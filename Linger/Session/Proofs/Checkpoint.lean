@@ -1063,4 +1063,43 @@ theorem loadBytes_resave {b : ByteArray} {c : Ckpt Vt.Vt} (h : loadBytes b = som
 theorem loadBytes_live {b : ByteArray} {c : Ckpt Vt.Vt} (h : loadBytes b = some c) :
     LiveReachableVt c.vt := load_live (by rwa [loadBytes_eq] at h)
 
+/-- A terminal a session can hold, where the decoder's door admits what `loadBytes` returns, is
+one where it admits every decodable state: the headline theorems' premise, from the one the
+component theorems take. -/
+theorem live_of_decoded {v : Vt.Vt}
+    (h : Live Vt.init Vt.feed Vt.resize Vt.quiesce (Decoded loadBytes) v) : LiveReachableVt v := by
+  induction h with
+  | init cols rows => exact .init cols rows
+  | feed _ bytes ih => exact .feed ih bytes
+  | resize _ cols rows ih => exact .resize ih cols rows
+  | quiesce _ ih => exact .quiesce ih
+  | ofDecoded h =>
+    obtain ⟨_, _, loaded, rfl⟩ := h
+    exact loadBytes_live loaded
+
+/-- Every decodable terminal is one `loadBytes` returns: the terminal of its own saved
+checkpoint, since the decoder's door leaves no partial parser state to forget. -/
+theorem decoded_of_decodable {v : Vt.Vt} (h : v.Decodable) : Decoded loadBytes v := by
+  have quiet : v.quiesce = v := by
+    have door := h
+    unfold Vt.Decodable Vt.ofDecoded at door
+    split at door
+    · injection door with door
+    · cases door
+  exact
+    ⟨saveBytes ⟨v, "", []⟩, ⟨v, "", []⟩, by
+      rw [loadBytes_saveBytes_live ⟨v, "", []⟩ (.ofDecoded h), quiet], rfl⟩
+
+/-- The terminals a session can hold are the same whether the decoder's door admits what
+`loadBytes` returns or every decodable state. -/
+theorem live_decoded_iff {v : Vt.Vt} :
+    Live Vt.init Vt.feed Vt.resize Vt.quiesce (Decoded loadBytes) v ↔ LiveReachableVt v := by
+  refine ⟨live_of_decoded, fun h => ?_⟩
+  induction h with
+  | init cols rows => exact .init cols rows
+  | feed _ bytes ih => exact .feed ih bytes
+  | resize _ cols rows ih => exact .resize ih cols rows
+  | quiesce _ ih => exact .quiesce ih
+  | ofDecoded h => exact .ofDecoded (decoded_of_decodable h)
+
 end Linger.Session.Checkpoint

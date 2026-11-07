@@ -6,12 +6,32 @@ public import Linger.Terminal.Spec
 
 /-! # Headline theorems
 
-The guarantees linger must keep. Each is stated over definitions in the components' `Spec`
-modules and over the program parts declared below as holes: each hole is `sorry` here, the
-program supplies it, and the claims say what it must do. `Theorems/Claims.lean` proves the same
-statements of the program's parts, and `./lake comparator` checks that it proves exactly these,
-that each part has the declared type, and that no axiom beyond `propext`, `Quot.sound` and
-`Classical.choice` is used. Changing a statement or a hole here changes what linger claims.
+The guarantees linger must keep, in eight parts:
+
+1. Transparency: a client that attaches shows the session's terminal, losing only history beyond
+   the replay budget, and the program reads exactly what its writers sent.
+2. Authority and attribution: a connection changes only what its role allows, a name has one
+   owner, and every value linger reports has one source, which alone can change it.
+3. Exactness: a request takes effect exactly as given, or is refused with a reason and changes
+   nothing.
+4. Program identity: a session runs exactly the program its creation named, and linger only
+   delivers bytes to it.
+5. Accountability: every session ends once, with an outcome recorded and reported truthfully to
+   anyone who asks, and every request gets a reply or a refusal.
+6. Bounded and clean: input cannot raise any buffer, loop or wait past its cap, and nothing a
+   session started outlives it.
+7. Recovery: resuming from a checkpoint gives back the saved session, less any half-parsed
+   control sequence.
+8. Clean terminal: what linger writes to a terminal on its own account is safe text or one of
+   its fixed sequences, and handing a terminal back leaves it canonical.
+
+Each theorem below is stated over definitions in the components' `Spec` modules and over the
+program parts declared below as holes: each hole is `sorry` here, the program supplies it, and
+the claims say what it must do. `Theorems/Claims.lean` proves the same statements of the
+program's parts, and `./lake comparator` checks that it proves exactly these, that each part has
+the declared type, and that no axiom beyond `propext`, `Quot.sound` and `Classical.choice` is
+used. Changing a statement or a hole here changes what linger claims. Each part's section says
+what it does not claim yet.
 
 Not claimed: anything about the IO executors, the C shim or the operating system, which suites
 test instead. -/
@@ -54,10 +74,6 @@ def Linger.Terminal.Vt.Vt.resize : Vt.Vt → (cols rows : Nat) → Vt.Vt := sorr
 @[expose]
 def Linger.Terminal.Vt.Vt.quiesce : Vt.Vt → Vt.Vt := sorry
 
-/-- The terminals the checkpoint decoder accepts. -/
-@[expose]
-def Linger.Terminal.Vt.Vt.Decodable : Vt.Vt → Prop := sorry
-
 /-- The screen's width in columns. -/
 @[expose]
 def Linger.Terminal.Vt.Vt.colCount : Vt.Vt → Nat := sorry
@@ -98,10 +114,6 @@ def Linger.Terminal.Vt.Vt.windowTitle : Vt.Vt → String := sorry
 @[expose]
 def Linger.Terminal.Vt.Vt.atBoundary : Vt.Vt → Bool := sorry
 
-/-- The repaint linger sends a client that attaches to a session with this terminal. -/
-@[expose]
-def Linger.Terminal.Render.restore : Vt.Vt → Render.Bytes := sorry
-
 /-- The history rows the repaint carries. -/
 @[expose]
 def Linger.Terminal.Render.sbRows : Vt.Vt → Array Vt.Row := sorry
@@ -139,9 +151,10 @@ def Linger.Session.State : Type := sorry
 def Linger.Session.State.boot : Vt.Vt → List (String × String) → List (String × String) → State :=
   sorry
 
-/-- The session after a trace of events, and the effects it asks the runtime for, in order. -/
+/-- The session's transition: the state after one event, and the effects it asks the runtime
+for, in order. -/
 @[expose]
-def Linger.Session.run : State → List Event → State × List (Effect Replay.Plan) := sorry
+def Linger.Session.step : State → Event → State × List (Effect Replay.Plan) := sorry
 
 /-- The record of the connection with the given identifier, if it is connected. -/
 @[expose]
@@ -213,16 +226,96 @@ def Linger.Session.Buf.owedLen : Buf.Buf → Nat := sorry
 
 namespace Linger.Claims
 
-/-! ## Session targets -/
+/-! ## 1. Transparency
+
+The terminals the claims quantify over are those a session can hold: fresh, fed, resized,
+quiesced, or read back by the checkpoint decoder, so every claim here also holds of a resumed
+session. A client receives the repaint as a stream, in steps of any positive byte budget; each
+claim says that the stream ends and that a receiver of the session's size that parses it shows
+what the session shows. Not claimed yet: that the receiver keeps showing it as output continues,
+and that the program reads exactly the bytes its writers sent. -/
+
+/-- Streaming the repaint of a terminal a session can hold ends, and a receiver of the same size
+that parses it ends with the session's dimensions and every row of its screen. -/
+theorem replay_grid (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
+    (hv :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) v)
+    (hw :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) w)
+    (hcols : w.colCount = v.colCount) (hrows : w.rowCount = v.rowCount) :
+    ∃ bytes,
+      Replay.Emits Replay.next budget (Replay.start v) bytes ∧
+        (w.feed bytes).colCount = v.colCount ∧
+        (w.feed bytes).rowCount = v.rowCount ∧
+        ∀ y < v.rowCount, (w.feed bytes).getRow y = v.getRow y := by
+  sorry
+
+/-- Streaming the repaint of a terminal a session can hold, with retained history, ends, and a
+receiver of the same size that parses it ends with exactly the session's history as the replay
+budget fits it. -/
+theorem replay_history (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
+    (hv :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) v)
+    (hw :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) w)
+    (hcols : w.colCount = v.colCount) (hrows : w.rowCount = v.rowCount)
+    (retained : (Render.sbRows v).isEmpty = false) :
+    ∃ bytes,
+      Replay.Emits Replay.next budget (Replay.start v) bytes ∧
+        (w.feed bytes).scrollback = (Render.sbRows v).toList := by
+  sorry
+
+/-- Outside origin mode, streaming the repaint of a terminal a session can hold ends, and a
+receiver of the same size that parses it puts its cursor where the session's is. -/
+theorem replay_cursor (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
+    (hv :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) v)
+    (hw :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) w)
+    (hcols : w.colCount = v.colCount) (hrows : w.rowCount = v.rowCount)
+    (ho : v.getModes.origin = false) :
+    ∃ bytes,
+      Replay.Emits Replay.next budget (Replay.start v) bytes ∧
+        (w.feed bytes).cursorPos = v.cursorPos := by
+  sorry
+
+/-! ## 2. Authority and attribution
+
+A watcher is a client attached without a size. Not claimed yet: that a watcher cannot end the
+session, disconnect every client or change labels (the session accepts these from any
+connection); that a name has one owner (proved of a model of the lock protocol,
+`Claim.at_most_one_owner`, and tested of the daemon); and which source each reported value has. -/
+
+/-- One client's bytes, however chunked, leave every other client's record unchanged. -/
+theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8)) {other : Nat}
+    (h : other ≠ id) :
+    (Session.trace Session.step s (chunks.map (Event.bytes id))).1.client? other =
+      s.client? other := by
+  sorry
+
+/-- A watcher cannot drive the session: whatever bytes it sends, however chunked, never write to
+the pty, resize it or change the terminal. -/
+theorem run_readonly (s : State) (id : Nat) (chunks : List (List UInt8)) {c : Client}
+    (hc : s.client? id = some c) (attached : c.attached = true) (watcher : c.sizer = false) :
+    (Session.trace Session.step s (chunks.map (Event.bytes id))).1.terminal = s.terminal ∧
+      ∀ eff ∈ (Session.trace Session.step s (chunks.map (Event.bytes id))).2,
+        (∀ bytes, eff ≠ .writePty bytes) ∧ ∀ cols rows, eff ≠ .resizePty cols rows := by
+  sorry
+
+/-! ## 3. Exactness
+
+Not claimed yet: that a session starts in the directory it was given (a failed `chdir` falls
+back to `$HOME`) and with the environment it was given (the program inherits the caller's). -/
 
 /-- Validation accepts exactly the valid names, and returns each unchanged. -/
 theorem check_eq_some_iff (s result : String) :
     Name.check s = some result ↔ result = s ∧ Name.Valid s := by sorry
-
-/-- Distinct accepted session names cannot alias: validation never maps two different names to
-the same one. -/
-theorem check_no_alias {a b name : String} (ha : Name.check a = some name)
-    (hb : Name.check b = some name) : a = b := by sorry
 
 /-- The command linger runs on a remote host parses, in the literal POSIX shell model, as
 exactly `linger`, the verb and every supplied word, with no other shell action. -/
@@ -231,42 +324,83 @@ theorem command_argv (verb : String) (words : List String) :
       (("linger" :: verb :: words).map String.toList) := by
   sorry
 
-/-! ## Terminal -/
+/-! ## 4. Program identity
 
-/-- Repainting a terminal a session can hold into any other such terminal of the same size
-reproduces its screen: the receiver ends with the same dimensions and every row. -/
-theorem restore_grid_reachable (v w : Vt.Vt)
-    (hv : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v)
-    (hw : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable w)
-    (hcols : w.colCount = v.colCount) (hrows : w.rowCount = v.rowCount) :
-    (w.feed (Render.restore v)).colCount = v.colCount ∧
-      (w.feed (Render.restore v)).rowCount = v.rowCount ∧
-      ∀ y < v.rowCount, (w.feed (Render.restore v)).getRow y = v.getRow y := by
+Not claimed yet: that `linger run` starts the program it names (it starts `$SHELL` and types the
+words into it, joined with spaces), and that a resumed session starts in the directory requested
+(it starts in the checkpoint's). -/
+
+/-! ## 5. Accountability
+
+Not claimed yet: that `linger wait` refuses an unknown name (it exits 0); that an outcome says how
+the program ended (a signal reads as exit status 128 plus its number, and a program not reaped
+within 3 seconds as 1); that anyone who asks later hears the outcome (only clients connected at
+the end do); and that every message gets a reply or a refusal (an unknown one is dropped). -/
+
+/-- When each external operation returns a typed result, every finite batch of events
+completes without an uncaught exception, keeping the session within its bounds and its
+terminal one a live session can hold. Disconnects and checkpoint failures are permitted
+results. -/
+theorem run_total_safe {World ε : Type}
+    (execute : State → World → (eff : Effect Replay.Plan) → Except ε (World × Driver.Reply eff))
+    (hw : Driver.Responds execute) (r : Driver.Result State World) (events : List Event)
+    (hb : Bounds State.roster State.labelList State.scanner r.st)
+    (hlive :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) r.st.terminal) :
+    ∃ out,
+      Driver.run execute r events = .ok out ∧
+        Bounds State.roster State.labelList State.scanner out.st ∧
+        Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+          (Checkpoint.Decoded Checkpoint.loadBytes) out.st.terminal := by
   sorry
 
-/-- Repainting a terminal a session can hold, with retained history, into another such terminal
-of the same size gives the receiver exactly the session's history as the replay budget fits
-it. -/
-theorem restore_sb_reachable (v w : Vt.Vt)
-    (hv : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v)
-    (hw : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable w)
-    (hcols : w.colCount = v.colCount) (hrows : w.rowCount = v.rowCount)
-    (hne : (Render.sbRows v).isEmpty = false) :
-    (w.feed (Render.restore v)).scrollback = (Render.sbRows v).toList := by sorry
+/-! ## 6. Bounded and clean
 
-/-- Outside origin mode, repainting a terminal a session can hold into another such terminal
-of the same size puts the receiver's cursor where the session's is. -/
-theorem restore_cursor_reachable (v w : Vt.Vt)
-    (hv : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v)
-    (hw : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable w)
-    (hcols : w.colCount = v.colCount) (hrows : w.rowCount = v.rowCount)
-    (ho : v.getModes.origin = false) : (w.feed (Render.restore v)).cursorPos = v.cursorPos := by
+`run_total_safe` keeps the session's clients, labels, frame decoders and pty scanner within their
+caps. Not claimed yet: that ending a session ends every process it started (linger signals only
+its program), and that `linger wait` gives up after a deadline. -/
+
+/-- The pty input queue never owes more than its cap, through any offers and flushes. -/
+theorem reachableIn_bound {cap : Nat} {b : Buf.Buf}
+    (h : Buf.InputReach Buf.Buf.empty Buf.bufOffer Buf.bufAdvance cap b) : Buf.owedLen b ≤ cap := by
   sorry
 
-/-- Streaming a repaint with any positive byte budget per step ends, and its chunks, each within
-the budget, concatenate to exactly the complete repaint `Render.restore v`. -/
-theorem start_faithful (budget : Nat) (positive : 0 < budget) (v : Vt.Vt) :
-    Replay.Emits Replay.next budget (Replay.start v) (Render.restore v) := by sorry
+/-- A client output queue the daemon keeps never owes more than its cap, through any appends
+and flushes. -/
+theorem reachableOut_bound {cap : Nat} {b : Buf.Buf}
+    (h : Buf.OutputReach Buf.Buf.empty Buf.bufEnqueue Buf.bufAdvance cap b) :
+    Buf.owedLen b ≤ cap := by sorry
+
+/-! ## 7. Recovery
+
+Every claim in section 1 covers the terminals the checkpoint decoder returns, so any bytes on
+disk resume a session those claims cover, or are refused. -/
+
+/-- Saving a checkpoint of a terminal a session can hold and loading it back returns the same
+checkpoint, with the terminal's partial parser state forgotten. -/
+theorem loadBytes_saveBytes_live (c : Checkpoint.Ckpt Vt.Vt)
+    (h :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) c.vt) :
+    Checkpoint.loadBytes (Checkpoint.saveBytes c) = some { c with vt := c.vt.quiesce } := by sorry
+
+/-- A daemon resumed from the saved checkpoint of a terminal a session can hold boots with that
+terminal, its partial parser state forgotten, and the checkpoint's first `maxLabels` labels. -/
+theorem resume_restores (c : Checkpoint.Ckpt Vt.Vt)
+    (h :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) c.vt)
+    (metaKv : List (String × String)) :
+    let saved := Checkpoint.loadBytes (Checkpoint.saveBytes c)
+    let booted := State.boot (bootVt (saved.map (·.vt))) ((saved.map (·.labels)).getD []) metaKv
+    booted.terminal = c.vt.quiesce ∧ booted.labelList = c.labels.take maxLabels := by
+  sorry
+
+/-! ## 8. Clean terminal
+
+Not claimed yet: one statement covering every sequence linger writes on its own account; each
+printer below is claimed on its own. -/
 
 /-- `linger capture` prints UTF-8 text with no C0 control, DEL or C1 control character other
 than its line terminators. -/
@@ -288,221 +422,6 @@ theorem leave_canonical_all (w : Vt.Vt) (h2 : 2 ≤ w.rowCount) :
           so := false, alt := false } ∧
       (w.feed Render.leaveAnsi).getPen = ({} : Vt.Pen) ∧
       (w.feed Render.leaveAnsi).windowTitle = "" := by
-  sorry
-
-/-! ## Sessions -/
-
-/-- Saving a checkpoint of a terminal a session can hold and loading it back returns the same
-checkpoint, with the terminal's partial parser state forgotten. -/
-theorem loadBytes_saveBytes_live (c : Checkpoint.Ckpt Vt.Vt)
-    (h : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable c.vt) :
-    Checkpoint.loadBytes (Checkpoint.saveBytes c) = some { c with vt := c.vt.quiesce } := by sorry
-
-/-- A daemon resumed from any bytes on disk boots a terminal a live session can hold. -/
-theorem liveReachableVt_resumeVt (b : ByteArray) :
-    Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable
-      (bootVt ((Checkpoint.loadBytes b).map (·.vt))) := by
-  sorry
-
-/-- When each external operation returns a typed result, every finite batch of events
-completes without an uncaught exception, keeping the session within its bounds and its
-terminal one a live session can hold. Disconnects and checkpoint failures are permitted
-results. -/
-theorem run_total_safe {World ε : Type}
-    (execute : State → World → (eff : Effect Replay.Plan) → Except ε (World × Driver.Reply eff))
-    (hw : Driver.Responds execute) (r : Driver.Result State World) (events : List Event)
-    (hb : Bounds State.roster State.labelList State.scanner r.st)
-    (hlive :
-      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable r.st.terminal) :
-    ∃ out,
-      Driver.run execute r events = .ok out ∧
-        Bounds State.roster State.labelList State.scanner out.st ∧
-        Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable
-          out.st.terminal := by
-  sorry
-
-/-- One client's input bytes, however chunked, leave every other client's record unchanged. -/
-theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8)) {other : Nat}
-    (h : other ≠ id) : (run s (chunks.map (Event.bytes id))).1.client? other = s.client? other := by
-  sorry
-
-/-- An attached client that gave no size cannot drive the session: whatever bytes it sends,
-however chunked, never write to the pty, resize it or change the terminal. -/
-theorem run_readonly (s : State) (id : Nat) (chunks : List (List UInt8)) {c : Client}
-    (hc : s.client? id = some c) (attached : c.attached = true) (watcher : c.sizer = false) :
-    (run s (chunks.map (Event.bytes id))).1.terminal = s.terminal ∧
-      ∀ eff ∈ (run s (chunks.map (Event.bytes id))).2,
-        (∀ bytes, eff ≠ .writePty bytes) ∧ ∀ cols rows, eff ≠ .resizePty cols rows := by
-  sorry
-
-/-- The pty input queue never owes more than its cap, through any offers and flushes. -/
-theorem reachableIn_bound {cap : Nat} {b : Buf.Buf}
-    (h : Buf.InputReach Buf.Buf.empty Buf.bufOffer Buf.bufAdvance cap b) : Buf.owedLen b ≤ cap := by
-  sorry
-
-/-- A client output queue the daemon keeps never owes more than its cap, through any appends
-and flushes. -/
-theorem reachableOut_bound {cap : Nat} {b : Buf.Buf}
-    (h : Buf.OutputReach Buf.Buf.empty Buf.bufEnqueue Buf.bufAdvance cap b) :
-    Buf.owedLen b ≤ cap := by sorry
-
-/-- In the lock-protocol model, two daemons or offline readers that share a socket or checkpoint
-resource are never active at once, across any interleaving of acquisition, release and reuse. -/
-theorem at_most_one_owner {s : Claim.State} (reached : Claim.Reachable s) {a b resource : Nat}
-    {left right : Claim.Lease} (ha : s.active a = some left) (hb : s.active b = some right)
-    (leftUses : left.Uses resource) (rightUses : right.Uses resource) : a = b := by sorry
-
-/-! ## What the parts show
-
-These pin the operations and observations the claims above are stated over, so that the claims
-cannot hold of parts that do nothing: in general where the behavior is simple, and on short
-inputs to a fresh terminal where it is not.
-
-### Terminal -/
-
-/-- A fresh terminal has the requested size, clamped to between 1 and 1000, blank rows, the
-cursor at the top left, default modes and pen, no history, the whole screen as its scroll
-region, ASCII character sets with G0 selected, the main screen current, an empty title, and its
-parser between control sequences and characters. -/
-theorem init_observed (cols rows : Nat) :
-    (Vt.Vt.init cols rows).colCount = Vt.clampDim cols ∧
-      (Vt.Vt.init cols rows).rowCount = Vt.clampDim rows ∧
-      (∀ y < Vt.clampDim rows,
-        (Vt.Vt.init cols rows).getRow y = Array.replicate (Vt.clampDim cols) ({} : Vt.Cell)) ∧
-      (Vt.Vt.init cols rows).cursorPos = (0, 0) ∧
-      (Vt.Vt.init cols rows).getModes = {} ∧
-      (Vt.Vt.init cols rows).getPen = {} ∧
-      (Vt.Vt.init cols rows).scrollback = [] ∧
-      Vt.stick (Vt.Vt.init cols rows) =
-        { rows := Vt.clampDim rows, top := 0, bot := Vt.clampDim rows - 1, g0 := false, g1 := false,
-          so := false, alt := false } ∧
-      (Vt.Vt.init cols rows).windowTitle = "" ∧ (Vt.Vt.init cols rows).atBoundary = true := by
-  sorry
-
-/-- A resize sets the clamped size, keeps the cursor within it, resets the scroll region to the
-whole screen, and keeps the history, modes, pen, title, character sets, screen selection and
-parser state. -/
-theorem resize_observed (v : Vt.Vt) (cols rows : Nat) :
-    (v.resize cols rows).colCount = Vt.clampDim cols ∧
-      (v.resize cols rows).rowCount = Vt.clampDim rows ∧
-      (v.resize cols rows).cursorPos =
-        (min v.cursorPos.1 (Vt.clampDim cols - 1), min v.cursorPos.2 (Vt.clampDim rows - 1)) ∧
-      Vt.stick (v.resize cols rows) =
-        { Vt.stick v with
-          rows := Vt.clampDim rows, top := 0, bot := Vt.clampDim rows - 1 } ∧
-      (v.resize cols rows).scrollback = v.scrollback ∧
-      (v.resize cols rows).getModes = v.getModes ∧
-      (v.resize cols rows).getPen = v.getPen ∧
-      (v.resize cols rows).windowTitle = v.windowTitle ∧
-      (v.resize cols rows).atBoundary = v.atBoundary := by
-  sorry
-
-/-- Forgetting partial parser state puts the parser between control sequences and characters,
-and keeps everything the terminal shows. -/
-theorem quiesce_observed (v : Vt.Vt) :
-    v.quiesce.atBoundary = true ∧
-      v.quiesce.colCount = v.colCount ∧
-      v.quiesce.rowCount = v.rowCount ∧
-      (∀ y, v.quiesce.getRow y = v.getRow y) ∧
-      v.quiesce.cursorPos = v.cursorPos ∧
-      v.quiesce.getModes = v.getModes ∧
-      v.quiesce.getPen = v.getPen ∧
-      v.quiesce.scrollback = v.scrollback ∧
-      Vt.stick v.quiesce = Vt.stick v ∧ v.quiesce.windowTitle = v.windowTitle := by
-  sorry
-
-/-- A checkpoint can hold every terminal a session can hold, with its partial parser state
-forgotten: the checkpoint decoder accepts it. -/
-theorem quiesce_decodable (v : Vt.Vt)
-    (h : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v) :
-    v.quiesce.Decodable := by sorry
-
-/-- Printing `A` on a fresh two-column, one-row terminal puts it under the cursor, moves the
-cursor right and makes it the line `linger capture` prints; a line feed on that bottom row then
-moves the row into the history, which the repaint carries. -/
-theorem print_observed :
-    ((Vt.Vt.init 2 1).feed [0x41]).getRow 0 = #[{ base := 'A' }, {}] ∧
-      ((Vt.Vt.init 2 1).feed [0x41]).cursorPos = (1, 0) ∧
-      Render.screenText ((Vt.Vt.init 2 1).feed [0x41]) = [0x41, 0x0A] ∧
-      ((Vt.Vt.init 2 1).feed [0x41, 0x0A]).scrollback = [#[{ base := 'A' }, {}]] ∧
-      Render.sbRows ((Vt.Vt.init 2 1).feed [0x41, 0x0A]) = #[#[{ base := 'A' }, {}]] := by
-  sorry
-
-/-- On a fresh terminal, SGR 1 makes the pen bold, DECSET 6 turns on origin mode, OSC 2 sets the
-window title, DECSTBM sets the scroll region, `ESC ( 0` and `ESC ) 0` give G0 and G1 the DEC
-line-drawing set and SO shifts to G1, DECSET 1049 switches to the alternate screen, and a lone
-ESC leaves the parser inside a control sequence. -/
-theorem controls_observed :
-    ((Vt.Vt.init 2 1).feed [0x1B, 0x5B, 0x31, 0x6D]).getPen = { bold := true } ∧
-      ((Vt.Vt.init 2 1).feed [0x1B, 0x5B, 0x3F, 0x36, 0x68]).getModes = { origin := true } ∧
-      ((Vt.Vt.init 2 1).feed [0x1B, 0x5D, 0x32, 0x3B, 0x74, 0x07]).windowTitle = "t" ∧
-      Vt.stick ((Vt.Vt.init 1 3).feed [0x1B, 0x5B, 0x32, 0x3B, 0x33, 0x72]) =
-        { rows := 3, top := 1, bot := 2, g0 := false, g1 := false, so := false, alt := false } ∧
-      Vt.stick ((Vt.Vt.init 1 3).feed [0x1B, 0x28, 0x30, 0x1B, 0x29, 0x30, 0x0E]) =
-        { rows := 3, top := 0, bot := 2, g0 := true, g1 := true, so := true, alt := false } ∧
-      Vt.stick ((Vt.Vt.init 1 3).feed [0x1B, 0x5B, 0x3F, 0x31, 0x30, 0x34, 0x39, 0x68]) =
-        { rows := 3, top := 0, bot := 2, g0 := false, g1 := false, so := false, alt := true } ∧
-      ((Vt.Vt.init 2 1).feed [0x1B]).atBoundary = false := by
-  sorry
-
-/-! ### Sessions -/
-
-/-- A daemon boots with the terminal its checkpoint restored, or a fresh 80×24 one, no clients,
-its first `maxLabels` restored labels and an idle pty scanner. -/
-theorem boot_observed (vt : Vt.Vt) (labels metaKv : List (String × String)) :
-    bootVt none = Vt.Vt.init 80 24 ∧
-      bootVt (some vt) = vt ∧
-      (State.boot vt labels metaKv).terminal = vt ∧
-      (State.boot vt labels metaKv).roster = [] ∧
-      (State.boot vt labels metaKv).labelList = labels.take maxLabels ∧
-      (State.boot vt labels metaKv).scanner = .ground := by
-  sorry
-
-/-- A session handles a trace one event at a time, and a client's record is the first in its
-roster with the client's identifier. -/
-theorem run_observed (s : State) (ev : Event) (evs : List Event) (id : Nat) :
-    run s [] = (s, []) ∧
-      run s (ev :: evs) =
-        ((run (run s [ev]).1 evs).1, (run s [ev]).2 ++ (run (run s [ev]).1 evs).2) ∧
-      s.client? id = s.roster.find? (·.id == id) := by
-  sorry
-
-/-- A connection the session has room for joins the end of its roster as a fresh record, and one
-past `maxClients` is closed without joining; a closed connection leaves no record; pty output
-reaches the terminal byte for byte; and a lone ESC from the child puts an idle scanner inside an
-escape sequence. -/
-theorem events_observed (s : State) (id : Nat) (chunk : List UInt8) :
-    (s.roster.length < maxClients → (run s [.connected id]).1.roster = s.roster ++ [{ id }]) ∧
-      (maxClients ≤ s.roster.length →
-        (run s [.connected id]).1.roster = s.roster ∧ Effect.close id ∈ (run s [.connected id]).2) ∧
-      (run s [.closed id]).1.client? id = none ∧
-      (run s [.ptyOut chunk]).1.terminal = s.terminal.feed chunk ∧
-      (s.scanner = .ground → (run s [.ptyOut [0x1B]]).1.scanner = .esc) := by
-  sorry
-
-/-- When every effect succeeds, the driver ends in the state `run` computes from the same events,
-unless one of them asks the daemon to exit. -/
-theorem driver_observed {World : Type}
-    (execute : State → World → (eff : Effect Replay.Plan) → Id (World × Driver.Reply eff))
-    (succeeds : ∀ st w eff, (execute st w eff).run.2 = Driver.success eff)
-    (r : Driver.Result State World) (events : List Event) (active : r.exiting = false)
-    (stays : Effect.exit ∉ (run r.st events).2) :
-    (Driver.run execute r events).run.st = (run r.st events).1 ∧
-      (Driver.run execute r events).run.exiting = false := by
-  sorry
-
-/-- What the daemon's byte queues owe: nothing at first; an offer to the pty input queue drops a
-frame that would pass the cap and otherwise appends it; an append to a client output queue
-always appends and reports whether the backlog passed the cap; a flush removes the bytes
-written. -/
-theorem buf_observed (cap n : Nat) (b : Buf.Buf) (more : ByteArray) :
-    Buf.owedLen Buf.Buf.empty = 0 ∧
-      (Buf.bufOffer cap b more).2 = decide (Buf.owedLen b + more.size > cap) ∧
-      Buf.owedLen (Buf.bufOffer cap b more).1 =
-        (if Buf.owedLen b + more.size > cap then Buf.owedLen b else Buf.owedLen b + more.size) ∧
-      (Buf.bufEnqueue cap b more).2 = decide (Buf.owedLen b + more.size > cap) ∧
-      Buf.owedLen (Buf.bufEnqueue cap b more).1 = Buf.owedLen b + more.size ∧
-      Buf.owedLen (Buf.bufAdvance b n) = Buf.owedLen b - n := by
   sorry
 
 end Linger.Claims

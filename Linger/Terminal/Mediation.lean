@@ -43,9 +43,10 @@ def da2Reply : Bytes := [ESC, 0x5B, 0x3E, 0x30, 0x3B, 0x30, 0x3B, 0x30, 0x63]
 private def statusReply (private_ : Bool) : Bytes :=
   [ESC, 0x5B] ++ (if private_ then [0x3F] else []) ++ [0x30, 0x6E]
 
-/-- The 1-based row a cursor position report gives, relative to the region under DECOM. -/
+/-- The 1-based row a cursor position report gives, relative to the region under DECOM. Origin
+mode and the region's top are read through the terminal's public surface. -/
 private def cprRow (v : Vt) : Nat :=
-  if v.modes.origin then if v.cursor.y < v.top then 1 else v.cursor.y - v.top + 1
+  if v.getModes.origin then if v.cursor.y < (stick v).top then 1 else v.cursor.y - (stick v).top + 1
   else v.cursor.y + 1
 
 /-- Cursor position report `CSI row ; column R`, with `?` when private. -/

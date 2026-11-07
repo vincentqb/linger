@@ -183,7 +183,7 @@ private def behind (s : State) : Nat := s.outSeq - s.lookSeq
 `infoText` because the framing below is only unambiguous if no field contains a
 framing byte, and that is a claim about *these* — see `infoText_framing`. -/
 def infoFields (s : State) : List (String × String) :=
-  s.metaKv ++ [("clients", toString (s.clients.filter (·.attached)).length)]
+  s.metaKv ++ [("clients", toString (s.roster.filter (·.attached)).length)]
     -- the observations `Status.classify` needs from the daemon; the rest
     -- (reachability, checkpoint loadability) only the caller can know
     ++
@@ -494,7 +494,7 @@ def step (s : State) (ev : Event) : State × List (Effect Plan) :=
         lookSeq := if s.clients.any (·.attached) then s.outSeq + 1 else s.lookSeq },
       (if r.replies.isEmpty then [] else [.writePty r.replies]) ++ broadcast s r.visible)
   | .childExited status =>
-    let flushed := Terminal.Mediation.finish s.scan
+    let flushed := Terminal.Mediation.finish s.scanner
     let s :=
       { s with
         exited := some status, scan := flushed.2 }

@@ -49,7 +49,7 @@ def start (v : Vt) : Plan :=
       Render.escB ++
       [0x5D, 0x32, 0x3B]
   let after :=
-    [0x07] ++ Render.modesAnsi v ++ Render.charsetAnsi v ++ Render.penSgr v.pen ++
+    [0x07] ++ Render.modesAnsi v ++ Render.charsetAnsi v ++ Render.penSgr v.getPen ++
       Render.cursorAnsi v ++
       Render.cursorPendingAnsi v
   let screens :=

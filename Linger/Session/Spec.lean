@@ -161,6 +161,16 @@ inductive Effect (Plan : Type) where
   | exit
   deriving Repr, DecidableEq
 
+/-- The session after a trace of events, given its transition: each event starts from the state
+the previous one left, and the effects come out in the order the events asked for them. -/
+@[expose]
+def trace {S E F : Type} (step : S → E → S × List F) (s : S) : List E → S × List F
+  | [] => (s, [])
+  | ev :: evs =>
+    let r := step s ev
+    let rest := trace step r.1 evs
+    (rest.1, r.2 ++ rest.2)
+
 /-- The session bounds, read through a state's client roster, labels and pty scanner: the
 roster and the label store within their caps, every client's frame decoder healthy and
 holding at most one frame, and the scanner within its caps. -/
@@ -223,6 +233,12 @@ structure Ckpt (V : Type) where
   cwd : String
   /-- The session's labels, as key/value pairs. -/
   labels : List (String × String)
+
+/-- `v` is the terminal of a checkpoint `load` returns for some bytes: a terminal a resumed
+session can start from. -/
+@[expose]
+def Decoded {V : Type} (load : ByteArray → Option (Ckpt V)) (v : V) : Prop :=
+  ∃ bytes c, load bytes = some c ∧ c.vt = v
 
 end Linger.Session.Checkpoint
 

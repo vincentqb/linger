@@ -388,9 +388,10 @@ row at the session's width, trimmed from the **oldest** end to `sbReplayBytes`.
 `Ring.toList` is oldest-first and oldest-first is the push order, so the budget
 walk — which has to start from the newest — runs on the reverse and the result is
 reversed back. Both reverses are load-bearing and in opposite ways: dropping the
-outer one plays the history backwards, and feeding `v.sb.toList` instead of its
+outer one plays the history backwards, and feeding `v.scrollback` instead of its
 reverse keeps the **oldest** N under a tight budget instead of the newest. -/
-def sbRows (v : Vt) : Array Row := (sbTake v.cols sbReplayBytes v.sb.toList.reverse).reverse.toArray
+def sbRows (v : Vt) : Array Row :=
+  (sbTake v.cols sbReplayBytes v.scrollback.reverse).reverse.toArray
 
 /-- **The history push.** Paint the fitted ring, then scroll it off the top with
 `v.rows` CRLFs.

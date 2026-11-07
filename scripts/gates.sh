@@ -1359,12 +1359,13 @@ for bound in \
   code_grep "^[[:space:]]+$bound\$" 'Linger/Session/Checkpoint.lean' > /dev/null \
     || fail "a byte-array checkpoint reader stopped forwarding its bound: $bound"
 done
-# The checkpoint hooks are `IO`, so no theorem sees them use the proved codec: write
-# the state's own fields through `saveBytes` (`saveBytes_eq`), and return what
-# `loadBytes` read from the file's bytes (`loadBytes_eq`).
+# The checkpoint hooks are `IO`, so no theorem sees them use the proved codec: write the
+# session's terminal and labels, read through the observers the headline theorems name,
+# through `saveBytes` (`saveBytes_eq`), and return what `loadBytes` read from the file's bytes
+# (`loadBytes_eq`).
 resume_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Resume.lean)"
 for tie in \
-  'let ck : Ckpt Linger[.]Terminal[.]Vt[.]Vt := [{] vt := st[.]vt, cwd, labels := st[.]labels [}] let bytes := saveBytes ck' \
+  'let ck : Ckpt Linger[.]Terminal[.]Vt[.]Vt := [{] vt := st[.]terminal, cwd, labels := st[.]labelList [}] let bytes := saveBytes ck' \
   'match loadBytes bytes with [|] some ck => return some [(]ck[.]vt, ck[.]cwd, ck[.]labels[)]'; do
   printf '%s\n' "$resume_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "checkpoint hooks bypassed the proved codec: $tie"

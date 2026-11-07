@@ -1548,7 +1548,7 @@ theorem sbRows_observed : sbRows ((Vt.init 2 1).feed [0x41, 0x0A]) = #[#[{ base 
   have hsb : ((Vt.init 2 1).feed [0x41, 0x0A]).sb.toList = [#[{ base := 'A' }, {}]] := by
     decide +kernel
   have hcost : sbRowCost #[{ base := 'A' }, {}] ≤ sbReplayBytes := by decide +kernel
-  unfold sbRows
+  unfold sbRows Linger.Terminal.Vt.Vt.scrollback
   rw [hsb, show ((Vt.init 2 1).feed [0x41, 0x0A]).cols = 2 from rfl]
   simp only [List.reverse_cons, List.reverse_nil, List.nil_append, sbTake, hfit, hcost, ite_true]
 

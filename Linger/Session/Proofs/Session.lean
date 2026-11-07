@@ -1836,6 +1836,13 @@ theorem run_observed (s : State) (ev : Event) (evs : List Event) (id : Nat) :
   refine ⟨rfl, ?_, rfl⟩
   simp [run]
 
+/-- Tracing events through `step` is `run`: the headline theorems' fold over the transition
+the driver calls is the one the session theorems are stated over. -/
+theorem trace_step (s : State) (evs : List Event) : trace step s evs = run s evs := by
+  induction evs generalizing s with
+  | nil => rfl
+  | cons ev evs ih => simp only [trace, run, ih]
+
 /-- Closing a connection removes every record with its identifier. -/
 theorem closeClient_clients (s : State) (id : Nat) :
     (closeClient s id).1.clients = s.clients.filter (·.id != id) := by

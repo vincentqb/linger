@@ -43,13 +43,13 @@ theorem classifyCsi_cpr (v : Vt) :
   simp [classifyCsi]
 
 theorem cprRow_absolute (v : Vt) (h : v.modes.origin = false) : cprRow v = v.cursor.y + 1 := by
-  simp [cprRow, h]
+  simp [cprRow, Vt.getModes, h]
 
 theorem cprRow_origin_above (v : Vt) (ho : v.modes.origin = true) (hy : v.cursor.y < v.top) :
-    cprRow v = 1 := by simp [cprRow, ho, hy]
+    cprRow v = 1 := by simp [cprRow, Vt.getModes, stick, ho, hy]
 
 theorem cprRow_origin_inside (v : Vt) (ho : v.modes.origin = true) (hy : ¬v.cursor.y < v.top) :
-    cprRow v = v.cursor.y - v.top + 1 := by simp [cprRow, ho, hy]
+    cprRow v = v.cursor.y - v.top + 1 := by simp [cprRow, Vt.getModes, stick, ho, hy]
 
 theorem classifyCsi_version (v : Vt) :
     classifyCsi v [ESC, 0x5B, 0x3E, 0x71] = .owned versionReply ∧
