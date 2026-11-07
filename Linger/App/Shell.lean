@@ -192,6 +192,11 @@ private def connectUpsert (name : String) (cmd : List String) : IO UInt32 := do
       fdOpt ← Client.connect name
     match fdOpt with
     | some fd =>
+      -- a resume whose directory is gone runs in $HOME, and says where it was saved
+      if let some (.ok info)← queryInfo name then
+        if let some saved := info.lookup "saved_dir" then
+          let ran := (info.lookup "start_dir").getD "$HOME"
+          IO.eprintln s!"linger: session '{name}' resumed in {ran}: its directory {saved} is gone"
       return fd
     | none =>
       let log ← Paths.logPath name

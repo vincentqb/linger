@@ -476,6 +476,17 @@ example (home : Option String) : Env.remotesFile home = none ↔ home = none ∨
 example (flag : Option String) : Env.detachEnabled true flag = true := by
   with_reducible exact Env.detachEnabled_readOnly flag
 
+example (saved : String) :
+    Env.resumeDir none saved false = none ∧ Env.resumeDir (some "") saved false = none := by
+  with_reducible exact Env.resumeDir_absent saved
+
+example (home : Option String) (saved : String) : Env.resumeDir home saved true = some saved := by
+  with_reducible exact Env.resumeDir_saved home saved
+
+example {dir : String} (set : dir ≠ "") (saved : String) :
+    Env.resumeDir (some dir) saved false = some dir := by
+  with_reducible exact Env.resumeDir_home set saved
+
 example (flag : Option String) : Env.detachEnabled false flag = flag.isNone := by
   with_reducible exact Env.detachEnabled_writable flag
 

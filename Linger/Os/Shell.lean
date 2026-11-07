@@ -116,16 +116,15 @@ def SpawnFailure.describe : SpawnFailure → String
 slash-qualified programs run directly. Executable text without a shebang runs
 through `/bin/sh`, preserving execvp's fallback.
 `extraEnv` entries are `"K=V"` with a nonempty key. `cwd = ""` inherits; a cwd the child cannot
-enter fails the start, unless `homeFallback` asks for the child's `$HOME` instead (a resume after
-a reboot may name a deleted directory). Dimensions must fit 16 bits.
+enter fails the start, whatever `$HOME` is: a resume chooses its directory before
+(`Linger.Os.Env.resumeDir`). Dimensions must fit 16 bits.
 
 Returns `(pid, master)`: the child, with SIGPIPE and SIGHUP at their defaults, and the
 pty master, close-on-exec and blocking. A program that cannot start is a `SpawnFailure`;
 the other setup failures in the child throw. The C side reports both over a close-on-exec
 pipe, so no pid is returned for a program that never ran. -/
-def trySpawnPty (cols rows : UInt32) (cwd : String) (homeFallback : Bool) (prog : String)
-    (args : Array String) (extraEnv : Array String) : IO (Except SpawnFailure (UInt32 × UInt32)) :=
-  do
+def trySpawnPty (cols rows : UInt32) (cwd prog : String) (args : Array String)
+    (extraEnv : Array String) : IO (Except SpawnFailure (UInt32 × UInt32)) := do
   checkWinsize cols rows
   checkCString "spawnPty cwd" cwd
   checkCommand "spawnPty" prog args
@@ -133,7 +132,7 @@ def trySpawnPty (cols rows : UInt32) (cwd : String) (homeFallback : Bool) (prog 
     checkCString "spawnPty environment" entry
     unless entry.contains '=' && !entry.startsWith "=" do
       throw (IO.userError s!"spawnPty: environment entry '{entry}' is not K=V")
-  match ← Boundary.spawnPty cols rows cwd homeFallback prog args extraEnv with
+  match ← Boundary.spawnPty cols rows cwd prog args extraEnv with
   | .ok packed =>
     return .ok ((packed >>> 32).toUInt32, packed.toUInt32)
   | .error (1, why) =>
@@ -143,10 +142,10 @@ def trySpawnPty (cols rows : UInt32) (cwd : String) (homeFallback : Bool) (prog 
   | .error (_, why) =>
     return .error (.notRunnable why)
 
-/-- `trySpawnPty` in `cwd` or nowhere else, throwing when the program cannot start. -/
+/-- `trySpawnPty`, throwing when the program cannot start. -/
 def spawnPty (cols rows : UInt32) (cwd prog : String) (args : Array String)
     (extraEnv : Array String) : IO (UInt32 × UInt32) := do
-  match ← trySpawnPty cols rows cwd false prog args extraEnv with
+  match ← trySpawnPty cols rows cwd prog args extraEnv with
   | .ok started =>
     return started
   | .error failure =>

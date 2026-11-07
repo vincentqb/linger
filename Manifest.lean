@@ -414,8 +414,8 @@ theorem run_readonly_rejects_kill :
 
 Not claimed yet, though suites test it: that `start` runs its program in the caller's directory
 or not at all (125, as `env -C`), with the caller's environment, which only `TERM`,
-`TERM_PROGRAM`, `TERM_PROGRAM_VERSION` and `LINGER_SESSION` change. A session `attach` or `run`
-creates, or resumes, falls back to `$HOME` when its directory is gone, and does not say so. -/
+`TERM_PROGRAM`, `TERM_PROGRAM_VERSION` and `LINGER_SESSION` change. A resume runs in its saved
+directory, or in `$HOME` when that is gone, and then says so (`Env.resumeDir`). -/
 
 /-- Validation accepts exactly the valid names, and returns each unchanged. -/
 theorem check_eq_some_iff (s result : String) :
@@ -444,7 +444,7 @@ theorem command_argv_rejects_empty :
 
 Not claimed yet, though suites test it: that `start` runs exactly the program and words it is
 given, without a shell. `linger run` starts `$SHELL` and types its words into it, joined with
-spaces, and a resumed session starts in the checkpoint's directory, not one the request names. -/
+spaces. -/
 
 /-! ## 5. Accountability
 

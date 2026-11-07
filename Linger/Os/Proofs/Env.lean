@@ -40,4 +40,17 @@ theorem detachEnabled_readOnly (flag : Option String) : detachEnabled true flag 
 theorem detachEnabled_writable (flag : Option String) : detachEnabled false flag = flag.isNone := by
   simp [detachEnabled]
 
+/-- A resume runs in its saved directory while that is a directory. -/
+theorem resumeDir_saved (home : Option String) (saved : String) :
+    resumeDir home saved true = some saved := rfl
+
+/-- A resume whose saved directory is gone runs in a nonempty `$HOME`. -/
+theorem resumeDir_home {dir : String} (set : dir ≠ "") (saved : String) :
+    resumeDir (some dir) saved false = some dir := by simp [resumeDir, set]
+
+/-- A resume whose saved directory is gone, with HOME unset or empty, runs nowhere. -/
+theorem resumeDir_absent (saved : String) :
+    resumeDir none saved false = none ∧ resumeDir (some "") saved false = none := by
+  simp [resumeDir]
+
 end Linger.Os.Env

@@ -4,9 +4,9 @@ public section
 
 /-! # Linger.Os.Env — what an environment value means
 
-The runtime reads SHELL, LINGER_NO_DETACH_KEY and the remotes file's HOME once each
-and passes the result here, so what an unset or empty value means is a pure decision with a theorem
-(`Linger/Os/Proofs/Env.lean`). The suites run the program with both.
+The runtime reads SHELL, LINGER_NO_DETACH_KEY, the remotes file's HOME and a resume's HOME
+once each and passes the result here, so what an unset or empty value means is a pure decision
+with a theorem (`Linger/Os/Proofs/Env.lean`). The suites run the program with both.
 -/
 
 namespace Linger.Os.Env
@@ -30,5 +30,14 @@ def remotesFile (home : Option String) : Option String :=
 clears ISIG, so the key is its only exit; `LINGER_NO_DETACH_KEY`, set to any value,
 disables it for writable attach only. -/
 def detachEnabled (readOnly : Bool) (flag : Option String) : Bool := readOnly || flag.isNone
+
+/-- Where a resumed session runs: its saved directory while that is a directory, else `$HOME`.
+An unset or empty HOME names none, so the resume refuses rather than run anywhere else. -/
+def resumeDir (home : Option String) (saved : String) (savedIsDir : Bool) : Option String :=
+  if savedIsDir then some saved
+  else
+    match home with
+    | some dir => if dir.isEmpty then none else some dir
+    | none => none
 
 end Linger.Os.Env

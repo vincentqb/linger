@@ -114,9 +114,45 @@ private def scaleChecks (e : Env) : IO Unit := do
   finally
     e.killAll #[name]
 
-/-- The resume suite: checkpoint, crash and restore. -/
+/-- A resume runs in its saved directory, or in `$HOME` when that is gone, and says so; with
+HOME unset or empty it refuses and leaves the saved session as it was (`Env.resumeDir`). -/
+private def directoryChecks (e : Env) : IO Unit := do
+  let home := s!"{e.dir}/home"
+  let kept := s!"{e.dir}/kept"
+  IO.FS.createDirAll home
+  IO.FS.createDirAll kept
+  let gone := s!"{e.dir}/gone"
+  let save (name dir : String) : IO Unit :=
+    IO.FS.writeBinFile s!"{e.dir}/{name}.ckpt"
+      (Linger.Session.Checkpoint.saveBytes ⟨Linger.Terminal.Vt.Vt.init 40 5, dir, []⟩)
+  save "rk" kept
+  let (keptRc, _, _) ← e.cliEnv #[("HOME", some home)] #["run", "rk", "true"]
+  expect
+      (keptRc == 0 && (← e.info "rk" "start_dir") == some kept &&
+        (← e.info "rk" "saved_dir").isNone)
+      "a resume runs in its saved directory"
+  save "rm" gone
+  let (movedRc, _, movedErr) ← e.cliEnv #[("HOME", some home)] #["run", "rm", "true"]
+  expect
+      (movedRc == 0 && has movedErr s!"resumed in {home}" &&
+        (← e.info "rm" "start_dir") == some home &&
+        (← e.info "rm" "saved_dir") == some gone)
+      s!"a resume whose directory is gone runs in HOME, and says so (rc={movedRc})"
+  let mut refused := true
+  for (name, value) in [("ru", none), ("re", some "")] do
+    save name gone
+    let (rc, _, _) ← e.cliEnv #[("HOME", value)] #["run", name, "true"]
+    refused :=
+      refused && rc != 0 && (← e.info name "pid").isNone &&
+        (← System.FilePath.pathExists s!"{e.dir}/{name}.ckpt")
+    IO.FS.removeFile s!"{e.dir}/{name}.ckpt"
+  expect refused "a resume whose directory is gone refuses when HOME is unset or empty"
+  e.killAll #["rk", "rm"]
+
+/-- The resume suite: checkpoint, crash and restore, and where a resume runs. -/
 def run : IO UInt32 :=
   Env.suite "resume" fun e => do
+    directoryChecks e
     checkpointRetry
     scaleChecks e
     -- one source for the pty geometry and for the off-the-screen window below

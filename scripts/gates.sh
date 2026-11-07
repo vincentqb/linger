@@ -754,6 +754,7 @@ done
 # (remotesFile_eq_none_iff): a fallback such as world-writable `/tmp` would let another
 # account choose them, and a suite cannot create `/tmp/.config`.
 for claim in shellOf_ne_empty shellOf_set shellOf_absent remotesFile_eq_none_iff remotesFile_set \
+             resumeDir_saved resumeDir_home resumeDir_absent \
              detachEnabled_readOnly detachEnabled_writable; do
   code_grep "^theorem $claim " Linger/Os/Proofs/Env.lean >/dev/null \
     || fail "environment policy contract disappeared: $claim"
@@ -1055,6 +1056,11 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def Rt[.]closeConn [(]rt : 
 # SHELL makes sh (shellOf_absent). Linger.Session.Suites.Agent creates sessions with both.
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let shell := Linger[.]Os[.]Env[.]shellOf [(]← IO[.]getEnv "SHELL"[)] let [(]prog, args[)] := match argv with [|] [[][]] => [(][(]shell, #[[][]][)] : String × Array String[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "a session without a command bypasses Env.shellOf"
+# A resume runs in its saved directory, else in a nonempty HOME, else nowhere
+# (resumeDir_absent): the daemon reads HOME for it into Env.resumeDir, and the resume suite
+# runs it with HOME unset and empty.
+printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])match Linger[.]Os[.]Env[.]resumeDir [(]← IO[.]getEnv "HOME"[)] dir [(]← System[.]FilePath[.]isDir dir[)] with([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "a resume chooses its directory outside Env.resumeDir"
 
 # Descriptor exhaustion must suspend admission without stopping existing work.
 # The live fixture exhausts real descriptors; gates pin the retry and fd cleanup.

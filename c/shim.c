@@ -384,12 +384,12 @@ LEAN_EXPORT lean_obj_res linger_poll(b_lean_obj_arg fds, b_lean_obj_arg events,
 /* -------------------------------------------------------------------- */
 /* pty                                                                   */
 
-/* linger_spawn_pty : UInt32 -> UInt32 -> @& String -> Bool -> @& String
+/* linger_spawn_pty : UInt32 -> UInt32 -> @& String -> @& String
  *                 -> @& Array String -> @& Array String
  *                 -> IO (Except (UInt8 × String) UInt64)
  * open a pty and fork+execve a child on its slave, with PATH lookup. Returns
  * pid<<32 | masterFd. cwd "" = inherit; a cwd the child cannot enter is a
- * failure unless home_fallback asks for $HOME instead. extraEnv entries are
+ * failure, whatever $HOME is. extraEnv entries are
  * "K=V". Child resets SIGPIPE/SIGHUP to default before exec.
  *
  * A program that cannot start is answered Except.error (why, the OS's words):
@@ -403,7 +403,7 @@ LEAN_EXPORT lean_obj_res linger_poll(b_lean_obj_arg fds, b_lean_obj_arg events,
  * -lutil is unportable. posix_openpt/grantpt/unlockpt/ptsname/setsid/
  * TIOCSCTTY are all plain libc and do exactly what forkpty wraps. */
 LEAN_EXPORT lean_obj_res linger_spawn_pty(uint32_t cols, uint32_t rows,
-                                       b_lean_obj_arg cwd, uint8_t home_fallback,
+                                       b_lean_obj_arg cwd,
                                        b_lean_obj_arg prog, b_lean_obj_arg args,
                                        b_lean_obj_arg extra_env) {
     struct winsize ws;
@@ -468,7 +468,6 @@ LEAN_EXPORT lean_obj_res linger_spawn_pty(uint32_t cols, uint32_t rows,
         envp[envc] = NULL;
     }
     const char *dir = lean_string_cstr(cwd);
-    const char *home = env_value(envp, "HOME=");
     const char *path = env_value(envp, "PATH=");
 
     /* execvp's ENOEXEC fallback, pre-allocated: a file that is executable but not a
@@ -511,11 +510,7 @@ LEAN_EXPORT lean_obj_res linger_spawn_pty(uint32_t cols, uint32_t rows,
         if (dup2(slave, 0) < 0 || dup2(slave, 1) < 0 || dup2(slave, 2) < 0)
             spawn_fail(errPipe[1], "dup2", errno);
         if (slave > 2) close(slave);
-        if (dir[0] != '\0' && chdir(dir) != 0) {
-            int e = errno;
-            /* only a caller that asked for it gets $HOME instead */
-            if (!(home_fallback && home && chdir(home) == 0)) spawn_fail(errPipe[1], "chdir", e);
-        }
+        if (dir[0] != '\0' && chdir(dir) != 0) spawn_fail(errPipe[1], "chdir", errno);
         exec_search(argv, shargv, envp, path);
         spawn_fail(errPipe[1], "execve", errno);
     }

@@ -101,8 +101,8 @@ Lean erases proofs regardless of file placement.
   alternative private enforces it. IO behavior is tested, not proved. Start behavioral
   fixes with a failing check and verify that new assertions detect a deliberate break;
   a check of a failure or cleanup path also asserts that the path was reached.
-- Read SHELL, HOME for remote hosts and LINGER_NO_DETACH_KEY once, into the pure
-  policies of `Linger/Os/Env.lean`, which `scripts/gates.sh` ties to each read,
+- Read SHELL, HOME for remote hosts and for a resume, and LINGER_NO_DETACH_KEY once, into
+  the pure policies of `Linger/Os/Env.lean`, which `scripts/gates.sh` ties to each read,
   and run every variable the program reads unset and empty in a suite.
 - Raw OS access belongs in `Linger/Os/` and `c/shim.c`. Every `@[extern]` declaration
   stays private in `Linger/Os/Boundary.lean`, which declares nothing else, and

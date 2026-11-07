@@ -33,9 +33,8 @@ private opaque poll (fds : @& Array UInt32) (events : @& Array UInt32) (timeoutM
     IO (Array UInt32)
 
 @[extern "linger_spawn_pty"]
-private opaque spawnPty (cols rows : UInt32) (cwd : @& String) (homeFallback : Bool)
-    (prog : @& String) (args : @& Array String) (extraEnv : @& Array String) :
-    IO (Except (UInt8 × String) UInt64)
+private opaque spawnPty (cols rows : UInt32) (cwd : @& String) (prog : @& String)
+    (args : @& Array String) (extraEnv : @& Array String) : IO (Except (UInt8 × String) UInt64)
 
 @[extern "linger_winsize_get"]
 private opaque winsizeGet (fd : UInt32) : IO UInt64

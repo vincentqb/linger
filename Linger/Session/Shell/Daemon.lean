@@ -687,7 +687,22 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
           pure none
         else
           loadCkpt
-      let cwd := (saved.map (fun (_, dir, _) => dir)).getD cwd
+      -- A new session runs in `cwd` or not at all. A resume runs in its saved directory, or in
+      -- $HOME when that is gone (`Env.resumeDir`), and then says so in the info field saved_dir
+      -- and in the log.
+      let mut cwd := cwd
+      let mut moved : Option String := none
+      if let some (_, dir, _) := saved then
+        match Linger.Os.Env.resumeDir (← IO.getEnv "HOME") dir (← System.FilePath.isDir dir) with
+        | some run =>
+          cwd := run
+          if run != dir then
+            moved := some dir
+            report s!"linger: session '{name}' resumes in {run}: its directory {dir} is gone"
+        | none =>
+          throw
+              (IO.userError
+                s!"session '{name}' cannot resume: its directory {dir} is gone, and HOME is unset")
       let restore := saved.map (fun (vt, _, labels) => (vt, labels))
       -- The socket lock excludes another cooperating listener, even if connect
       -- failed for a reason other than a stale socket. Never unlink the lock inode.
@@ -710,14 +725,13 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
         -- The name is this session's from here on: should the daemon end without saying how
         -- its program ended, a reader that holds the name hears that the ending is unknown,
         -- never the previous session's. A record that cannot be written starts nothing, and a
-        -- program that cannot start puts the previous record back. Only a resume, never a
-        -- start, may run in $HOME when its directory is gone.
+        -- program that cannot start puts the previous record back.
         let previous ← record.load
         record.save .running
         let spawned ←
           try
             trySpawnPty (UInt32.ofNat (Linger.Terminal.Vt.clampDim vt0.colCount))
-                (UInt32.ofNat (Linger.Terminal.Vt.clampDim vt0.rowCount)) cwd start.isNone prog args
+                (UInt32.ofNat (Linger.Terminal.Vt.clampDim vt0.rowCount)) cwd prog args
                 #[s!"LINGER_SESSION={name}", "TERM=xterm-256color", "TERM_PROGRAM=linger",
                   s!"TERM_PROGRAM_VERSION={Linger.Terminal.Mediation.versionNumber}"]
           catch err =>
@@ -737,8 +751,9 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
           tell .started
         let st :=
           State.boot vt0 ((restore.map (·.2)).getD [])
-            [("name", name), ("pid", toString pid), ("created", toString created),
-              ("cmd", String.intercalate " " (prog :: args.toList)), ("start_dir", cwd)]
+            ([("name", name), ("pid", toString pid), ("created", toString created),
+                ("cmd", String.intercalate " " (prog :: args.toList)), ("start_dir", cwd)] ++
+              (moved.map (fun dir => [("saved_dir", dir)])).getD [])
         -- The cleanup reads the runtime as each round left it, the program's ending included,
         -- whatever fails after that round.
         let latest ← IO.mkRef ({ st, listenFd, ptyFd, childPid := pid, saveCkpt, dropCkpt } : Rt)
