@@ -198,7 +198,7 @@ inductive Effect (Plan : Type) where
   | writePty (bytes : List UInt8)
   /-- Set the pty's window size. -/
   | resizePty (cols rows : UInt32)
-  /-- Ask the child to terminate (SIGTERM). -/
+  /-- Ask the program to end: SIGHUP to it and to every process of its terminal session. -/
   | killChild
   /-- Save a checkpoint of the session. -/
   | checkpoint

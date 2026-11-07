@@ -709,10 +709,11 @@ private def discardSaved (name : String) : IO (Except String Bool) := do
       return .error err.toString
   return .ok (← IO.ofExcept discarded)
 
-/-- `kill`: end the session and return once it has ended. Its daemon stops the program (SIGTERM,
-then SIGKILL), records how it ended and gives the name up. With no daemon, a saved session is
-discarded instead. No session, a refusal, a name another process holds, or a session that has
-not ended within `heldNameMs`, prints a diagnostic and returns 1. -/
+/-- `kill`: end the session and return once it has ended. Its daemon stops the program (SIGHUP to
+its terminal session, then SIGKILL after a second), records how it ended and gives the name up.
+With no daemon, a saved session is discarded instead. No session, a refusal, a name another
+process holds, or a session that has not ended within `heldNameMs`, prints a diagnostic and
+returns 1. -/
 private def cmdKill (name : String) : IO UInt32 := do
   match ← Client.oneShot name .kill with
   | some (.refused why) =>
