@@ -17,6 +17,8 @@ import all Linger.Session.Proofs.Buf
 import all Linger.Session.Proofs.Checkpoint
 import all Linger.Session.Proofs.Driver
 import all Linger.Session.Proofs.Session
+import all Linger.Session.Proofs.Start
+public import Linger.Session.Start
 import all Linger.Terminal.Vt
 import all Linger.Terminal.Proofs.Vt
 import all Linger.Terminal.Proofs.Vt.Renderable
@@ -178,6 +180,17 @@ theorem replay_cursor_rejects_silence :
   cases emits with
   | step next => cases next
   | done => exact absurd (congrArg Prod.fst cursor) (by decide +kernel)
+
+theorem start_plan (live saved : Bool) :
+    Start.plan live saved = if live then .running else if saved then .saved else .take :=
+  Start.plan_eq live saved
+
+theorem start_plan_rejects_take :
+    ¬∀ (live saved : Bool),
+        (fun (_ _ : Bool) => Start.Plan.take) live saved =
+          if live then .running else if saved then .saved else .take := by
+  intro h
+  cases h true false
 
 theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8)) {other : Nat}
     (h : other ≠ id) :

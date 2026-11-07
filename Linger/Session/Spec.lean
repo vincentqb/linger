@@ -37,6 +37,20 @@ def Outcome.status : Outcome → UInt32
 
 end Linger.Session
 
+namespace Linger.Session.Start
+
+/-- What `start` does with the name it is given. -/
+inductive Plan where
+  /-- No session holds the name: take it. -/
+  | take
+  /-- A live session holds the name: refuse, and say so. -/
+  | running
+  /-- A saved session holds the name: refuse, and say so, without resuming it. -/
+  | saved
+  deriving Repr, DecidableEq
+
+end Linger.Session.Start
+
 namespace Linger.Session.Wire
 
 /-- The protocol level a daemon speaks, which `info` reports as `protocol`, so a client can

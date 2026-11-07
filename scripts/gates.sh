@@ -1129,7 +1129,7 @@ attach_words="$(code_grep '"attach"[[:space:]]*(,|[]]|::)' 'Linger/*/Shell.lean'
   || fail "noninteractive command lookup must not fuzzy-match or rewrite a name"
 code_grep '^[[:space:]]+Linger[.]Target[.]Remote[.]targetValid target = true ∧ target ∉ candidates := by$' Linger/Selector/Proofs/Picker.lean >/dev/null \
   || fail "selector creation and command arguments no longer share the target grammar"
-for verb in attach run send detach kill info capture resize get set unset clear; do
+for verb in attach run start send detach kill info capture resize get set unset clear; do
   code_grep "^[[:space:]]+withTarget \"$verb\" " Linger/App/Shell.lean >/dev/null \
     || fail "session command bypassed the common exact target boundary: $verb"
 done
@@ -1187,8 +1187,15 @@ done
   || fail "lock path construction and acquisition must never unlink or replace a lock inode"
 printf '%s\n' "$client_code" | CG_RE='(^|[[:space:]])try Paths[.]checkSpelling path return some fd catch err => close fd throw err([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "successful connects must reject case-folded aliases and close on failure"
-printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])IO Unit := do let deadline := [(]← monotonicMs[)] [+] claimWaitMs let reported ← IO[.]mkRef false let retry := claimRetry name [(]← Paths[.]socketPath name[)] deadline reported Paths[.]withSessionLockRetrying name retry do ignoreSighup let saved ← loadCkpt([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])IO Unit := do let deadline := [(]← monotonicMs[)] [+] claimWaitMs let reported ← IO[.]mkRef false let retry := claimRetry name [(]← Paths[.]socketPath name[)] deadline reported Paths[.]withSessionLockRetrying name retry do ignoreSighup let sockPath ← Paths[.]socketPath name([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "daemon recovery and lifetime must execute inside both ownership locks"
+# A start takes a name only by Start.plan, decided holding the name, and never loads a checkpoint.
+for tie in \
+  'if let some tell := start then match Start[.]plan live [(]← System[.]FilePath[.]pathExists [(]← Paths[.]ckptPath name[)][)] with' \
+  'let saved ← if start[.]isSome then pure none else loadCkpt'; do
+  printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "a start took a name outside Start.plan or resumed a saved session: $tie"
+done
 # An offline reader holds both locks briefly, so the daemon's startup claim retries a
 # held lock for a bounded, positive time, and stops at once when a live daemon answers
 # on the socket. A retry is asked only after a failed attempt. Every other acquisition
@@ -1206,8 +1213,8 @@ retrying="$(code_grep '(^|[^[:alnum:]_])with(Session)?LockRetrying([^[:alnum:]_]
   || fail "only the daemon's startup claim may retry a held lock: ${retrying:-no retrying claim}"
 for tie in \
   'finally close listenFd try IO[.]FS[.]removeFile sockPath catch _ => pure [(][)][[:space:]]+end Linger[.]Session[.]Shell[.]Daemon' \
-  'finally let rt ← latest[.]get for c in rt[.]conns do close c[.]fd let outcome ← stopProgram rt try saveRecord [(][.]ended outcome[)]' \
-  'saveRecord [.]running let [(]pid, ptyFd[)] ← spawnPty'; do
+  'finally let rt ← latest[.]get for c in rt[.]conns do close c[.]fd let outcome ← stopProgram rt try record[.]save [(][.]ended outcome[)]' \
+  'let previous ← record[.]load record[.]save [.]running let spawned ← try trySpawnPty'; do
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "daemon resource cleanup escaped its ownership lifetime: $tie"
 done

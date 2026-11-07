@@ -5,6 +5,7 @@ public import Linger.Session.Buf
 import Linger.Session.Driver
 public import Linger.Session
 public import Linger.Session.Record
+public import Linger.Session.Start
 import Linger.Terminal.Mediation
 import Linger.Os.Env
 import Linger.Session.Shell.Paths
@@ -628,28 +629,66 @@ private def claimRetry (name sockPath : String) (deadline : Nat) (reported : IO.
   IO.sleep 10
   return true
 
+/-- How a daemon keeps its name's end record: `Linger.Session.Shell.Record`, or nothing in a suite
+that serves without one. -/
+structure RecordFile where
+  /-- The record's bytes, or `none` when there is no record. -/
+  load : IO (Option (List UInt8))
+  /-- Replace the record. -/
+  save : Linger.Session.Record → IO Unit
+  /-- Put back the bytes `load` gave, or remove the record when it gave none. -/
+  restore : Option (List UInt8) → IO Unit
+
+/-- Why a program could not start, for a person. -/
+private def failureText (failure : SpawnFailure) (prog cwd : String) : String :=
+  match failure with
+  | .directory why => s!"cannot enter the directory {cwd}: {why}"
+  | .notFound _ => s!"{prog}: not found"
+  | .notRunnable why => s!"{prog}: cannot be run: {why}"
+
 /-- Hold both ownership locks from before recovery through final cleanup.
 Loading under the locks prevents a second runtime namespace from reading or
 overwriting a checkpoint that another daemon is still using. The claim waits
 out an offline reader (`claimRetry`) but not a live owner. The name's end record says the
-program runs before it starts and how it ended before the locks are released. -/
+program runs before it starts and how it ended before the locks are released; a program that
+cannot start leaves the record as it was.
+
+With `start`, the daemon takes the name only when no live or saved session holds it, never
+resumes one (`Start.plan`), runs the program in `cwd` or not at all, and tells `start` what it
+did. -/
 def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State → IO Unit)
     (dropCkpt : IO Unit)
     (loadCkpt : IO (Option (Linger.Terminal.Vt.Vt × String × List (String × String))))
-    (saveRecord : Linger.Session.Record → IO Unit) : IO Unit := do
+    (record : RecordFile) (start : Option (Start.Report → IO Unit) := none) : IO Unit := do
   let deadline := (← monotonicMs) + claimWaitMs
   let reported ← IO.mkRef false
   let retry := claimRetry name (← Paths.socketPath name) deadline reported
   Paths.withSessionLockRetrying name retry do
       ignoreSighup
-      let saved ← loadCkpt
-      let cwd := (saved.map (fun (_, dir, _) => dir)).getD cwd
-      let restore := saved.map (fun (vt, _, labels) => (vt, labels))
       let sockPath ← Paths.socketPath name
       let r ← unixConnect sockPath
-      if r ≥ 0 then
+      let live := r ≥ 0
+      if live then
         close r.toUInt64.toUInt32
+      if let some tell := start then
+        match Start.plan live (← System.FilePath.pathExists (← Paths.ckptPath name)) with
+        | .running =>
+          tell .running
+          return
+        | .saved =>
+          tell .saved
+          return
+        | .take =>
+          pure ()
+      if live then
         throw (IO.userError s!"session '{name}' already running")
+      let saved ←
+        if start.isSome then
+          pure none
+        else
+          loadCkpt
+      let cwd := (saved.map (fun (_, dir, _) => dir)).getD cwd
+      let restore := saved.map (fun (vt, _, labels) => (vt, labels))
       -- The socket lock excludes another cooperating listener, even if connect
       -- failed for a reason other than a stale socket. Never unlink the lock inode.
       try
@@ -670,13 +709,32 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
         let created ← realtimeS
         -- The name is this session's from here on: should the daemon end without saying how
         -- its program ended, a reader that holds the name hears that the ending is unknown,
-        -- never the previous session's. A record that cannot be written starts nothing.
-        saveRecord .running
-        let (pid, ptyFd) ←
-          spawnPty (UInt32.ofNat (Linger.Terminal.Vt.clampDim vt0.colCount))
-              (UInt32.ofNat (Linger.Terminal.Vt.clampDim vt0.rowCount)) cwd prog args
-              #[s!"LINGER_SESSION={name}", "TERM=xterm-256color", "TERM_PROGRAM=linger",
-                s!"TERM_PROGRAM_VERSION={Linger.Terminal.Mediation.versionNumber}"]
+        -- never the previous session's. A record that cannot be written starts nothing, and a
+        -- program that cannot start puts the previous record back. Only a resume, never a
+        -- start, may run in $HOME when its directory is gone.
+        let previous ← record.load
+        record.save .running
+        let spawned ←
+          try
+            trySpawnPty (UInt32.ofNat (Linger.Terminal.Vt.clampDim vt0.colCount))
+                (UInt32.ofNat (Linger.Terminal.Vt.clampDim vt0.rowCount)) cwd start.isNone prog args
+                #[s!"LINGER_SESSION={name}", "TERM=xterm-256color", "TERM_PROGRAM=linger",
+                  s!"TERM_PROGRAM_VERSION={Linger.Terminal.Mediation.versionNumber}"]
+          catch err =>
+            record.restore previous
+            throw err
+        if let .error failure := spawned then
+          record.restore previous
+          let why := failureText failure prog cwd
+          match start with
+          | some tell =>
+            tell (.failed failure.status why.toUTF8.toList)
+          | none =>
+            throw (IO.userError s!"linger: session '{name}' did not start: {why}")
+          return
+        let .ok (pid, ptyFd) := spawned | return
+        if let some tell := start then
+          tell .started
         let st :=
           State.boot vt0 ((restore.map (·.2)).getD [])
             [("name", name), ("pid", toString pid), ("created", toString created),
@@ -702,7 +760,7 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
             close c.fd
           let outcome ← stopProgram rt
           try
-            saveRecord (.ended outcome)
+            record.save (.ended outcome)
           catch err =>
             report s!"linger: recording how the program ended failed: {err}"
           -- the program is reaped last: until then its zombie keeps its pid, which is its

@@ -29,4 +29,17 @@ def load (name : String) : IO (Option (List UInt8)) := do
     return none
   return some (← IO.FS.readBinFile path).toList
 
+/-- Put back bytes `load` gave, whole, or remove the record when it gave none: what a session
+whose program never started leaves. -/
+def restore (name : String) (previous : Option (List UInt8)) : IO Unit := do
+  let path ← Paths.recordPath name
+  match previous with
+  | some bytes =>
+    let tmp := path ++ ".tmp"
+    IO.FS.writeBinFile tmp (ByteArray.mk bytes.toArray)
+    IO.FS.rename tmp path
+  | none =>
+    if ← System.FilePath.pathExists path then
+      IO.FS.removeFile path
+
 end Linger.Session.Shell.Record

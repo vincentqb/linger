@@ -29,6 +29,7 @@ import all Linger.Terminal.Proofs.Vt.Renderable
 import all Linger.Terminal.Proofs.Vt.State
 import all Linger.Session.Proofs.Wire
 import all Linger.Session.Proofs.Record
+import all Linger.Session.Proofs.Start
 
 /-! # Contract statements
 
@@ -234,6 +235,14 @@ example (file : Option (List UInt8)) : (Session.Record.answer file).isSome = fil
 example {file : Option (List UInt8)} {known : Option Session.Outcome}
     (h : Session.Record.settled file = some known) : Session.Record.answer file = known := by
   with_reducible exact Session.Record.settled_answer h
+
+-- Starting a session
+example (live saved : Bool) :
+    Session.Start.plan live saved = .take ↔ live = false ∧ saved = false := by
+  with_reducible exact Session.Start.plan_take_iff live saved
+
+example (r : Session.Start.Report) : Session.Start.Report.decode r.encode = some r := by
+  with_reducible exact Session.Start.decode_encode r
 
 -- Transport
 example (ms : List Wire.Msg) (hms : ∀ (m : Wire.Msg), m ∈ ms → m.WF) (chunks : List (List UInt8))

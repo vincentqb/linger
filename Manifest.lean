@@ -199,6 +199,10 @@ def Linger.Session.Checkpoint.saveBytes : Checkpoint.Ckpt Vt.Vt → ByteArray :=
 @[expose]
 def Linger.Session.Checkpoint.loadBytes : ByteArray → Option (Checkpoint.Ckpt Vt.Vt) := sorry
 
+/-- What `start` does with a name, given whether a live session and a saved one hold it. -/
+@[expose]
+def Linger.Session.Start.plan : (live saved : Bool) → Start.Plan := sorry
+
 /-- A byte queue the daemon keeps: its pty's input, or a client's output. -/
 @[expose]
 def Linger.Session.Buf.Buf : Type := sorry
@@ -343,7 +347,20 @@ theorem replay_cursor_rejects_silence :
 
 A watcher is a client attached without a size. Not claimed yet: that a name has one owner
 (proved of a model of the lock protocol, `Claim.at_most_one_owner`, and tested of the daemon),
-and which source each reported value has. -/
+and which source each reported value has. `start` takes no name a session holds
+(`start_plan`); the daemon decides that holding the name. -/
+
+/-- `start` takes a name only when no live session holds it and none is saved. Otherwise it
+refuses, saying which holds it: a live one first, whose daemon also owns any saved state. -/
+theorem start_plan (live saved : Bool) :
+    Start.plan live saved = if live then .running else if saved then .saved else .take := by sorry
+
+/-- `start_plan` rejects a `start` that takes every name. -/
+theorem start_plan_rejects_take :
+    ¬∀ (live saved : Bool),
+        (fun (_ _ : Bool) => Start.Plan.take) live saved =
+          if live then .running else if saved then .saved else .take := by
+  sorry
 
 /-- One client's bytes, however chunked, leave every other client's record unchanged. -/
 theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8)) {other : Nat}
@@ -395,8 +412,10 @@ theorem run_readonly_rejects_kill :
 
 /-! ## 3. Exactness
 
-Not claimed yet: that a session starts in the directory it was given (a failed `chdir` falls
-back to `$HOME`) and with the environment it was given (the program inherits the caller's). -/
+Not claimed yet, though suites test it: that `start` runs its program in the caller's directory
+or not at all (125, as `env -C`), with the caller's environment, which only `TERM`,
+`TERM_PROGRAM`, `TERM_PROGRAM_VERSION` and `LINGER_SESSION` change. A session `attach` or `run`
+creates, or resumes, falls back to `$HOME` when its directory is gone, and does not say so. -/
 
 /-- Validation accepts exactly the valid names, and returns each unchanged. -/
 theorem check_eq_some_iff (s result : String) :
@@ -423,9 +442,9 @@ theorem command_argv_rejects_empty :
 
 /-! ## 4. Program identity
 
-Not claimed yet: that `linger run` starts the program it names (it starts `$SHELL` and types the
-words into it, joined with spaces), and that a resumed session starts in the directory requested
-(it starts in the checkpoint's). -/
+Not claimed yet, though suites test it: that `start` runs exactly the program and words it is
+given, without a shell. `linger run` starts `$SHELL` and types its words into it, joined with
+spaces, and a resumed session starts in the checkpoint's directory, not one the request names. -/
 
 /-! ## 5. Accountability
 

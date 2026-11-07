@@ -3,6 +3,8 @@ module
 public import Verify.Harness
 import Linger.Session.Shell.Inventory
 import Linger.Session.Shell.Client
+import Linger.Session.Checkpoint
+import Linger.Terminal.Mediation
 
 public section
 
@@ -194,9 +196,107 @@ private def checkInfo (e : Env) (mode : String) (error : Option String) : IO Uni
     IO.FS.removeFile socketPath
     IO.FS.removeFile readyPath
 
+/-- `start` from `cwd`, with `extra` on top of the suite's environment: exit status and stderr. -/
+private def startIn (e : Env) (cwd : String) (extra : Array (String × Option String))
+    (args : Array String) : IO (UInt32 × String) := do
+  let out ←
+    IO.Process.output
+        { cmd := e.bin, args := #["start"] ++ args, env := e.procEnv ++ extra, cwd := some cwd }
+  return (out.exitCode, out.stderr)
+
+/-- The names `ls --porcelain` lists. -/
+private def listed (e : Env) : IO (List String) := do
+  return (← e.out #["ls", "--porcelain"]).splitOn "\n" |>.filterMap fun line =>
+      (line.dropPrefix? "name\t").map (·.toString)
+
+/-- `start` runs an exact argv in a new session, in the caller's directory and environment,
+refuses a name a live or saved session holds, and leaves nothing behind when the program cannot
+start: VERA's request N1. -/
+private def startChecks (e : Env) : IO Unit := do
+  let work := s!"{e.dir}/start work"
+  IO.FS.createDirAll work
+  let (rc, err) ←
+    startIn e work #[("CANARY", none), ("MARK", some "m1")]
+        #["st1", "/bin/sh", "-c", "pwd; env; printf '%s\\n' \"$1\"; sleep 30", "sh", "$(touch t)"]
+  let shown ← waitFor 4000 (return has (← e.out #["capture", "--history", "st1"]) "$(touch t)")
+  let history ← e.out #["capture", "--history", "st1"]
+  expect
+      (rc == 0 && err.isEmpty && shown && has history work && has history "MARK=m1" &&
+        has history "LINGER_SESSION=st1" &&
+        !(← System.FilePath.pathExists s!"{work}/t"))
+      s!"start runs its argv exactly, in the caller's directory and environment (rc={rc})"
+  let pid ← e.info "st1" "pid"
+  -- the program's environment is exactly the caller's, but for the terminal's and the session's
+  -- name; the shell that writes it out may add its own few
+  let envFile := s!"{work}/env.out"
+  let caller := ["PATH=/usr/bin:/bin", s!"LINGER_DIR={e.dir}", "SHELL=/bin/sh", "MARK=m2"]
+  let exact ←
+    IO.Process.output
+        { cmd := "/usr/bin/env",
+          args :=
+            #["-i"] ++ caller.toArray ++
+              #[e.bin, "start", "st0", "/bin/sh", "-c", "exec env > \"$1\"", "sh", envFile],
+          cwd := some work }
+  let (envRc, _, _) ← e.cli #["wait", "st0"]
+  let seen :=
+    ((← IO.FS.readFile envFile).splitOn "\n").filter fun line =>
+      !line.isEmpty && !["PWD=", "OLDPWD=", "SHLVL=", "_="].any (line.startsWith ·)
+  let expected :=
+    caller ++
+      ["LINGER_SESSION=st0", "TERM=xterm-256color", "TERM_PROGRAM=linger",
+        s!"TERM_PROGRAM_VERSION={Linger.Terminal.Mediation.versionNumber}"]
+  expect
+      (exact.exitCode == 0 && envRc == 0 && seen.length == expected.length &&
+        expected.all seen.contains)
+      s!"start passes the caller's environment exactly, but for TERM* and LINGER_SESSION ({seen})"
+  let (liveRc, liveErr) ← startIn e work #[] #["st1", "true"]
+  expect (liveRc == 1 && has liveErr "is running" && (← e.info "st1" "pid") == pid)
+      "start refuses a name a live session holds, and says so"
+  let savedPath := s!"{e.dir}/stsv.ckpt"
+  let saved := Linger.Session.Checkpoint.saveBytes ⟨Linger.Terminal.Vt.Vt.init 20 2, work, []⟩
+  IO.FS.writeBinFile savedPath saved
+  let (savedRc, savedErr) ← startIn e work #[] #["stsv", "true"]
+  expect
+      (savedRc == 1 && has savedErr "is saved" && (← e.info "stsv" "pid").isNone &&
+        (← IO.FS.readBinFile savedPath).toList == saved.toList)
+      "start refuses a name a saved session holds, without resuming it"
+  IO.FS.removeFile savedPath
+  let before ← listed e
+  let (missingRc, missingErr) ← startIn e work #[] #["stm", "linger-no-such-program-42"]
+  let (deniedRc, deniedErr) ← startIn e work #[] #["stn", "/etc/passwd"]
+  let after ← listed e
+  let noRecords :=
+    !(← System.FilePath.pathExists s!"{e.dir}/stm.end") &&
+      !(← System.FilePath.pathExists s!"{e.dir}/stn.end")
+  expect
+      (missingRc == 127 && has missingErr "not found" && deniedRc == 126 &&
+        has deniedErr "cannot be run" &&
+        before == after &&
+        noRecords)
+      s!"a program that cannot start returns 127 or 126 and leaves nothing behind \
+        ({missingRc}, {deniedRc})"
+  -- a directory the daemon cannot enter: the command runs in it, and takes its search
+  -- permission away first
+  let locked := s!"{e.dir}/start locked"
+  IO.FS.createDirAll locked
+  let root := (← Linger.Os.Shell.getuid) == 0
+  let lockedRun ←
+    IO.Process.output
+        { cmd := "/bin/sh", args := #["-c", "chmod 000 . && exec \"$0\" start stc true", e.bin],
+          env := e.procEnv, cwd := some locked }
+  discard <| IO.Process.output { cmd := "chmod", args := #["755", locked] }
+  expect
+      (root ||
+        lockedRun.exitCode == 125 && has lockedRun.stderr "cannot enter" &&
+          !(← System.FilePath.pathExists s!"{e.dir}/stc.end"))
+      s!"start in a directory it cannot enter returns 125 and leaves nothing behind \
+        ({lockedRun.exitCode})"
+  e.killAll #["st1"]
+
 /-- The agent suite: the one-shot verbs that see and drive a session. -/
 def run : IO UInt32 :=
   Env.suite "agent" fun e => do
+    startChecks e
     for (mode, why) in
       [("eof", "connection lost"), ("timeout", "no reply"), ("refused", "info refused"),
         ("malformed", "invalid response"), ("exited", "ended before"), ("utf8", "invalid UTF-8"),

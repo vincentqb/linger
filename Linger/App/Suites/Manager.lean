@@ -668,8 +668,8 @@ private def usageChecks (e : Env) : IO Unit := do
           [err, shortErr, helpErr, hErr].all String.isEmpty &&
           out.endsWith "\n" &&
           rows.map (fun line => (line.splitOn " ").headD "") ==
-            ["attach", "ls", "tmux", "run", "send", "detach", "kill", "info", "capture", "resize",
-              "wait", "get", "set", "unset", "clear", "version", "help"] &&
+            ["attach", "ls", "tmux", "run", "start", "send", "detach", "kill", "info", "capture",
+              "resize", "wait", "get", "set", "unset", "clear", "version", "help"] &&
           rows.all
             (fun line =>
               line == line.trimAscii.toString &&

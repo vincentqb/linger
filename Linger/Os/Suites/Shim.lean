@@ -261,9 +261,14 @@ def testSpawnFailures : IO Unit := do
 
 /-- Capture an exited child or its spawn error, cleaning up even when a check fails. -/
 def ptyResult (cwd prog : String) (args extraEnv : Array String := #[]) (cols : UInt32 := 80)
-    (rows : UInt32 := 24) : IO (Except String (String × Int64)) := do
+    (rows : UInt32 := 24) (homeFallback : Bool := false) : IO (Except String (String × Int64)) := do
   try
-    let (pid, master) ← spawnPty cols rows cwd prog args extraEnv
+    let (pid, master) ←
+      match ← trySpawnPty cols rows cwd homeFallback prog args extraEnv with
+      | .ok started =>
+        pure started
+      | .error failure =>
+        throw (IO.userError failure.describe)
     try
       let out ← drain master ((← monotonicMs) + 5000) .empty
       let status ← reap pid
@@ -336,9 +341,17 @@ def testPtyPath : IO Unit :=
         (resultIs
           (← ptyResult dir.toString "plain" #["two words"] #[s!"PATH={first}", "LINGERTEST=child"])
           "path:two words:child")
-    check "a vanished cwd falls back to the child's HOME"
-        (resultIs (← ptyResult s!"{dir}/gone" "/bin/sh" #["-c", "pwd"] #[s!"HOME={first}"])
+    check "a vanished cwd falls back to the child's HOME when the caller asks for it"
+        (resultIs
+          (←
+            ptyResult s!"{dir}/gone" "/bin/sh" #["-c", "pwd"] #[s!"HOME={first}"] (homeFallback :=
+                true))
           (← IO.FS.realPath first).toString)
+    let strict ← ptyResult s!"{dir}/gone" "/bin/sh" #["-c", "pwd"] #[s!"HOME={first}"]
+    check "a vanished cwd fails the start otherwise"
+        (match strict with
+        | .error why => why.startsWith "spawn_pty: chdir:"
+        | .ok _ => false)
 
 /-- Run in a disposable process: closing stdio must not clobber the spawn report. -/
 def closedStdioProbe (kind logPath : String) : IO UInt32 := do

@@ -66,6 +66,23 @@ static lean_obj_res io_msg(const char *msg) {
 
 static lean_obj_res io_ok_unit(void) { return lean_io_result_mk_ok(lean_box(0)); }
 
+/* A started program (Except.ok) or why one did not start (Except.error): the
+ * failure's kind and the OS's words for it. */
+static lean_obj_res spawn_started(uint64_t packed) {
+    lean_object *started = lean_alloc_ctor(1, 1, 0);
+    lean_ctor_set(started, 0, lean_box_uint64(packed));
+    return lean_io_result_mk_ok(started);
+}
+
+static lean_obj_res spawn_refused(uint8_t why, int code) {
+    lean_object *pair = lean_alloc_ctor(0, 2, 0);
+    lean_ctor_set(pair, 0, lean_box(why));
+    lean_ctor_set(pair, 1, lean_mk_string(strerror(code)));
+    lean_object *refused = lean_alloc_ctor(0, 1, 0);
+    lean_ctor_set(refused, 0, pair);
+    return lean_io_result_mk_ok(refused);
+}
+
 /* Child-side setup/exec failure reporting. The child writes one record to a
  * CLOEXEC pipe and _exits; a successful exec closes the pipe, so the parent
  * reads EOF. Without this, a failed setsid/dup2/execve is invisible: the
@@ -367,11 +384,18 @@ LEAN_EXPORT lean_obj_res linger_poll(b_lean_obj_arg fds, b_lean_obj_arg events,
 /* -------------------------------------------------------------------- */
 /* pty                                                                   */
 
-/* linger_spawn_pty : UInt32 -> UInt32 -> @& String -> @& String
- *                 -> @& Array String -> @& Array String -> IO UInt64
+/* linger_spawn_pty : UInt32 -> UInt32 -> @& String -> Bool -> @& String
+ *                 -> @& Array String -> @& Array String
+ *                 -> IO (Except (UInt8 × String) UInt64)
  * open a pty and fork+execve a child on its slave, with PATH lookup. Returns
- * pid<<32 | masterFd. cwd "" = inherit. extraEnv entries are "K=V".
- * Child resets SIGPIPE/SIGHUP to default before exec; _exit(127) on fail.
+ * pid<<32 | masterFd. cwd "" = inherit; a cwd the child cannot enter is a
+ * failure unless home_fallback asks for $HOME instead. extraEnv entries are
+ * "K=V". Child resets SIGPIPE/SIGHUP to default before exec.
+ *
+ * A program that cannot start is answered Except.error (why, the OS's words):
+ * why 1 is its directory (125, as env -C), 2 no such program (127), 3 found
+ * but not runnable (126). A started one is Except.ok (pid<<32 | masterFd).
+ * The other setup failures throw.
  *
  * Uses the POSIX posix_openpt family rather than forkpty(3): forkpty
  * lives in libutil, which the Lean toolchain does not bundle and which
@@ -379,8 +403,9 @@ LEAN_EXPORT lean_obj_res linger_poll(b_lean_obj_arg fds, b_lean_obj_arg events,
  * -lutil is unportable. posix_openpt/grantpt/unlockpt/ptsname/setsid/
  * TIOCSCTTY are all plain libc and do exactly what forkpty wraps. */
 LEAN_EXPORT lean_obj_res linger_spawn_pty(uint32_t cols, uint32_t rows,
-                                       b_lean_obj_arg cwd, b_lean_obj_arg prog,
-                                       b_lean_obj_arg args, b_lean_obj_arg extra_env) {
+                                       b_lean_obj_arg cwd, uint8_t home_fallback,
+                                       b_lean_obj_arg prog, b_lean_obj_arg args,
+                                       b_lean_obj_arg extra_env) {
     struct winsize ws;
     memset(&ws, 0, sizeof ws);
     ws.ws_col = (unsigned short)cols;
@@ -487,8 +512,9 @@ LEAN_EXPORT lean_obj_res linger_spawn_pty(uint32_t cols, uint32_t rows,
             spawn_fail(errPipe[1], "dup2", errno);
         if (slave > 2) close(slave);
         if (dir[0] != '\0' && chdir(dir) != 0) {
-            /* saved cwd may be gone after reboot; HOME beats dying */
-            if (home && chdir(home) != 0) { /* keep inherited cwd */ }
+            int e = errno;
+            /* only a caller that asked for it gets $HOME instead */
+            if (!(home_fallback && home && chdir(home) == 0)) spawn_fail(errPipe[1], "chdir", e);
         }
         exec_search(argv, shargv, envp, path);
         spawn_fail(errPipe[1], "execve", errno);
@@ -504,12 +530,15 @@ LEAN_EXPORT lean_obj_res linger_spawn_pty(uint32_t cols, uint32_t rows,
         int status;
         while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
         close(master);
+        uint8_t why = 0;
+        if (strcmp(rec.stage, "chdir") == 0) why = 1;
+        else if (strcmp(rec.stage, "execve") == 0) why = rec.code == ENOENT ? 2 : 3;
+        if (why != 0) return spawn_refused(why, rec.code);
         char buf[128];
         snprintf(buf, sizeof buf, "spawn_pty: %s", rec.stage);
         return io_err_code(buf, rec.code);
     }
-    return lean_io_result_mk_ok(
-        lean_box_uint64(((uint64_t)(uint32_t)pid << 32) | (uint32_t)master));
+    return spawn_started(((uint64_t)(uint32_t)pid << 32) | (uint32_t)master);
 }
 
 /* linger_winsize_get : UInt32 -> IO UInt64   (cols<<32 | rows) */

@@ -372,7 +372,7 @@ def serveProbe (dir : String) : IO UInt32 := do
   let bin ← IO.appPath
   serve "tail" dir [bin.toString, "--delivery-child", s!"{dir}/go"] (fun _ => pure ())
       (IO.FS.writeFile s!"{dir}/exited" "") (pure (some (Linger.Terminal.Vt.Vt.init 20 5, dir, [])))
-      (fun _ => pure ())
+      { load := pure none, save := fun _ => pure (), restore := fun _ => pure () }
   return 0
 
 private def serveTail (dir : String) : IO Unit := do

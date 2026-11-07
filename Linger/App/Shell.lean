@@ -41,6 +41,7 @@ private def usage : String :=
 ls [-r [hosts]] [--summary|--porcelain]   List sessions or attention counts
 tmux <command> [SAVE]                     Saved tmux panes; see tmux help
 run <name> <command...>                   Run a shell command; create if needed
+start <name> <program> [args...]          Start a program, exactly, in a new session
 send <name> <text...|->                   Send raw input; - reads stdin
 detach <name>                             Detach all clients from a session
 kill <name>                               End a session, or discard a saved one
@@ -70,6 +71,105 @@ private abbrev socketWaitFloorMs : Nat := 3000
 
 /-- The longest `connectUpsert` waits for the socket of a daemon it spawned. -/
 private abbrev socketWaitCapMs : Nat := 30000
+
+/-- The name's end record on disk, as a daemon keeps it. -/
+private def recordFile (name : String) : Daemon.RecordFile :=
+  { load := Record.load name, save := Record.save name, restore := Record.restore name }
+
+/-- Write what the daemon did to the report `start` named, whole, through a temporary sibling. -/
+private def writeReport (path : String) (report : Linger.Session.Start.Report) : IO Unit := do
+  IO.FS.writeBinFile s!"{path}.tmp" (ByteArray.mk report.encode.toArray)
+  IO.FS.rename s!"{path}.tmp" path
+
+/-- The daemon `start` began. It reports what it did once, and a failure before that is reported
+too: as `running` when a live session took the name first, else as a failure, 125. -/
+private def serveStart (report name cwd : String) (argv : List String) : IO Unit := do
+  let told ← IO.mkRef false
+  let tell (r : Linger.Session.Start.Report) : IO Unit := do
+    told.set true
+    writeReport report r
+  try
+    Daemon.serve name cwd argv (Resume.saveCkpt name) (Resume.dropCkpt name) (Resume.loadCkpt name)
+        (recordFile name) (some tell)
+  catch err =>
+    unless ← told.get do
+      match ← Client.connect name with
+      | some fd =>
+        close fd
+        tell .running
+      | none =>
+        tell (.failed 125 err.toString.toUTF8.toList)
+    throw err
+
+/-- How long `start` waits for its daemon's report. -/
+private abbrev startWaitMs : Nat := 30000
+
+/-- The report `start` named, once its daemon has written it; reading it removes it. -/
+private def takeReport (path : String) : IO (Option (Option Linger.Session.Start.Report)) := do
+  if !(← System.FilePath.pathExists path) then
+    return none
+  let bytes ← IO.FS.readBinFile path
+  IO.FS.removeFile path
+  return some (Linger.Session.Start.Report.decode bytes.toList)
+
+/-- `start`'s status for its daemon's report: 0 once the program runs; 1, saying which session
+holds the name, for a refusal; and for a program that could not start, the status a shell or
+`env` reports. A report that is no report is linger's own failure, 125. -/
+private def startStatus (name : String) : Option Linger.Session.Start.Report → IO UInt32
+  | some .started => return 0
+  | some .running => do
+    IO.eprintln s!"linger: session '{name}' is running"
+    return 1
+  | some .saved => do
+    IO.eprintln s!"linger: session '{name}' is saved; attach to resume it, or kill it to discard it"
+    return 1
+  | some (.failed status why) => do
+    IO.eprintln s!"linger: session '{name}' did not start: {Client.replyText "no reason" why}"
+    return status.toUInt32
+  | none => do
+    IO.eprintln s!"linger: session '{name}' did not start: the daemon's report is unreadable"
+    return 125
+
+/-- `start`: run `argv` exactly, with no shell, in a new session named `name`, in this directory
+and with this environment, and return once the program runs. A live or saved session that holds
+the name is refused, saying which, and never resumed (`Start.plan`); the daemon decides again
+holding the name. A program that cannot start returns what a shell or `env` reports, 125 for its
+directory, 127 when not found and 126 when not runnable, and leaves no session, checkpoint or
+record behind. -/
+private def cmdStart (name : String) (argv : List String) : IO UInt32 := do
+  let live ←
+    match ← Client.connect name with
+    | some fd =>
+      do
+        close fd
+        pure true
+    | none =>
+      pure false
+  let saved ← System.FilePath.pathExists (← Paths.ckptPath name)
+  match Linger.Session.Start.plan live saved with
+  | .running =>
+    startStatus name (some .running)
+  | .saved =>
+    startStatus name (some .saved)
+  | .take =>
+    let report ← Paths.startReportPath name s!"{← getpid}-{← IO.rand 0 0xFFFFFFFF}"
+    let cwd := (← IO.Process.getCurrentDir).toString
+    let log ← Paths.logPath name
+    let pid ←
+      spawnDetached (← IO.appPath).toString
+          (⟨["__start", report, name, cwd] ++ argv⟩ : Array String) log
+    let deadline := (← monotonicMs) + startWaitMs
+    repeat
+      if let some told← takeReport report then
+        return ← startStatus name told
+      if !(← alive pid) || (← monotonicMs) ≥ deadline then
+        -- one last look: the daemon may have reported just before it ended
+        if let some told← takeReport report then
+          return ← startStatus name told
+        IO.eprintln
+            s!"linger: session '{name}' did not start: its daemon did not report (see {log})"
+        return 125
+      IO.sleep 10
 
 /-- Connect, spawning the daemon first if needed (attach-is-upsert). Without a socket it
 gives up no sooner than `socketWaitFloorMs`; after that it keeps waiting only while the
@@ -725,8 +825,16 @@ def main (args : List String) : IO UInt32 := do
   match args with
   | "__daemon" :: name :: cwd :: cmd =>
     Daemon.serve name cwd cmd (Resume.saveCkpt name) (Resume.dropCkpt name) (Resume.loadCkpt name)
-        (Record.save name)
+        (recordFile name)
     return 0
+  | "__start" :: report :: name :: cwd :: argv =>
+    serveStart report name cwd argv
+    return 0
+  | "start" :: name :: argv =>
+    if argv.isEmpty then
+      IO.eprintln "usage: linger start <name> <program> [args...]"
+      return 2
+    withTarget "start" name argv (cmdStart · argv)
   | "attach" :: rest | "a" :: rest =>
     attachArgs rest
   | "run" :: name :: cmd | "r" :: name :: cmd =>

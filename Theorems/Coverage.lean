@@ -16,6 +16,7 @@ import all Linger.Terminal.Proofs.Render
 import all Linger.Terminal.Proofs.Replay
 import all Linger.Session.Proofs.Resume
 import all Linger.Session.Proofs.Record
+import all Linger.Session.Proofs.Start
 import all Linger.Display.Proofs.Status
 import all Linger.Display.Proofs.Title
 import all Linger.Import.Proofs.Resurrect

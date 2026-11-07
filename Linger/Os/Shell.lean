@@ -89,18 +89,43 @@ daemon polls its listener, its pty and at most `maxClients` clients, well under 
 def poll (fds events : Array UInt32) (timeoutMs : Int32) : IO (Array UInt32) :=
   Boundary.poll fds events timeoutMs
 
+/-- Why a program could not start in a new terminal, with the operating system's words. -/
+inductive SpawnFailure where
+  /-- Its directory could not be entered. -/
+  | directory (why : String)
+  /-- No program of its name was found. -/
+  | notFound (why : String)
+  /-- Its program was found and could not be run. -/
+  | notRunnable (why : String)
+  deriving Repr, DecidableEq
+
+/-- The status a shell or `env(1)` reports for a program that could not start: 125 for its
+directory, as `env -C` does, 127 for one not found and 126 for one that cannot run. -/
+def SpawnFailure.status : SpawnFailure → UInt8
+  | .directory _ => 125
+  | .notFound _ => 127
+  | .notRunnable _ => 126
+
+/-- What failed, in the operating system's words: entering the directory, or running the
+program. -/
+def SpawnFailure.describe : SpawnFailure → String
+  | .directory why => s!"spawn_pty: chdir: {why}"
+  | .notFound why | .notRunnable why => s!"spawn_pty: execve: {why}"
+
 /-- posix_openpt + execve. A bare program is searched in the child's PATH;
 slash-qualified programs run directly. Executable text without a shebang runs
 through `/bin/sh`, preserving execvp's fallback.
-`extraEnv` entries are `"K=V"` with a nonempty key. `cwd = ""` inherits;
-a vanished cwd falls back to the child's `$HOME`, then the inherited cwd
-(reboot-resume may restore a deleted directory). Dimensions must fit 16 bits.
+`extraEnv` entries are `"K=V"` with a nonempty key. `cwd = ""` inherits; a cwd the child cannot
+enter fails the start, unless `homeFallback` asks for the child's `$HOME` instead (a resume after
+a reboot may name a deleted directory). Dimensions must fit 16 bits.
 
 Returns `(pid, master)`: the child, with SIGPIPE and SIGHUP at their defaults, and the
-pty master, close-on-exec and blocking. Setup and exec failures in the child reach us
-as an error rather than a live pid: the C side reports them over a close-on-exec pipe. -/
-def spawnPty (cols rows : UInt32) (cwd prog : String) (args : Array String)
-    (extraEnv : Array String) : IO (UInt32 × UInt32) := do
+pty master, close-on-exec and blocking. A program that cannot start is a `SpawnFailure`;
+the other setup failures in the child throw. The C side reports both over a close-on-exec
+pipe, so no pid is returned for a program that never ran. -/
+def trySpawnPty (cols rows : UInt32) (cwd : String) (homeFallback : Bool) (prog : String)
+    (args : Array String) (extraEnv : Array String) : IO (Except SpawnFailure (UInt32 × UInt32)) :=
+  do
   checkWinsize cols rows
   checkCString "spawnPty cwd" cwd
   checkCommand "spawnPty" prog args
@@ -108,8 +133,24 @@ def spawnPty (cols rows : UInt32) (cwd prog : String) (args : Array String)
     checkCString "spawnPty environment" entry
     unless entry.contains '=' && !entry.startsWith "=" do
       throw (IO.userError s!"spawnPty: environment entry '{entry}' is not K=V")
-  let packed ← Boundary.spawnPty cols rows cwd prog args extraEnv
-  return ((packed >>> 32).toUInt32, packed.toUInt32)
+  match ← Boundary.spawnPty cols rows cwd homeFallback prog args extraEnv with
+  | .ok packed =>
+    return .ok ((packed >>> 32).toUInt32, packed.toUInt32)
+  | .error (1, why) =>
+    return .error (.directory why)
+  | .error (2, why) =>
+    return .error (.notFound why)
+  | .error (_, why) =>
+    return .error (.notRunnable why)
+
+/-- `trySpawnPty` in `cwd` or nowhere else, throwing when the program cannot start. -/
+def spawnPty (cols rows : UInt32) (cwd prog : String) (args : Array String)
+    (extraEnv : Array String) : IO (UInt32 × UInt32) := do
+  match ← trySpawnPty cols rows cwd false prog args extraEnv with
+  | .ok started =>
+    return started
+  | .error failure =>
+    throw (IO.userError failure.describe)
 
 /-- (cols, rows) of the tty behind `fd`. Throws when TIOCGWINSZ fails, for example on a
 descriptor that is not a terminal. -/

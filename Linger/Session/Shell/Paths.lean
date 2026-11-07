@@ -118,6 +118,11 @@ private def stateLockPath (name : String) : IO String := do
 def logPath (name : String) : IO String := do
   namedPath ((← stateDir) ++ "/logs") name ".log"
 
+/-- Where the daemon a `start` began tells it what it did, `logs/<name>.start-<nonce>` in
+`stateDir`: a name each `start` makes its own with `nonce`. -/
+def startReportPath (name nonce : String) : IO String := do
+  namedPath ((← stateDir) ++ "/logs") name s!".start-{nonce}"
+
 /-- Failed acquisition does not run the action. A held lock is tried again while
 `retry`, asked only after a failed attempt, holds. Always release after the action,
 including startup/read exceptions; recheck spelling after the atomic acquisition. -/
