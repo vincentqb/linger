@@ -28,6 +28,7 @@ import all Linger.Terminal.Proofs.Vt
 import all Linger.Terminal.Proofs.Vt.Renderable
 import all Linger.Terminal.Proofs.Vt.State
 import all Linger.Session.Proofs.Wire
+import all Linger.Session.Proofs.Record
 
 /-! # Contract statements
 
@@ -223,6 +224,16 @@ example (s : Session.State) (o : Session.Outcome) {c : Session.Client} (hc : c �
 
 example {o₁ o₂ : Session.Outcome} (h : Session.outcomeFields o₁ = Session.outcomeFields o₂) :
     o₁ = o₂ := by with_reducible exact Session.outcomeFields_injective h
+
+example (r : Session.Record) : Session.Record.decode (Session.Record.encode r) = some r := by
+  with_reducible exact Session.Record.decode_encode r
+
+example (file : Option (List UInt8)) : (Session.Record.answer file).isSome = file.isSome := by
+  with_reducible exact Session.Record.answer_isSome file
+
+example {file : Option (List UInt8)} {known : Option Session.Outcome}
+    (h : Session.Record.settled file = some known) : Session.Record.answer file = known := by
+  with_reducible exact Session.Record.settled_answer h
 
 -- Transport
 example (ms : List Wire.Msg) (hms : ∀ (m : Wire.Msg), m ∈ ms → m.WF) (chunks : List (List UInt8))

@@ -1135,7 +1135,7 @@ for verb in attach run send detach kill info capture resize get set unset clear;
 done
 for tie in \
   'match Linger[.]Target[.]Remote[.]parseTarget target with [|] none => invalidTarget [|] some parsed => runTarget verb parsed args localAction options' \
-  'let some targets := names[.]mapM Linger[.]Target[.]Remote[.]parseTarget [|] invalidTarget let mut rc : UInt32 := 0 for target in targets do rc := max rc [(]← runTarget "wait" target [[]] cmdWait[)]' \
+  'let some targets := names[.]mapM Linger[.]Target[.]Remote[.]parseTarget [|] invalidTarget let mut rc : UInt32 := 0 for target in targets do rc ← runTarget "wait" target [[]] cmdWait' \
   'let interactive := verb == "attach" if interactive && [(]![(]← stdinIsTty[)] [|][|] ![(]← [(]← IO[.]getStdout[)][.]isTty[)][)] then' \
   'let operands := if verb == "attach" [|][|] verb == "capture" then Linger[.]Target[.]Remote[.]targetOperands target[.]name else [[]target[.]name[]]' \
   'IO[.]Process[.]spawn [{] cmd := "ssh", args := #[[]if interactive then "-t" else "-T", "--", host, Linger[.]Target[.]Remote[.]command verb [(]options [+][+] operands [+][+] args[)][]], stdin := [.]inherit [}] try child[.]wait finally if interactive then writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Terminal[.]Render[.]leaveAnsi[.]toArray[)]' \
@@ -1205,7 +1205,8 @@ retrying="$(code_grep '(^|[^[:alnum:]_])with(Session)?LockRetrying([^[:alnum:]_]
   || fail "only the daemon's startup claim may retry a held lock: ${retrying:-no retrying claim}"
 for tie in \
   'finally close listenFd try IO[.]FS[.]removeFile sockPath catch _ => pure [(][)][[:space:]]+end Linger[.]Session[.]Shell[.]Daemon' \
-  'finally for c in rt[.]conns do close c[.]fd try if !rt[.]reaped then if ← alive rt[.]childPid then'; do
+  'finally let rt ← latest[.]get for c in rt[.]conns do close c[.]fd let outcome ← endProgram rt try saveRecord [(][.]ended outcome[)]' \
+  'saveRecord [.]running let [(]pid, ptyFd[)] ← spawnPty'; do
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "daemon resource cleanup escaped its ownership lifetime: $tie"
 done

@@ -118,10 +118,10 @@ private def withPair (dir tag : String) (vt : Linger.Terminal.Vt.Vt)
       let st := (Session.step (.boot vt [] []) (.connected fd.toNat)).1
       -- An independent idle listener fills the unused pty poll slot. New
       -- clients may connect to `listener` without making this slot readable.
-      -- No program runs, so there is none to reap.
+      -- No program runs: its ending is settled, so no round reaps one.
       let rt : Rt :=
-        { st, listenFd := listener, ptyFd := idle, childPid := 0, reaped := true, conns := [{ fd }],
-          saveCkpt := fun _ => pure (), dropCkpt := pure () }
+        { st, listenFd := listener, ptyFd := idle, childPid := 0, ending := some .unknown,
+          conns := [{ fd }], saveCkpt := fun _ => pure (), dropCkpt := pure () }
       f rt peer fd
     finally
       close peer
@@ -372,6 +372,7 @@ def serveProbe (dir : String) : IO UInt32 := do
   let bin ← IO.appPath
   serve "tail" dir [bin.toString, "--delivery-child", s!"{dir}/go"] (fun _ => pure ())
       (IO.FS.writeFile s!"{dir}/exited" "") (pure (some (Linger.Terminal.Vt.Vt.init 20 5, dir, [])))
+      (fun _ => pure ())
   return 0
 
 private def serveTail (dir : String) : IO Unit := do

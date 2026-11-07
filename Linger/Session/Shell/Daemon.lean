@@ -4,6 +4,7 @@ import Linger.Os.Shell
 public import Linger.Session.Buf
 import Linger.Session.Driver
 public import Linger.Session
+public import Linger.Session.Record
 import Linger.Terminal.Mediation
 import Linger.Os.Env
 import Linger.Session.Shell.Paths
@@ -136,9 +137,9 @@ structure Rt where
   can exit while its background jobs hold the terminal, and a program can close its terminal and
   keep running. Only the program's own exit ends the session. -/
   ptyOpen : Bool := true
-  /-- Whether the program has been reaped. Its pid may belong to another process afterwards,
-  so nothing signals or reaps it again. -/
-  reaped : Bool := false
+  /-- How the program ended, once a reap has said. Its pid may belong to another process
+  afterwards, so nothing signals or reaps it again. -/
+  ending : Option Outcome := none
   /-- How long the next poll waits for the program's end while its terminal is closed. The end
   usually follows at once, so the wait starts at 10 ms; it doubles each round up to a second, so
   a program that runs on without its terminal wakes the daemon once a second. -/
@@ -340,7 +341,7 @@ private def executeEffect (st : State) (rt : Rt) : (eff : Effect Plan) → IO (R
     return (rt, ())
   | .killChild => do
     -- a reaped program's pid may now belong to another process
-    if !rt.reaped then
+    if rt.ending.isNone then
       kill rt.childPid 15 -- SIGTERM
     return (rt, ())
   | .checkpoint => do
@@ -398,7 +399,7 @@ def pollRound (rt : Rt) : IO (Rt × List Event) := do
   let now ← monotonicMs
   let rt ← expireConns rt now
   -- once the terminal has closed, the program's end usually follows at once
-  let mut timeout := if rt.ptyOpen || rt.reaped then 1000 else rt.reapWaitMs
+  let mut timeout := if rt.ptyOpen || rt.ending.isSome then 1000 else rt.reapWaitMs
   for c in rt.conns do
     if let some deadline := c.closeBy then
       timeout := min timeout (deadline - now)
@@ -495,24 +496,28 @@ def pollRound (rt : Rt) : IO (Rt × List Event) := do
           rt ← rt.closeConn c.fd
           events := events ++ [.closed c.fd.toNat]
   -- the program's end, whatever still holds its terminal
-  if !rt.reaped then
+  if rt.ending.isNone then
     match ← programEnd rt.childPid with
     | none =>
       if !rt.ptyOpen then
         rt := { rt with reapWaitMs := min 1000 (2 * rt.reapWaitMs) }
     | some outcome =>
-      rt := { rt with reaped := true }
-      -- the output it left in the terminal comes first, within a bounded number of reads
+      rt := { rt with ending := some outcome }
+      -- the output it left in the terminal comes first, within a bounded number of reads; a
+      -- failed read ends them, and the ending is reported all the same
       if rt.ptyOpen then
-        for _ in List.range finalReads do
-          match ← read rt.ptyFd 65536 with
-          | some bs =>
-            if bs.isEmpty then
+        try
+          for _ in List.range finalReads do
+            match ← read rt.ptyFd 65536 with
+            | some bs =>
+              if bs.isEmpty then
+                break
+              events := events ++ [.ptyOut bs.toList]
+            | none =>
+              rt := { rt with ptyOpen := false }
               break
-            events := events ++ [.ptyOut bs.toList]
-          | none =>
-            rt := { rt with ptyOpen := false }
-            break
+        catch err =>
+          report s!"linger: reading the program's last output failed: {err}"
       events := events ++ [.childExited outcome]
   return (rt, events)
 
@@ -545,6 +550,34 @@ def drainConns (rt : Rt) : IO Rt := do
     close c.fd
   return { rt with conns := [] }
 
+/-- How long the program has to end after SIGTERM before it gets SIGKILL. -/
+private def stopGraceMs : Nat := 150
+
+/-- How the program ended, ending it first if it still runs: SIGTERM, then SIGKILL if it outlives
+`stopGraceMs`, and `unknown` if it cannot be reaped within a second after that. Only this
+daemon's unreaped child holds the program's pid, so a signal sent while a reap reports the
+program running reaches the program and nothing else. -/
+private def endProgram (rt : Rt) : IO Outcome := do
+  if let some outcome := rt.ending then
+    return outcome
+  try
+    if let some outcome← programEnd rt.childPid then
+      return outcome
+    kill rt.childPid 15
+    for _ in List.range (stopGraceMs / 10) do
+      IO.sleep 10
+      if let some outcome← programEnd rt.childPid then
+        return outcome
+    kill rt.childPid 9
+    for _ in List.range 100 do
+      IO.sleep 10
+      if let some outcome← programEnd rt.childPid then
+        return outcome
+    return .unknown
+  catch err =>
+    report s!"linger: child cleanup failed: {err}"
+    return .unknown
+
 /-- How long a starting daemon waits for its locks. An offline reader holds both only
 while it loads and prints a checkpoint. `connectUpsert` gives up on the socket no sooner
 than 3 s, and after that only once this daemon exits or 30 s have passed. -/
@@ -573,11 +606,12 @@ private def claimRetry (name sockPath : String) (deadline : Nat) (reported : IO.
 /-- Hold both ownership locks from before recovery through final cleanup.
 Loading under the locks prevents a second runtime namespace from reading or
 overwriting a checkpoint that another daemon is still using. The claim waits
-out an offline reader (`claimRetry`) but not a live owner. -/
+out an offline reader (`claimRetry`) but not a live owner. The name's end record says the
+program runs before it starts and how it ended before the locks are released. -/
 def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State → IO Unit)
     (dropCkpt : IO Unit)
-    (loadCkpt : IO (Option (Linger.Terminal.Vt.Vt × String × List (String × String)))) : IO Unit :=
-  do
+    (loadCkpt : IO (Option (Linger.Terminal.Vt.Vt × String × List (String × String))))
+    (saveRecord : Linger.Session.Record → IO Unit) : IO Unit := do
   let deadline := (← monotonicMs) + claimWaitMs
   let reported ← IO.mkRef false
   let retry := claimRetry name (← Paths.socketPath name) deadline reported
@@ -609,6 +643,10 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
         -- the syscall boundary; resizing the restored VT would reset its margins.
         let vt0 := Linger.Session.bootVt (restore.map (·.1))
         let created ← realtimeS
+        -- The name is this session's from here on: should the daemon end without saying how
+        -- its program ended, a reader that holds the name hears that the ending is unknown,
+        -- never the previous session's. A record that cannot be written starts nothing.
+        saveRecord .running
         let (pid, ptyFd) ←
           spawnPty (UInt32.ofNat (Linger.Terminal.Vt.clampDim vt0.colCount))
               (UInt32.ofNat (Linger.Terminal.Vt.clampDim vt0.rowCount)) cwd prog args
@@ -618,29 +656,30 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
           State.boot vt0 ((restore.map (·.2)).getD [])
             [("name", name), ("pid", toString pid), ("created", toString created),
               ("cmd", String.intercalate " " (prog :: args.toList)), ("start_dir", cwd)]
-        let mut rt : Rt := { st, listenFd, ptyFd, childPid := pid, saveCkpt, dropCkpt }
+        -- The cleanup reads the runtime as each round left it, the program's ending included,
+        -- whatever fails after that round.
+        let latest ← IO.mkRef ({ st, listenFd, ptyFd, childPid := pid, saveCkpt, dropCkpt } : Rt)
         try
           setNonblock ptyFd
+          let mut rt ← latest.get
           while !rt.exiting do
             let (rt', events) ← pollRound rt
+            latest.set rt'
             let now ← monotonicMs
             rt ← pump rt' (events ++ [.tick now])
             rt ← flushPty rt
+            latest.set rt
           rt ← drainConns rt
+          latest.set rt
         finally
+          let rt ← latest.get
           for c in rt.conns do
             close c.fd
+          let outcome ← endProgram rt
           try
-            if !rt.reaped then
-              if ← alive rt.childPid then
-                kill rt.childPid 15
-                IO.sleep 150
-                if ← alive rt.childPid then
-                  kill rt.childPid 9
+            saveRecord (.ended outcome)
           catch err =>
-            report s!"linger: child cleanup failed: {err}"
-          if !rt.reaped then
-            discard <| waitpidNohang rt.childPid
+            report s!"linger: recording how the program ended failed: {err}"
           close rt.ptyFd
       finally
         close listenFd

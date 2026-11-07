@@ -429,10 +429,10 @@ words into it, joined with spaces), and that a resumed session starts in the dir
 
 /-! ## 5. Accountability
 
-Not claimed yet: that `linger wait` refuses an unknown name (it exits 0), and that anyone who asks
-later hears the outcome (only clients connected at the end do). The session refuses a message it
-does not know (`onMsg_unknown`), and `info` reports each ending with its own fields
-(`outcomeFields_injective`). -/
+Not claimed yet: that whoever asks after a session ends hears its outcome. The name's end record
+keeps it, a record always gives a reader an answer (`Record.answer_isSome`), and suites test the
+files and locks around it. The session refuses a message it does not know (`onMsg_unknown`), and
+`info` reports each ending with its own fields (`outcomeFields_injective`). -/
 
 /-- When the session's program ends, every client attached to the session or waiting for its end
 is told how the program ended and then the status a shell would report for that ending, and the

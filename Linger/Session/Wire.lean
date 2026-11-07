@@ -64,14 +64,14 @@ private def knownTag (t : UInt8) : Bool := t ≤ 17
 
 /-- An ending as two bytes: its kind (0 exited, 1 signalled, 2 unknown) and its code or signal
 number. `readOutcome` inverts it (`readOutcome_outcomeBytes`). -/
-private def outcomeBytes : Outcome → List UInt8
+def outcomeBytes : Outcome → List UInt8
   | .exited code => [0, code]
   | .signaled signal => [1, signal]
   | .unknown => [2, 0]
 
 /-- Total: a payload that is no ending this version knows reads as `unknown`, so a newer
 daemon's ending is never misreported as an exit code or a signal. -/
-private def readOutcome : List UInt8 → Outcome
+def readOutcome : List UInt8 → Outcome
   | 0 :: code :: _ => .exited code
   | 1 :: signal :: _ => .signaled signal
   | _ => .unknown

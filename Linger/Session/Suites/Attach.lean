@@ -226,6 +226,17 @@ def run : IO UInt32 :=
       pure ()
     expect (waited.map (·.1) == some 3)
         "a session ends with its program while a background job holds its terminal"
+    -- A session that ended with nobody waiting still answers, from its name's end record.
+    let _ ← e.cli #["run", "w5", "exec sh -c 'exit 37'"]
+    let gone ← waitFor 5000 (return !has (← e.out #["list"]) "w5")
+    let (lateRc, _, _) ← e.cli #["wait", "w5"]
+    let (infoRc, lateInfo, _) ← e.cli #["info", "w5"]
+    expect (gone && lateRc == 37 && infoRc == 0 && has lateInfo "exit\t37")
+        s!"an ended session's record answers wait and info (rc={lateRc})"
+    let (neverRc, _, neverErr) ← e.cli #["wait", "w-never"]
+    expect (neverRc == 127 && has neverErr "no session") "wait on a name no session took exits 127"
+    let (bothRc, _, _) ← e.cli #["wait", "w3", "w5"]
+    expect (bothRc == 37) s!"wait reports the last of several sessions (rc={bothRc})"
     -- A transport loss is neither a detach nor a successful wait.
     let lost ← e.spawn #["attach", "attach-lost"] cols rows
     let _ ← waitFor 4000 (return (← e.info "attach-lost" "clients") == some "1")
@@ -262,8 +273,8 @@ def run : IO UInt32 :=
       throw (IO.userError "wait-lost daemon did not crash")
     let waitCode ← waitOrKill waiter 3000
     let waitErr ← waiter.stderr.readToEnd
-    expect (waitCode == some 1 && has waitErr "connection lost")
-        "wait exits 1 when the daemon disappears"
+    expect (waitCode == some 125 && has waitErr "outcome unknown")
+        "wait exits 125, its outcome unknown, when the daemon disappears"
     -- 8. An empty chooser offers the default name without creating it on entry.
     let defaults : Env := { e with dir := s!"{e.dir}/default" }
     let defaultName := Linger.Target.Name.defaultName

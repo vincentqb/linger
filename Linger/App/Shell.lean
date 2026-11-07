@@ -11,6 +11,7 @@ import Linger.Terminal.Render
 import Linger.Display.Listing
 import Linger.Os.Shell.Command
 import Linger.Session.Shell.Resume
+import Linger.Session.Shell.Record
 import Linger.Terminal.Mediation
 import Std.Async.Signal
 
@@ -455,30 +456,92 @@ private def cmdSendStdin (name : String) : IO UInt32 := do
     finally
       close fd
 
+/-- Return the status a shell would report for the ending, saying on stderr when a signal killed
+the program or how it ended is unknown. -/
+private def reportEnding (name : String) (ending : Client.Ending) : IO UInt32 := do
+  match ending with
+  | .outcome (.exited _) | .status _ =>
+    pure ()
+  | .outcome _ =>
+    IO.eprintln s!"linger: session '{name}' ended ({ending.describe})"
+  return ending.exitStatus
+
+/-- What answers for a name when no daemon does. -/
+private inductive Unanswered where
+  /-- Another process holds the name, as a daemon does while it starts or ends; `why` says so. -/
+  | held (why : String)
+  /-- The name's end record says this (`Record.answer`), read while holding the name when the
+  answer depends on it (`Record.settled`). -/
+  | recorded (outcome : Option Linger.Session.Outcome)
+
+/-- Read the name's end record. A missing record or one that says how its program ended answers
+at once (`Record.settled`); only a running one needs the name held to read, since a reader that
+can hold the name knows the record's daemon is gone. A record that cannot be read throws. -/
+private def unanswered (name : String) : IO Unanswered := do
+  if let some answer := Linger.Session.Record.settled (← Record.load name) then
+    return .recorded answer
+  let loaded ←
+    try
+      Paths.withSessionLock name do
+          return ← (Record.load name).toBaseIO
+    catch err =>
+      return .held err.toString
+  return .recorded (Linger.Session.Record.answer (← IO.ofExcept loaded))
+
+/-- How long `wait` keeps trying a name that another process holds while no daemon answers on
+it, as while a daemon starts or ends: past an ending daemon's drain and its program's stop. -/
+private def heldNameMs : Nat := Daemon.drainTimeoutMs + 5000
+
 /-- `wait`: block until the session's program ends and return the status a shell would report
-for it, saying on stderr when a signal killed the program or how it ended is unknown. No session
-returns 0; a refusal, a lost connection or a reply without a status prints a diagnostic
-and returns 1. -/
+for it (`reportEnding`). With no daemon to answer, the name's end record does once nothing else
+holds the name: how the last session's program ended, or 127, as a shell's `wait` reports an
+unknown job, when no session has taken the name. A daemon lost during the wait leaves its own
+record, never an older one. linger's own failures, a refusal, a reply without a status or a name
+held past `heldNameMs`, print a diagnostic and return 125. -/
 private def cmdWait (name : String) : IO UInt32 := do
-  match ← Client.oneShot name .wait (untilDone := false) with
+  let deadline := (← monotonicMs) + heldNameMs
+  repeat
+    match ← Client.oneShot name .wait (untilDone := false) with
+    | some (.exited ending) =>
+      return ← reportEnding name ending
+    | some (.refused why) =>
+      IO.eprintln s!"linger: {why}"
+      return 125
+    | some .done | some .silent =>
+      IO.eprintln s!"linger: no exit status from '{name}'"
+      return 125
+    | some (.lost _) | none =>
+      match ← unanswered name with
+      | .recorded none =>
+        IO.eprintln s!"linger: no session '{name}'"
+        return 127
+      | .recorded (some outcome) =>
+        return ← reportEnding name (.outcome outcome)
+      | .held why =>
+        if (← monotonicMs) ≥ deadline then
+          IO.eprintln s!"linger: no answer for '{name}': {why}"
+          return 125
+        IO.sleep 20
+
+/-- `info`: the live session's fields; with no daemon to answer, the name and how the program of
+the last session to hold it ended, from the name's end record. No session, a refusal or a failed
+reply prints a diagnostic and returns 1. -/
+private def cmdInfo (name : String) : IO UInt32 := do
+  match ← Client.oneShot name .info (silenceMs := Client.replySilenceMs) with
+  | some result =>
+    requestStatus name result
   | none =>
-    return 0 -- no session = nothing to wait for
-  | some (.exited ending) =>
-    match ending with
-    | .outcome (.exited _) | .status _ =>
-      pure ()
-    | .outcome _ =>
-      IO.eprintln s!"linger: session '{name}' ended ({ending.describe})"
-    return ending.exitStatus
-  | some (.refused why) =>
-    IO.eprintln s!"linger: {why}"
-    return 1
-  | some (.lost why) =>
-    IO.eprintln s!"linger: {why} while waiting for '{name}'"
-    return 1
-  | some .done | some .silent =>
-    IO.eprintln s!"linger: no exit status from '{name}'"
-    return 1
+    match ← unanswered name with
+    | .recorded (some outcome) =>
+      for (k, v) in ("name", name) :: Linger.Session.outcomeFields outcome do
+        IO.println s!"{k}\t{v}"
+      return 0
+    | .recorded none =>
+      IO.eprintln s!"linger: no session '{name}'"
+      return 1
+    | .held why =>
+      IO.eprintln s!"linger: no answer for '{name}': {why}"
+      return 1
 
 /-- `get`: print the session's labels as `key=value` lines from one info reply. No
 session, or a failed reply, prints a diagnostic and returns 1. -/
@@ -545,6 +608,7 @@ def main (args : List String) : IO UInt32 := do
   match args with
   | "__daemon" :: name :: cwd :: cmd =>
     Daemon.serve name cwd cmd (Resume.saveCkpt name) (Resume.dropCkpt name) (Resume.loadCkpt name)
+        (Record.save name)
     return 0
   | "attach" :: rest | "a" :: rest =>
     attachArgs rest
@@ -571,7 +635,7 @@ def main (args : List String) : IO UInt32 := do
   | ["kill", name] | ["k", name] =>
     withTarget "kill" name [] (requireLiveSend · .kill)
   | ["info", name] | ["i", name] =>
-    withTarget "info" name [] (requireLive · .info Client.replySilenceMs)
+    withTarget "info" name [] cmdInfo
   | "capture" :: rest | "c" :: rest =>
     captureArgs rest
   | ["resize", name, cs, rs] =>
@@ -590,13 +654,14 @@ def main (args : List String) : IO UInt32 := do
         IO.eprintln "usage: linger resize <name> <cols> <rows>"
         return 2
   | "wait" :: names | "w" :: names =>
+    -- as a shell's `wait` does with several jobs, the status is the last one's
     if names.isEmpty then
       IO.eprintln "usage: linger wait <name>..."
       return 2
     let some targets := names.mapM Linger.Target.Remote.parseTarget | invalidTarget
     let mut rc : UInt32 := 0
     for target in targets do
-      rc := max rc (← runTarget "wait" target [] cmdWait)
+      rc ← runTarget "wait" target [] cmdWait
     return rc
   | ["get", name] | ["g", name] =>
     withTarget "get" name [] cmdGet

@@ -99,6 +99,10 @@ def socketPath (name : String) : IO String := do
 def ckptPath (name : String) : IO String := do
   namedPath (← stateDir) name ".ckpt"
 
+/-- The name's end record (`Linger.Session.Record`), `<name>.end` in `stateDir`. -/
+def recordPath (name : String) : IO String := do
+  namedPath (← stateDir) name ".end"
+
 /-- Name-ownership lock (see `Linger.Os.Shell.flock`). Lives beside the
 socket: same directory lifetime, same 0700 permissions. Never
 unlinked — a lock file that gets unlinked stops being a lock. -/
