@@ -311,6 +311,8 @@ library_roots LingerInputTheorems '#[`Linger.Selector.Proofs.Input]' 'leanOption
 library_roots LingerFuzzy '#[`Linger.Selector.Fuzzy]' 'leanOptions := implementationOptions'
 [ "$(library_decl Linger)" = "lean_lib Linger where leanOptions := implementationOptions " ] \
   || fail "the Linger library lost implementationOptions: $(library_decl Linger)"
+[ "$(library_decl Suites)" = "lean_lib Suites where globs := #[.submodules \`Linger.Session.Suites] leanOptions := implementationOptions " ] \
+  || fail "the Suites library lost its globs or implementationOptions: $(library_decl Suites)"
 [ "$(git grep -c 'def implementationOptions : Array LeanOption := #\[⟨`linter.missingDocs, true⟩\]$' -- lakefile.lean)" = lakefile.lean:1 ] \
   || fail "implementationOptions no longer enables linter.missingDocs"
 # Proofs and fixtures build every module under their directories, so every module is
