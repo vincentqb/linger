@@ -2,6 +2,8 @@ module
 
 public import Verify.Harness
 import Linger.Session.Checkpoint
+import Linger.Session.Shell.Client
+import Linger.Session.Wire
 
 public section
 
@@ -208,6 +210,39 @@ def run : IO UInt32 :=
     IO.sleep 800
     expect ((← e.info "w" "cols") == some "80")
         "resizing the watcher's terminal does not resize the session"
+    -- 6b. a watcher may look and leave, nothing more. On its own connection, its
+    -- requests to end the session, disconnect every client or change labels are
+    -- refused, and the session keeps its program, its clients and its labels.
+    let raw ← Linger.Os.Shell.unixConnect s!"{e.dir}/w.sock"
+    expect (raw ≥ 0) "a raw watcher connects to the session"
+    let watcherFd := raw.toUInt64.toUInt32
+    Linger.Session.Shell.Client.sendMsg watcherFd (.attach 0 0)
+    expect (← waitFor 4000 (return (← e.info "w" "clients") == some "3"))
+        "the raw watcher is attached"
+    -- Everything the connection receives, decoded from its first byte.
+    let stream ← IO.mkRef ByteArray.empty
+    let refusals : IO Nat := do
+      let msgs := (({} : Linger.Session.Wire.Decoder).feed (← stream.get).toList).2
+      return (msgs.filter (· == .err "read-only".toUTF8.toList)).length
+    let refused : Linger.Session.Wire.Msg → IO Bool := fun m => do
+      let before ← refusals
+      Linger.Session.Shell.Client.sendMsg watcherFd m
+      waitFor 4000 do
+          let ready ← Linger.Os.Shell.poll #[watcherFd] #[Linger.Os.Shell.POLLIN] 100
+          if ready[0]! &&& Linger.Os.Shell.POLLIN != 0 then
+            if let some bytes← Linger.Os.Shell.read watcherFd 65536 then
+              stream.modify (· ++ bytes)
+          return (← refusals) == before + 1
+    expect (← refused .detachAll) "a watcher's request to disconnect every client is refused"
+    expect (← refused (.labelSet "owner=watcher".toUTF8.toList))
+        "a watcher's request to set a label is refused"
+    expect (← refused .kill) "a watcher's request to end the session is refused"
+    expect
+        ((← e.info "w" "clients") == some "3" && (← e.info "w" "label.owner") == none &&
+          has (← e.out #["ls"]) "w")
+        "the session keeps its program, its clients and its labels"
+    Linger.Os.Shell.close watcherFd
+    expect (← waitFor 4000 (return (← e.info "w" "clients") == some "2")) "the raw watcher left"
     -- 7/8. a watcher is not the size owner, so `linger resize` still applies.
     -- With guard A intact `sizeOwner` is none and controlResize applies; with A
     -- removed the watcher owns the size and this returns 1 with "owns the size".

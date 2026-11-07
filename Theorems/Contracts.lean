@@ -99,8 +99,9 @@ example (s : Session.State) (c : Session.Client) (bs : List UInt8)
 example (s : Session.State) (id : Nat) (chunks : List (List UInt8)) {c : Session.Client}
     (hc : s.client? id = some c) (attached : c.attached = true) (watcher : c.sizer = false) :
     (Session.run s (chunks.map (Session.Event.bytes id))).1.terminal = s.terminal ∧
+      (Session.run s (chunks.map (Session.Event.bytes id))).1.labelList = s.labelList ∧
       ∀ eff ∈ (Session.run s (chunks.map (Session.Event.bytes id))).2,
-        (∀ bytes, eff ≠ .writePty bytes) ∧ ∀ cols rows, eff ≠ .resizePty cols rows := by
+        (∃ m, eff = .send id m) ∨ eff = .close id ∨ eff = .checkpoint := by
   with_reducible exact Session.run_readonly s id chunks hc attached watcher
 
 -- Listing rows

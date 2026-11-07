@@ -93,39 +93,46 @@ key is the payload through `labelText` (invalid bytes → `""`, which matches no
 `.labelSet` can store since it rejects an empty key), the store is filtered, and
 the only effect is `.done`. `rfl`, so a smuggled side effect — a vt touch, a
 `.err`, an append — breaks it. -/
-theorem onMsg_labelUnset (s : State) (c : Client) (k : List UInt8) :
+theorem onMsg_labelUnset (s : State) (c : Client) (k : List UInt8)
+    (control : (c.attached && !c.sizer) = false) :
     onMsg s c (.labelUnset k) =
       ({ s with
           labels := s.labels.filter (fun kv => kv.1 != labelText k), dirty := true },
-        [.send c.id .done]) := rfl
+        [.send c.id .done]) := by
+  simp [onMsg, control]
 
 /-- …and the consequence, stated where a reader looks for it: after an unset, no
 label carries that key. This is the promise; the shape above is how it is kept. -/
-theorem onMsg_labelUnset_gone (s : State) (c : Client) (k : List UInt8) :
+theorem onMsg_labelUnset_gone (s : State) (c : Client) (k : List UInt8)
+    (control : (c.attached && !c.sizer) = false) :
     ∀ kv ∈ (onMsg s c (.labelUnset k)).1.labels, kv.1 ≠ labelText k := by
   intro kv hkv
-  simp only [onMsg, List.mem_filter, bne_iff_ne] at hkv
+  rw [onMsg_labelUnset s c k control] at hkv
+  simp only [List.mem_filter, bne_iff_ne] at hkv
   exact hkv.2
 
 /-- …and it removes *only* that key: every other label survives. Without this,
 `onMsg_labelUnset_gone` is satisfied by an arm that clears the whole store — the
 vacuity that makes a removal claim worthless. -/
 theorem onMsg_labelUnset_keeps (s : State) (c : Client) (k : List UInt8) (kv : String × String)
-    (hmem : kv ∈ s.labels) (hne : kv.1 ≠ labelText k) :
+    (control : (c.attached && !c.sizer) = false) (hmem : kv ∈ s.labels) (hne : kv.1 ≠ labelText k) :
     kv ∈ (onMsg s c (.labelUnset k)).1.labels := by
-  simp only [onMsg, List.mem_filter, bne_iff_ne]
+  rw [onMsg_labelUnset s c k control]
+  simp only [List.mem_filter, bne_iff_ne]
   exact ⟨hmem, hne⟩
 
 /-- **`linger clear` empties the store and marks it for checkpointing.** -/
-theorem onMsg_labelClear (s : State) (c : Client) :
+theorem onMsg_labelClear (s : State) (c : Client) (control : (c.attached && !c.sizer) = false) :
     onMsg s c .labelClear =
       ({ s with
           labels := [], dirty := true },
-        [.send c.id .done]) := rfl
+        [.send c.id .done]) := by
+  simp [onMsg, control]
 
 /-- …the consequence, so the name a reader greps for states the fact. -/
-theorem onMsg_labelClear_empty (s : State) (c : Client) :
-    (onMsg s c .labelClear).1.labels = [] := rfl
+theorem onMsg_labelClear_empty (s : State) (c : Client)
+    (control : (c.attached && !c.sizer) = false) : (onMsg s c .labelClear).1.labels = [] := by
+  rw [onMsg_labelClear s c control]
 
 /-! ## §Detach -/
 
@@ -139,6 +146,13 @@ theorem closeClient_last_dirty (s : State) (id : Nat) (hd : s.dirty = true)
 
 @[simp]
 theorem closeClient_vt (s : State) (id : Nat) : (closeClient s id).1.vt = s.vt := by
+  unfold closeClient
+  dsimp only
+  split <;> rfl
+
+/-- Closing a connection leaves the labels alone. -/
+@[simp]
+theorem closeClient_labels (s : State) (id : Nat) : (closeClient s id).1.labels = s.labels := by
   unfold closeClient
   dsimp only
   split <;> rfl
@@ -263,11 +277,12 @@ did not ask for — and a `.done` to the requester last, after the closes, so th
 caller's own socket is not shut before its reply is queued. `rfl`, so dropping
 the filter, reordering the `.done`, or closing the roster instead of the
 attached subset each break it. -/
-theorem onMsg_detachAll (s : State) (c : Client) :
+theorem onMsg_detachAll (s : State) (c : Client) (control : (c.attached && !c.sizer) = false) :
     onMsg s c .detachAll =
       (s,
         (s.clients.filter (·.attached) |>.map (fun c' => Effect.close c'.id)) ++
-          [.send c.id .done]) := rfl
+          [.send c.id .done]) := by
+  simp [onMsg, control]
 
 /-- Attach only resizes: the scrollback — the session's history — is
 untouched by any attach/detach cycle (observer or not). -/
@@ -1881,14 +1896,17 @@ theorem events_observed (s : State) (id : Nat) (chunk : List UInt8) :
 
 /-! ## Read-only clients
 
-An attached client that did not give a size is a watcher: whatever bytes it sends, however
-chunked, never write to the pty, resize it or change the terminal. Its records stay watchers'
-across the trace: no message detaches it or makes it a sizer, and a decoder error removes
-every record with its identifier. -/
+An attached client that did not give a size is a watcher. Whatever bytes it sends, however
+chunked, leave the terminal and the labels alone, and every effect they cause is a message to
+it, its own disconnection or a checkpoint: it can look and leave, and nothing else. Its records
+stay watchers' across the trace: no message detaches it or makes it a sizer, and a decoder error
+removes every record with its identifier. -/
 
-/-- An effect that writes to the pty or resizes it. -/
-def touchesPty : Effect Plan → Bool
-  | .writePty _ | .resizePty _ _ => true
+/-- An effect a watcher's bytes may cause: a message to it, its own disconnection, or a
+checkpoint. -/
+def watcherEffect (id : Nat) : Effect Plan → Bool
+  | .send to _ | .close to => to == id
+  | .checkpoint => true
   | _ => false
 
 /-- Every record the identifier finds is attached and gave no size. -/
@@ -1961,15 +1979,15 @@ theorem onMsg_watcher_record (s : State) (c : Client) (m : Msg) (hc : s.client? 
     repeat' split
     all_goals exact hc
 
-/-- A message from a watcher adds no pty effect. -/
-theorem onMsg_watcher_quiet (s : State) (c : Client) (m : Msg) (ha : c.attached = true)
-    (hs : c.sizer = false) : (onMsg s c m).2.all (!touchesPty ·) = true := by
+/-- Every effect of a watcher's message is a message to it. -/
+theorem onMsg_watcher_own (s : State) (c : Client) (m : Msg) (ha : c.attached = true)
+    (hs : c.sizer = false) : (onMsg s c m).2.all (watcherEffect c.id) = true := by
   cases m
   all_goals
     unfold onMsg resizeOwned resize controlResize infoMsgs
     dsimp only
     repeat' split
-  all_goals simp_all [touchesPty, outputMsgs]
+  all_goals simp_all [watcherEffect, outputMsgs]
 
 /-- A message from a watcher leaves the terminal alone. -/
 theorem onMsg_watcher_vt (s : State) (c : Client) (m : Msg) (ha : c.attached = true)
@@ -1981,55 +1999,69 @@ theorem onMsg_watcher_vt (s : State) (c : Client) (m : Msg) (ha : c.attached = t
     repeat' split
   all_goals simp_all [State.setClient]
 
-/-- A message batch from a watcher keeps its records watchers', leaves the terminal alone and
-adds no pty effect. -/
+/-- A message from a watcher leaves the labels alone. -/
+theorem onMsg_watcher_labels (s : State) (c : Client) (m : Msg) (ha : c.attached = true)
+    (hs : c.sizer = false) : (onMsg s c m).1.labels = s.labels := by
+  cases m
+  all_goals
+    unfold onMsg resizeOwned resize
+    dsimp only
+    repeat' split
+  all_goals simp_all [State.setClient]
+
+/-- A message batch from a watcher keeps its records watchers', leaves the terminal and the
+labels alone, and adds only effects a watcher may cause. -/
 theorem feedMsgs_watcher (id : Nat) (msgs : List Msg) (acc : State × List (Effect Plan))
-    (hw : Watches acc.1 id) (hq : acc.2.all (!touchesPty ·) = true) :
+    (hw : Watches acc.1 id) (hq : acc.2.all (watcherEffect id) = true) :
     Watches (feedMsgs id msgs acc).1 id ∧
       (feedMsgs id msgs acc).1.vt = acc.1.vt ∧
-      (feedMsgs id msgs acc).2.all (!touchesPty ·) = true := by
+      (feedMsgs id msgs acc).1.labels = acc.1.labels ∧
+      (feedMsgs id msgs acc).2.all (watcherEffect id) = true := by
   apply
     feedMsgs_induct id msgs acc (P := fun r =>
-      Watches r.1 id ∧ r.1.vt = acc.1.vt ∧ r.2.all (!touchesPty ·) = true) ?_ ⟨hw, rfl, hq⟩
-  intro r c m _ _ _ hc ⟨hw', hvt, hq'⟩
+      Watches r.1 id ∧
+        r.1.vt = acc.1.vt ∧ r.1.labels = acc.1.labels ∧ r.2.all (watcherEffect id) = true)
+      ?_ ⟨hw, rfl, rfl, hq⟩
+  intro r c m _ _ _ hc ⟨hw', hvt, hlb, hq'⟩
   have hid : c.id = id := client?_id hc
   subst hid
   obtain ⟨ha, hs⟩ := hw' c hc
   obtain ⟨c', hc', ha', hs'⟩ := onMsg_watcher_record r.1 c m hc ha
-  refine ⟨?_, ?_, ?_⟩
+  refine ⟨?_, ?_, ?_, ?_⟩
   · intro c'' h''
     rw [hc'] at h''
     cases h''
     exact ⟨ha'.trans ha, hs'.trans hs⟩
   · rw [onMsg_watcher_vt r.1 c m ha hs, hvt]
-  · simp [List.all_append, hq', onMsg_watcher_quiet r.1 c m ha hs]
+  · rw [onMsg_watcher_labels r.1 c m ha hs, hlb]
+  · simp [List.all_append, hq', onMsg_watcher_own r.1 c m ha hs]
 
-/-- One read from a watcher keeps its records watchers', leaves the terminal alone and adds no
-pty effect. -/
+/-- One read from a watcher keeps its records watchers', leaves the terminal and the labels
+alone, and adds only effects a watcher may cause. -/
 theorem step_bytes_watcher (s : State) (id : Nat) (chunk : List UInt8) (hw : Watches s id) :
     Watches (step s (.bytes id chunk)).1 id ∧
       (step s (.bytes id chunk)).1.vt = s.vt ∧
-      (step s (.bytes id chunk)).2.all (!touchesPty ·) = true := by
+      (step s (.bytes id chunk)).1.labels = s.labels ∧
+      (step s (.bytes id chunk)).2.all (watcherEffect id) = true := by
   unfold step
   dsimp only
   split
-  · exact ⟨hw, rfl, rfl⟩
+  · exact ⟨hw, rfl, rfl, rfl⟩
   · rename_i c hc
     obtain ⟨ha, hs⟩ := hw c hc
     have hid : c.id = id := client?_id hc
     split
-    · refine ⟨fun c' h' => ?_, closeClient_vt s id, ?_⟩
+    · refine ⟨fun c' h' => ?_, closeClient_vt s id, closeClient_labels s id, ?_⟩
       · rw [closeClient_client?] at h'
         cases h'
       · have hcl : ∀ e ∈ (closeClient s id).2, e = .checkpoint := by
           unfold closeClient; dsimp only; split <;> simp
-        have hq : (closeClient s id).2.all (!touchesPty ·) = true := by
+        have hq : (closeClient s id).2.all (watcherEffect id) = true := by
           rw [List.all_eq_true]
           intro e he
           rw [hcl e he]
           rfl
-        simp only [List.all_cons, hq, Bool.and_true]
-        rfl
+        simp [List.all_cons, hq, watcherEffect]
     · have hw0 :=
         watches_setClient (c :=
           { c with
@@ -2043,33 +2075,42 @@ theorem step_bytes_watcher (s : State) (id : Nat) (chunk : List UInt8) (hw : Wat
             [])
           hw0 rfl
 
-/-- Bytes from a watcher, however chunked, leave the terminal alone and add no pty effect. -/
+/-- Bytes from a watcher, however chunked, leave the terminal and the labels alone and add only
+effects a watcher may cause. -/
 theorem run_bytes_watcher (s : State) (id : Nat) (chunks : List (List UInt8)) (hw : Watches s id) :
     (run s (chunks.map (Event.bytes id))).1.vt = s.vt ∧
-      (run s (chunks.map (Event.bytes id))).2.all (!touchesPty ·) = true := by
+      (run s (chunks.map (Event.bytes id))).1.labels = s.labels ∧
+      (run s (chunks.map (Event.bytes id))).2.all (watcherEffect id) = true := by
   induction chunks generalizing s with
-  | nil => exact ⟨rfl, rfl⟩
-  | cons chunk rest ih =>
-    obtain ⟨hw', hvt, hq⟩ := step_bytes_watcher s id chunk hw
-    obtain ⟨hvt', hq'⟩ := ih (step s (.bytes id chunk)).1 hw'
+  | nil => exact ⟨rfl, rfl, rfl⟩
+  | cons chunk rest
+    ih =>
+    obtain ⟨hw', hvt, hlb, hq⟩ := step_bytes_watcher s id chunk hw
+    obtain ⟨hvt', hlb', hq'⟩ := ih (step s (.bytes id chunk)).1 hw'
     simp only [List.map_cons, run]
-    exact ⟨hvt'.trans hvt, by simp [List.all_append, hq, hq']⟩
+    exact ⟨hvt'.trans hvt, hlb'.trans hlb, by simp [List.all_append, hq, hq']⟩
 
-/-- **An attached client that gave no size cannot drive the session**: whatever bytes it sends,
-however chunked, never write to the pty, resize it or change the terminal. -/
+/-- **A watcher can look and leave, and nothing else**: whatever bytes it sends, however
+chunked, leave the terminal and the labels unchanged, and every effect they cause is a message to
+the watcher, its own disconnection or a checkpoint. -/
 theorem run_readonly (s : State) (id : Nat) (chunks : List (List UInt8)) {c : Client}
     (hc : s.client? id = some c) (attached : c.attached = true) (watcher : c.sizer = false) :
     (run s (chunks.map (Event.bytes id))).1.terminal = s.terminal ∧
+      (run s (chunks.map (Event.bytes id))).1.labelList = s.labelList ∧
       ∀ eff ∈ (run s (chunks.map (Event.bytes id))).2,
-        (∀ bytes, eff ≠ .writePty bytes) ∧ ∀ cols rows, eff ≠ .resizePty cols rows := by
+        (∃ m, eff = .send id m) ∨ eff = .close id ∨ eff = .checkpoint := by
   have hw : Watches s id := by
     intro c' h
     rw [hc] at h
     cases h
     exact ⟨attached, watcher⟩
-  obtain ⟨hvt, hq⟩ := run_bytes_watcher s id chunks hw
-  refine ⟨hvt, fun eff he => ?_⟩
-  have hquiet := List.all_eq_true.mp hq eff he
-  refine ⟨fun bytes h => ?_, fun cols rows h => ?_⟩ <;> subst h <;> simp [touchesPty] at hquiet
+  obtain ⟨hvt, hlb, hq⟩ := run_bytes_watcher s id chunks hw
+  refine ⟨hvt, hlb, fun eff he => ?_⟩
+  have own := List.all_eq_true.mp hq eff he
+  cases eff with
+  | send to m => exact .inl ⟨m, by simp_all [watcherEffect]⟩
+  | close to => exact .inr (.inl (by simp_all [watcherEffect]))
+  | checkpoint => exact .inr (.inr rfl)
+  | _ => simp [watcherEffect] at own
 
 end Linger.Session

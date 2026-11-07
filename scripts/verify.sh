@@ -240,7 +240,7 @@ say "4. live suites (separate processes, at most four at once)"
 # No suite shares an Env directory, and the runner waits for all of them on failure.
 ./.lake/build/bin/suites --suites \
   manager:127 delivery:37 attach:50 agent:48 \
-  resume:19 watch:40 title:18 graphics:9 robust:30 \
+  resume:19 watch:47 title:18 graphics:9 robust:30 \
   interop:72 recipes:58 status:17 terminal:12 overview:15 remote:68 identity:25 \
   || fail "live suites (see $logs/linger-*.out)"
 

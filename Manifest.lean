@@ -341,10 +341,9 @@ theorem replay_cursor_rejects_silence :
 
 /-! ## 2. Authority and attribution
 
-A watcher is a client attached without a size. Not claimed yet: that a watcher cannot end the
-session, disconnect every client or change labels (the session accepts these from any
-connection); that a name has one owner (proved of a model of the lock protocol,
-`Claim.at_most_one_owner`, and tested of the daemon); and which source each reported value has. -/
+A watcher is a client attached without a size. Not claimed yet: that a name has one owner
+(proved of a model of the lock protocol, `Claim.at_most_one_owner`, and tested of the daemon),
+and which source each reported value has. -/
 
 /-- One client's bytes, however chunked, leave every other client's record unchanged. -/
 theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8)) {other : Nat}
@@ -364,30 +363,34 @@ theorem run_bytes_isolates_rejects_reset :
             s.client? other := by
   sorry
 
-/-- A watcher cannot drive the session: whatever bytes it sends, however chunked, never write to
-the pty, resize it or change the terminal. -/
+/-- A watcher can look and leave, and nothing else: whatever bytes it sends, however chunked,
+leave the terminal and the labels unchanged, and every effect they cause is a message to the
+watcher, its own disconnection or a checkpoint. -/
 theorem run_readonly (s : State) (id : Nat) (chunks : List (List UInt8)) {c : Client}
     (hc : s.client? id = some c) (attached : c.attached = true) (watcher : c.sizer = false) :
     (Session.trace Session.step s (chunks.map (Event.bytes id))).1.terminal = s.terminal ∧
+      (Session.trace Session.step s (chunks.map (Event.bytes id))).1.labelList = s.labelList ∧
       ∀ eff ∈ (Session.trace Session.step s (chunks.map (Event.bytes id))).2,
-        (∀ bytes, eff ≠ .writePty bytes) ∧ ∀ cols rows, eff ≠ .resizePty cols rows := by
+        (∃ m, eff = .send id m) ∨ eff = .close id ∨ eff = .checkpoint := by
   sorry
 
-/-- `run_readonly` rejects a session that writes to the pty for every event, a watcher's
-included. -/
-theorem run_readonly_rejects_writer :
+/-- `run_readonly` rejects a session that ends itself on any event, a watcher's included. -/
+theorem run_readonly_rejects_kill :
     ¬∀ (s : State) (id : Nat) (chunks : List (List UInt8)) {c : Client},
         (fun (_ : State) (i : Nat) => some ({ id := i, attached := true } : Client)) s id = some c →
           c.attached = true →
           c.sizer = false →
-          (Session.trace (fun s _ => (s, ([.writePty []] : List (Effect Replay.Plan)))) s
+          (Session.trace (fun s _ => (s, ([.killChild] : List (Effect Replay.Plan)))) s
                   (chunks.map (Event.bytes id))).1.terminal =
               s.terminal ∧
+            (Session.trace (fun s _ => (s, ([.killChild] : List (Effect Replay.Plan)))) s
+                  (chunks.map (Event.bytes id))).1.labelList =
+              s.labelList ∧
             ∀
               eff ∈
-                (Session.trace (fun s _ => (s, ([.writePty []] : List (Effect Replay.Plan)))) s
+                (Session.trace (fun s _ => (s, ([.killChild] : List (Effect Replay.Plan)))) s
                     (chunks.map (Event.bytes id))).2,
-              (∀ bytes, eff ≠ .writePty bytes) ∧ ∀ cols rows, eff ≠ .resizePty cols rows := by
+              (∃ m, eff = .send id m) ∨ eff = .close id ∨ eff = .checkpoint := by
   sorry
 
 /-! ## 3. Exactness

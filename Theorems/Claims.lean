@@ -212,28 +212,35 @@ theorem run_bytes_isolates_rejects_reset :
 theorem run_readonly (s : State) (id : Nat) (chunks : List (List UInt8)) {c : Client}
     (hc : s.client? id = some c) (attached : c.attached = true) (watcher : c.sizer = false) :
     (Session.trace Session.step s (chunks.map (Event.bytes id))).1.terminal = s.terminal ∧
+      (Session.trace Session.step s (chunks.map (Event.bytes id))).1.labelList = s.labelList ∧
       ∀ eff ∈ (Session.trace Session.step s (chunks.map (Event.bytes id))).2,
-        (∀ bytes, eff ≠ .writePty bytes) ∧ ∀ cols rows, eff ≠ .resizePty cols rows := by
+        (∃ m, eff = .send id m) ∨ eff = .close id ∨ eff = .checkpoint := by
   rw [Session.trace_step]
   exact Session.run_readonly s id chunks hc attached watcher
 
-theorem run_readonly_rejects_writer :
+theorem run_readonly_rejects_kill :
     ¬∀ (s : State) (id : Nat) (chunks : List (List UInt8)) {c : Client},
         (fun (_ : State) (i : Nat) => some ({ id := i, attached := true } : Client)) s id = some c →
           c.attached = true →
           c.sizer = false →
-          (Session.trace (fun s _ => (s, ([.writePty []] : List (Effect Replay.Plan)))) s
+          (Session.trace (fun s _ => (s, ([.killChild] : List (Effect Replay.Plan)))) s
                   (chunks.map (Event.bytes id))).1.terminal =
               s.terminal ∧
+            (Session.trace (fun s _ => (s, ([.killChild] : List (Effect Replay.Plan)))) s
+                  (chunks.map (Event.bytes id))).1.labelList =
+              s.labelList ∧
             ∀
               eff ∈
-                (Session.trace (fun s _ => (s, ([.writePty []] : List (Effect Replay.Plan)))) s
+                (Session.trace (fun s _ => (s, ([.killChild] : List (Effect Replay.Plan)))) s
                     (chunks.map (Event.bytes id))).2,
-              (∀ bytes, eff ≠ .writePty bytes) ∧ ∀ cols rows, eff ≠ .resizePty cols rows := by
+              (∃ m, eff = .send id m) ∨ eff = .close id ∨ eff = .checkpoint := by
   intro h
-  obtain ⟨-, effects⟩ :=
+  obtain ⟨-, -, effects⟩ :=
     @h (State.boot (Vt.Vt.init 1 1) [] []) 0 [[]] { id := 0, attached := true } rfl rfl rfl
-  exact (effects (.writePty []) (by simp [Session.trace])).1 [] rfl
+  rcases effects .killChild (by simp [Session.trace]) with ⟨_, sent⟩ | closed | saved
+  · cases sent
+  · cases closed
+  · cases saved
 
 theorem check_eq_some_iff (s result : String) :
     Name.check s = some result ↔ result = s ∧ Name.Valid s := Name.check_eq_some_iff s result

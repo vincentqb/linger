@@ -11,7 +11,7 @@
     "Linger.Claims.run_bytes_isolates",
     "Linger.Claims.run_bytes_isolates_rejects_reset",
     "Linger.Claims.run_readonly",
-    "Linger.Claims.run_readonly_rejects_writer",
+    "Linger.Claims.run_readonly_rejects_kill",
     "Linger.Claims.check_eq_some_iff",
     "Linger.Claims.check_eq_some_iff_rejects_any",
     "Linger.Claims.command_argv",

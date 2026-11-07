@@ -309,7 +309,9 @@ private def broadcast (s : State) (bytes : List UInt8) : List (Effect Plan) :=
 
 /-! ## Message handling (client → daemon) -/
 
-/-- Handle one client message; one query per read is answered (`Client.answered`). -/
+/-- Handle one client message; one query per read is answered (`Client.answered`). A watcher, an
+attached client that gave no size, may look and leave: its keystrokes are dropped and its
+requests to disconnect every client, end the session or change labels are refused. -/
 private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Plan) :=
   match m with
   | .attach cols rows =>
@@ -349,8 +351,13 @@ private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Pla
         let c := { c with answered := true }
         controlResize (s.setClient c) c cols rows
   | .detachAll =>
-    (s, (s.clients.filter (·.attached) |>.map (fun c' => Effect.close c'.id)) ++ [.send c.id .done])
-  | .kill => (s, [.killChild, .dropCheckpoint, .exit])
+    if c.attached && !c.sizer then (s, [.send c.id (.err "read-only".toUTF8.toList)])
+    else
+      (s,
+        (s.clients.filter (·.attached) |>.map (fun c' => Effect.close c'.id)) ++ [.send c.id .done])
+  | .kill =>
+    if c.attached && !c.sizer then (s, [.send c.id (.err "read-only".toUTF8.toList)])
+    else (s, [.killChild, .dropCheckpoint, .exit])
   | .info =>
     if c.answered then (s, [.send c.id (.err "one request per read".toUTF8.toList)])
     else (s.setClient { c with answered := true }, infoMsgs c.id (infoText s))
@@ -375,26 +382,32 @@ private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Pla
     | some st => (s, [.send c.id (.exited st)])
     | none => (s.setClient { c with waiting := true }, [])
   | .labelSet kv =>
-    let parts := (labelText kv).splitOn "="
-    let k := parts.headD ""
-    if k.isEmpty then (s, [.send c.id (.err "empty label key".toUTF8.toList)])
+    if c.attached && !c.sizer then (s, [.send c.id (.err "read-only".toUTF8.toList)])
     else
-      let v := String.intercalate "=" parts.tail
-      let labels := (s.labels.filter (·.1 != k)) ++ [(k, v)]
-      if labels.length > maxLabels then (s, [.send c.id (.err "too many labels".toUTF8.toList)])
+      let parts := (labelText kv).splitOn "="
+      let k := parts.headD ""
+      if k.isEmpty then (s, [.send c.id (.err "empty label key".toUTF8.toList)])
       else
-        ({ s with
-            labels, dirty := true },
-          [.send c.id .done])
+        let v := String.intercalate "=" parts.tail
+        let labels := (s.labels.filter (·.1 != k)) ++ [(k, v)]
+        if labels.length > maxLabels then (s, [.send c.id (.err "too many labels".toUTF8.toList)])
+        else
+          ({ s with
+              labels, dirty := true },
+            [.send c.id .done])
   | .labelUnset k =>
-    let txt := labelText k
-    ({ s with
-        labels := s.labels.filter (·.1 != txt), dirty := true },
-      [.send c.id .done])
+    if c.attached && !c.sizer then (s, [.send c.id (.err "read-only".toUTF8.toList)])
+    else
+      let txt := labelText k
+      ({ s with
+          labels := s.labels.filter (·.1 != txt), dirty := true },
+        [.send c.id .done])
   | .labelClear =>
-    ({ s with
-        labels := [], dirty := true },
-      [.send c.id .done])
+    if c.attached && !c.sizer then (s, [.send c.id (.err "read-only".toUTF8.toList)])
+    else
+      ({ s with
+          labels := [], dirty := true },
+        [.send c.id .done])
   -- daemon-to-client vocabulary arriving at the daemon, and unknown
   -- tags: dropped without a trace (§Frame, machine half)
   | .output _ | .exited _ | .infoReply _ | .done | .err _ => (s, [])
