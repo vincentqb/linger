@@ -84,7 +84,7 @@ say "1. build (program + theorems + tests + audit)"
 # Lake checks source/dependency content and replays cached diagnostics. Rehash
 # artifacts too, and fail on warnings even after a local warningAsError override.
 # Run `./lake clean` first for clean release/compiler validation. The list holds every
-# default target (scripts/gates.sh checks), so a fresh checkout runs the LeanEvidence audit
+# default target (scripts/gates.sh checks), so a fresh checkout runs the Lean Software Challenge audit
 # here, as a local `./lake build` does.
 ./lake --rehash --wfail build Linger LingerVt LingerVtTheorems LingerInput LingerInputTheorems \
     LingerFuzzy Theorems Tests Suites linger lingertest suites audit > "$logs/build.log" 2>&1 \

@@ -1,7 +1,7 @@
 module
 
 public import Linger.Terminal.Spec
-import LeanEvidence.Commands
+import SoftwareChallenge.Commands
 
 public section
 

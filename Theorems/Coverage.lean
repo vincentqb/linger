@@ -30,7 +30,7 @@ import all Theorems.Claims
 import all Theorems.Contracts
 public meta import Lean.Elab.Command
 import Lean.Parser.Command
-meta import LeanEvidence.Commands -- shake: keep
+meta import SoftwareChallenge.Commands -- shake: keep
 public meta import Lean.Compiler.CSimpAttr
 import Lean.Compiler.CSimpAttr
 

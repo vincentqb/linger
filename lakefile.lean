@@ -7,8 +7,8 @@ package linger where leanOptions :=
     ⟨`linter.extra.unreachableTactic, true⟩, ⟨`linter.redundantVisibility, true⟩,
     ⟨`linter.extra.unnecessarySeqFocus, true⟩]
 
-require lean_evidence from git
-  "https://github.com/vincentqb/lean-evidence"@"eb5c88a365d1541c3d626beb63cfd8cea76580b4"
+require software_challenge from git
+  "https://github.com/vincentqb/lean-software-challenge"@"bf9fcf91ab57cc1c8f11ffdd4c4d3403e86bf214"
 
 /-- Options for every library but `Verify`: Lake builds a module with the options of one library
 that contains it, and these libraries overlap, so they share a single set. With the package's
@@ -97,9 +97,9 @@ lean_lib Manifest where leanOptions := #[⟨`warn.sorry, false⟩, ⟨`linter.mi
 
 @[default_target] lean_exe linger where root := `Main
 
-/-- The LeanEvidence audit of every module the default targets build. -/
+/-- The Lean Software Challenge audit of every module the default targets build. -/
 @[default_target] target audit pkg : Unit := do
-  return (← pkg.fetchFacetJob `leanEvidence).map (fun _ => ())
+  return (← pkg.fetchFacetJob `softwareChallenge).map (fun _ => ())
 
 /-- Build and run the complete verifier, including live pty suites. -/
 @[test_driver] script test do

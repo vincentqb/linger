@@ -3,7 +3,7 @@ module
 import Verify.Harness
 public import Linger.Session.Shell.Daemon
 import Linger.Session.Tests.Delivery
-import LeanEvidence.Commands
+import SoftwareChallenge.Commands
 
 public section
 

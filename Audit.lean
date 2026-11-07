@@ -1,14 +1,14 @@
 module
 
-public meta import LeanEvidence.Audit
+public meta import SoftwareChallenge.Audit
 
-/-- The LeanEvidence audit. A module takes the role of the longest prefix listed here. The
-`Linger` entry covers the umbrella module, which only gathers the session library for the
-build, and any module no longer prefix covers: as tooling, none of its code can run in the
-program, so a new component joins the program only once it is listed. -/
+/-- The Lean Software Challenge audit. A module takes the role of the longest prefix listed
+here. The `Linger` entry covers the umbrella module, which only gathers the session library
+for the build, and any module no longer prefix covers: as tooling, none of its code can run in
+the program, so a new component joins the program only once it is listed. -/
 public meta def main : List String → IO Unit :=
-  LeanEvidence.Audit.run
-    { trusted := #[`Init, `Std, `Lean, `LeanEvidence]
+  SoftwareChallenge.Audit.run
+    { trusted := #[`Init, `Std, `Lean, `SoftwareChallenge]
       layers :=
         #[(`Linger, .tooling), (`Main, .shell), (`Theorems, .tooling), (`Verify, .tooling),
           (`Linger.App, .core), (`Linger.Display, .core), (`Linger.Import, .core),
