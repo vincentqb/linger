@@ -9,7 +9,8 @@ errno only; object arguments are borrowed `@&`, so the shim never manages refcou
 Nothing here has a Lean body to prove. Every declaration is private: `Linger.Os.Shell`,
 the one module that imports this one, wraps each binding under the same name, checks the
 arguments the C side cannot represent, and states the contract in the wrapper's docstring.
-`Linger.Os.Suites.Shim` and the live suites exercise those contracts. -/
+A binding that signals or waits for a process takes a proof that its pid is a real one, which
+the C call never sees. `Linger.Os.Suites.Shim` and the live suites exercise those contracts. -/
 
 namespace Linger.Os.Boundary
 
@@ -65,16 +66,17 @@ private opaque spawnDetached (prog : @& String) (args : @& Array String) (logPat
     IO UInt32
 
 @[extern "linger_kill"]
-private opaque kill (pid sig : UInt32) : IO Unit
+private opaque kill (pid sig : UInt32) (valid : 0 < pid ∧ pid ≤ 0x7FFFFFFF) : IO Unit
 
 @[extern "linger_alive"]
-private opaque alive (pid : UInt32) : IO Bool
+private opaque alive (pid : UInt32) (valid : 0 < pid ∧ pid ≤ 0x7FFFFFFF) : IO Bool
 
 @[extern "linger_waitpid_nohang"]
-private opaque waitpidNohang (pid : UInt32) (keep : Bool) : IO Int64
+private opaque waitpidNohang (pid : UInt32) (keep : Bool) (valid : 0 < pid ∧ pid ≤ 0x7FFFFFFF) :
+    IO Int64
 
 @[extern "linger_signal_session"]
-private opaque signalSession (sid sig : UInt32) : IO UInt32
+private opaque signalSession (sid sig : UInt32) (valid : 0 < sid ∧ sid ≤ 0x7FFFFFFF) : IO UInt32
 
 @[extern "linger_getuid"]
 private opaque getuid : IO UInt32

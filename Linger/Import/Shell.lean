@@ -429,7 +429,7 @@ private def snapshot : IO (List (String × String)) := do
               | throw (IO.userError s!"could not read live session: {name}")
             unless pid < UInt32.size do
               throw (IO.userError s!"invalid process id for session: {name}")
-            Linger.Os.Shell.checkPid "export" pid.toUInt32
+            discard <| Linger.Os.Shell.checkPid "export" pid.toUInt32
             Linger.Os.Shell.getcwdOf pid.toUInt32
       unless !dir.isEmpty && (System.FilePath.mk dir).isAbsolute do
         throw (IO.userError s!"could not read working directory for session: {name}")

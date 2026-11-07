@@ -219,21 +219,22 @@ def spawnDetached (prog : String) (args : Array String) (logPath : String) : IO 
   Boundary.spawnDetached prog args logPath
 
 /-- POSIX reads `0` as "every process in my group" and a negative `pid_t` as a
-process group, so the process wrappers below accept only a real pid. An
-out-of-range `UInt32` becomes negative in the C cast, which is the same hazard. -/
-def checkPid (what : String) (pid : UInt32) : IO Unit := do
-  if pid == 0 || pid > 0x7FFFFFFF then
-    throw (IO.userError s!"{what}: {pid} is not a process id (0 and negative values are selectors)")
+process group, so the process bindings take a proof that the pid is neither, which this check
+returns. An out-of-range `UInt32` becomes negative in the C cast, which is the same hazard. -/
+def checkPid (what : String) (pid : UInt32) : IO (PLift (0 < pid ∧ pid ≤ 0x7FFFFFFF)) := do
+  if valid : 0 < pid ∧ pid ≤ 0x7FFFFFFF then
+    return ⟨valid⟩
+  throw (IO.userError s!"{what}: {pid} is not a process id (0 and negative values are selectors)")
 
 /-- kill(2); ESRCH (already gone) is not an error, and other failures throw. -/
 def kill (pid sig : UInt32) : IO Unit := do
-  checkPid "kill" pid
-  Boundary.kill pid sig
+  let ⟨valid⟩ ← checkPid "kill" pid
+  Boundary.kill pid sig valid
 
 /-- kill(pid, 0): is the process alive (and visible to us)? -/
 def alive (pid : UInt32) : IO Bool := do
-  checkPid "alive" pid
-  Boundary.alive pid
+  let ⟨valid⟩ ← checkPid "alive" pid
+  Boundary.alive pid valid
 
 /-- What a non-blocking wait for a child found. -/
 inductive Reaped where
@@ -249,8 +250,8 @@ inductive Reaped where
 
 /-- A non-blocking wait for the child `pid`, which reaps it once it has ended unless `keep`. -/
 private def waitNohang (what : String) (pid : UInt32) (keep : Bool) : IO Reaped := do
-  checkPid what pid
-  let status ← Boundary.waitpidNohang pid keep
+  let ⟨valid⟩ ← checkPid what pid
+  let status ← Boundary.waitpidNohang pid keep valid
   if status == -1 then
     return .running
   if status < 0 then
@@ -274,8 +275,8 @@ child, unreaped meanwhile (`peekNohang`), so no other session can have the id. O
 that changes hands between the session read and the signal is never signalled; on macOS, and on
 Linux before 5.3, that window remains. A process of another user is not reached. -/
 def signalSession (sid sig : UInt32) : IO UInt32 := do
-  checkPid "signalSession" sid
-  Boundary.signalSession sid sig
+  let ⟨valid⟩ ← checkPid "signalSession" sid
+  Boundary.signalSession sid sig valid
 
 /-- WNOHANG waitpid as a shell reports it. `-1` the requested child is still running; `-2` it
 is not reapable, as for `reapNohang`; `≥ 0` the exit status, 128 plus the signal's number if

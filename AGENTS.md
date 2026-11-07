@@ -110,8 +110,8 @@ Lean erases proofs regardless of file placement.
   stays private in `Linger/Os/Boundary.lean`, which declares nothing else, and
   `Linger/Os/Shell.lean` wraps each one: it is the surface callers use. Keep the shim
   to syscalls and errno.
-  Return `-errno`, avoid numeric errno values in Lean, and validate signal PIDs
-  with `Linger.Os.Shell.checkPid`.
+  Return `-errno` and avoid numeric errno values in Lean. A binding that takes a pid also
+  takes the proof `Linger.Os.Shell.checkPid` returns.
 - Validate session names without rewriting them before paths; fuzzy matching
   belongs only in interactive selection. Freeze each poll loop's fd set.
   Compose displays through `Title.compose` and `Status.summary` in the order

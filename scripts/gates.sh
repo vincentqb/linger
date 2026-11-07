@@ -1424,10 +1424,11 @@ done
 # script signals the harness, the agent running it, and whatever shell shares that
 # group — which is exactly what happened on 2026-09-15, from `kill 0 15` inside
 # `lingertest`. Scoped to the shell and the shim, because that is where nothing else
-# stops it: from Lean the call goes through `Linger.Os.Shell.checkPid`, which rejects 0
-# and every value that casts to a negative `pid_t` — a mechanism, not a grep — and
-# `Linger/Os/Suites/Shim.lean`'s `kill 0 15` is that mechanism's regression test, so including
-# Lean here would flag the assertion instead of the hazard. `kill -0 $pid` (the
+# stops it: from Lean every process binding takes the proof `Linger.Os.Shell.checkPid`
+# returns, which it gives for no 0 and no value that casts to a negative `pid_t` (a type,
+# not a grep), and `Linger/Os/Suites/Shim.lean`'s `kill 0 15` is that mechanism's
+# regression test, so including Lean here would flag the assertion instead of the hazard.
+# `kill -0 $pid` (the
 # liveness probe) is a signal flag, not a target, and is deliberately not matched.
 ! code_grep 'kill([[:space:]]+-[A-Za-z0-9]+)*[[:space:]]+(--[[:space:]]+)?(0|-[0-9]+)([^0-9]|$)' \
     'scripts/*.sh' 'c/shim.c' 'recipes/*' \
