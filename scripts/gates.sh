@@ -934,7 +934,7 @@ code_grep "$VT_ALL_RE" '*.lean' \
 # deliberate, reviewable act — the checkpoint for "does this genuinely
 # need a syscall wrapper, or does Lean core already have it?" (see the
 # C-vs-Rust and shrink-the-shim notes in SCRATCHPAD.md).
-SHIM_CAP=21
+SHIM_CAP=22
 shim_n="$(code_count 'LEAN_EXPORT' 'c/shim.c')"
 [ "$shim_n" -le "$SHIM_CAP" ] \
   || fail "shim grew to $shim_n wrappers (cap $SHIM_CAP); justify the new syscall and bump the cap"
@@ -1206,7 +1206,7 @@ retrying="$(code_grep '(^|[^[:alnum:]_])with(Session)?LockRetrying([^[:alnum:]_]
   || fail "only the daemon's startup claim may retry a held lock: ${retrying:-no retrying claim}"
 for tie in \
   'finally close listenFd try IO[.]FS[.]removeFile sockPath catch _ => pure [(][)][[:space:]]+end Linger[.]Session[.]Shell[.]Daemon' \
-  'finally let rt ← latest[.]get for c in rt[.]conns do close c[.]fd let outcome ← endProgram rt try saveRecord [(][.]ended outcome[)]' \
+  'finally let rt ← latest[.]get for c in rt[.]conns do close c[.]fd let outcome ← stopProgram rt try saveRecord [(][.]ended outcome[)]' \
   'saveRecord [.]running let [(]pid, ptyFd[)] ← spawnPty'; do
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "daemon resource cleanup escaped its ownership lifetime: $tie"

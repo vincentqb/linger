@@ -127,6 +127,22 @@ def tcScript : String :=
 /-- A `find` result in a failure label: `-1` for absent. -/
 private def idxStr (o : Option Nat) : String := (o.map toString).getD "-1"
 
+/-- Whether the job whose pid a shell wrote to `path` ends within a few seconds. A job that
+outlives that is ended here, so a failed check leaves nothing running. -/
+private def jobEnds (path : String) : IO Bool := do
+  let pidIn : IO (Option UInt32) := do
+    try
+      return ((← IO.FS.readFile path).trimAscii.toString.toNat?).map UInt32.ofNat
+    catch _ =>
+      return none
+  unless ← waitFor 3000 (return (← pidIn).isSome) do
+    return false
+  let some job ← pidIn | return false
+  let ended ← waitFor 5000 (return !(← Linger.Os.Shell.alive job))
+  unless ended do
+    Linger.Os.Shell.kill job 9
+  return ended
+
 /-- The attach suite: attach, detach, reattach, mirroring, waiting, hand-back and
 scrollback. -/
 def run : IO UInt32 :=
@@ -214,19 +230,15 @@ def run : IO UInt32 :=
     let (termRc, _, termErr) ← e.cli #["wait", "w3"]
     expect (termRc == 143 && has termErr "killed by signal 15")
         s!"wait reports a death by signal (rc={termRc})"
-    -- The session ends with its program, even while a background job holds its terminal.
+    -- The session ends with its program, even while a background job holds its terminal, and
+    -- the job ends with it.
     let jobFile := s!"{e.dir}/w4.job"
     let _ ←
       e.cli #["run", "w4", s!"sleep 600 & echo $! > {jobFile}; exec sh -c 'sleep 0.5; exit 3'"]
     let waited ← e.cliTimeout #["wait", "w4"] 5000
-    -- linger does not end the job yet, so the suite does
-    try
-      if let some job := (← IO.FS.readFile jobFile).trimAscii.toString.toNat? then
-        Linger.Os.Shell.kill job.toUInt32 9
-    catch _ =>
-      pure ()
-    expect (waited.map (·.1) == some 3)
-        "a session ends with its program while a background job holds its terminal"
+    let jobEnded ← jobEnds jobFile
+    expect (waited.map (·.1) == some 3 && jobEnded)
+        "a session ends with its program while a background job holds its terminal, and so does the job"
     -- A session that ended with nobody waiting still answers, from its name's end record.
     let _ ← e.cli #["run", "w5", "exec sh -c 'exit 37'"]
     let gone ← waitFor 5000 (return !has (← e.out #["list"]) "w5")
@@ -249,20 +261,35 @@ def run : IO UInt32 :=
           limitMs ≤ 2000 &&
           running)
         s!"wait --timeout stops waiting and leaves the session running ({limitMs} ms)"
-    -- kill returns once the session has ended, and the record says how.
+    -- kill returns once the session has ended, and the record says how: by its hangup.
     let (killRc, _, _) ← e.cli #["kill", "w6"]
     let (_, killedInfo, _) ← e.cli #["info", "w6"]
-    expect (killRc == 0 && has killedInfo "signal\t15")
+    expect (killRc == 0 && has killedInfo "signal\t1")
         s!"kill returns once the session has ended (rc={killRc})"
     let trapFile := s!"{e.dir}/w7.trapped"
     let _ ←
       e.cli
-          #["run", "w7", s!"exec sh -c \"trap '' TERM; : > {trapFile}; while :; do sleep 1; done\""]
+          #["run", "w7", s!"exec sh -c \"trap '' HUP; : > {trapFile}; while :; do sleep 1; done\""]
     let trapped ← waitFor 3000 (System.FilePath.pathExists trapFile)
     let (stubbornRc, _, _) ← e.cli #["kill", "w7"]
     let (_, stubbornInfo, _) ← e.cli #["info", "w7"]
     expect (trapped && stubbornRc == 0 && has stubbornInfo "signal\t9")
-        "kill ends a program that ignores SIGTERM"
+        "kill ends a program that ignores SIGHUP"
+    -- Nothing of the session's terminal session outlives it: not a background job of a shell
+    -- that kill ends, nor one that ignores SIGHUP after its program exits by itself.
+    let job8 := s!"{e.dir}/w8.job"
+    let _ ← e.cli #["run", "w8", s!"sleep 600 & echo $! > {job8}"]
+    let started ← waitFor 3000 (System.FilePath.pathExists job8)
+    let (bgKillRc, _, _) ← e.cli #["kill", "w8"]
+    let bgEnded ← jobEnds job8
+    expect (started && bgKillRc == 0 && bgEnded) "kill ends the session's background jobs"
+    let job9 := s!"{e.dir}/w9.job"
+    let _ ←
+      e.cli #["run", "w9", s!"exec sh -c \"trap '' HUP; sleep 600 & echo \\$! > {job9}; exit 37\""]
+    let (ownRc, _, _) ← e.cli #["wait", "w9"]
+    let ownEnded ← jobEnds job9
+    expect (ownRc == 37 && ownEnded)
+        s!"a session's end ends a job of its terminal session that ignores SIGHUP (rc={ownRc})"
     -- With no daemon, kill discards a saved session, and then finds none.
     let savedPath := s!"{e.dir}/w-saved.ckpt"
     IO.FS.writeBinFile savedPath

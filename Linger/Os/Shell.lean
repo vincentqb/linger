@@ -195,24 +195,22 @@ def alive (pid : UInt32) : IO Bool := do
   checkPid "alive" pid
   Boundary.alive pid
 
-/-- What a non-blocking reap of a child found. -/
+/-- What a non-blocking wait for a child found. -/
 inductive Reaped where
   /-- The child is still running. -/
   | running
-  /-- The child is not ours to reap, or is already reaped. -/
+  /-- The child is not ours to wait for, or is already reaped. -/
   | unreapable
-  /-- The child exited with this code, and is reaped. -/
+  /-- The child exited with this code. -/
   | exited (code : UInt8)
-  /-- A signal with this number killed the child, which is reaped. -/
+  /-- A signal with this number killed the child. -/
   | signaled (signal : UInt8)
   deriving Repr, DecidableEq
 
-/-- WNOHANG waitpid, saying how a reaped child ended: its exit code, or the signal that
-killed it. `unreapable` covers `ECHILD` (not our child, or already reaped) and every other
-non-`EINTR` failure alike, so a caller polls `alive` rather than waiting forever. -/
-def reapNohang (pid : UInt32) : IO Reaped := do
-  checkPid "reapNohang" pid
-  let status ← Boundary.waitpidNohang pid
+/-- A non-blocking wait for the child `pid`, which reaps it once it has ended unless `keep`. -/
+private def waitNohang (what : String) (pid : UInt32) (keep : Bool) : IO Reaped := do
+  checkPid what pid
+  let status ← Boundary.waitpidNohang pid keep
   if status == -1 then
     return .running
   if status < 0 then
@@ -220,6 +218,24 @@ def reapNohang (pid : UInt32) : IO Reaped := do
   if status < 256 then
     return .exited status.toInt.toNat.toUInt8
   return .signaled (status - 256).toInt.toNat.toUInt8
+
+/-- WNOHANG wait, saying how a reaped child ended: its exit code, or the signal that killed it.
+`unreapable` covers `ECHILD` (not our child, or already reaped) and every other non-`EINTR`
+failure alike, so a caller polls `alive` rather than waiting forever. -/
+def reapNohang (pid : UInt32) : IO Reaped := waitNohang "reapNohang" pid false
+
+/-- `reapNohang` that leaves an ended child unreaped, so its zombie keeps its pid, and with it
+the id of the session it leads, from every other process until a reap. -/
+def peekNohang (pid : UInt32) : IO Reaped := waitNohang "peekNohang" pid true
+
+/-- Send `sig` to every process whose session id is `sid`, other than `sid` itself, and return
+how many it reached; signal 0 only counts them. The caller keeps the session's leader, its
+child, unreaped meanwhile (`peekNohang`), so no other session can have the id. On Linux a pid
+that changes hands between the session read and the signal is never signalled; on macOS, and on
+Linux before 5.3, that window remains. A process of another user is not reached. -/
+def signalSession (sid sig : UInt32) : IO UInt32 := do
+  checkPid "signalSession" sid
+  Boundary.signalSession sid sig
 
 /-- WNOHANG waitpid as a shell reports it. `-1` the requested child is still running; `-2` it
 is not reapable, as for `reapNohang`; `≥ 0` the exit status, 128 plus the signal's number if

@@ -34,6 +34,15 @@
 #ifdef __APPLE__
 #include <libproc.h>   /* PROC_PIDVNODEPATHINFO: the /proc-less cwd read */
 #include <sys/stat.h>  /* stat: check that path against the cwd vnode */
+#else
+#include <dirent.h>       /* the /proc listing of linger_signal_session */
+#include <sys/syscall.h>  /* pidfd_open and pidfd_send_signal, which glibc may not wrap */
+#ifndef SYS_pidfd_open
+#define SYS_pidfd_open 434 /* the same number on x86-64 and arm64 */
+#endif
+#ifndef SYS_pidfd_send_signal
+#define SYS_pidfd_send_signal 424
+#endif
 #endif
 
 /* Hold the Lean poll bits to the ABI on each supported platform. */
@@ -751,34 +760,99 @@ LEAN_EXPORT lean_obj_res linger_alive(uint32_t pid) {
     return lean_io_result_mk_ok(lean_box(r == 0 ? 1 : 0));
 }
 
-/* linger_waitpid_nohang : UInt32 -> IO Int64
+/* linger_waitpid_nohang : UInt32 -> Bool -> IO Int64
  * -1: the requested child is still running. -2: not our child or already
  * reaped (ECHILD -- the caller then asks linger_alive). 0..255: the exit
- * code; 256+sig: killed by signal sig. Both reap the zombie, and the two
- * ranges keep an exit code apart from a signal (Linger.Os.Shell.reapNohang).
+ * code; 256+sig: killed by signal sig. The two ranges keep an exit code
+ * apart from a signal (Linger.Os.Shell.reapNohang). An ended child is
+ * reaped unless keep is set; with keep it stays waitable, so its zombie
+ * holds its pid (WNOWAIT).
  *
- * There is no fourth outcome to report: the only other errno waitpid can
- * set here is EINVAL for bad options, and the options are the constant
- * WNOHANG. Selectors (pid 0, negative pid_t) never arrive -- Linger.Os.Shell
- * .checkPid rejects them -- so a failure that is not ECHILD is answered
- * -2 rather than "running", which degrades to a liveness probe instead of
- * waiting forever on a child that cannot be reaped. */
-LEAN_EXPORT lean_obj_res linger_waitpid_nohang(uint32_t pid) {
-    int status;
-    pid_t r;
-    do { r = waitpid((pid_t)pid, &status, WNOHANG); }
+ * waitid, not waitpid, because only waitid can leave the zombie. With
+ * WNOHANG and nothing to report it returns 0 and leaves si_pid as the
+ * caller set it, hence the zeroed siginfo. There is no fourth outcome to
+ * report: the only other errno waitid can set here is EINVAL for bad
+ * options, and the options are constant. Selectors (pid 0, negative pid_t)
+ * never arrive -- Linger.Os.Shell.checkPid rejects them -- so a failure
+ * that is not ECHILD is answered -2 rather than "running", which degrades
+ * to a liveness probe instead of waiting forever on a child that cannot
+ * be reaped. */
+LEAN_EXPORT lean_obj_res linger_waitpid_nohang(uint32_t pid, uint8_t keep) {
+    siginfo_t info;
+    memset(&info, 0, sizeof info);
+    int r;
+    do { r = waitid(P_PID, (id_t)pid, &info, WEXITED | WNOHANG | (keep ? WNOWAIT : 0)); }
     while (r < 0 && errno == EINTR);
     int64_t out;
-    if (r == 0) {
-        out = -1;
-    } else if (r == (pid_t)pid) {
-        if (WIFEXITED(status)) out = WEXITSTATUS(status);
-        else if (WIFSIGNALED(status)) out = 256 + WTERMSIG(status);
-        else out = -1; /* WNOHANG without WUNTRACED: not exited, so running */
-    } else {
+    if (r < 0) {
         out = -2;
+    } else if (info.si_pid == 0) {
+        out = -1;
+    } else if (info.si_code == CLD_EXITED) {
+        out = info.si_status & 0xFF;
+    } else if (info.si_code == CLD_KILLED || info.si_code == CLD_DUMPED) {
+        out = 256 + info.si_status;
+    } else {
+        out = -1; /* WEXITED only: no other state change is reported */
     }
     return lean_io_result_mk_ok(lean_box_uint64((uint64_t)out));
+}
+
+/* linger_signal_session : UInt32 -> UInt32 -> IO UInt32
+ * Send sig (0 only tests) to every process whose session id is sid, other
+ * than sid itself, and return how many it reached. Processes of another
+ * user are not reached, and a failed listing throws.
+ *
+ * The caller keeps the session's leader, its child, unreaped meanwhile:
+ * the zombie holds the pid that is the session's id, so no other session
+ * can take that id. On Linux each process is pinned with a pidfd before
+ * its session is read, so a pid that its process gave up and another took
+ * between the read and the signal is never signalled; a kernel without
+ * pidfds (before 5.3) falls back to getsid then kill, like macOS, where
+ * that window remains. */
+LEAN_EXPORT lean_obj_res linger_signal_session(uint32_t sid, uint32_t sig) {
+    uint32_t reached = 0;
+#ifdef __APPLE__
+    int cap = proc_listallpids(NULL, 0);
+    if (cap < 0) return io_err("proc_listallpids");
+    cap += 64; /* room for processes started since the count */
+    pid_t *pids = malloc((size_t)cap * sizeof *pids);
+    if (pids == NULL) return io_err("malloc");
+    int n = proc_listallpids(pids, cap * (int)sizeof *pids);
+    if (n < 0) {
+        free(pids);
+        return io_err("proc_listallpids");
+    }
+    for (int i = 0; i < n; i++) {
+        if (pids[i] <= 0 || pids[i] == (pid_t)sid || getsid(pids[i]) != (pid_t)sid) continue;
+        if (kill(pids[i], (int)sig) == 0) reached++;
+    }
+    free(pids);
+#else
+    DIR *dir = opendir("/proc");
+    if (dir == NULL) return io_err("opendir(/proc)");
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        char *end;
+        long pid = strtol(entry->d_name, &end, 10);
+        if (end == entry->d_name || *end != '\0' || pid <= 0 || pid == (long)sid) continue;
+        /* getsid alone first: it is one cheap syscall per process on the host */
+        if (getsid((pid_t)pid) != (pid_t)sid) continue;
+        int fd = (int)syscall(SYS_pidfd_open, (pid_t)pid, 0);
+        if (fd < 0 && errno == ESRCH) continue;
+        /* read again once pinned: the pid may have changed hands since */
+        if (fd >= 0 && getsid((pid_t)pid) != (pid_t)sid) {
+            close(fd);
+            continue;
+        }
+        long r = fd >= 0 ? syscall(SYS_pidfd_send_signal, fd, (int)sig, NULL, 0)
+                         : (long)kill((pid_t)pid, (int)sig);
+        if (r == 0) reached++;
+        if (fd >= 0) close(fd);
+    }
+    closedir(dir);
+#endif
+    return lean_io_result_mk_ok(lean_box_uint32(reached));
 }
 
 /* -------------------------------------------------------------------- */

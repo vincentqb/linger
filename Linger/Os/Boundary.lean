@@ -71,7 +71,10 @@ private opaque kill (pid sig : UInt32) : IO Unit
 private opaque alive (pid : UInt32) : IO Bool
 
 @[extern "linger_waitpid_nohang"]
-private opaque waitpidNohang (pid : UInt32) : IO Int64
+private opaque waitpidNohang (pid : UInt32) (keep : Bool) : IO Int64
+
+@[extern "linger_signal_session"]
+private opaque signalSession (sid sig : UInt32) : IO UInt32
 
 @[extern "linger_getuid"]
 private opaque getuid : IO UInt32

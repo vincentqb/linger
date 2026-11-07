@@ -137,8 +137,8 @@ structure Rt where
   can exit while its background jobs hold the terminal, and a program can close its terminal and
   keep running. Only the program's own exit ends the session. -/
   ptyOpen : Bool := true
-  /-- How the program ended, once a reap has said. Its pid may belong to another process
-  afterwards, so nothing signals or reaps it again. -/
+  /-- How the program ended, once a wait has said. The program stays unreaped until `serve` has
+  ended the rest of its terminal session, so its pid stays its own until then. -/
   ending : Option Outcome := none
   /-- How long the next poll waits for the program's end while its terminal is closed. The end
   usually follows at once, so the wait starts at 10 ms; it doubles each round up to a second, so
@@ -340,9 +340,10 @@ private def executeEffect (st : State) (rt : Rt) : (eff : Effect Plan) → IO (R
       report s!"linger: pty resize failed: {err}"
     return (rt, ())
   | .killChild => do
-    -- a reaped program's pid may now belong to another process
+    -- hang up the program's whole terminal session; `serve` ends what outlives that
     if rt.ending.isNone then
-      kill rt.childPid 15 -- SIGTERM
+      kill rt.childPid 1 -- SIGHUP
+    discard <| signalSession rt.childPid 1
     return (rt, ())
   | .checkpoint => do
     try
@@ -381,10 +382,11 @@ private def closedFd : UInt32 := 0xFFFFFFFF
 /-- How many reads of the terminal the program's last output may take once it has ended. -/
 private def finalReads : Nat := 16
 
-/-- How the program ended, if it has: reaped with its exit code or signal, or `unknown` when it
-is no longer ours to reap. -/
+/-- How the program ended, if it has: its exit code or signal, or `unknown` when it is no longer
+ours to wait for. It stays unreaped, so its zombie keeps its pid, which is its session's id,
+until `serve` has ended the session's other processes (`signalSession`). -/
 private def programEnd (pid : UInt32) : IO (Option Outcome) := do
-  match ← reapNohang pid with
+  match ← peekNohang pid with
   | .running =>
     return none
   | .exited code =>
@@ -550,33 +552,56 @@ def drainConns (rt : Rt) : IO Rt := do
     close c.fd
   return { rt with conns := [] }
 
-/-- How long the program has to end after SIGTERM before it gets SIGKILL. -/
-private def stopGraceMs : Nat := 150
+/-- How long the processes of an ending session have after SIGHUP before SIGKILL. -/
+private def hangupGraceMs : Nat := 1000
 
-/-- How the program ended, ending it first if it still runs: SIGTERM, then SIGKILL if it outlives
-`stopGraceMs`, and `unknown` if it cannot be reaped within a second after that. Only this
-daemon's unreaped child holds the program's pid, so a signal sent while a reap reports the
-program running reaches the program and nothing else. -/
-private def endProgram (rt : Rt) : IO Outcome := do
+/-- How long the kernel has to end the processes SIGKILL reached. -/
+private def killWaitMs : Nat := 1000
+
+/-- Whether `done` holds within `ms` milliseconds, asked every `step`. -/
+private def within (ms step : Nat) (done : IO Bool) : IO Bool := do
+  for _ in List.range (ms / step) do
+    if ← done then
+      return true
+    IO.sleep step.toUInt32
+  done
+
+/-- How the program ended, ending it first if it still runs: SIGHUP to it and to the rest of its
+terminal session, then SIGKILL to them all if it outlives `hangupGraceMs`, and `unknown` if it
+has not ended `killWaitMs` after that. The program stays unreaped (`programEnd`). -/
+private def stopProgram (rt : Rt) : IO Outcome := do
   if let some outcome := rt.ending then
     return outcome
+  let pid := rt.childPid
+  let ending ← IO.mkRef (none : Option Outcome)
+  let ended : IO Bool := do
+    if (← ending.get).isNone then
+      ending.set (← programEnd pid)
+    return (← ending.get).isSome
   try
-    if let some outcome← programEnd rt.childPid then
-      return outcome
-    kill rt.childPid 15
-    for _ in List.range (stopGraceMs / 10) do
-      IO.sleep 10
-      if let some outcome← programEnd rt.childPid then
-        return outcome
-    kill rt.childPid 9
-    for _ in List.range 100 do
-      IO.sleep 10
-      if let some outcome← programEnd rt.childPid then
-        return outcome
-    return .unknown
+    for (sig, ms) in [(1, hangupGraceMs), (9, killWaitMs)] do
+      if ← ended then
+        break
+      kill pid sig
+      discard <| signalSession pid sig
+      if ← within ms 10 ended then
+        break
   catch err =>
-    report s!"linger: child cleanup failed: {err}"
-    return .unknown
+    report s!"linger: stopping the program failed: {err}"
+  return (← ending.get).getD .unknown
+
+/-- End every other process of the program's terminal session: SIGHUP, then SIGKILL to whatever
+outlives `hangupGraceMs`. Run while the program is unreaped, so its pid is still the session's
+id and no other session's. A process that left the session with `setsid` is not reached. Each
+look at the session lists every process on the host, so it looks every 50 ms. -/
+private def endSession (pid : UInt32) : IO Unit := do
+  let gone : IO Bool := return (← signalSession pid 0) == 0
+  for (sig, ms) in [(1, hangupGraceMs), (9, killWaitMs)] do
+    if ← gone then
+      return
+    discard <| signalSession pid sig
+    if ← within ms 50 gone then
+      return
 
 /-- How long a starting daemon waits for its locks. An offline reader holds both only
 while it loads and prints a checkpoint. `connectUpsert` gives up on the socket no sooner
@@ -675,11 +700,18 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
           let rt ← latest.get
           for c in rt.conns do
             close c.fd
-          let outcome ← endProgram rt
+          let outcome ← stopProgram rt
           try
             saveRecord (.ended outcome)
           catch err =>
             report s!"linger: recording how the program ended failed: {err}"
+          -- the program is reaped last: until then its zombie keeps its pid, which is its
+          -- session's id, so ending the session's other processes reaches no one else
+          try
+            endSession rt.childPid
+          catch err =>
+            report s!"linger: ending the session's processes failed: {err}"
+          discard <| reapNohang rt.childPid
           close rt.ptyFd
       finally
         close listenFd

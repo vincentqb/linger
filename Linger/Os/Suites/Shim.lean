@@ -153,6 +153,69 @@ def testReapEnding : IO Unit := do
   check "reapNohang reports an exit code" ((← reapEnding "exit 143") == .exited 143)
   check "reapNohang reports the killing signal" ((← reapEnding "kill -TERM $$") == .signaled 15)
 
+/-- A peek leaves an ended child waitable, so its zombie keeps its pid until a reap. -/
+def testPeekKeepsChild : IO Unit := do
+  let (pid, master) ← spawnPty 80 24 "" "sh" #["-c", "exit 5"] #[]
+  let _ ← drain master ((← monotonicMs) + 5000) .empty
+  Linger.Os.Shell.close master
+  let deadline := (← monotonicMs) + 5000
+  let mut seen ← peekNohang pid
+  while seen == .running && (← monotonicMs) < deadline do
+    IO.sleep 20
+    seen ← peekNohang pid
+  let again ← peekNohang pid
+  let reaped ← reapNohang pid
+  let gone ← reapNohang pid
+  check "peekNohang leaves an ended child waitable"
+      (seen == .exited 5 && again == .exited 5 && reaped == .exited 5 && gone == .unreapable)
+
+/-- The pid a session's shell printed as `job=<pid>`, read from its terminal. -/
+def readJob (master : UInt32) : IO (Option UInt32) := do
+  let deadline := (← monotonicMs) + 5000
+  let mut out := ""
+  while (← monotonicMs) < deadline do
+    let revs ← poll #[master] #[POLLIN] 200
+    if revs[0]! &&& POLLIN != 0 then
+      match ← read master 4096 with
+      | some bs =>
+        out := out ++ (String.fromUTF8? bs).getD ""
+      | none =>
+        break
+    if let [_, rest] := out.splitOn "job=" then
+      if let [digits, _] := rest.splitOn "\r\n" then
+        return digits.toNat?.map UInt32.ofNat
+  return none
+
+/-- `signalSession` reaches the other processes of a session, and nothing outside it. -/
+def testSignalSession : IO Unit := do
+  let (leader, master) ← spawnPty 80 24 "" "sh" #["-c", "sleep 60 & echo job=$!; wait"] #[]
+  let outsider ← IO.Process.spawn { cmd := "sleep", args := #["60"] }
+  try
+    let job ← readJob master
+    let before ← signalSession leader 0
+    let reached ← signalSession leader 9
+    let deadline := (← monotonicMs) + 5000
+    let mut after := reached
+    while after != 0 && (← monotonicMs) < deadline do
+      IO.sleep 20
+      after ← signalSession leader 0
+    let jobGone ←
+      match job with
+      | some pid =>
+        do
+          pure !(← alive pid)
+      | none =>
+        pure false
+    check "signalSession reaches the other processes of a session"
+        (job.isSome && before == 1 && reached == 1 && after == 0 && jobGone)
+    check "signalSession reaches nothing outside the session" (← alive outsider.pid)
+  finally
+    outsider.kill
+    discard <| outsider.wait
+    Linger.Os.Shell.close master
+    kill leader 9
+    discard <| reap leader
+
 /-- A zero-length read is not EOF: `read(fd, buf, 0)` returns 0 without testing
 for end of file, and `none` publicly means EOF.
 
@@ -470,6 +533,8 @@ public def main (args : List String) : IO UInt32 := do
   testWinsize
   testProcessSelectors
   testReapEnding
+  testPeekKeepsChild
+  testSignalSession
   testZeroLengthRead
   testSpawnFailures
   testPtyPath

@@ -504,8 +504,12 @@ theorem run_total_safe_rejects_jump :
 /-! ## 6. Bounded and clean
 
 `run_total_safe` keeps the session's clients, labels, frame decoders and pty scanner within their
-caps. Not claimed yet: that ending a session ends every process it started (linger signals only
-its program), and that `linger wait` gives up after a deadline. -/
+caps. Not claimed yet, though suites test it: that when a session ends, no process of its terminal
+session remains. The daemon sends SIGHUP to each, then SIGKILL to those still running a second
+later, and reaps the program last, so the program's pid, which is the session's id, stays
+reserved until then. A process that leaves the session with `setsid`, or runs as another user,
+is out of reach, and on macOS, or Linux before 5.3, a pid freed and reused between reading its
+session and signalling it could receive the signal. -/
 
 /-- The pty input queue never owes more than its cap, through any offers and flushes. -/
 theorem reachableIn_bound {cap : Nat} {b : Buf.Buf}

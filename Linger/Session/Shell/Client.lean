@@ -110,7 +110,13 @@ private def drainReplies (fd : UInt32) (untilDone : Bool) (silenceMs : Int32 := 
       if silenceMs < 0 then
         continue
       return .silent
-    match ← read fd 65536 with
+    -- a daemon that stopped accepting resets the connection rather than closing it
+    let received ←
+      try
+        read fd 65536
+      catch _ =>
+        pure none
+    match received with
     | none =>
       return .lost "connection lost"
     | some bs =>
@@ -158,7 +164,11 @@ def oneShot (name : String) (m : Msg) (untilDone : Bool := true) (silenceMs : In
     return none
   | some fd =>
     try
-      sendMsg fd m
+      -- a daemon that stopped accepting resets the connection, so the request cannot be sent
+      try
+        sendMsg fd m
+      catch _ =>
+        return some (.lost "connection lost")
       return some (← drainReplies fd untilDone silenceMs)
     finally
       close fd
