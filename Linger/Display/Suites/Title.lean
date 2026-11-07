@@ -170,6 +170,12 @@ private def expectedTitle (unread : Bool) : String :=
   let summary := Linger.Display.Status.summary (if unread then [.wantsYou] else [])
   Linger.Display.Title.compose "title-main" "editor" summary maxChars
 
+/-- At most the last 160 of `bytes`, as decimal codes, for a failure message. -/
+private def codes (bytes : ByteArray) : String :=
+  let shown := bytes.extract (bytes.size - 160) bytes.size
+  s!"last {shown.size} of {bytes.size}: " ++
+    " ".intercalate (shown.toList.map fun byte => toString byte.toNat)
+
 private def splitCase (e : Env) (c : Client) (seen : IO.Ref Receiver)
     (label startKey endKey : String) (opening closing : ByteArray) (unread : Bool) : IO Unit := do
   let before ← seen.get
@@ -182,17 +188,31 @@ private def splitCase (e : Env) (c : Client) (seen : IO.Ref Receiver)
   -- one-second interval, including the response budget and client polling.
   receive c seen 2500
   let held ← seen.get
-  expect
-      (openCode == 0 && opened && !incomplete.vt.atBoundary && changed &&
-        held.bytes.size == incomplete.bytes.size &&
-        !held.vt.atBoundary &&
-        held.vt.windowTitle == before.vt.windowTitle)
-      s!"{label}: attention refresh waits for the application boundary"
+  let waited :=
+    openCode == 0 && opened && !incomplete.vt.atBoundary && changed &&
+      held.bytes.size == incomplete.bytes.size &&
+      !held.vt.atBoundary &&
+      held.vt.windowTitle == before.vt.windowTitle
+  expect waited <|
+      s!"{label}: attention refresh waits for the application boundary" ++
+        if waited then ""
+        else
+          s!" (send status {openCode}, opened {opened}, attention changed {changed}, " ++
+            s!"{incomplete.bytes.size} then {held.bytes.size} bytes, at a boundary " ++
+            s!"{incomplete.vt.atBoundary} then {held.vt.atBoundary}, title " ++
+            s!"{held.vt.windowTitle.quote} after {before.vt.windowTitle.quote}; bytes since " ++
+            s!"the start, {codes (since held start)})"
   let (closeCode, _, _) ← e.cli #["send", "title-main", endKey]
   let completed ← awaitOutput c seen (titleIs (expectedTitle unread))
   let after ← seen.get
-  expect (closeCode == 0 && completed && hasBytes (since after start) (opening ++ closing).toList)
-      s!"{label}: completion preserves bytes and emits the pending title"
+  let preserved :=
+    closeCode == 0 && completed && hasBytes (since after start) (opening ++ closing).toList
+  expect preserved <|
+      s!"{label}: completion preserves bytes and emits the pending title" ++
+        if preserved then ""
+        else
+          s!" (send status {closeCode}, pending title shown {completed}, title " ++
+            s!"{after.vt.windowTitle.quote}; bytes since the start, {codes (since after start)})"
 
 /-- Ask the probe program for a pong and wait for it in the output that follows. -/
 private def ping (c : Client) (seen : IO.Ref Receiver) : IO Bool := do
