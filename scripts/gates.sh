@@ -1135,7 +1135,8 @@ for verb in attach run send detach kill info capture resize get set unset clear;
 done
 for tie in \
   'match Linger[.]Target[.]Remote[.]parseTarget target with [|] none => invalidTarget [|] some parsed => runTarget verb parsed args localAction options' \
-  'let some targets := names[.]mapM Linger[.]Target[.]Remote[.]parseTarget [|] invalidTarget let mut rc : UInt32 := 0 for target in targets do rc ← runTarget "wait" target [[]] cmdWait' \
+  'let some targets := names[.]mapM Linger[.]Target[.]Remote[.]parseTarget [|] invalidTarget let deadline ← limit[.]mapM' \
+  'rc ← runTarget "wait" target [[]] [(]cmdWait deadline[)] options' \
   'let interactive := verb == "attach" if interactive && [(]![(]← stdinIsTty[)] [|][|] ![(]← [(]← IO[.]getStdout[)][.]isTty[)][)] then' \
   'let operands := if verb == "attach" [|][|] verb == "capture" then Linger[.]Target[.]Remote[.]targetOperands target[.]name else [[]target[.]name[]]' \
   'IO[.]Process[.]spawn [{] cmd := "ssh", args := #[[]if interactive then "-t" else "-T", "--", host, Linger[.]Target[.]Remote[.]command verb [(]options [+][+] operands [+][+] args[)][]], stdin := [.]inherit [}] try child[.]wait finally if interactive then writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Terminal[.]Render[.]leaveAnsi[.]toArray[)]' \

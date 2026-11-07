@@ -2,6 +2,7 @@ module
 
 public import Verify.Harness
 import Linger.Session.Shell.Daemon
+import Linger.Session.Checkpoint
 import Linger.Target.Name
 
 public section
@@ -237,6 +238,40 @@ def run : IO UInt32 :=
     expect (neverRc == 127 && has neverErr "no session") "wait on a name no session took exits 127"
     let (bothRc, _, _) ← e.cli #["wait", "w3", "w5"]
     expect (bothRc == 37) s!"wait reports the last of several sessions (rc={bothRc})"
+    -- A time limit stops the wait with 124 and leaves the session running.
+    let _ ← e.cli #["run", "w6", "exec sleep 30"]
+    let limitStart ← Linger.Os.Shell.monotonicMs
+    let limited ← e.cliTimeout #["wait", "--timeout", "0.5", "w6"] 5000
+    let limitMs := (← Linger.Os.Shell.monotonicMs) - limitStart
+    let running := (← e.info "w6" "pid").isSome
+    expect
+        (limited.map (·.1) == some 124 && limited.any (has ·.2.2 "timed out") && 400 ≤ limitMs &&
+          limitMs ≤ 2000 &&
+          running)
+        s!"wait --timeout stops waiting and leaves the session running ({limitMs} ms)"
+    -- kill returns once the session has ended, and the record says how.
+    let (killRc, _, _) ← e.cli #["kill", "w6"]
+    let (_, killedInfo, _) ← e.cli #["info", "w6"]
+    expect (killRc == 0 && has killedInfo "signal\t15")
+        s!"kill returns once the session has ended (rc={killRc})"
+    let trapFile := s!"{e.dir}/w7.trapped"
+    let _ ←
+      e.cli
+          #["run", "w7", s!"exec sh -c \"trap '' TERM; : > {trapFile}; while :; do sleep 1; done\""]
+    let trapped ← waitFor 3000 (System.FilePath.pathExists trapFile)
+    let (stubbornRc, _, _) ← e.cli #["kill", "w7"]
+    let (_, stubbornInfo, _) ← e.cli #["info", "w7"]
+    expect (trapped && stubbornRc == 0 && has stubbornInfo "signal\t9")
+        "kill ends a program that ignores SIGTERM"
+    -- With no daemon, kill discards a saved session, and then finds none.
+    let savedPath := s!"{e.dir}/w-saved.ckpt"
+    IO.FS.writeBinFile savedPath
+        (Linger.Session.Checkpoint.saveBytes ⟨Linger.Terminal.Vt.Vt.init 20 2, e.dir, []⟩)
+    let (savedRc, _, _) ← e.cli #["kill", "w-saved"]
+    let discarded := !(← System.FilePath.pathExists savedPath)
+    let (absentRc, _, absentErr) ← e.cli #["kill", "w-saved"]
+    expect (savedRc == 0 && discarded && absentRc == 1 && has absentErr "no session")
+        "kill discards a saved session, then finds none"
     -- A transport loss is neither a detach nor a successful wait.
     let lost ← e.spawn #["attach", "attach-lost"] cols rows
     let _ ← waitFor 4000 (return (← e.info "attach-lost" "clients") == some "1")

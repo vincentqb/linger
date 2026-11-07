@@ -43,11 +43,11 @@ tmux <command> [SAVE]                     Saved tmux panes; see tmux help
 run <name> <command...>                   Run a shell command; create if needed
 send <name> <text...|->                   Send raw input; - reads stdin
 detach <name>                             Detach all clients from a session
-kill <name>                               Kill a session and its clients
+kill <name>                               End a session, or discard a saved one
 info <name>                               Print session details
 capture [--history] <name>                Print the live or saved screen
 resize <name> <cols> <rows>               Resize a detached session
-wait <name>...                            Wait for session programs to exit
+wait [--timeout SECONDS] <name>...        Wait for programs to end; 124 on timeout
 get <name>                                Print session labels
 set <name> <k=v>...                       Set labels
 unset <name> <key>...                     Remove labels
@@ -496,18 +496,28 @@ private def heldNameMs : Nat := Daemon.drainTimeoutMs + 5000
 for it (`reportEnding`). With no daemon to answer, the name's end record does once nothing else
 holds the name: how the last session's program ended, or 127, as a shell's `wait` reports an
 unknown job, when no session has taken the name. A daemon lost during the wait leaves its own
-record, never an older one. linger's own failures, a refusal, a reply without a status or a name
-held past `heldNameMs`, print a diagnostic and return 125. -/
-private def cmdWait (name : String) : IO UInt32 := do
-  let deadline := (← monotonicMs) + heldNameMs
+record, never an older one. With a `deadline` on the monotonic clock, 124 once it has passed and
+the session is still running, as `timeout(1)` reports, leaving the session as it is. linger's
+own failures, a refusal, a reply without a status or a name held past `heldNameMs`, print a
+diagnostic and return 125. -/
+private def cmdWait (deadline : Option Nat) (name : String) : IO UInt32 := do
+  let heldUntil := (← monotonicMs) + heldNameMs
   repeat
-    match ← Client.oneShot name .wait (untilDone := false) with
+    -- a silence budget ends a held wait when the time is up; `Int32` bounds one round of it
+    let now ← monotonicMs
+    let silenceMs : Int32 :=
+      match deadline with
+      | some limit => Int32.ofNat (min (limit - now) 2147483647)
+      | none => -1
+    match ← Client.oneShot name .wait (untilDone := false) (silenceMs := silenceMs) with
     | some (.exited ending) =>
       return ← reportEnding name ending
+    | some .silent =>
+      pure ()
     | some (.refused why) =>
       IO.eprintln s!"linger: {why}"
       return 125
-    | some .done | some .silent =>
+    | some .done =>
       IO.eprintln s!"linger: no exit status from '{name}'"
       return 125
     | some (.lost _) | none =>
@@ -518,10 +528,117 @@ private def cmdWait (name : String) : IO UInt32 := do
       | .recorded (some outcome) =>
         return ← reportEnding name (.outcome outcome)
       | .held why =>
-        if (← monotonicMs) ≥ deadline then
+        if (← monotonicMs) ≥ heldUntil then
           IO.eprintln s!"linger: no answer for '{name}': {why}"
           return 125
         IO.sleep 20
+    if let some limit := deadline then
+      if (← monotonicMs) ≥ limit then
+        IO.eprintln s!"linger: timed out waiting for '{name}'"
+        return 124
+
+/-- Milliseconds in `text`, a number of seconds such as `timeout(1)` takes: digits, a point and
+digits, or both, counting at most three decimals. -/
+private def parseSeconds (text : String) : Option Nat :=
+  let digits (part : String) := !part.isEmpty && part.all Char.isDigit
+  match text.splitOn "." with
+  | [whole] => if digits whole then whole.toNat?.map (· * 1000) else none
+  | [whole, fraction] =>
+    if (whole.isEmpty || digits whole) && digits fraction then
+      let millis := (fraction.toList.take 3 ++ List.replicate (3 - fraction.length) '0')
+      do
+      let seconds ←
+        if whole.isEmpty then
+          some 0
+        else
+          whole.toNat?
+      let millis ← (String.ofList millis).toNat?
+      return seconds * 1000 + millis
+    else none
+  | _ => none
+
+/-- Milliseconds as seconds, with three decimals, as `parseSeconds` reads them back. -/
+private def secondsText (ms : Nat) : String :=
+  let millis := toString (ms % 1000)
+  s!"{ms / 1000}.{"".pushn '0' (3 - millis.length)}{millis}"
+
+/-- `wait` for each named session in turn and return the last one's status, as a shell's `wait`
+does with several jobs. With a time limit in milliseconds, all of them share one deadline, and
+124 means it passed. -/
+private def waitAll (names : List String) (limit : Option Nat) : IO UInt32 := do
+  if names.isEmpty then
+    IO.eprintln "usage: linger wait [--timeout SECONDS] <name>..."
+    return 2
+  let some targets := names.mapM Linger.Target.Remote.parseTarget | invalidTarget
+  let deadline ←
+    limit.mapM fun ms => do
+        return (← monotonicMs) + ms
+  let mut rc : UInt32 := 0
+  for target in targets do
+    let now ← monotonicMs
+    let options :=
+      match deadline with
+      | some due => ["--timeout", secondsText (due - now)]
+      | none => []
+    rc ← runTarget "wait" target [] (cmdWait deadline) options
+    if let some due := deadline then
+      if rc == 124 && (← monotonicMs) ≥ due then
+        return 124
+  return rc
+
+/-- Whether `name` had a checkpoint, which this discards. -/
+private def dropSaved (name : String) : IO Bool := do
+  if ← System.FilePath.pathExists (← Paths.ckptPath name) then
+    Resume.dropCkpt name
+    return true
+  return false
+
+/-- Discard the saved session `name` while holding the name: whether it had a checkpoint to
+discard, or why another process holds the name. -/
+private def discardSaved (name : String) : IO (Except String Bool) := do
+  let discarded ←
+    try
+      Paths.withSessionLock name do
+          return ← (dropSaved name).toBaseIO
+    catch err =>
+      return .error err.toString
+  return .ok (← IO.ofExcept discarded)
+
+/-- `kill`: end the session and return once it has ended. Its daemon stops the program (SIGTERM,
+then SIGKILL), records how it ended and gives the name up. With no daemon, a saved session is
+discarded instead. No session, a refusal, a name another process holds, or a session that has
+not ended within `heldNameMs`, prints a diagnostic and returns 1. -/
+private def cmdKill (name : String) : IO UInt32 := do
+  match ← Client.oneShot name .kill with
+  | some (.refused why) =>
+    IO.eprintln s!"linger: {why}"
+    return 1
+  | some _ =>
+    -- the session has ended once its daemon gives the name up, which it does after recording
+    -- how the program ended and removing its socket
+    let deadline := (← monotonicMs) + heldNameMs
+    repeat
+      let released ←
+        try
+          Paths.withSessionLock name (pure true)
+        catch _ =>
+          pure false
+      if released then
+        return 0
+      if (← monotonicMs) ≥ deadline then
+        IO.eprintln s!"linger: session '{name}' has not ended"
+        return 1
+      IO.sleep 20
+  | none =>
+    match ← discardSaved name with
+    | .ok true =>
+      return 0
+    | .ok false =>
+      IO.eprintln s!"linger: no session '{name}'"
+      return 1
+    | .error why =>
+      IO.eprintln s!"linger: {why}"
+      return 1
 
 /-- `info`: the live session's fields; with no daemon to answer, the name and how the program of
 the last session to hold it ended, from the name's end record. No session, a refusal or a failed
@@ -633,7 +750,7 @@ def main (args : List String) : IO UInt32 := do
   | ["detach", name] | ["d", name] =>
     withTarget "detach" name [] (requireLive · .detachAll)
   | ["kill", name] | ["k", name] =>
-    withTarget "kill" name [] (requireLiveSend · .kill)
+    withTarget "kill" name [] cmdKill
   | ["info", name] | ["i", name] =>
     withTarget "info" name [] cmdInfo
   | "capture" :: rest | "c" :: rest =>
@@ -653,16 +770,15 @@ def main (args : List String) : IO UInt32 := do
       do
         IO.eprintln "usage: linger resize <name> <cols> <rows>"
         return 2
-  | "wait" :: names | "w" :: names =>
-    -- as a shell's `wait` does with several jobs, the status is the last one's
-    if names.isEmpty then
-      IO.eprintln "usage: linger wait <name>..."
+  | "wait" :: "--timeout" :: seconds :: names | "w" :: "--timeout" :: seconds :: names =>
+    match parseSeconds seconds with
+    | some ms =>
+      waitAll names (some ms)
+    | none =>
+      IO.eprintln "usage: linger wait [--timeout SECONDS] <name>..."
       return 2
-    let some targets := names.mapM Linger.Target.Remote.parseTarget | invalidTarget
-    let mut rc : UInt32 := 0
-    for target in targets do
-      rc ← runTarget "wait" target [] cmdWait
-    return rc
+  | "wait" :: names | "w" :: names =>
+    waitAll names none
   | ["get", name] | ["g", name] =>
     withTarget "get" name [] cmdGet
   | "set" :: name :: kvs =>
