@@ -40,7 +40,7 @@ private def usage : String :=
   "attach [--read-only] [name] [command...]  Choose, create or attach to a session
 ls [-r [hosts]] [--summary|--porcelain]   List sessions or attention counts
 tmux <command> [SAVE]                     Saved tmux panes; see tmux help
-run <name> <command...>                   Run a shell command; create if needed
+run <name> <command...>                   Deprecated: type into a shell; use start, send
 start <name> <program> [args...]          Start a program, exactly, in a new session
 send <name> <text...|->                   Send raw input; - reads stdin
 detach <name>                             Detach all clients from a session
@@ -847,6 +847,10 @@ def main (args : List String) : IO UInt32 := do
       IO.eprintln "usage: linger run <name> <command...>"
       return 2
     withTarget "run" name cmd fun name => do
+        -- the shell it types into reinterprets the words, and the shell is the session's program
+        IO.eprintln
+            "linger: run is deprecated and will be removed: it types its words into the session's \
+            shell. Use start to run a program in a new session, or send to type into a session."
         let fd ← connectUpsert name []
         try
           Client.sendMsg fd (.input (String.intercalate " " cmd ++ "\n").toUTF8.toList)

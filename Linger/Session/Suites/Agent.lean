@@ -292,6 +292,10 @@ private def startChecks (e : Env) : IO Unit := do
       s!"start in a directory it cannot enter returns 125 and leaves nothing behind \
         ({lockedRun.exitCode})"
   e.killAll #["st1"]
+  let (runRc, _, runErr) ← e.cli #["run", "st-run", "true"]
+  expect (runRc == 0 && has runErr "deprecated" && has runErr "start" && has runErr "send")
+      "run says it is deprecated, and points to start and send"
+  e.killAll #["st-run"]
 
 /-- The agent suite: the one-shot verbs that see and drive a session. -/
 def run : IO UInt32 :=

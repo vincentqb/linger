@@ -443,8 +443,8 @@ theorem command_argv_rejects_empty :
 /-! ## 4. Program identity
 
 Not claimed yet, though suites test it: that `start` runs exactly the program and words it is
-given, without a shell. `linger run` starts `$SHELL` and types its words into it, joined with
-spaces. -/
+given, without a shell. `linger run`, deprecated and saying so, starts `$SHELL` and types its words
+into it, joined with spaces. -/
 
 /-! ## 5. Accountability
 
