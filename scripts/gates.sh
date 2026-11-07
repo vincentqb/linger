@@ -81,9 +81,12 @@ proof_paths="$(git ls-files -- 'Theorems/*.lean' 'Linger/*/Proofs/*.lean')"
 # Termination is proved everywhere, never asserted with the keyword.
 ! code_grep '(^|[^[:alnum:]_])partial def([^[:alnum:]_]|$)' '*.lean' \
   || fail "partial def: use structural or well-founded recursion, or a do-block loop"
-# A raised limit means a proof or term got harder; that is a signal to restructure.
-! code_grep 'set_option[[:space:]]+(maxHeartbeats|maxRecDepth)' '*.lean' \
-  || fail "raised maxHeartbeats/maxRecDepth: restructure instead of budgeting"
+# Options come only from lakefile.lean, whose declarations are pinned below, and from
+# scripts/verify.sh's flags: an option set in a file overrides both, and options such as
+# `debug.skipKernelTC`, `warningAsError`, `autoImplicit` or a raised `maxHeartbeats` or
+# `synthInstance.maxHeartbeats` weaken a check instead of meeting it.
+! code_grep '(^|[^[:alnum:]_])set_option([^[:alnum:]_]|$)' '*.lean' \
+  || fail "set_option in a Lean file: options belong in lakefile.lean, and a raised limit means restructuring"
 # Fuel makes a recursion total by cutting it off, so the claims hold of a truncation.
 ! code_grep '[(]fuel[[:space:]]*:' '*.lean' \
   || fail "a fuel parameter: recurse on the data or a decreasing measure"
@@ -281,12 +284,15 @@ import_closure Linger/Terminal/Replay.lean \
 # Read declaration lines through code_grep, then compare their verbatim Name
 # literals: multiple backticks on a roots line are Lean syntax, not prose.
 library_decl() {                             # `lean_lib $1` with its indented fields
+  lake_decl lean_lib "$1"
+}
+lake_decl() {                                # `$1 $2` (`package linger`) with its indented fields
   code_grep '.' lakefile.lean \
     | sed 's/^[^:]*:[0-9]*://' \
-    | awk -v lib="$1" '
+    | awk -v kind="$1" -v name="$2" '
         /^--/ { next }
-        /^(@[[][^]]*[]][[:space:]]+)?lean_lib / {
-          sub(/^@[[][^]]*[]][[:space:]]+/, ""); active = ($2 == lib)
+        /^(@[[][^]]*[]][[:space:]]+)?[a-z_]+[[:space:]]/ {
+          sub(/^@[[][^]]*[]][[:space:]]+/, ""); active = ($1 == kind && $2 == name)
           if (active) { $1 = $1; printf "%s ", $0 }
           next
         }
@@ -315,6 +321,16 @@ library_roots LingerFuzzy '#[`Linger.Selector.Fuzzy]' 'leanOptions := implementa
   || fail "the Suites library lost its globs or implementationOptions: $(library_decl Suites)"
 [ "$(git grep -c 'def implementationOptions : Array LeanOption := #\[⟨`linter.missingDocs, true⟩\]$' -- lakefile.lean)" = lakefile.lean:1 ] \
   || fail "implementationOptions no longer enables linter.missingDocs"
+# With `set_option` banned, the package's options and these declarations' fields are every
+# option a module is built with, so each declaration that can carry options is pinned.
+[ "$(lake_decl package linger)" = "package linger where leanOptions := #[⟨\`autoImplicit, false⟩, ⟨\`relaxedAutoImplicit, false⟩, ⟨\`warningAsError, true⟩, ⟨\`linter.extra.unreachableTactic, true⟩, ⟨\`linter.redundantVisibility, true⟩, ⟨\`linter.extra.unnecessarySeqFocus, true⟩] " ] \
+  || fail "the package options changed: $(lake_decl package linger)"
+[ "$(library_decl Verify)" = "lean_lib Verify where " ] \
+  || fail "the Verify library gained fields: $(library_decl Verify)"
+for exe in "linger \`Main" "lingertest \`Linger.Os.Suites.Shim" "suites \`Verify.Main"; do
+  [ "$(lake_decl lean_exe "${exe% *}")" = "lean_exe ${exe% *} where root := ${exe#* } " ] \
+    || fail "the ${exe% *} executable must declare only its root: $(lake_decl lean_exe "${exe% *}")"
+done
 # Proofs and fixtures build every module under their directories, so every module is
 # checked without a root module importing it: the legacy `Theorems/` tree and each
 # component's `Proofs/` and `Tests/`, in component order. The glob omits the root

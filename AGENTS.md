@@ -133,8 +133,8 @@ Lean erases proofs regardless of file placement.
   any other hard-coded `/tmp` there and in the CI workflow, except in
   `Linger/Session/Suites/Paths.lean` and `Linger/Display/Suites/Overview.lean`, which
   assert product defaults.
-- No `partial def`, fuel parameter or raised `maxHeartbeats`/`maxRecDepth` in any
-  Lean file (`scripts/gates.sh`). Proofs add no axioms:
+- No `partial def`, fuel parameter or `set_option` in any Lean file (`scripts/gates.sh`):
+  options come from `lakefile.lean`. Proofs add no axioms:
   `Theorems/Coverage.lean` rejects every axiom declared in pure or proof
   modules, including those native evaluation (`native_decide`,
   `decide +native`, `bv_decide`) adds, and fails unless its imports reach
