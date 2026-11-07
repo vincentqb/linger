@@ -16,6 +16,12 @@ own specification. -/
 
 namespace Linger.Session.Wire
 
+/-- The protocol level a daemon speaks, which `info` reports as `protocol`, so a client can
+refuse a request an older daemon cannot serve before sending it. Level 1 refuses a message it
+does not know; a daemon that reports no level predates the field and drops one silently. -/
+@[expose]
+def protocol : Nat := 1
+
 /-- Largest payload a frame may carry. Reads from the OS are ≤ 64 KiB, so honest senders stay
 far below; a frame claiming more is either corruption or an attack, and the decoder turns it
 into a connection error rather than memory growth. -/

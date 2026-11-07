@@ -37,8 +37,8 @@ THEOREMS.md rows:
   errored — a malformed peer is closed, not buffered) and the terminal
   scanner (`Bounded.scanOk`). `step` preserves all four against any
   event stream.
-* §Frame, machine half — an `unknown` wire message produces no state
-  change and no effects.
+* §Frame, machine half — an `unknown` wire message is refused with an
+  error reply and produces no state change.
 -/
 
 namespace Linger.Session
@@ -51,10 +51,18 @@ attribute [local grind] controlResize resizeOwned resize State.setClient
 
 /-! ## §Frame (machine half) and other exact-shape facts -/
 
+/-- A message this version does not know is a request it cannot serve: the session refuses it
+and changes nothing. -/
 theorem onMsg_unknown (s : State) (c : Client) (t : UInt8) (p : List UInt8) :
-    onMsg s c (.unknown t p) = (s, []) := rfl
+    onMsg s c (.unknown t p) = (s, [.send c.id (.err "unknown message".toUTF8.toList)]) := rfl
 
-/-- Wrong-direction messages are dropped too. -/
+/-- Every `info` reply reports the protocol level and the version the daemon runs. -/
+theorem infoFields_protocol (s : State) :
+    ("protocol", toString Wire.protocol) ∈ infoFields s ∧
+      ("version", Terminal.Mediation.versionNumber) ∈ infoFields s := by
+  simp [infoFields]
+
+/-- Wrong-direction messages are no request, and are dropped. -/
 theorem onMsg_wrong_direction (s : State) (c : Client) (bs : List UInt8) :
     onMsg s c (.output bs) = (s, []) ∧
       onMsg s c (.infoReply bs) = (s, []) ∧

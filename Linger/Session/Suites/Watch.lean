@@ -221,22 +221,27 @@ def run : IO UInt32 :=
         "the raw watcher is attached"
     -- Everything the connection receives, decoded from its first byte.
     let stream ← IO.mkRef ByteArray.empty
-    let refusals : IO Nat := do
+    let errors : String → IO Nat := fun why => do
       let msgs := (({} : Linger.Session.Wire.Decoder).feed (← stream.get).toList).2
-      return (msgs.filter (· == .err "read-only".toUTF8.toList)).length
-    let refused : Linger.Session.Wire.Msg → IO Bool := fun m => do
-      let before ← refusals
+      return (msgs.filter (· == .err why.toUTF8.toList)).length
+    let refusedWith : String → Linger.Session.Wire.Msg → IO Bool := fun why m => do
+      let before ← errors why
       Linger.Session.Shell.Client.sendMsg watcherFd m
       waitFor 4000 do
           let ready ← Linger.Os.Shell.poll #[watcherFd] #[Linger.Os.Shell.POLLIN] 100
           if ready[0]! &&& Linger.Os.Shell.POLLIN != 0 then
             if let some bytes← Linger.Os.Shell.read watcherFd 65536 then
               stream.modify (· ++ bytes)
-          return (← refusals) == before + 1
+          return (← errors why) == before + 1
+    let refused := refusedWith "read-only"
     expect (← refused .detachAll) "a watcher's request to disconnect every client is refused"
     expect (← refused (.labelSet "owner=watcher".toUTF8.toList))
         "a watcher's request to set a label is refused"
     expect (← refused .kill) "a watcher's request to end the session is refused"
+    expect (← refusedWith "unknown message" (.unknown 99 [1, 2, 3]))
+        "a message the daemon does not know is refused"
+    expect ((← e.info "w" "protocol") == some (toString Linger.Session.Wire.protocol))
+        "info reports the protocol level"
     expect
         ((← e.info "w" "clients") == some "3" && (← e.info "w" "label.owner") == none &&
           has (← e.out #["ls"]) "w")

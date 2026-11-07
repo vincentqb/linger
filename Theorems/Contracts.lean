@@ -203,6 +203,16 @@ example (s : Session.State) (id : Nat) (chunk : List UInt8) :
           (pre ++ post).all (!Session.resizes ·)) := by
   with_reducible exact Session.step_bytes_one_reply s id chunk
 
+example (s : Session.State) (c : Session.Client) (t : UInt8) (p : List UInt8) :
+    Session.onMsg s c (.unknown t p) =
+      (s, [.send c.id (.err "unknown message".toUTF8.toList)]) := by
+  with_reducible exact Session.onMsg_unknown s c t p
+
+example (s : Session.State) :
+    ("protocol", toString Wire.protocol) ∈ Session.infoFields s ∧
+      ("version", Terminal.Mediation.versionNumber) ∈ Session.infoFields s := by
+  with_reducible exact Session.infoFields_protocol s
+
 -- Transport
 example (ms : List Wire.Msg) (hms : ∀ (m : Wire.Msg), m ∈ ms → m.WF) (chunks : List (List UInt8))
     (hc : chunks.flatten = List.flatMap Wire.encode ms) :

@@ -74,12 +74,11 @@ def replySilenceMs : Int32 := 2000
 
 /-- Read frames until the daemon closes or the requested terminator arrives.
 A nonnegative `silenceMs` gives up after that much *silence*, for the one-shot
-verbs a pre-upgrade daemon does not know: an unknown tag is dropped without a
-trace (Wire §Frame), so a daemon from before the verb existed replies nothing at
-all, and the untimed drain would hang the client forever — the deadline has to
-be owned here. Output payloads stream to stdout as they come (`capture` is such
-a stream); the timeout is per poll round, so a long reply that keeps arriving
-never trips it. -/
+verbs a pre-upgrade daemon does not know: a daemon reporting `protocol` 1 or later refuses an
+unknown tag, but one from before that drops it without a trace, and the untimed drain would
+hang the client forever — the deadline has to be owned here. Output payloads stream to stdout
+as they come (`capture` is such a stream); the timeout is per poll round, so a long reply that
+keeps arriving never trips it. -/
 private def drainReplies (fd : UInt32) (untilDone : Bool) (silenceMs : Int32 := -1) : IO Drained :=
   do
   let mut dec : Decoder := {}

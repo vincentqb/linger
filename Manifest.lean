@@ -431,8 +431,8 @@ words into it, joined with spaces), and that a resumed session starts in the dir
 
 Not claimed yet: that `linger wait` refuses an unknown name (it exits 0); that an outcome says how
 the program ended (a signal reads as exit status 128 plus its number, and a program not reaped
-within 3 seconds as 1); that anyone who asks later hears the outcome (only clients connected at
-the end do); and that every message gets a reply or a refusal (an unknown one is dropped). -/
+within 3 seconds as 1); and that anyone who asks later hears the outcome (only clients connected
+at the end do). The session refuses a message it does not know (`onMsg_unknown`). -/
 
 /-- When each external operation returns a typed result, every finite batch of events
 completes without an uncaught exception, keeping the session within its bounds and its

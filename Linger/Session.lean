@@ -21,7 +21,7 @@ Tensions carried (THEOREMS.md):
 * §Bound — clients ≤ `maxClients`, labels ≤ `maxLabels`, every stored
   wire decoder stays under the Wire §Bound cap and non-errored (a
   malformed peer is closed, not buffered).
-* §Frame (machine half) — an `unknown` message changes nothing.
+* §Frame (machine half) — an `unknown` message is refused and changes nothing.
 -/
 
 namespace Linger.Session
@@ -184,6 +184,8 @@ private def behind (s : State) : Nat := s.outSeq - s.lookSeq
 framing byte, and that is a claim about *these* — see `infoText_framing`. -/
 def infoFields (s : State) : List (String × String) :=
   s.metaKv ++ [("clients", toString (s.roster.filter (·.attached)).length)]
+    -- what a client needs before sending a request this daemon may not serve
+    ++ [("protocol", toString Wire.protocol), ("version", Terminal.Mediation.versionNumber)]
     -- the observations `Status.classify` needs from the daemon; the rest
     -- (reachability, checkpoint loadability) only the caller can know
     ++
@@ -408,10 +410,10 @@ private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Pla
       ({ s with
           labels := [], dirty := true },
         [.send c.id .done])
-  -- daemon-to-client vocabulary arriving at the daemon, and unknown
-  -- tags: dropped without a trace (§Frame, machine half)
+  -- daemon-to-client vocabulary arriving at the daemon is no request and is dropped;
+  -- a tag this version does not know is a request it cannot serve, and is refused
   | .output _ | .exited _ | .infoReply _ | .done | .err _ => (s, [])
-  | .unknown _ _ => (s, [])
+  | .unknown _ _ => (s, [.send c.id (.err "unknown message".toUTF8.toList)])
 
 /-! ## The step function -/
 

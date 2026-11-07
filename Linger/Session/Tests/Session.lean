@@ -441,11 +441,12 @@ example :
        && effs.contains .dropCheckpoint
        && effs.contains .exit) = true := by native_decide
 
-/-- An unknown tag in a real frame does nothing at all (§Frame). -/
+/-- An unknown tag in a real frame is refused and changes nothing else (§Frame). -/
 example :
-    (let quiet := run [.connected 1, .bytes 1 (encode (.unknown 99 [1, 2, 3]))]
+    (let refused := run [.connected 1, .bytes 1 (encode (.unknown 99 [1, 2, 3]))]
      let base := run [.connected 1]
-     quiet.2 == base.2 && quiet.1.clients.length == base.1.clients.length) = true := by
+     refused.2 == base.2 ++ [.send 1 (.err "unknown message".toUTF8.toList)] &&
+       refused.1.clients.length == base.1.clients.length) = true := by
   native_decide
 
 /-- The 17th client is refused (§Bound: maxClients = 16). -/
