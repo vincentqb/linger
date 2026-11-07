@@ -115,8 +115,9 @@ csi_count='([(][^)]*[^[:alnum:]_.]|[(])?(a1|n)([^[:alnum:]_]|$)|[(][^)]*[.]arg([
 # without it one CSI 65535 X runs 65535 iterations.
 code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(]v[.]cursor[.]x [+] n[)] v[.]cols[)]$' \
   Linger/Terminal/Vt.lean >/dev/null || fail "ECH lost its clamp: its span must end at min (v.cursor.x + n) v.cols"
-# the OS surface stays where AGENTS.md says it is
-[ "$(code_grep '@[[]extern' '*.lean' | awk -F: '!seen[$1]++ { print $1 }' | tr -d ' ')" = "Linger/Os/Boundary.lean" ] \
+# the OS surface stays where AGENTS.md says it is: the attribute in any form, including
+# `@[never_extract, extern "f"]` and `attribute [extern "f"] g`
+[ "$(code_grep '(^|[^[:alnum:]_])extern([^[:alnum:]_]|$)' '*.lean' | awk -F: '!seen[$1]++ { print $1 }' | tr -d ' ')" = "Linger/Os/Boundary.lean" ] \
   || fail "extern declarations outside Linger/Os/Boundary.lean"
 # The boundary declares foreign functions and nothing else: no Lean body, no wrapper.
 ! code_grep '^[[:space:]]*(private[[:space:]]+)?(def|abbrev|theorem|instance|structure|inductive)[[:space:]]' \
@@ -385,6 +386,13 @@ import_closure Linger/Os/Boundary.lean ''
 [ "$(module_imports '*.lean' | awk -F: "$IMPORT_AWK"'
     import_mod($3) == "Linger.Os.Boundary" && !seen[$1]++ { print $1 }')" = "Linger/Os/Shell.lean" ] \
   || fail "a module other than Linger/Os/Shell.lean imports Linger.Os.Boundary"
+# `import all` transits (see the Vt friend set below), so `import all Linger.Os.Shell` would
+# grant the private bindings it wraps: every other module imports it plainly.
+shell_all="$(module_imports '*.lean' | awk -F: "$IMPORT_AWK"'
+  $3 ~ /import[[:space:]]+all[[:space:]]/ && import_mod($3) == "Linger.Os.Shell" { print "  " $0 }')"
+[ -z "$shell_all" ] || {
+  printf '%s\n' "$shell_all" >&2
+  fail "import all Linger.Os.Shell grants the private Boundary bindings: import it plainly"; }
 import_closure Linger/Os/Shell/Command.lean 'import Linger.Os.Shell;'
 import_closure Linger/Import/Shell.lean 'import Linger.Import.Resurrect;import Linger.Session.Checkpoint;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Session.Shell.Paths;import Linger.Session.Shell.Resume;import Linger.Session.Shell.Inventory;import Linger.Os.Shell.Command;import Linger.Target.Remote;import Linger.Selector.Shell;import Std.Async.System;'
 import_closure Linger/Selector/Shell.lean \
