@@ -173,7 +173,7 @@ def run : IO UInt32 :=
     let err ← drainStr missing.fd 1500
     let rc ← missing.reap
     missing.bye (sendDetach := false)
-    expect (rc == 1) "read-only attach to a missing session exits 1"
+    expect (rc == 127) "read-only attach to a missing session exits 127"
     expect (has err "no live session or readable checkpoint for 'nosuch'")
         "read-only attach reports the exact missing session"
     expect (!has (← e.out #["ls"]) "nosuch") "read-only attach creates no session"

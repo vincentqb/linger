@@ -297,7 +297,7 @@ def run : IO UInt32 :=
     let (savedRc, _, _) ← e.cli #["kill", "w-saved"]
     let discarded := !(← System.FilePath.pathExists savedPath)
     let (absentRc, _, absentErr) ← e.cli #["kill", "w-saved"]
-    expect (savedRc == 0 && discarded && absentRc == 1 && has absentErr "no session")
+    expect (savedRc == 0 && discarded && absentRc == 127 && has absentErr "no session")
         "kill discards a saved session, then finds none"
     -- A transport loss is neither a detach nor a successful wait.
     let lost ← e.spawn #["attach", "attach-lost"] cols rows

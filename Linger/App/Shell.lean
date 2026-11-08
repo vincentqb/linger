@@ -359,6 +359,11 @@ private def cmdSummary : IO UInt32 := do
     IO.println summary
   return 0
 
+/-- The exit status when no daemon answered for `name` and nothing saved could be read: 1 if a
+checkpoint exists that will not load, else 127, as for a session that does not exist. -/
+private def missingOrUnreadable (name : String) : IO UInt32 := do
+  return if ← System.FilePath.pathExists (← Paths.ckptPath name) then 1 else 127
+
 /-- A live connection is authoritative. Only read-only attachment can view an
 offline checkpoint, loaded while owning both resources and displayed after
 releasing them. Writable attachment keeps the create/resume path. Live titles
@@ -368,17 +373,17 @@ private def cmdAttach (name : String) (cmd : List String) (readOnly : Bool) : IO
     if readOnly then
       match ← Client.connect name with
       | some fd =>
-        Client.attach name fd summaryText true
+        some <$> Client.attach name fd summaryText true
       | none =>
         let checkpoint ← Paths.withSessionLock name (Resume.loadCkpt name)
-        match checkpoint with
-        | some (vt, _, _) =>
-          Client.viewSaved name vt
-        | none =>
-          pure (.refused s!"no live session or readable checkpoint for '{name}'")
+        checkpoint.mapM fun (vt, _, _) => Client.viewSaved name vt
     else
       let fd ← connectUpsert name cmd
-      Client.attach name fd summaryText
+      some <$> Client.attach name fd summaryText
+  let some result := result
+    |
+    IO.eprintln s!"linger: no live session or readable checkpoint for '{name}'"
+    return ← missingOrUnreadable name
   match result with
   | .ended ending =>
     IO.eprintln s!"\r\nlinger: session '{name}' ended ({ending.describe})"
@@ -468,14 +473,19 @@ private def requestStatus (name : String) (result : Client.Drained) : IO UInt32 
     IO.eprintln s!"linger: no reply from '{name}'"
   return 1
 
+/-- A command named a session that does not exist: say so and return 127, which a shell reports
+for a command it cannot find. -/
+private def noSession (name : String) : IO UInt32 := do
+  IO.eprintln s!"linger: no session '{name}'"
+  return 127
+
 /-- One request to a live session. Pass `Client.replySilenceMs` for verbs a
 pre-upgrade daemon does not know, which would otherwise hang the untimed drain
 (spec agent-cli, Decision 4). -/
 private def requireLive (name : String) (m : Msg) (silenceMs : Int32 := -1) : IO UInt32 := do
   match ← Client.oneShot name m (silenceMs := silenceMs) with
   | none =>
-    IO.eprintln s!"linger: no session '{name}'"
-    return 1
+    noSession name
   | some result =>
     requestStatus name result
 
@@ -483,8 +493,7 @@ private def requireLive (name : String) (m : Msg) (silenceMs : Int32 := -1) : IO
 private def requireLiveSend (name : String) (m : Msg) : IO UInt32 := do
   if ← Client.sendOnly name m then
     return 0
-  IO.eprintln s!"linger: no session '{name}'"
-  return 1
+  noSession name
 
 /-- A connected daemon is authoritative, including its errors. Only an absent
 connection followed by successful ownership acquisition permits an offline read.
@@ -502,7 +511,7 @@ private def cmdRead (name : String) (m : Msg) (render : Linger.Terminal.Vt.Vt �
           return 0
         | none =>
           IO.eprintln s!"linger: no live session or readable checkpoint for '{name}'"
-          return 1
+          missingOrUnreadable name
 
 /-- `send <name> -`: stdin to the session's pty, byte-exact, one `.input`
 frame per read (≤ 64 KiB, so every frame satisfies `Msg.WF`). The agent's raw input
@@ -510,14 +519,13 @@ path — Enter, ^C, ESC, arrow sequences, exact whitespace: everything argv
 cannot carry (agent-cli Decision 5). Poll-then-read so EOF (`read` = `none`)
 is distinguished from would-block (`some #[]`, looped past) without spinning;
 no timeout on purpose — a slow producer feeding a pipe is legitimate. Stdin EOF
-returns 0; a missing session, a refusal, an invalid reply, the session's exit or a lost
-connection returns 1. Nothing accumulates (each chunk is sent and dropped), so no
+returns 0, and a missing session 127; a refusal, an invalid reply, the session's exit or a
+lost connection returns 1. Nothing accumulates (each chunk is sent and dropped), so no
 `Buf` is involved. -/
 private def cmdSendStdin (name : String) : IO UInt32 := do
   match ← Client.connect name with
   | none =>
-    IO.eprintln s!"linger: no session '{name}'"
-    return 1
+    noSession name
   | some fd =>
     try
       let mut dec : Linger.Session.Wire.Decoder := {}
@@ -711,9 +719,9 @@ private def discardSaved (name : String) : IO (Except String Bool) := do
 
 /-- `kill`: end the session and return once it has ended. Its daemon stops the program (SIGHUP to
 its terminal session, then SIGKILL after a second), records how it ended and gives the name up.
-With no daemon, a saved session is discarded instead. No session, a refusal, a name another
-process holds, or a session that has not ended within `heldNameMs`, prints a diagnostic and
-returns 1. -/
+With no daemon, a saved session is discarded instead. No session returns 127; a refusal, a name
+another process holds, or a session that has not ended within `heldNameMs`, prints a diagnostic
+and returns 1. -/
 private def cmdKill (name : String) : IO UInt32 := do
   match ← Client.oneShot name .kill with
   | some (.refused why) =>
@@ -740,15 +748,14 @@ private def cmdKill (name : String) : IO UInt32 := do
     | .ok true =>
       return 0
     | .ok false =>
-      IO.eprintln s!"linger: no session '{name}'"
-      return 1
+      noSession name
     | .error why =>
       IO.eprintln s!"linger: {why}"
       return 1
 
 /-- `info`: the live session's fields; with no daemon to answer, the name and how the program of
-the last session to hold it ended, from the name's end record. No session, a refusal or a failed
-reply prints a diagnostic and returns 1. -/
+the last session to hold it ended, from the name's end record. No session returns 127; a refusal
+or a failed reply prints a diagnostic and returns 1. -/
 private def cmdInfo (name : String) : IO UInt32 := do
   match ← Client.oneShot name .info (silenceMs := Client.replySilenceMs) with
   | some result =>
@@ -760,19 +767,17 @@ private def cmdInfo (name : String) : IO UInt32 := do
         IO.println s!"{k}\t{v}"
       return 0
     | .recorded none =>
-      IO.eprintln s!"linger: no session '{name}'"
-      return 1
+      noSession name
     | .held why =>
       IO.eprintln s!"linger: no answer for '{name}': {why}"
       return 1
 
-/-- `get`: print the session's labels as `key=value` lines from one info reply. No
-session, or a failed reply, prints a diagnostic and returns 1. -/
+/-- `get`: print the session's labels as `key=value` lines from one info reply. No session
+returns 127, and a failed reply prints a diagnostic and returns 1. -/
 private def cmdGet (name : String) : IO UInt32 := do
   match ← queryInfo name with
   | none =>
-    IO.eprintln s!"linger: no session '{name}'"
-    return 1
+    noSession name
   | some (.error err) =>
     IO.eprintln s!"linger: {err} for '{name}'"
     return 1

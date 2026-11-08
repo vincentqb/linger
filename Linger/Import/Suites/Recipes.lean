@@ -734,7 +734,7 @@ def run : IO UInt32 :=
     let (irc, _, ierr) ← runImport e home.toString data.toString #[invalidSave.toString]
     expect
         (irc == 1 && has ierr "working directory not found" &&
-          (← e.cli #["info", "prevalid-w1-p0"]).1 == 1)
+          (← e.cli #["info", "prevalid-w1-p0"]).1 == 127)
         "linger tmux import validates every cwd before creating any session"
     let invalidNameSave := root / "invalid-name-save"
     let longNameSave := root / "long-name-save"
@@ -746,7 +746,7 @@ def run : IO UInt32 :=
     expect
         (urc == 1 && longRc == 1 && has uerr "not a valid linger name" &&
           has longErr "not a valid linger name" &&
-          (← e.cli #["info", "bad_name-w1-p0"]).1 == 1)
+          (← e.cli #["info", "bad_name-w1-p0"]).1 == 127)
         "linger tmux import rejects names that linger would rewrite or truncate"
     let inaccessibleDir := root / "inaccessible"
     let inaccessibleSave := root / "inaccessible-save"
@@ -762,7 +762,7 @@ def run : IO UInt32 :=
         Linger.Os.Shell.chmod inaccessibleDir.toString 0o700
     expect
         (accessRc == 1 && has accessErr "working directory not accessible" &&
-          (← e.cli #["info", "accessvalid-w1-p0"]).1 == 1)
+          (← e.cli #["info", "accessvalid-w1-p0"]).1 == 127)
         "linger tmux import validates directory access before creating any session"
     let malformedSave := root / "malformed-save"
     IO.FS.writeFile malformedSave "pane\tshort\n"

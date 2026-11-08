@@ -340,8 +340,8 @@ def run : IO UInt32 :=
     cl.bye -- detach, close, reap
     -- info against a missing session fails cleanly, quoting the name it looked for.
     let (irc, _, ierr) ← e.cli #["info", "nosuch"]
-    expect (irc == 1 && has ierr "no session 'nosuch'")
-        "info on a missing session exits 1 with a message"
+    expect (irc == 127 && has ierr "no session 'nosuch'")
+        "info on a missing session exits 127 with a message"
     -- All arguments are valid; the daemon rejects the entry beyond its label cap.
     let labels := (List.range (Linger.Session.maxLabels + 1)).map fun i => s!"probe-{i}=value"
     let (lrc, _, lerr) ← e.cli (#["set", "ag"] ++ labels.toArray)
@@ -396,7 +396,7 @@ def run : IO UInt32 :=
     let hist := (← e.out #["capture", "--history", "ag"]).splitOn "\n"
     expect (cap2.length == rows + 1 && hist.length > cap2.length)
         "capture stays screen-sized while history grows"
-    expect ((← e.cli #["capture", "nosuch"]).1 == 1) "capture on a missing session exits 1"
+    expect ((← e.cli #["capture", "nosuch"]).1 == 127) "capture on a missing session exits 127"
     -- ── Step 3: send - (raw stdin) ────────────────────────────────────────────
     -- a full command line with its newline arrives verbatim and executes. The
     -- marker is asserted on the *expansion* (GOT-42), which the typed line does
@@ -440,7 +440,7 @@ def run : IO UInt32 :=
                 return has (← e.out #["capture", "ag"]) "INTERRUPTED-OK"))
         "send - carries ^C (the foreground child died, the shell came back)"
     expect ((← sendStdin e "ag" "") == 0) "send - with empty stdin exits 0"
-    expect ((← sendStdin e "nosuch" "x") == 1) "send - on a missing session exits 1"
+    expect ((← sendStdin e "nosuch" "x") == 127) "send - on a missing session exits 127"
     -- Keep stdin open and idle, then crash the daemon. The sender must observe the
     -- socket, not wait forever for producer EOF.
     let _ ← e.cli #["run", "send-lost", "sleep", "600"]
@@ -504,8 +504,8 @@ def run : IO UInt32 :=
     let (zrc, _, _) ← e.cli #["resize", "rz", "0", "10"]
     let (brc, _, _) ← e.cli #["resize", "rz", toString tooBig, "10"]
     expect (zrc == 2 && brc == 2) "zero and oversize are rejected client-side"
-    expect ((← e.cli #["resize", "nosuch", "80", "24"]).1 == 1)
-        "resize on a missing session exits 1"
+    expect ((← e.cli #["resize", "nosuch", "80", "24"]).1 == 127)
+        "resize on a missing session exits 127"
     e.killAll #["rz"]
     -- An empty or unset SHELL names no program: creation falls back to the default
     -- shell (`shellOf_absent`). The harness sets SHELL for every other session.

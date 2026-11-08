@@ -756,7 +756,7 @@ for tie in \
   'let withColor := [(]← [(]← IO[.]getStdout[)][.]isTty[)] && [(]← IO[.]getEnv "NO_COLOR"[)][.]isNone writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor rows[)][.]toArray[)]' \
   'def summaryText : IO String := do let rows ← localRows [(]some [(][(]← monotonicMs[)] [+] 250[)][)] return Linger[.]Display[.]Status[.]summary [(]rows[.]map fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD "unknown"[)][)]' \
   'def cmdSummary : IO UInt32 := do let summary ← summaryText if !summary[.]isEmpty then IO[.]println summary return 0' \
-  'let fd ← connectUpsert name cmd Client[.]attach name fd summaryText' \
+  'let fd ← connectUpsert name cmd some <[$]> Client[.]attach name fd summaryText' \
   '[|] [[]"ls", "--summary"[]] [|] [[]"list", "--summary"[]] [|] [[]"l", "--summary"[]] => cmdSummary'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "listing or prompt bypassed its shared policy: $tie"
@@ -1252,7 +1252,7 @@ for tie in \
 done
 for tie in \
   'requestStatus name result [|] none => Paths[.]withSessionLock name do match ← Resume[.]loadCkpt name with [|] some [(]vt, _, _[)] => writeAll stdoutFd [(]ByteArray[.]mk [(]render vt[)][.]toArray[)]' \
-  'if readOnly then match ← Client[.]connect name with [|] some fd => Client[.]attach name fd summaryText true [|] none => let checkpoint ← Paths[.]withSessionLock name [(]Resume[.]loadCkpt name[)] match checkpoint with [|] some [(]vt, _, _[)] => Client[.]viewSaved name vt'; do
+  'if readOnly then match ← Client[.]connect name with [|] some fd => some <[$]> Client[.]attach name fd summaryText true [|] none => let checkpoint ← Paths[.]withSessionLock name [(]Resume[.]loadCkpt name[)] checkpoint[.]mapM fun [(]vt, _, _[)] => Client[.]viewSaved name vt'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "offline reading or listing bypassed ownership: $tie"
 done
