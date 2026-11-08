@@ -764,11 +764,13 @@ done
 # The session inventory the listing, the prompt summary, `get` and the importer share.
 inventory_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Inventory.lean)"
 for tie in \
-  'if let some deadline := stopAt then if [(]← monotonicMs[)] ≥ deadline then return some [(][.]error [(]IO[.]userError "overview deadline reached"[)][)] match ← Client[.]connect name stopAt[.]isSome with [|] none => if stopAt[.]isSome && retainUnavailable then return some [(][.]error [(]IO[.]userError "overview connection unavailable"[)][)] return none [|] some fd => try let info ← [(]readInfo fd stopAt[)][.]toBaseIO return some info finally close fd' \
+  'if let some deadline := stopAt then if [(]← monotonicMs[)] ≥ deadline then return some [(][.]error [(]IO[.]userError "overview deadline reached"[)][)] match ← connect stopAt[.]isSome with [|] none => if stopAt[.]isSome && retainUnavailable then return some [(][.]error [(]IO[.]userError "overview connection unavailable"[)][)] return none [|] some fd => try let info ← [(]readInfo fd stopAt[)][.]toBaseIO return some info finally close fd' \
   'Client[.]sendMsg fd [.]info let deadline := stopAt[.]getD [(][(]← monotonicMs[)] [+] 2000[)]' \
   'while go && [(]← monotonicMs[)] < deadline do let remaining := deadline - [(]← monotonicMs[)] let revs ← poll #[[]fd[]] #[[]POLLIN[]] [(]Int32[.]ofNat [(]min 100 remaining[)][)]' \
+  'queryWith [(]Client[.]connect name ·[)] stopAt retainUnavailable' \
+  'IO[.]asTask [(]queryWith [(]connectListed listed ·[)] [(]some deadline[)] retainUnavailable[)]' \
   'let infos ← queryInfos sockets deadline stopAt[.]isSome' \
-  'for [(]name, result[)] in sockets[.]zip infos do match result with [|] some info => confirmedLive := confirmedLive [+][+] [[]name[]] rows := rows [+][+] [[]liveRow name [(]info[.]toOption[.]getD [[][]][)][]] [|] none => if ![(]← removeStaleSocket name[)] then'; do
+  'for [(]listed, result[)] in sockets[.]zip infos do let name := listed[.]name match result with [|] some info => confirmedLive := confirmedLive [+][+] [[]name[]] rows := rows [+][+] [[]liveRow name [(]info[.]toOption[.]getD [[][]][)][]] [|] none => if ![(]← removeStaleSocket listed[)] then'; do
   printf '%s\n' "$inventory_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "listing or prompt bypassed its shared policy: $tie"
 done
@@ -804,7 +806,7 @@ for tie in \
 done
 for tie in \
   'while next < names[.]size && [(]← pending[.]get[)][.]size < localQueryLimit && [(]← monotonicMs[)] < deadline do' \
-  'IO[.]asTask [(]queryInfo names[[]index[]]! [(]some deadline[)] retainUnavailable[)] Task[.]Priority[.]dedicated' \
+  'let some listed := names[[]index[]][?] [|] break let task ← IO[.]asTask [(]queryWith [(]connectListed listed ·[)] [(]some deadline[)] retainUnavailable[)] Task[.]Priority[.]dedicated' \
   'finally for [(]_, task[)] in ← pending[.]get do discard <[|] IO[.]wait task'; do
   printf '%s\n' "$inventory_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "discovery lost its bounded task or process ownership: $tie"
@@ -1191,13 +1193,13 @@ done
 paths_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Paths.lean)"
 for tie in \
   'match Linger[.]Target[.]Name[.]check name with [|] some name => return name [|] none => throw' \
-  'let name ← checkName name ensureDir dir let path := s!"[{]dir[}]/[{]name[}][{]suffix[}]" checkSpelling path return path' \
+  'let name ← if listed then pure name else checkName name ensureDir dir let path := s!"[{]dir[}]/[{]name[}][{]suffix[}]" unless listed do checkSpelling path return path' \  'def namedPath [(]dir name suffix : String[)] : IO String := pathIn dir name suffix false' \
   'def socketPath [(]name : String[)] : IO String := do namedPath [(]← socketDir[)] name "[.]sock"' \
   'def ckptPath [(]name : String[)] : IO String := do namedPath [(]← stateDir[)] name "[.]ckpt"' \
   'def lockPath [(]name : String[)] : IO String := do namedPath [(]← socketDir[)] name "[.]lock"' \
   'def stateLockPath [(]name : String[)] : IO String := do namedPath [(][(]← stateDir[)] [+][+] "/[.]locks"[)] name "[.]lock"' \
   'def logPath [(]name : String[)] : IO String := do namedPath [(][(]← stateDir[)] [+][+] "/logs"[)] name "[.]log"' \
-  'def withLockRetrying [{]α : Type[}] [(]path : String[)] [(]retry : IO Bool[)] [(]action : IO α[)] : IO α := do let mut fd ← Linger[.]Os[.]Shell[.]flock path while fd < 0 do unless ← retry do break fd ← Linger[.]Os[.]Shell[.]flock path if fd < 0 then throw [(]IO[.]userError s!"session is owned by another process [(][{]path[}][)]"[)] try checkSpelling path action finally Linger[.]Os[.]Shell[.]close fd[.]toUInt64[.]toUInt32' \
+  'def withLockRetrying [{]α : Type[}] [(]path : String[)] [(]retry : IO Bool[)] [(]action : IO α[)] [(]listed : Bool := false[)] : IO α := do let mut fd ← Linger[.]Os[.]Shell[.]flock path while fd < 0 do unless ← retry do break fd ← Linger[.]Os[.]Shell[.]flock path if fd < 0 then throw [(]IO[.]userError s!"session is owned by another process [(][{]path[}][)]"[)] try unless listed do checkSpelling path action finally Linger[.]Os[.]Shell[.]close fd[.]toUInt64[.]toUInt32' \  'def Listed[.]withLock [{]α : Type[}] [(]n : Listed[)] [(]action : IO α[)] : IO α := do withLockRetrying [(]← pathIn [(]← socketDir[)] n[.]name "[.]lock" true[)] [(]pure false[)] action [(]listed := true[)]' \  'def Listed[.]withSessionLock [{]α : Type[}] [(]n : Listed[)] [(]action : IO α[)] : IO α := do n[.]withLock do withLockRetrying [(]← pathIn [(][(]← stateDir[)] [+][+] "/[.]locks"[)] n[.]name "[.]lock" true[)] [(]pure false[)] action [(]listed := true[)]' \
   'def withLock [{]α : Type[}] [(]path : String[)] [(]action : IO α[)] : IO α := withLockRetrying path [(]pure false[)] action' \
   'def withSessionLockRetrying [{]α : Type[}] [(]name : String[)] [(]retry : IO Bool[)] [(]action : IO α[)] : IO α := do withLockRetrying [(]← lockPath name[)] retry do withLockRetrying [(]← stateLockPath name[)] retry action' \
   'def withSessionLock [{]α : Type[}] [(]name : String[)] [(]action : IO α[)] : IO α := withSessionLockRetrying name [(]pure false[)] action'; do
@@ -1207,9 +1209,9 @@ done
 # A listing row takes its name verbatim from the socket filename (`rowFields_name`), so
 # both listings pass every directory entry through the exact name check.
 for tie in \
-  'private def listNames [(]dir suffix : String[)] : IO [(]List String[)] := do ensureDir dir return [(]← System[.]FilePath[.]readDir dir[)][.]toList[.]filterMap fun e => [(]e[.]fileName[.]dropSuffix[?] suffix[)][.]bind [(]Linger[.]Target[.]Name[.]check ·[.]toString[)]' \
-  'def listSocketNames : IO [(]List String[)] := do listNames [(]← socketDir[)] "[.]sock"' \
-  'def listCkptNames : IO [(]List String[)] := do listNames [(]← stateDir[)] "[.]ckpt"'; do
+  'private def listNames [(]dir suffix : String[)] : IO [(]List Listed[)] := do ensureDir dir return [(]← System[.]FilePath[.]readDir dir[)][.]toList[.]filterMap fun e => [(][(]e[.]fileName[.]dropSuffix[?] suffix[)][.]bind [(]Linger[.]Target[.]Name[.]check ·[.]toString[)][)][.]map [(]⟨·⟩[)]' \
+  'def listSocketNames : IO [(]List Listed[)] := do listNames [(]← socketDir[)] "[.]sock"' \
+  'def listCkptNames : IO [(]List Listed[)] := do listNames [(]← stateDir[)] "[.]ckpt"'; do
   printf '%s\n' "$paths_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "session listing must check every directory entry with Name.check: $tie"
 done
@@ -1254,7 +1256,7 @@ for tie in \
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "offline reading or listing bypassed ownership: $tie"
 done
-tie='let available ← try Paths[.]withSessionLock name [(]pure true[)] catch _ => pure false'
+tie='let available ← try listed[.]withSessionLock [(]pure true[)] catch _ => pure false'
 printf '%s\n' "$inventory_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
   || fail "offline reading or listing bypassed ownership: $tie"
 # Saved viewing consumes the bounded, faithful replay cursor. The original

@@ -73,23 +73,48 @@ private def checkName (name : String) : IO String := do
   | none =>
     throw (IO.userError s!"invalid session name (use {nameRule})")
 
+/-- `s` with the case of each ASCII letter swapped. -/
+private def swapCase (s : String) : String :=
+  s.map fun c => if c.isLower then c.toUpper else if c.isUpper then c.toLower else c
+
 /-- On a case-insensitive filesystem, a different spelling must not open an
-existing session. Check again after creating/locking or connecting to a path. -/
+existing session. Check again after creating/locking or connecting to a path. A directory
+that tells case apart has no entry under the swapped spelling, because linger writes only
+lower-case suffixes, so there the existing entry is the exact spelling and two lookups
+settle it; only a directory that finds the swapped spelling is listed. -/
 def checkSpelling (path : String) : IO Unit := do
   let p := System.FilePath.mk path
   if ← p.pathExists then
-    let entries ← p.parent.getD "." |>.readDir
-    unless entries.any (fun entry => some entry.fileName == p.fileName) do
-      throw (IO.userError "session name differs from an existing filename's spelling")
+    let dir := p.parent.getD "."
+    let some file := p.fileName | return
+    if ← (dir / swapCase file).pathExists then
+      let entries ← dir.readDir
+      unless entries.any (fun entry => entry.fileName == file) do
+        throw (IO.userError "session name differs from an existing filename's spelling")
+
+/-- A session name as a directory listing spells it, which is the spelling on disk, so its
+paths need no `checkSpelling`. Only `listSocketNames` and `listCkptNames` make one. -/
+structure Listed where private mk ::
+  /-- The name, spelled as on disk. -/
+  name : String
+
+/-- `dir/<name><suffix>`, after creating `dir` with `ensureDir`. A name a listing read is
+taken as spelled; any other must pass `checkName` and then `checkSpelling`. -/
+private def pathIn (dir name suffix : String) (listed : Bool) : IO String := do
+  let name ←
+    if listed then
+      pure name
+    else
+      checkName name
+  ensureDir dir
+  let path := s!"{dir}/{name}{suffix}"
+  unless listed do
+    checkSpelling path
+  return path
 
 /-- `dir/<name><suffix>` once `checkName` accepts `name`, after creating `dir` with
 `ensureDir` and rejecting an existing entry spelled differently (`checkSpelling`). -/
-private def namedPath (dir name suffix : String) : IO String := do
-  let name ← checkName name
-  ensureDir dir
-  let path := s!"{dir}/{name}{suffix}"
-  checkSpelling path
-  return path
+private def namedPath (dir name suffix : String) : IO String := pathIn dir name suffix false
 
 /-- The session's socket, `<name>.sock` in `socketDir`. -/
 def socketPath (name : String) : IO String := do
@@ -123,11 +148,16 @@ def logPath (name : String) : IO String := do
 def startReportPath (name nonce : String) : IO String := do
   namedPath ((← stateDir) ++ "/logs") name s!".start-{nonce}"
 
+/-- The socket of a session a listing named. -/
+def Listed.socketPath (n : Listed) : IO String := do
+  pathIn (← socketDir) n.name ".sock" true
+
 /-- Failed acquisition does not run the action. A held lock is tried again while
 `retry`, asked only after a failed attempt, holds. Always release after the action,
-including startup/read exceptions; recheck spelling after the atomic acquisition. -/
-private def withLockRetrying {α : Type} (path : String) (retry : IO Bool) (action : IO α) : IO α :=
-  do
+including startup/read exceptions; recheck spelling after the atomic acquisition unless a
+listing read the name. -/
+private def withLockRetrying {α : Type} (path : String) (retry : IO Bool) (action : IO α)
+    (listed : Bool := false) : IO α := do
   let mut fd ← Linger.Os.Shell.flock path
   while fd < 0 do
     unless ← retry do
@@ -136,7 +166,8 @@ private def withLockRetrying {α : Type} (path : String) (retry : IO Bool) (acti
   if fd < 0 then
     throw (IO.userError s!"session is owned by another process ({path})")
   try
-    checkSpelling path
+    unless listed do
+      checkSpelling path
     action
   finally
     Linger.Os.Shell.close fd.toUInt64.toUInt32
@@ -157,18 +188,28 @@ def withSessionLockRetrying {α : Type} (name : String) (retry : IO Bool) (actio
 def withSessionLock {α : Type} (name : String) (action : IO α) : IO α :=
   withSessionLockRetrying name (pure false) action
 
-/-- Valid session names among `dir`'s entries ending in `suffix`. -/
-private def listNames (dir suffix : String) : IO (List String) := do
+/-- The name lock of a session a listing named, without retrying. -/
+def Listed.withLock {α : Type} (n : Listed) (action : IO α) : IO α := do
+  withLockRetrying (← pathIn (← socketDir) n.name ".lock" true) (pure false) action (listed := true)
+
+/-- `withSessionLock` for a session a listing named. -/
+def Listed.withSessionLock {α : Type} (n : Listed) (action : IO α) : IO α := do
+  n.withLock do
+      withLockRetrying (← pathIn ((← stateDir) ++ "/.locks") n.name ".lock" true) (pure false)
+          action (listed := true)
+
+/-- Valid session names among `dir`'s entries ending in `suffix`, as the directory spells them. -/
+private def listNames (dir suffix : String) : IO (List Listed) := do
   ensureDir dir
   return (← System.FilePath.readDir dir).toList.filterMap fun e =>
-      (e.fileName.dropSuffix? suffix).bind (Linger.Target.Name.check ·.toString)
+      ((e.fileName.dropSuffix? suffix).bind (Linger.Target.Name.check ·.toString)).map (⟨·⟩)
 
 /-- Session names present as sockets, live or stale. -/
-def listSocketNames : IO (List String) := do
+def listSocketNames : IO (List Listed) := do
   listNames (← socketDir) ".sock"
 
 /-- Checkpoint names (resumable sessions after a reboot). -/
-def listCkptNames : IO (List String) := do
+def listCkptNames : IO (List Listed) := do
   listNames (← stateDir) ".ckpt"
 
 end Linger.Session.Shell.Paths

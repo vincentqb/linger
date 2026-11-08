@@ -81,14 +81,13 @@ def readInfo (fd : UInt32) (stopAt : Option Nat := none) : IO (List (String × S
       | [k, v] => pure (k, v)
       | _ => throw (IO.userError "invalid info record")
 
-/-- Keep connection absence separate from an info failure: listing must retain
-a connected peer, while `get` must report its unanswered request. -/
-def queryInfo (name : String) (stopAt : Option Nat := none) (retainUnavailable : Bool := true) :
-    IO (Option (Except IO.Error (List (String × String)))) := do
+/-- One info conversation over a connection `connect` opens; `none` when it opens none. -/
+private def queryWith (connect : Bool → IO (Option UInt32)) (stopAt : Option Nat)
+    (retainUnavailable : Bool) : IO (Option (Except IO.Error (List (String × String)))) := do
   if let some deadline := stopAt then
     if (← monotonicMs) ≥ deadline then
       return some (.error (IO.userError "overview deadline reached"))
-  match ← Client.connect name stopAt.isSome with
+  match ← connect stopAt.isSome with
   | none =>
     if stopAt.isSome && retainUnavailable then
       return some (.error (IO.userError "overview connection unavailable"))
@@ -100,12 +99,23 @@ def queryInfo (name : String) (stopAt : Option Nat := none) (retainUnavailable :
     finally
       close fd
 
+/-- Keep connection absence separate from an info failure: listing must retain
+a connected peer, while `get` must report its unanswered request. -/
+def queryInfo (name : String) (stopAt : Option Nat := none) (retainUnavailable : Bool := true) :
+    IO (Option (Except IO.Error (List (String × String)))) :=
+  queryWith (Client.connect name ·) stopAt retainUnavailable
+
+/-- `Client.connect` to a session a listing named, whose spelling needs no check. -/
+private def connectListed (n : Paths.Listed) (nonblocking : Bool) : IO (Option UInt32) := do
+  let r ← unixConnect (← n.socketPath) nonblocking
+  return if r ≥ 0 then some r.toUInt64.toUInt32 else none
+
 /-- Maximum simultaneous local overview queries. -/
 private abbrev localQueryLimit : Nat := 32
 
 /-- Bounded socket conversations run against the same deadline.
 Results retain their input positions; every started task is joined, even on error. -/
-private def queryInfos (names : Array String) (deadline : Nat) (retainUnavailable : Bool) :
+private def queryInfos (names : Array Paths.Listed) (deadline : Nat) (retainUnavailable : Bool) :
     IO (Array (Option (Except IO.Error (List (String × String))))) := do
   let unknown := some (.error (IO.userError "overview deadline reached"))
   let mut results := Array.replicate names.size unknown
@@ -119,8 +129,9 @@ private def queryInfos (names : Array String) (deadline : Nat) (retainUnavailabl
       while
         next < names.size && (← pending.get).size < localQueryLimit && (← monotonicMs) < deadline do
         let index := next
+        let some listed := names[index]? | break
         let task ←
-          IO.asTask (queryInfo names[index]! (some deadline) retainUnavailable)
+          IO.asTask (queryWith (connectListed listed ·) (some deadline) retainUnavailable)
               Task.Priority.dedicated
         pending.modify (·.push (index, task))
         next := next + 1
@@ -147,11 +158,11 @@ private def queryInfos (names : Array String) (deadline : Nat) (retainUnavailabl
 
 /-- Remove a failed-connect socket only while holding its name lock. `false`
 means another owner holds the lock or the probe itself failed; both fail closed. -/
-private def removeStaleSocket (name : String) : IO Bool := do
+private def removeStaleSocket (n : Paths.Listed) : IO Bool := do
   try
-    Paths.withLock (← Paths.lockPath name) do
+    n.withLock do
         try
-          IO.FS.removeFile (← Paths.socketPath name)
+          IO.FS.removeFile (← n.socketPath)
         catch _ =>
           pure ()
         return true
@@ -159,11 +170,12 @@ private def removeStaleSocket (name : String) : IO Bool := do
     return false
 
 /-- Common local snapshot for the listing and prompt. Concurrent queries share
-one deadline (two seconds for a listing); unqueried peers stay unknown. -/
+one deadline (two seconds for a listing); unqueried peers stay unknown. The names come from
+the directories, so no path here needs a spelling check. -/
 def localRows (stopAt : Option Nat := none) : IO (List (List (String × String))) := do
   let deadline := stopAt.getD ((← monotonicMs) + 2000)
-  let sockets := (← Paths.listSocketNames).toArray.qsort (· < ·)
-  let ckpts := (← Paths.listCkptNames).toArray.qsort (· < ·) |>.toList
+  let sockets := (← Paths.listSocketNames).toArray.qsort (·.name < ·.name)
+  let ckpts := (← Paths.listCkptNames).toArray.qsort (·.name < ·.name) |>.toList
   let infos ← queryInfos sockets deadline stopAt.isSome
   let liveRow := fun name info =>
     Linger.Display.Listing.rowFields name info ++
@@ -171,22 +183,24 @@ def localRows (stopAt : Option Nat := none) : IO (List (List (String × String))
         ("status", Linger.Display.Status.name (Linger.Display.Listing.rowStatus (.live info)))]
   let mut confirmedLive : List String := []
   let mut rows : List (List (String × String)) := []
-  for (name, result) in sockets.zip infos do
+  for (listed, result) in sockets.zip infos do
+    let name := listed.name
     match result with
     | some info =>
       confirmedLive := confirmedLive ++ [name]
       rows := rows ++ [liveRow name (info.toOption.getD [])]
     | none =>
-      if !(← removeStaleSocket name) then
+      if !(← removeStaleSocket listed) then
         -- Failed connect while another process owns (or may own) the name: keep
         -- the rendezvous path and list the identity as live/unknown.
         confirmedLive := confirmedLive ++ [name]
         rows := rows ++ [liveRow name []]
-  for name in ckpts do
+  for listed in ckpts do
+    let name := listed.name
     if !confirmedLive.contains name then
       let available ←
         try
-          Paths.withSessionLock name (pure true)
+          listed.withSessionLock (pure true)
         catch _ =>
           pure false
       -- Another runtime directory may share this checkpoint namespace.
