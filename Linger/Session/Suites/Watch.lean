@@ -2,6 +2,7 @@ module
 
 public import Verify.Harness
 import Linger.Session.Checkpoint
+import Linger.Session.Record
 import Linger.Session.Shell.Client
 import Linger.Session.Wire
 
@@ -77,6 +78,29 @@ def checkpointChecks (e : Env) : IO Unit := do
   finally
     viewer.bye
     e.killAll #["--read-only"]
+  -- a saved session whose program ended shows how in the title, as the listing does
+  IO.FS.writeBinFile s!"{e.dir}/done.ckpt" bytes
+  IO.FS.writeBinFile s!"{e.dir}/done.end"
+      (ByteArray.mk (Linger.Session.Record.encode (.ended (.exited 3))).toArray)
+  let done ← e.spawn #["attach", "--read-only", "done"] 40 4
+  try
+    let titleOf := fun (output : ByteArray) =>
+      ((Linger.Terminal.Vt.Vt.init 40 4).feed output.toList).windowTitle
+    let screen ← IO.mkRef ByteArray.empty
+    let titled ←
+      done.awaitText screen
+          (fun output =>
+            has (titleOf output) (String.singleton (Linger.Display.Status.icon .exitedBad)))
+    let title := titleOf (← screen.get)
+    expect
+        (titled && has title "done" &&
+          !has title (String.singleton (Linger.Display.Status.icon .resumable)) &&
+          (← e.status "done") == .exitedBad)
+        s!"a saved view of an ended session shows its ending in the title ({title})"
+    done.detach
+  finally
+    done.bye
+  e.killAll #["done"]
   -- A saved view forwards nothing and raw mode clears ISIG: the detach key is its
   -- only exit, so the writable-attach opt-out must not remove it.
   let pinned ← e.spawnEnv #["LINGER_NO_DETACH_KEY=1"] #["attach", "--read-only", "saved"] 40 4

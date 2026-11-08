@@ -2,11 +2,11 @@ module
 
 import Linger.Os.Shell
 public import Linger.Session
-import Linger.Session.Wire
 import Linger.Session.Buf
 import Linger.Session.Shell.Client
 import Linger.Session.Shell.Paths
-import Linger.Display.Listing
+import Linger.Session.Shell.Record
+public import Linger.Display.Listing
 import Linger.Display.Status
 
 public section
@@ -169,9 +169,23 @@ private def removeStaleSocket (n : Paths.Listed) : IO Bool := do
   catch _ =>
     return false
 
+/-- A saved session's listing row and the fields it adds, from reading its name's end record:
+ended, with the status a shell reports and how its program ended (`Session.outcomeFields`),
+when the record says so; unknown when the record cannot be read; otherwise resumable, as a
+session interrupted before its program ended, or saved before end records existed. -/
+def savedRow (record : Except IO.Error (Option (List UInt8))) :
+    Linger.Display.Listing.Row × List (String × String) :=
+  match record with
+  | .error _ => (.broken, [])
+  | .ok bytes =>
+    match bytes.bind Linger.Session.Record.decode with
+    | some (.ended outcome) => (.ended outcome.status.toNat, Linger.Session.outcomeFields outcome)
+    | _ => (.stale, [])
+
 /-- Common local snapshot for the listing and prompt. Concurrent queries share
 one deadline (two seconds for a listing); unqueried peers stay unknown. The names come from
-the directories, so no path here needs a spelling check. -/
+the directories, so no path here needs a spelling check. A saved session is listed as its end
+record says (`savedRow`), read while holding the name. -/
 def localRows (stopAt : Option Nat := none) : IO (List (List (String × String))) := do
   let deadline := stopAt.getD ((← monotonicMs) + 2000)
   let sockets := (← Paths.listSocketNames).toArray.qsort (·.name < ·.name)
@@ -198,20 +212,25 @@ def localRows (stopAt : Option Nat := none) : IO (List (List (String × String))
   for listed in ckpts do
     let name := listed.name
     if !confirmedLive.contains name then
-      let available ←
-        try
-          listed.withSessionLock (pure true)
-        catch _ =>
-          pure false
       -- Another runtime directory may share this checkpoint namespace.
       -- A busy or unreadable lock cannot establish that the session is offline.
+      let record ←
+        try
+          listed.withSessionLock (some <$> (Record.loadListed listed).toBaseIO)
+        catch _ =>
+          pure none
+      let savedFields := fun (row : Linger.Display.Listing.Row) extra =>
+        Linger.Display.Listing.rowFields name
+          ([("state", "resumable"),
+              ("status", Linger.Display.Status.name (Linger.Display.Listing.rowStatus row))] ++
+            extra)
       rows :=
         rows ++
-          [if available then
-              Linger.Display.Listing.rowFields name
-                [("state", "resumable"),
-                  ("status", Linger.Display.Status.name (Linger.Display.Listing.rowStatus .stale))]
-            else liveRow name []]
+          [match record with
+            | none => liveRow name []
+            | some loaded =>
+              let (row, ending) := savedRow loaded
+              savedFields row ending]
   return rows
 
 end Linger.Session.Shell.Inventory

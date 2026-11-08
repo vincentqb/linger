@@ -27,11 +27,13 @@ first one that applies. -/
 inductive Status where
   /-- `?` — the checkpoint will not load, or the daemon did not answer. -/
   | unknown
-  /-- `!` — the program exited nonzero, or was killed by a signal. -/
+  /-- `!` — the program ended any other way: a nonzero exit, a signal, or an ending linger did
+  not see. -/
   | exitedBad
   /-- `✓` — the program exited 0. It did its job. -/
   | exitedOk
-  /-- `~` — no daemon, but a checkpoint is on disk: attach restores it. -/
+  /-- `~` — no daemon, but a checkpoint is on disk whose program was interrupted before it
+  ended: attach resumes it. -/
   | resumable
   /-- `⣿` — output or a bell since the session was last looked at, now quiet. -/
   | wantsYou
@@ -48,8 +50,8 @@ structure Obs where
   known : Bool := true
   /-- The session's socket is live. -/
   daemonUp : Bool := true
-  /-- The exit status, once the child is gone. Only the daemon can report
-  it, so `some _` presupposes `daemonUp`. -/
+  /-- The status a shell reports for how the program ended, once it has: from the daemon while
+  it ends, then from the name's end record, which a socket-less row reads. -/
   exit : Option Nat := none
   /-- Output within the "working" window. -/
   fresh : Bool := false

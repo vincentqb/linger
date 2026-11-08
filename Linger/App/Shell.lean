@@ -44,7 +44,7 @@ run <name> <command...>                   Deprecated: type into a shell; use sta
 start <name> <program> [args...]          Start a program, exactly, in a new session
 send <name> <text...|->                   Send raw input; - reads stdin
 detach <name>                             Detach all clients from a session
-kill <name>                               End a session, or discard a saved one
+kill <name>                               End a session, or discard a saved or ended one
 info <name>                               Print session details
 capture [--history] <name>                Print the live or saved screen
 resize <name> <cols> <rows>               Resize a detached session
@@ -89,7 +89,7 @@ private def serveStart (report name cwd : String) (argv : List String) : IO Unit
     told.set true
     writeReport report r
   try
-    Daemon.serve name cwd argv (Resume.saveCkpt name) (Resume.dropCkpt name) (Resume.loadCkpt name)
+    Daemon.serve name cwd argv (← Resume.saver name) (Resume.dropCkpt name) (Resume.loadCkpt name)
         (recordFile name) (some tell)
   catch err =>
     unless ← told.get do
@@ -113,15 +113,24 @@ private def takeReport (path : String) : IO (Option (Option Linger.Session.Start
   return some (Linger.Session.Start.Report.decode bytes.toList)
 
 /-- `start`'s status for its daemon's report: 0 once the program runs; 1, saying which session
-holds the name, for a refusal; and for a program that could not start, the status a shell or
-`env` reports. A report that is no report is linger's own failure, 125. -/
+holds the name, for a refusal, and for a saved one whether its program ended; and for a program
+that could not start, the status a shell or `env` reports. A report that is no report is
+linger's own failure, 125. -/
 private def startStatus (name : String) : Option Linger.Session.Start.Report → IO UInt32
   | some .started => return 0
   | some .running => do
     IO.eprintln s!"linger: session '{name}' is running"
     return 1
   | some .saved => do
-    IO.eprintln s!"linger: session '{name}' is saved; attach to resume it, or kill it to discard it"
+    let record := (← (Record.load name).toBaseIO).toOption.join
+    match record.bind Linger.Session.Record.decode with
+    | some (.ended outcome) =>
+      IO.eprintln
+          s!"linger: session '{name}' ended ({(Client.Ending.outcome outcome).describe}); \
+          kill it to discard it, or attach to resume it"
+    | _ =>
+      IO.eprintln
+          s!"linger: session '{name}' is saved; attach to resume it, or kill it to discard it"
     return 1
   | some (.failed status why) => do
     IO.eprintln s!"linger: session '{name}' did not start: {Client.replyText "no reason" why}"
@@ -131,11 +140,11 @@ private def startStatus (name : String) : Option Linger.Session.Start.Report →
     return 125
 
 /-- `start`: run `argv` exactly, with no shell, in a new session named `name`, in this directory
-and with this environment, and return once the program runs. A live or saved session that holds
-the name is refused, saying which, and never resumed (`Start.plan`); the daemon decides again
-holding the name. A program that cannot start returns what a shell or `env` reports, 125 for its
-directory, 127 when not found and 126 when not runnable, and leaves no session, checkpoint or
-record behind. -/
+and with this environment, and return once the program runs. A live or saved session, an ended
+one included, that holds the name is refused, saying which, and never resumed (`Start.plan`);
+the daemon decides again holding the name. A program that cannot start returns what a shell or
+`env` reports, 125 for its directory, 127 when not found and 126 when not runnable, and leaves
+no session, checkpoint or record behind. -/
 private def cmdStart (name : String) (argv : List String) : IO UInt32 := do
   let live ←
     match ← Client.connect name with
@@ -365,9 +374,10 @@ private def missingOrUnreadable (name : String) : IO UInt32 := do
   return if ← System.FilePath.pathExists (← Paths.ckptPath name) then 1 else 127
 
 /-- A live connection is authoritative. Only read-only attachment can view an
-offline checkpoint, loaded while owning both resources and displayed after
-releasing them. Writable attachment keeps the create/resume path. Live titles
-sample `summaryText` in this process. -/
+offline checkpoint, loaded with its end record while owning both resources and displayed after
+releasing them, under the status the listing shows for it. Writable attachment keeps the
+create/resume path, which resumes an ended session too. Live titles sample `summaryText` in this
+process. -/
 private def cmdAttach (name : String) (cmd : List String) (readOnly : Bool) : IO UInt32 := do
   let result ←
     if readOnly then
@@ -375,8 +385,11 @@ private def cmdAttach (name : String) (cmd : List String) (readOnly : Bool) : IO
       | some fd =>
         some <$> Client.attach name fd summaryText true
       | none =>
-        let checkpoint ← Paths.withSessionLock name (Resume.loadCkpt name)
-        checkpoint.mapM fun (vt, _, _) => Client.viewSaved name vt
+        let (checkpoint, record) ←
+          Paths.withSessionLock name do
+              return (← Resume.loadCkpt name, ← (Record.load name).toBaseIO)
+        let status := Linger.Display.Listing.rowStatus (savedRow record).1
+        checkpoint.mapM fun (vt, _, _) => Client.viewSaved name vt status
     else
       let fd ← connectUpsert name cmd
       some <$> Client.attach name fd summaryText
@@ -719,9 +732,9 @@ private def discardSaved (name : String) : IO (Except String Bool) := do
 
 /-- `kill`: end the session and return once it has ended. Its daemon stops the program (SIGHUP to
 its terminal session, then SIGKILL after a second), records how it ended and gives the name up.
-With no daemon, a saved session is discarded instead. No session returns 127; a refusal, a name
-another process holds, or a session that has not ended within `heldNameMs`, prints a diagnostic
-and returns 1. -/
+With no daemon, a saved session is discarded instead, an ended one included, whose end record
+stays for `wait` and `info`. No session returns 127; a refusal, a name another process holds,
+or a session that has not ended within `heldNameMs`, prints a diagnostic and returns 1. -/
 private def cmdKill (name : String) : IO UInt32 := do
   match ← Client.oneShot name .kill with
   | some (.refused why) =>
@@ -835,7 +848,7 @@ interchange elsewhere; `__daemon` runs a session's daemon in this process. -/
 def main (args : List String) : IO UInt32 := do
   match args with
   | "__daemon" :: name :: cwd :: cmd =>
-    Daemon.serve name cwd cmd (Resume.saveCkpt name) (Resume.dropCkpt name) (Resume.loadCkpt name)
+    Daemon.serve name cwd cmd (← Resume.saver name) (Resume.dropCkpt name) (Resume.loadCkpt name)
         (recordFile name)
     return 0
   | "__start" :: report :: name :: cwd :: argv =>

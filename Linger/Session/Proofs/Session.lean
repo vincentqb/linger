@@ -281,7 +281,8 @@ theorem step_childExited_scan (s : State) (outcome : Outcome) :
     (step s (.childExited outcome)).1.scan = .ground := by simp [step, Terminal.Mediation.finish]
 
 /-- The incomplete prefix is the first effect segment, before the ending and its status go to
-every attached or waiting client, then the closes, checkpoint deletion, and daemon exit. -/
+every attached or waiting client, then the closes, the checkpoint of the last screen, and daemon
+exit. -/
 theorem step_childExited_effects (s : State) (outcome : Outcome) :
     (step s (.childExited outcome)).2 =
       let flushed := Terminal.Mediation.finish s.scan
@@ -293,7 +294,32 @@ theorem step_childExited_effects (s : State) (outcome : Outcome) :
         s'.clients.filter (fun c => c.attached || c.waiting) |>.flatMap
           (fun c => [Effect.send c.id (.ended outcome), Effect.send c.id (.exited outcome.status)])
       let closes := s'.clients.map (fun c => Effect.close c.id)
-      flush ++ notify ++ closes ++ [.dropCheckpoint, .exit] := rfl
+      flush ++ notify ++ closes ++ [.checkpoint, .exit] := rfl
+
+/-- A presentation broadcast deletes no checkpoint: it is only messages to clients. -/
+theorem broadcast_no_dropCheckpoint (s : State) (bytes : List UInt8) :
+    Effect.dropCheckpoint ∉ broadcast s bytes := by
+  unfold broadcast outputMsgs
+  split <;> simp
+
+/-- **An ended session is a result**: when the program ends, the daemon saves the session's
+last screen, as the program left it, just before it exits, and deletes nothing. So the session
+stays listed with how its program ended, and `capture` shows what it left, until `kill`
+discards it; `kill` itself deletes the checkpoint (`onMsg_kill`). -/
+theorem step_childExited_keeps (s : State) (o : Outcome) :
+    (∃ front,
+        (step s (.childExited o)).2 = front ++ [.checkpoint, .exit] ∧
+          Effect.dropCheckpoint ∉ front) ∧
+      (step s (.childExited o)).1.terminal = s.terminal := by
+  refine ⟨⟨_, by rw [step_childExited_effects], ?_⟩, rfl⟩
+  simp [List.mem_append, broadcast_no_dropCheckpoint]
+
+/-- `kill` from a client that may send it hangs up the program, deletes the checkpoint and ends
+the daemon; a watcher's is refused and changes nothing. -/
+theorem onMsg_kill (s : State) (c : Client) :
+    onMsg s c .kill =
+      if c.attached && !c.sizer then (s, [.send c.id (.err "read-only".toUTF8.toList)])
+      else (s, [.killChild, .dropCheckpoint, .exit]) := rfl
 
 /-- What a function makes of one member is a block of what it makes of the whole list. -/
 theorem infix_flatMap_of_mem {α β : Type} {f : α → List β} {l : List α} {a : α} (h : a ∈ l) :

@@ -527,7 +527,9 @@ def step (s : State) (ev : Event) : State × List (Effect Plan) :=
       s.clients.filter (fun c => c.attached || c.waiting) |>.flatMap
         (fun c => [Effect.send c.id (.ended outcome), Effect.send c.id (.exited outcome.status)])
     let closes := s.clients.map (fun c => Effect.close c.id)
-    (s, flush ++ notify ++ closes ++ [.dropCheckpoint, .exit])
+    -- an ended session is a result: its last screen is saved, and stays until `kill`
+    -- discards it or a writable attach resumes it
+    (s, flush ++ notify ++ closes ++ [.checkpoint, .exit])
   | .tick now =>
     -- the activity flag is refreshed in both branches as a field value: a
     -- `let` before the `if` would hide the `if` from the proofs that `split`

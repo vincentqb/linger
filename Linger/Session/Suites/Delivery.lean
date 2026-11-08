@@ -367,11 +367,15 @@ def childProbe (trigger : String) : IO UInt32 := do
   return 7
 
 /-- Run the actual serving loop in a separate process with a private state dir.
-The delete hook signals child exit before normal transport cleanup. -/
+The checkpoint hook signals child exit when it saves the ended session's last screen, before
+normal transport cleanup. -/
 def serveProbe (dir : String) : IO UInt32 := do
   let bin ← IO.appPath
-  serve "tail" dir [bin.toString, "--delivery-child", s!"{dir}/go"] (fun _ => pure ())
-      (IO.FS.writeFile s!"{dir}/exited" "") (pure (some (Linger.Terminal.Vt.Vt.init 20 5, dir, [])))
+  let saveEnded := fun (st : Session.State) => do
+    if ((Session.infoFields st).lookup "exit").isSome then
+      IO.FS.writeFile s!"{dir}/exited" ""
+  serve "tail" dir [bin.toString, "--delivery-child", s!"{dir}/go"] saveEnded (pure ())
+      (pure (some (Linger.Terminal.Vt.Vt.init 20 5, dir, [])))
       { load := pure none, save := fun _ => pure (), restore := fun _ => pure () }
   return 0
 

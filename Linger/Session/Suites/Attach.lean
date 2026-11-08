@@ -63,8 +63,10 @@ def closeFeedback (e : Env) : IO Unit := do
         let after ← Linger.Session.Shell.Daemon.pump rt events
         let clients := (Linger.Session.infoFields after.st).lookup "clients"
         if exiting then
-          expect (after.exiting && (← saved.get) == 0 && (← dropped.get) == 1)
-              "child exit discards queued events without recreating its checkpoint"
+          -- the end saves the last screen once; the queued tick, which would save again, is
+          -- discarded with the rest of the queue
+          expect (after.exiting && (← saved.get) == 1 && (← dropped.get) == 0)
+              "child exit saves its last screen once and discards queued events"
         else
           expect (clients == some "0" && after.conns.isEmpty && (← saved.get) == 1)
               "detach-all removes the size owner and checkpoints the last detach"
@@ -204,7 +206,13 @@ def run : IO UInt32 :=
     -- output after about a second.
     let drain2 ← IO.asTask (drain c2.fd 4000)
     let drain3 ← IO.asTask (drain c3.fd 4000)
-    expect (← waitFor 4000 (return !has (← e.out #["list"]) "demo")) "shell exit ends the session"
+    expect
+        (←
+          waitFor 4000 do
+              let status ← e.status "demo"
+              return (status == .exitedOk || status == .exitedBad) &&
+                  (← e.info "demo" "pid").isNone)
+        "shell exit ends the session, which stays listed as ended"
     let exit2 ← IO.ofExcept (← IO.wait drain2)
     let exit3 ← IO.ofExcept (← IO.wait drain3)
     let handed2 := receiver2.feed exit2.toList
@@ -239,12 +247,15 @@ def run : IO UInt32 :=
     let jobEnded ← jobEnds jobFile
     expect (waited.map (·.1) == some 3 && jobEnded)
         "a session ends with its program while a background job holds its terminal, and so does the job"
-    -- A session that ended with nobody waiting still answers, from its name's end record.
+    -- A session that ended with nobody waiting still answers, from its name's end record, and
+    -- stays listed as ended with its status.
     let _ ← e.cli #["run", "w5", "exec sh -c 'exit 37'"]
-    let gone ← waitFor 5000 (return !has (← e.out #["list"]) "w5")
+    let ended ←
+      waitFor 5000 do
+          return (← e.status "w5") == .exitedBad && (← e.field "w5" "exit") == some "37"
     let (lateRc, _, _) ← e.cli #["wait", "w5"]
     let (infoRc, lateInfo, _) ← e.cli #["info", "w5"]
-    expect (gone && lateRc == 37 && infoRc == 0 && has lateInfo "exit\t37")
+    expect (ended && lateRc == 37 && infoRc == 0 && has lateInfo "exit\t37")
         s!"an ended session's record answers wait and info (rc={lateRc})"
     let (neverRc, _, neverErr) ← e.cli #["wait", "w-never"]
     expect (neverRc == 127 && has neverErr "no session") "wait on a name no session took exits 127"

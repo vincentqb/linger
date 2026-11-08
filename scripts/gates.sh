@@ -1252,11 +1252,11 @@ for tie in \
 done
 for tie in \
   'requestStatus name result [|] none => Paths[.]withSessionLock name do match ← Resume[.]loadCkpt name with [|] some [(]vt, _, _[)] => writeAll stdoutFd [(]ByteArray[.]mk [(]render vt[)][.]toArray[)]' \
-  'if readOnly then match ← Client[.]connect name with [|] some fd => some <[$]> Client[.]attach name fd summaryText true [|] none => let checkpoint ← Paths[.]withSessionLock name [(]Resume[.]loadCkpt name[)] checkpoint[.]mapM fun [(]vt, _, _[)] => Client[.]viewSaved name vt'; do
+  'if readOnly then match ← Client[.]connect name with [|] some fd => some <[$]> Client[.]attach name fd summaryText true [|] none => let [(]checkpoint, record[)] ← Paths[.]withSessionLock name do return [(]← Resume[.]loadCkpt name, ← [(]Record[.]load name[)][.]toBaseIO[)] let status := Linger[.]Display[.]Listing[.]rowStatus [(]savedRow record[)][.]1 checkpoint[.]mapM fun [(]vt, _, _[)] => Client[.]viewSaved name vt status'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "offline reading or listing bypassed ownership: $tie"
 done
-tie='let available ← try listed[.]withSessionLock [(]pure true[)] catch _ => pure false'
+tie='let record ← try listed[.]withSessionLock [(]some <[$]> [(]Record[.]loadListed listed[)][.]toBaseIO[)] catch _ => pure none'
 printf '%s\n' "$inventory_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
   || fail "offline reading or listing bypassed ownership: $tie"
 # Saved viewing consumes the bounded, faithful replay cursor. The original
@@ -1265,7 +1265,7 @@ printf '%s\n' "$inventory_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk
 for tie in \
   'let mut lastSize : Option [(]UInt32 × UInt32[)] := none while true do let size ← winsizeGet stdinFd if lastSize != some size then let cols := if size[.]1 == 0 then snapshot[.]colCount else size[.]1[.]toNat let rows := if size[.]2 == 0 then snapshot[.]rowCount else size[.]2[.]toNat' \
   'let view := if snapshot[.]colCount == cols && snapshot[.]rowCount == rows then snapshot else snapshot[.]resize cols rows let mut repaint := Linger[.]Terminal[.]Replay[.]start view repeat match Linger[.]Terminal[.]Replay[.]next 65536 repaint with [|] none => break [|] some [(]bytes, next[)] => if !bytes[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] repaint := next' \
-  'let title := Linger[.]Display[.]Title[.]compose name view[.]windowTitle [(]String[.]singleton [(]Linger[.]Display[.]Status[.]icon [.]resumable[)][)] Linger[.]Terminal[.]Title[.]maxChars writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Terminal[.]Title[.]update view title[)][.]toArray[)]' \
+  'let title := Linger[.]Display[.]Title[.]compose name view[.]windowTitle [(]String[.]singleton [(]Linger[.]Display[.]Status[.]icon status[)][)] Linger[.]Terminal[.]Title[.]maxChars writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Terminal[.]Title[.]update view title[)][.]toArray[)]' \
   'if [(]splitDetach bytes true[)][.]2 then return [.]detached return [.]detached finally try writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Terminal[.]Render[.]leaveAnsi[.]toArray[)] finally termRestore stdinFd saved'; do
   printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "saved viewer bypassed bounded replay, snapshot preservation or terminal ownership: $tie"

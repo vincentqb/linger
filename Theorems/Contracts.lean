@@ -111,6 +111,16 @@ example (socketName : String) (info : List (String × String)) :
     (Listing.rowFields socketName info).lookup "name" = some socketName := by
   with_reducible exact Listing.rowFields_name socketName info
 
+example (status : Nat) :
+    Listing.rowStatus (.ended status) =
+      if status = 0 then Status.Status.exitedOk else Status.Status.exitedBad := by
+  with_reducible exact Listing.rowStatus_ended status
+
+example (st : Status.Status) :
+    Listing.rowStatus (.remote false (Status.name st)) =
+      if st = .exitedOk ∨ st = .exitedBad then st else .resumable := by
+  with_reducible exact Listing.rowStatus_remote_saved st
+
 -- Event driver
 example {World ε : Type}
     (execute :
@@ -222,6 +232,13 @@ example (s : Session.State) (o : Session.Outcome) {c : Session.Client} (hc : c �
         (Session.step s (.childExited o)).2 ∧
       (Session.step s (.childExited o)).2.getLast? = some .exit := by
   with_reducible exact Session.step_ended_reports s o hc listening
+
+example (s : Session.State) (o : Session.Outcome) :
+    (∃ front,
+        (Session.step s (.childExited o)).2 = front ++ [.checkpoint, .exit] ∧
+          Session.Effect.dropCheckpoint ∉ front) ∧
+      (Session.step s (.childExited o)).1.terminal = s.terminal := by
+  with_reducible exact Session.step_childExited_keeps s o
 
 example {o₁ o₂ : Session.Outcome} (h : Session.outcomeFields o₁ = Session.outcomeFields o₂) :
     o₁ = o₂ := by with_reducible exact Session.outcomeFields_injective h

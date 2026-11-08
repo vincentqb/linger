@@ -50,7 +50,13 @@ theorem rowStatus_unanswered (info : List (String × String)) (h : answered info
 contained (there is no daemon to have sent one). -/
 theorem rowStatus_resumable : rowStatus .stale = Status.resumable := rfl
 
-/-- No socket and no loadable checkpoint is `unknown`. -/
+/-- **An ended session is a result**: a saved row whose end record says its program ended shows
+`✓` for status 0 and `!` for any other, until `kill` discards it. -/
+theorem rowStatus_ended (status : Nat) :
+    rowStatus (.ended status) = if status = 0 then Status.exitedOk else Status.exitedBad := by
+  cases status <;> rfl
+
+/-- No socket and an unreadable saved session is `unknown`. -/
 theorem rowStatus_gone : rowStatus .broken = Status.unknown := rfl
 
 /-- An empty reply is not an answer, so a busy daemon lists as `unknown`
@@ -72,6 +78,28 @@ authority on its own session. Round-trips through the porcelain name by
 theorem rowStatus_remote_reported (st : Status) :
     rowStatus (.remote true (Linger.Display.Status.name st)) = st := by
   simp [rowStatus, Linger.Display.Status.ofName_name]
+
+/-- A session a peer lists as saved shows how its program ended, `✓` or `!`, as the peer says;
+any other status a peer reports for it, it shows as resumable, since only a running session
+can be working, idle or waiting. -/
+theorem rowStatus_remote_saved (st : Status) :
+    rowStatus (.remote false (Linger.Display.Status.name st)) =
+      if st = .exitedOk ∨ st = .exitedBad then st else .resumable := by
+  cases st <;> rfl
+
+/-- An ended row says how its program ended in the words a client prints when a session ends:
+the status of an exit, -/
+theorem endingText_exit (code : String) : endingText [("exit", code)] = some s!"status {code}" := by
+  simp [endingText]
+
+/-- …the signal that killed it, -/
+theorem endingText_signal (code signal : String) :
+    endingText [("exit", code), ("signal", signal)] = some s!"killed by signal {signal}" := rfl
+
+/-- …or that linger did not see how it ended, as `Session.outcomeFields` writes each. A row
+without these fields, as from a peer, says only that it ended. -/
+theorem endingText_unknown (code : String) :
+    endingText [("exit", code), ("outcome", "unknown")] = some "outcome unknown" := rfl
 
 /-- A missing or malformed flag reads as `false`, so an omission cannot make
 a row look busier or fresher than it is. -/

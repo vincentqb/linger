@@ -152,6 +152,10 @@ def startReportPath (name nonce : String) : IO String := do
 def Listed.socketPath (n : Listed) : IO String := do
   pathIn (← socketDir) n.name ".sock" true
 
+/-- The end record of a session a listing named. -/
+def Listed.recordPath (n : Listed) : IO String := do
+  pathIn (← stateDir) n.name ".end" true
+
 /-- Failed acquisition does not run the action. A held lock is tried again while
 `retry`, asked only after a failed attempt, holds. Always release after the action,
 including startup/read exceptions; recheck spelling after the atomic acquisition unless a

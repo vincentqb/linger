@@ -63,11 +63,15 @@ inductive Row where
   /-- A socket accepted the connection; `info` is whatever it replied (possibly
   nothing, if it was too busy). -/
   | live (info : List (String × String))
-  /-- No socket, but a checkpoint file is there. -/
+  /-- No socket, but a checkpoint file is there, and its end record does not say how its
+  program ended: the session was interrupted, as by a reboot. -/
   | stale
-  /-- No socket, and the checkpoint will not load. Not produced by `Cli` yet —
-  it lists checkpoint *names* without probing them — and that gap is visible
-  here as an unused constructor rather than hidden in a `true`. -/
+  /-- No socket, a checkpoint, and an end record saying its program ended with this status, as
+  a shell reports it: the session's result, until `kill` discards it. -/
+  | ended (status : Nat)
+  /-- No socket, and the saved session cannot be read: its end record, which says whether its
+  program ended, cannot be read. A checkpoint that will not load would be one too, but the
+  listing does not load checkpoints. -/
   | broken
   /-- From a peer's porcelain over ssh: whether the peer lists the session live,
   and the peer's own `status` name, read by `Status.ofName`. -/
@@ -75,19 +79,25 @@ inductive Row where
   deriving Repr
 
 /-- The status a row displays. Only a live row consults the daemon's reply, and a remote row
-shows its peer's status only while the peer reports it live. -/
+shows its peer's status while the peer reports it live, or once the peer says its program
+ended. -/
 def rowStatus : Row → Status
   | .live info =>
     classify
       { known := answered info, daemonUp := true,
-        -- an exit status can only come from a live daemon, so it is read only
-        -- here: a reply-supplied "exit" must never make a socket-less row look
-        -- like a completed run
+        -- a reply's exit status is read only here, for a live row: a socket-less row's
+        -- comes from its end record (`ended`), so a reply can never make one look like a
+        -- completed run
         exit := (info.lookup "exit").bind String.toNat?, fresh := flag info "fresh",
         unseen := flag info "unseen" }
   | .stale => .resumable
+  | .ended status => classify { daemonUp := false, exit := some status }
   | .broken => .unknown
-  | .remote live peerStatus => if live then ofName peerStatus else .resumable
+  | .remote live peerStatus =>
+    -- a session the peer lists as saved shows how its program ended, and never what only a
+    -- running session can show
+    let status := ofName peerStatus
+    if live || status == .exitedOk || status == .exitedBad then status else .resumable
 
 /-! ## Rendering the human-readable listing
 
@@ -117,9 +127,20 @@ structure RowPiece where
   nameSpan : Option (Nat × Nat) := none
   deriving BEq, Repr
 
+/-- How a saved row's program ended, in the words a client prints when a session ends, from the
+`exit`, `signal` and `outcome` fields `Session.outcomeFields` writes: `none` for a row that
+carries none of them. -/
+def endingText (info : List (String × String)) : Option String :=
+  match info.lookup "signal", info.lookup "outcome", info.lookup "exit" with
+  | some signal, _, _ => some s!"killed by signal {signal}"
+  | none, some "unknown", _ => some "outcome unknown"
+  | none, _, some code => some s!"status {code}"
+  | none, _, none => none
+
 /-- One shared row: status badge, aligned name, command/pid, labels and watchers.
 Every untrusted value is made printable before a renderer sees it, including C1
-controls that can otherwise be interpreted as terminal commands. -/
+controls that can otherwise be interpreted as terminal commands. A saved row whose program
+ended says how, where another saved row says it is resumable. -/
 def rowPieces (nameCol : Nat) (info : List (String × String)) : List RowPiece :=
   let f := fun k => (info.lookup k).getD ""
   let st := Status.ofName (f "status")
@@ -130,7 +151,10 @@ def rowPieces (nameCol : Nat) (info : List (String × String)) : List RowPiece :
   -- `(busy)` is only for a *local* daemon that did not answer (status unknown,
   -- no pid/cmd); a live remote row carries no pid but is not busy.
   let detail :=
-    if f "state" == "resumable" then "(resumable)"
+    if f "state" == "resumable" then
+      if st == .exitedOk || st == .exitedBad then
+        "ended" ++ ((endingText info).map (s!" ({·})")).getD ""
+      else "(resumable)"
     else
       if st == .unknown && (f "pid").isEmpty && (f "cmd").isEmpty then "(busy)"
       else if (f "pid").isEmpty then f "cmd" else s!"pid {f "pid"}  {f "cmd"}"

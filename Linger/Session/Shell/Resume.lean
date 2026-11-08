@@ -19,25 +19,32 @@ namespace Linger.Session.Shell.Resume
 open Linger.Session.Checkpoint (Ckpt saveBytes loadBytes)
 open Linger.Session (State)
 
-/-- Write the session's terminal state, labels and working directory to its checkpoint
-through a temporary sibling moved into place, so the file is replaced whole. The directory
-is the child's live cwd when readable, else the start directory the daemon recorded. -/
-def saveCkpt (name : String) (st : State) : IO Unit := do
-  let path ← Paths.ckptPath name
-  -- live cwd beats the recorded start_dir: resume should reopen where
-  -- the user actually was
-  let live ←
-    match (st.metaKv.lookup "pid").bind String.toNat? with
-    | some p =>
-      Linger.Os.Shell.getcwdOf (UInt32.ofNat p)
-    | none =>
-      pure ""
-  let cwd := if live.isEmpty then (st.metaKv.lookup "start_dir").getD "" else live
-  let ck : Ckpt Linger.Terminal.Vt.Vt := { vt := st.terminal, cwd, labels := st.labelList }
-  let bytes := saveBytes ck
-  let tmp := path ++ ".tmp"
-  IO.FS.writeBinFile tmp bytes
-  IO.FS.rename tmp path
+/-- The checkpoint hook of one daemon: write the session's terminal state, labels and working
+directory to its checkpoint through a temporary sibling moved into place, so the file is
+replaced whole. The directory is the program's live cwd when readable; else the last one this
+hook read, as for the save after the program has ended, whose directory can no longer be read;
+else the start directory the daemon recorded. -/
+def saver (name : String) : IO (State → IO Unit) := do
+  let lastDir ← IO.mkRef ""
+  return fun st => do
+    let path ← Paths.ckptPath name
+    -- live cwd beats the recorded start_dir: resume should reopen where
+    -- the user actually was
+    let live ←
+      match (st.metaKv.lookup "pid").bind String.toNat? with
+      | some p =>
+        Linger.Os.Shell.getcwdOf (UInt32.ofNat p)
+      | none =>
+        pure ""
+    if !live.isEmpty then
+      lastDir.set live
+    let known ← lastDir.get
+    let cwd := if known.isEmpty then (st.metaKv.lookup "start_dir").getD "" else known
+    let ck : Ckpt Linger.Terminal.Vt.Vt := { vt := st.terminal, cwd, labels := st.labelList }
+    let bytes := saveBytes ck
+    let tmp := path ++ ".tmp"
+    IO.FS.writeBinFile tmp bytes
+    IO.FS.rename tmp path
 
 /-- Delete the session's checkpoint if it exists; a missing file is not an error. -/
 def dropCkpt (name : String) : IO Unit := do

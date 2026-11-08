@@ -200,7 +200,8 @@ def run : IO UInt32 :=
         pure false
     expect (ckptOk && magicOk) s!"checkpoint written on last detach ({ckpts})"
     -- simulate reboot: SIGKILL the DAEMON (the pid in `list` is the shell —
-    -- killing that is a clean exit and rightly drops the checkpoint). Aborts the
+    -- killing that ends the program, which leaves an ended session, not an
+    -- interrupted one). Aborts the
     -- suite rather than printing a check: with no crash there is nothing below
     -- this line left to mean anything.
     unless (← e.crashDaemon "boot") do
@@ -218,12 +219,35 @@ def run : IO UInt32 :=
     let savedCwd ← IO.FS.realPath e.dir
     expect (has (← drainStr boot2.fd 1500) savedCwd.toString) "fresh shell starts in the saved cwd"
     expect (has (← e.out #["get", "boot"]) "k=v") "labels survive the reboot"
-    -- clean exit drops the checkpoint
-    boot2.type "exit\r"
-    let _ ← waitFor 4000 (return (← e.dirNames ".ckpt").isEmpty)
+    -- a clean exit keeps the session as a result: its last screen stays saved, listed as
+    -- ended with status 0. The marker is an expansion, so the typed line cannot show it.
+    boot2.type "echo LAST-$((6*7)); exit\r"
+    let ended ← waitFor 5000 (return (← e.status "boot") == Status.exitedOk)
     let ckpts2 ← e.dirNames ".ckpt"
-    expect (ckpts2 == []) s!"clean exit drops the checkpoint ({ckpts2})"
+    expect
+        (ended && (← e.field "boot" "exit") == some "0" && ckpts2 == ["boot.ckpt"] &&
+          has (← e.out #["capture", "boot"]) "LAST-42")
+        s!"a clean exit keeps the last screen, listed as ended with status 0 ({ckpts2})"
     boot2.bye (sendDetach := false)
+    -- writable attach resumes an ended session: its last screen, labels and directory, under
+    -- a fresh shell
+    let boot3 ← e.spawn #["attach", "boot"] cols rows
+    let replay3 ← IO.mkRef ByteArray.empty
+    let restored ← boot3.awaitText replay3 (hasText · "LAST-42") (ms := 5000)
+    expect
+        (restored &&
+          (←
+            waitFor 4000 do
+                return (← e.status "boot") != Status.exitedOk && (← e.info "boot" "pid").isSome) &&
+          has (← e.out #["get", "boot"]) "k=v")
+        "attach resumes an ended session with its last screen and labels"
+    boot3.type "exit\r"
+    let _ ← waitFor 5000 (return (← e.status "boot") == Status.exitedOk)
+    boot3.bye (sendDetach := false)
+    e.killAll #["boot"]
+    let ckpts3 ← e.dirNames ".ckpt"
+    expect (ckpts3 == [] && !has (← e.out #["ls"]) "boot")
+        s!"kill discards an ended session's checkpoint ({ckpts3})"
     -- corrupt checkpoint: daemon must start fresh, not crash.
     --
     -- Written with `Checkpoint.magic`: a foreign tag would only reach `stripMagic`'s

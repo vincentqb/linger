@@ -297,10 +297,66 @@ private def startChecks (e : Env) : IO Unit := do
       "run says it is deprecated, and points to start and send"
   e.killAll #["st-run"]
 
+/-- An ended session is a result: it stays listed with how its program ended and what it left on
+the screen, `start` refuses its name, and `kill` discards it, after which `wait` still answers
+from the name's end record. -/
+private def endedChecks (e : Env) : IO Unit := do
+  let work := s!"{e.dir}/ended work"
+  IO.FS.createDirAll work
+  -- the marker is an expansion, so only the program's output, not an echo, can show it
+  let (okRc, _) ← startIn e work #[] #["end-ok", "/bin/sh", "-c", "echo DONE-$((6*7))"]
+  let (badRc, _) ← startIn e work #[] #["end-bad", "/bin/sh", "-c", "echo FAILED-$((6*7)); exit 3"]
+  let (sigRc, _) ← startIn e work #[] #["end-sig", "/bin/sh", "-c", "kill -TERM $$"]
+  let ended ←
+    waitFor 5000 do
+        return (← e.status "end-ok") == .exitedOk && (← e.status "end-bad") == .exitedBad &&
+            (← e.status "end-sig") == .exitedBad
+  expect
+      (okRc == 0 && badRc == 0 && sigRc == 0 && ended && (← e.field "end-ok" "exit") == some "0" &&
+        (← e.field "end-bad" "exit") == some "3" &&
+        (← e.field "end-sig" "signal") == some "15" &&
+        (← e.field "end-ok" "state") == some "resumable")
+      "an ended session stays listed, saved, with how its program ended"
+  let human := lines (← e.out #["ls"])
+  let says := fun (name detail : String) =>
+    human.any fun row => has row s!" {name} " && has row detail
+  expect
+      (says "end-ok" "ended (status 0)" && says "end-bad" "ended (status 3)" &&
+        says "end-sig" "ended (killed by signal 15)")
+      s!"the listing says how each ended session's program ended ({human})"
+  let (sumRc, summary, _) ← e.cli #["ls", "--summary"]
+  expect (sumRc == 0 && summary == Linger.Display.Status.summary [.exitedBad, .exitedBad] ++ "\n")
+      s!"the attention summary counts failed endings and not a clean one ({summary})"
+  let (capRc, capOut, _) ← e.cli #["capture", "end-bad"]
+  expect (capRc == 0 && has capOut "FAILED-42") "capture shows what an ended program left"
+  let savedPath := s!"{e.dir}/end-bad.ckpt"
+  -- read as a value, so a missing checkpoint is a failed check rather than an exception
+  let saved ← (IO.FS.readBinFile savedPath).toBaseIO
+  let (startRc, startErr) ← startIn e work #[] #["end-bad", "true"]
+  expect
+      (startRc == 1 && has startErr "ended (status 3)" && has startErr "kill it to discard it" &&
+        saved.isOk &&
+        (← (IO.FS.readBinFile savedPath).toBaseIO).toOption.map (·.toList) ==
+          saved.toOption.map (·.toList) &&
+        (← e.status "end-bad") == .exitedBad)
+      s!"start refuses an ended session's name, saying how it ended ({startErr})"
+  let (killRc, _, _) ← e.cli #["kill", "end-bad"]
+  let (goneRc, _, _) ← e.cli #["capture", "end-bad"]
+  let (waitRc, _, _) ← e.cli #["wait", "end-bad"]
+  expect
+      (killRc == 0 && !(← listed e).contains "end-bad" && goneRc == 127 && waitRc == 3 &&
+        (← e.status "end-ok") == .exitedOk)
+      s!"kill discards an ended session, and wait still answers from its record \
+        ({killRc}, {goneRc}, {waitRc})"
+  e.killAll #["end-ok", "end-sig"]
+  expect ((← listed e).all fun name => !name.startsWith "end-")
+      "kill discards every ended session it names"
+
 /-- The agent suite: the one-shot verbs that see and drive a session. -/
 def run : IO UInt32 :=
   Env.suite "agent" fun e => do
     startChecks e
+    endedChecks e
     for (mode, why) in
       [("eof", "connection lost"), ("timeout", "no reply"), ("refused", "info refused"),
         ("malformed", "invalid response"), ("exited", "ended before"), ("utf8", "invalid UTF-8"),

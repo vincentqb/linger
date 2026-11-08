@@ -10,7 +10,7 @@ import Linger.Terminal.Title
 import Linger.Terminal.Render
 import Linger.Target.Remote
 import Linger.Display.Title
-import Linger.Display.Status
+public import Linger.Display.Status
 import Linger.Session.Shell.Paths
 
 public section
@@ -196,9 +196,11 @@ inductive Outcome where
   deriving Repr, Inhabited
 
 /-- A fixed checkpoint view. Redraw from the original snapshot on resize;
-discard input except the detach key. Ownership was released after loading,
-so this viewer cannot block another process from resuming the session. -/
-def viewSaved (name : String) (snapshot : Linger.Terminal.Vt.Vt) : IO Outcome := do
+discard input except the detach key. The title shows `status`, the saved session's.
+Ownership was released after loading, so this viewer cannot block another process from
+resuming the session. -/
+def viewSaved (name : String) (snapshot : Linger.Terminal.Vt.Vt)
+    (status : Linger.Display.Status.Status) : IO Outcome := do
   let saved ← termRaw stdinFd
   try
     let fds := #[stdinFd]
@@ -223,8 +225,7 @@ def viewSaved (name : String) (snapshot : Linger.Terminal.Vt.Vt) : IO Outcome :=
             repaint := next
         let title :=
           Linger.Display.Title.compose name view.windowTitle
-            (String.singleton (Linger.Display.Status.icon .resumable))
-            Linger.Terminal.Title.maxChars
+            (String.singleton (Linger.Display.Status.icon status)) Linger.Terminal.Title.maxChars
         writeAll stdoutFd (ByteArray.mk (Linger.Terminal.Title.update view title).toArray)
         lastSize := some size
       let ready ← poll fds events 200

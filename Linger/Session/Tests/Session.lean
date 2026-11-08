@@ -116,7 +116,7 @@ example :
      let r := step s (.childExited (.exited 0))
      r.1.scan == .ground && r.1.vt.cursor == s.vt.cursor &&
        r.2 == [.send 7 (.output [ESC, 0x5B]), .send 7 (.ended (.exited 0)), .send 7 (.exited 0),
-               .close 7, .dropCheckpoint, .exit]) = true := by
+               .close 7, .checkpoint, .exit]) = true := by
   native_decide
 
 /-- A client closing changes nothing but the roster (a checkpoint
@@ -434,13 +434,14 @@ example :
   native_decide
 
 /-- `wait` parks until the child exits, then hears how it ended and the status a shell would
-report; a clean exit drops the checkpoint. -/
+report; the last screen is checkpointed, not dropped. -/
 example :
     (let (_, effs) := run [.connected 1, .bytes 1 (encode .wait),
                            .childExited (.exited 0)]
      effs.contains (.send 1 (.ended (.exited 0)))
        && effs.contains (.send 1 (.exited 0))
-       && effs.contains .dropCheckpoint
+       && effs.contains .checkpoint
+       && !effs.contains .dropCheckpoint
        && effs.contains .exit) = true := by native_decide
 
 /-- A signal reads as 128 plus its number, and the ending says it was a signal. -/
