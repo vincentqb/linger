@@ -35,7 +35,13 @@
     "Linger.leave_canonical_all",
     "Linger.leave_canonical_all_rejects_escape",
     "Linger.ticks_settle",
-    "Linger.ticks_settle_rejects_poll"
+    "Linger.ticks_settle_rejects_poll",
+    "Linger.classify_iff",
+    "Linger.classify_iff_rejects_idle",
+    "Linger.icon_glyphs",
+    "Linger.icon_glyphs_rejects_unknown",
+    "Linger.summary_exact",
+    "Linger.summary_exact_rejects_count"
   ],
   "definition_names": [
     "Linger.Target.Name.check",
@@ -61,6 +67,9 @@
     "Linger.Terminal.Replay.Plan",
     "Linger.Terminal.Replay.start",
     "Linger.Terminal.Replay.next",
+    "Linger.Display.Status.classify",
+    "Linger.Display.Status.icon",
+    "Linger.Display.Status.summary",
     "Linger.Session.State",
     "Linger.Session.State.boot",
     "Linger.Session.step",

@@ -1,5 +1,6 @@
 module
 
+public import Linger.Display.Spec
 public import Linger.Session.Spec
 public import Linger.Target.Spec
 public import Linger.Terminal.Spec
@@ -35,6 +36,11 @@ each with a kill, and says what it does not claim yet:
    session, every wait is bounded and says what it missed, and optional work is skipped or
    coalesced, never queued.
 
+The status rule: a session's status is one glyph for one observation, `⣷` output right now, `⣿`
+new output, then it stopped, `⣀` nothing new since you looked, `✓` ended with status 0, `!` ended
+any other way, `~` saved with no daemon and `?` no answer, and titles and `ls --summary` count
+`⣿`, `!` and `?`. Its section follows the ten parts.
+
 Each theorem below is stated over definitions in the components' `Spec` modules and over the
 program parts declared below as holes: each hole is `sorry` here, the program supplies it, and
 the claims say what it must do. `Theorems/Solution.lean` proves the same statements of the
@@ -43,15 +49,11 @@ the declared type, and that no axiom beyond `propext`, `Quot.sound` and `Classic
 used. Changing a statement or a hole here changes what linger claims.
 
 Not claimed: anything about the IO executors, the C shim or the operating system, which suites
-test instead, and the status rule: a session's status is one glyph for one observation, `⣷`
-output right now, `⣿` new output, then it stopped, `⣀` nothing new since you looked, `✓` ended
-with status 0, `!` ended any other way, `~` saved with no daemon and `?` no answer, and titles and
-`ls --summary` count `⣿`, `!` and `?`. No `Spec` module holds its types yet;
-`Linger/Display/Proofs/Status.lean` proves it of the program. -/
+test instead. -/
 
 public section
 
-open Linger.Session Linger.Target Linger.Terminal
+open Linger.Display Linger.Session Linger.Target Linger.Terminal
 
 /-! ## The program's parts
 
@@ -152,6 +154,20 @@ the stream has ended. -/
 @[expose]
 def Linger.Terminal.Replay.next :
     (budget : Nat) → Replay.Plan → Option (Render.Bytes × Replay.Plan) := sorry
+
+/-! ### Statuses -/
+
+/-- The status a listing row shows for what linger observed of its session. -/
+@[expose]
+def Linger.Display.Status.classify : Status.Obs → Status.Status := sorry
+
+/-- The glyph a status is shown as. -/
+@[expose]
+def Linger.Display.Status.icon : Status.Status → Char := sorry
+
+/-- The attention summary titles and `ls --summary` show for the statuses of some sessions. -/
+@[expose]
+def Linger.Display.Status.summary : List Status.Status → String := sorry
 
 /-! ### Sessions -/
 
@@ -703,5 +719,65 @@ theorem ticks_settle_rejects_poll :
 Not claimed yet: that work a request needs never waits on optional work or on another session,
 that every wait is bounded and says what it missed, and that optional work is skipped or
 coalesced. The robust suite tests it. -/
+
+/-! ## The status rule -/
+
+/-- Every observation gets exactly the status its legend line describes: `?` no answer, `✓` ended
+with status 0, `!` ended any other way, `~` saved with no daemon, `⣷` output right now, `⣿` new
+output, then it stopped, and `⣀` nothing new since you looked. -/
+theorem classify_iff (o : Status.Obs) (s : Status.Status) :
+    Status.classify o = s ↔ Status.Is s o := by sorry
+
+/-- `classify_iff` rejects a classifier that calls every session idle. -/
+theorem classify_iff_rejects_idle :
+    ¬∀ (o : Status.Obs) (s : Status.Status),
+        (fun (_ : Status.Obs) => Status.Status.idle) o = s ↔ Status.Is s o := by
+  sorry
+
+/-- Each status is shown as its own glyph. -/
+theorem icon_glyphs :
+    Status.icon .working = '⣷' ∧
+      Status.icon .wantsYou = '⣿' ∧
+      Status.icon .idle = '⣀' ∧
+      Status.icon .exitedOk = '✓' ∧
+      Status.icon .exitedBad = '!' ∧ Status.icon .resumable = '~' ∧ Status.icon .unknown = '?' := by
+  sorry
+
+/-- `icon_glyphs` rejects an icon that shows every status as `?`. -/
+theorem icon_glyphs_rejects_unknown :
+    ¬((fun (_ : Status.Status) => '?') .working = '⣷' ∧
+        (fun (_ : Status.Status) => '?') .wantsYou = '⣿' ∧
+        (fun (_ : Status.Status) => '?') .idle = '⣀' ∧
+        (fun (_ : Status.Status) => '?') .exitedOk = '✓' ∧
+        (fun (_ : Status.Status) => '?') .exitedBad = '!' ∧
+        (fun (_ : Status.Status) => '?') .resumable = '~' ∧
+        (fun (_ : Status.Status) => '?') .unknown = '?') := by
+  sorry
+
+/-- Titles and `ls --summary` count only `⣿`, `!` and `?`: in that order, how many sessions show
+each, when that is not zero, followed by its glyph, separated by spaces. -/
+theorem summary_exact (statuses : List Status.Status) :
+    Status.summary statuses =
+      String.intercalate " "
+        ((if statuses.count .wantsYou = 0 then []
+          else [(toString (statuses.count .wantsYou)).push (Status.icon .wantsYou)]) ++
+          (if statuses.count .exitedBad = 0 then []
+          else [(toString (statuses.count .exitedBad)).push (Status.icon .exitedBad)]) ++
+          (if statuses.count .unknown = 0 then []
+          else [(toString (statuses.count .unknown)).push (Status.icon .unknown)])) := by
+  sorry
+
+/-- `summary_exact` rejects a summary that counts every session. -/
+theorem summary_exact_rejects_count :
+    ¬∀ (statuses : List Status.Status),
+        (fun (all : List Status.Status) => toString all.length) statuses =
+          String.intercalate " "
+            ((if statuses.count .wantsYou = 0 then []
+              else [(toString (statuses.count .wantsYou)).push (Status.icon .wantsYou)]) ++
+              (if statuses.count .exitedBad = 0 then []
+              else [(toString (statuses.count .exitedBad)).push (Status.icon .exitedBad)]) ++
+              (if statuses.count .unknown = 0 then []
+              else [(toString (statuses.count .unknown)).push (Status.icon .unknown)])) := by
+  sorry
 
 end Linger

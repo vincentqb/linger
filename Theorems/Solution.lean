@@ -1,5 +1,6 @@
 module
 
+public import Linger.Display.Status
 public import Linger.Session
 public import Linger.Session.Buf
 public import Linger.Session.Checkpoint
@@ -11,6 +12,7 @@ public import Linger.Target.Spec
 public import Linger.Terminal.Render
 public import Linger.Terminal.Replay
 public import Linger.Terminal.Spec
+import all Linger.Display.Proofs.Status
 import Linger.Target.Proofs.Name
 import Linger.Target.Proofs.Remote
 import all Linger.Session.Proofs.Buf
@@ -39,7 +41,7 @@ public section
 
 namespace Linger
 
-open Linger.Session Linger.Target Linger.Terminal
+open Linger.Display Linger.Session Linger.Target Linger.Terminal
 
 theorem replay_grid (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
     (hv :
@@ -520,5 +522,58 @@ theorem ticks_settle_rejects_poll :
             none := by
   intro h
   exact absurd (h (State.boot (Vt.Vt.init 1 1) [] []) 0 0 0 rfl rfl) (by simp)
+
+theorem classify_iff (o : Status.Obs) (s : Status.Status) : Status.classify o = s ↔ Status.Is s o :=
+  Status.classify_iff o s
+
+theorem classify_iff_rejects_idle :
+    ¬∀ (o : Status.Obs) (s : Status.Status),
+        (fun (_ : Status.Obs) => Status.Status.idle) o = s ↔ Status.Is s o := by
+  intro h
+  exact absurd ((h { known := false } .unknown).mpr rfl) (by decide)
+
+theorem icon_glyphs :
+    Status.icon .working = '⣷' ∧
+      Status.icon .wantsYou = '⣿' ∧
+      Status.icon .idle = '⣀' ∧
+      Status.icon .exitedOk = '✓' ∧
+      Status.icon .exitedBad = '!' ∧
+      Status.icon .resumable = '~' ∧
+      Status.icon .unknown = '?' := ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+theorem icon_glyphs_rejects_unknown :
+    ¬((fun (_ : Status.Status) => '?') .working = '⣷' ∧
+        (fun (_ : Status.Status) => '?') .wantsYou = '⣿' ∧
+        (fun (_ : Status.Status) => '?') .idle = '⣀' ∧
+        (fun (_ : Status.Status) => '?') .exitedOk = '✓' ∧
+        (fun (_ : Status.Status) => '?') .exitedBad = '!' ∧
+        (fun (_ : Status.Status) => '?') .resumable = '~' ∧
+        (fun (_ : Status.Status) => '?') .unknown = '?') := by
+  intro h
+  exact absurd h.1 (by decide)
+
+theorem summary_exact (statuses : List Status.Status) :
+    Status.summary statuses =
+      String.intercalate " "
+        ((if statuses.count .wantsYou = 0 then []
+          else [(toString (statuses.count .wantsYou)).push (Status.icon .wantsYou)]) ++
+          (if statuses.count .exitedBad = 0 then []
+          else [(toString (statuses.count .exitedBad)).push (Status.icon .exitedBad)]) ++
+          (if statuses.count .unknown = 0 then []
+          else [(toString (statuses.count .unknown)).push (Status.icon .unknown)])) :=
+  Status.summary_exact statuses
+
+theorem summary_exact_rejects_count :
+    ¬∀ (statuses : List Status.Status),
+        (fun (all : List Status.Status) => toString all.length) statuses =
+          String.intercalate " "
+            ((if statuses.count .wantsYou = 0 then []
+              else [(toString (statuses.count .wantsYou)).push (Status.icon .wantsYou)]) ++
+              (if statuses.count .exitedBad = 0 then []
+              else [(toString (statuses.count .exitedBad)).push (Status.icon .exitedBad)]) ++
+              (if statuses.count .unknown = 0 then []
+              else [(toString (statuses.count .unknown)).push (Status.icon .unknown)])) := by
+  intro h
+  exact absurd (h []) (by simp)
 
 end Linger

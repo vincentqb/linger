@@ -10,8 +10,8 @@ could show the same glyph (not exclusive), a row could match no glyph (not
 covering), or a glyph could be unreachable (a lie in the legend). This file
 rules out all three.
 
-The predicates below are the states as *described in the legend*, written
-independently of `classify`'s cascade — that independence is the point. If
+The legend predicates `Is`, in `Linger/Display/Spec.lean`, are the states as *described in the
+legend*, written independently of `classify`'s cascade — that independence is the point. If
 they were the cascade's guards with the earlier branches negated, cover and
 disjointness would be tautologies and the theorems would say nothing. As
 written, `classify_sound` is a real claim: the cascade computes the
@@ -19,18 +19,6 @@ description.
 -/
 
 namespace Linger.Display.Status
-
-/-- The legend, as predicates on an observation. -/
-def Is : Status → Obs → Prop
-  | .unknown, o => o.known = false
-  | .exitedOk, o => o.known = true ∧ o.exit = some 0
-  | .exitedBad, o => o.known = true ∧ ∃ n, o.exit = some n ∧ n ≠ 0
-  | .resumable, o => o.known = true ∧ o.exit = none ∧ o.daemonUp = false
-  | .working, o => o.known = true ∧ o.exit = none ∧ o.daemonUp = true ∧ o.fresh = true
-  | .wantsYou, o =>
-    o.known = true ∧ o.exit = none ∧ o.daemonUp = true ∧ o.fresh = false ∧ o.unseen = true
-  | .idle, o =>
-    o.known = true ∧ o.exit = none ∧ o.daemonUp = true ∧ o.fresh = false ∧ o.unseen = false
 
 /-- The cascade agrees exactly with the independent legend predicates. -/
 theorem classify_iff (o : Obs) (s : Status) : classify o = s ↔ Is s o := by

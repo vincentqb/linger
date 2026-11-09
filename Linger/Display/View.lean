@@ -1,6 +1,7 @@
 module
 
-public import Linger.Display.Status
+public import Linger.Display.Spec
+import Linger.Display.Status
 
 public section
 

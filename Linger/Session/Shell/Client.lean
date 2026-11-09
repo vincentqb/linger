@@ -10,7 +10,8 @@ import Linger.Terminal.Title
 import Linger.Terminal.Render
 import Linger.Target.Remote
 import Linger.Display.Title
-public import Linger.Display.Status
+public import Linger.Display.Spec
+import Linger.Display.Status
 import Linger.Session.Shell.Paths
 
 public section

@@ -4,7 +4,8 @@ public import Linger.Selector.Key
 import Linger.Selector.Fuzzy
 import Linger.Target.Name
 import Linger.Display.Listing
-public import Linger.Display.Status
+public import Linger.Display.Spec
+import Linger.Display.Status
 import Linger.Target.Remote
 import Linger.Terminal.Vt
 import Linger.Display.View

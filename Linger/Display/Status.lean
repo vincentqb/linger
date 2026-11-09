@@ -1,5 +1,7 @@
 module
 
+public import Linger.Display.Spec
+
 public section
 
 /-! # Session status — what a listing row reports
@@ -10,51 +12,14 @@ something linger saw directly, shown as one glyph, and says what to do next: lea
 status belongs here only when these seven cannot say what someone needs. Titles and
 `ls --summary` count the three that ask for someone: `⣿`, `!` and `?` (`summary`).
 
-The classifier is a pure function of an observation record, so the states
+The states, the observation record and the legend live in `Linger/Display/Spec.lean`. The
+classifier is a pure function of an observation record, so the states
 partition the observation space by construction rather than by convention —
 `Linger/Display/Proofs/Status.lean` proves the cover, the disjointness, and that every
 state is reachable (a state no observation produces would be a lie in the legend).
 -/
 
 namespace Linger.Display.Status
-
-/-- Seven mutually exclusive states, in priority order: a row shows the
-first one that applies. -/
-inductive Status where
-  /-- `?` — no answer: the daemon did not answer, or the saved session could not be read. -/
-  | unknown
-  /-- `!` — the program ended any other way: a nonzero exit, a signal, or an ending linger did
-  not see. -/
-  | exitedBad
-  /-- `✓` — the program exited 0. It did its job. -/
-  | exitedOk
-  /-- `~` — no daemon, but a checkpoint is on disk whose program was interrupted before it
-  ended: attach resumes it. -/
-  | resumable
-  /-- `⣿` — new output since the session was last looked at, a bell included, then it stopped. -/
-  | wantsYou
-  /-- `⣷` — output right now. -/
-  | working
-  /-- `⣀` — nothing new since you last looked. -/
-  | idle
-  deriving DecidableEq, Repr, Inhabited
-
-/-- What a row is classified from. Booleans the runtime computes, so the
-classifier depends on nothing else — no clock, no filesystem. -/
-structure Obs where
-  /-- We got a trustworthy answer about this row. -/
-  known : Bool := true
-  /-- The session's socket is live. -/
-  daemonUp : Bool := true
-  /-- The status a shell reports for how the program ended, once it has: from the daemon while
-  it ends, then from the name's end record, which a socket-less row reads. -/
-  exit : Option Nat := none
-  /-- Output within the "working" window. -/
-  fresh : Bool := false
-  /-- Output, or a bell, since the session was last looked at (attach, output while
-  attached, or capture). -/
-  unseen : Bool := false
-  deriving DecidableEq, Repr, Inhabited
 
 /-- The classifier: a priority cascade. -/
 def classify (o : Obs) : Status :=

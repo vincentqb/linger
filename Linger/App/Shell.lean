@@ -16,6 +16,7 @@ import Linger.Session.Shell.Resume
 import Linger.Session.Shell.Record
 import Linger.Terminal.Mediation
 import Std.Async.Signal
+import Linger.Display.Status
 
 public section
 
