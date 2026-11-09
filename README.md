@@ -14,4 +14,5 @@ linger attach work
 ```
 
 Press **Ctrl-\\** to detach; run the same command to reattach.
-`linger help` lists commands. [Configuration recipes](recipes/README.md).
+`linger help` lists commands, the statuses a session shows and the exit codes.
+[Configuration recipes](recipes/README.md).

@@ -654,14 +654,17 @@ private def acceptThenCancel (s : Session) (keys : String := "\r") (visits : Nat
   return clean && (← beforeAttach s 1 (visits - 1)) && (← attachNormal s.fixture)
 
 private def usageChecks (e : Env) : IO Unit := do
-  check e "help" "linger help lists each command on one line and aliases agree without a terminal"
+  check e "help"
+      "linger help lists each command on one line, then every status and exit code, and aliases agree"
       fun f => do
       let (rc, out, err) ← f.piped #["--help"]
       let (shortRc, shortOut, shortErr) ← f.piped #["-h"]
       let (helpRc, helpOut, helpErr) ← f.piped #["help"]
       let (hRc, hOut, hErr) ← f.piped #["h"]
       IO.FS.writeFile (f.root / "help.txt") out
-      let rows := (out.dropEnd 1).toString.splitOn "\n"
+      let lines := (out.dropEnd 1).toString.splitOn "\n"
+      let rows := lines.takeWhile (· != "")
+      let footer := lines.dropWhile (· != "")
       return rc == 0 && shortRc == 0 && helpRc == 0 && hRc == 0 && shortOut == out &&
           helpOut == out &&
           hOut == out &&
@@ -674,6 +677,15 @@ private def usageChecks (e : Env) : IO Unit := do
             (fun line =>
               line == line.trimAscii.toString &&
                 ((line.splitOn "  ").filter (!·.isEmpty)).length ≥ 2) &&
+          Linger.Display.Status.legend.all (fun line => footer.contains ("  " ++ line)) &&
+          footer.any
+            (fun line =>
+              has line
+                ("count " ++
+                  String.intercalate " "
+                    (Linger.Display.Status.attention.map
+                      (String.singleton ∘ Linger.Display.Status.icon)))) &&
+          footer.any (fun line => has line "127 not found") &&
           has out "--summary" &&
           has out "--read-only" &&
           has out "--history" &&

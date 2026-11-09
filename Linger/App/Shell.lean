@@ -56,6 +56,20 @@ clear <name>                              Remove all labels
 version                                   Print version and state paths
 help                                      Show commands"
 
+/-- What `linger help` prints after the commands: the seven statuses a session can show, which
+of them titles and `ls --summary` count, and the exit statuses every command shares. -/
+private def helpFooter : String :=
+  let glyphs :=
+    String.intercalate " "
+      (Linger.Display.Status.attention.map fun status =>
+        String.singleton (Linger.Display.Status.icon status))
+  String.intercalate "\n"
+    (["", "Statuses"] ++ Linger.Display.Status.legend.map ("  " ++ ·) ++
+      [s!"Titles and ls --summary count {glyphs}", "",
+        "Exit status: the program's own, when the command waits for it to end; otherwise",
+        "0 done, 1 refused or failed, 2 usage, 124 timed out, 125 linger failed, 126 cannot run,",
+        "127 not found, 130 interrupted"])
+
 /-- Start `name`'s daemon detached, running this executable as `__daemon name cwd cmd...`
 with its output appended to `Paths.logPath`. Returns the daemon's pid once that program
 has started, without waiting for it to listen; `connectUpsert` waits for the socket. -/
@@ -942,7 +956,7 @@ def main (args : List String) : IO UInt32 := do
   | ["version"] | ["v"] =>
     cmdVersion
   | ["help"] | ["h"] | ["--help"] | ["-h"] =>
-    IO.println usage
+    IO.println (usage ++ "\n" ++ helpFooter)
     return 0
   -- Explicit listing forms reach this backend.
   | "ls" :: rest | "list" :: rest | "l" :: rest =>

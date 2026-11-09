@@ -4,20 +4,16 @@ public section
 
 /-! # Session status — what a listing row reports
 
-One glyph per row, and the design constraint that produced this set is
-**two states share a glyph only when they call for the same action**. That
-rule settled four separate merges: a bell and unread output both mean "go
-look"; waiting-at-a-prompt is the same observation as "was working, now
-silent" unless the shell emits OSC 133, and even then the response is
-identical; a busy daemon and an unloadable checkpoint both mean "we cannot
-tell you the truth about this row". What stayed distinct is where the
-response differs: a clean exit versus a failed one, idle versus wants-you.
+**One glyph, one observation.** Every session has exactly one of seven statuses. Each is
+something linger saw directly, shown as one glyph, and says what to do next: leave `⣷`, look at
+`⣿`, nothing for `⣀`, read or discard `✓` and `!`, resume `~` when wanted, and check `?`. A new
+status belongs here only when these seven cannot say what someone needs. Titles and
+`ls --summary` count the three that ask for someone: `⣿`, `!` and `?` (`summary`).
 
 The classifier is a pure function of an observation record, so the states
 partition the observation space by construction rather than by convention —
 `Linger/Display/Proofs/Status.lean` proves the cover, the disjointness, and that every
-state is reachable (a state no observation produces would be a lie in the
-legend).
+state is reachable (a state no observation produces would be a lie in the legend).
 -/
 
 namespace Linger.Display.Status
@@ -25,7 +21,7 @@ namespace Linger.Display.Status
 /-- Seven mutually exclusive states, in priority order: a row shows the
 first one that applies. -/
 inductive Status where
-  /-- `?` — the checkpoint will not load, or the daemon did not answer. -/
+  /-- `?` — no answer: the daemon did not answer, or the saved session could not be read. -/
   | unknown
   /-- `!` — the program ended any other way: a nonzero exit, a signal, or an ending linger did
   not see. -/
@@ -35,11 +31,11 @@ inductive Status where
   /-- `~` — no daemon, but a checkpoint is on disk whose program was interrupted before it
   ended: attach resumes it. -/
   | resumable
-  /-- `⣿` — output or a bell since the session was last looked at, now quiet. -/
+  /-- `⣿` — new output since the session was last looked at, a bell included, then it stopped. -/
   | wantsYou
   /-- `⣷` — output right now. -/
   | working
-  /-- `⣀` — nothing since you last looked. -/
+  /-- `⣀` — nothing new since you last looked. -/
   | idle
   deriving DecidableEq, Repr, Inhabited
 
@@ -116,10 +112,13 @@ def style : Status → String
   | .exitedBad => "\x1b[31m"
   | .idle | .resumable => "\x1b[2;39m"
 
-/-- Attention groups in display order, retaining only positive exact counts.
-Ordinary activity and successful completion do not ask for attention. -/
+/-- The statuses that ask for someone, in display order: titles and `ls --summary` count only
+these. Ordinary activity and successful completion do not ask for attention. -/
+def attention : List Status := [.wantsYou, .exitedBad, .unknown]
+
+/-- Attention groups in display order, retaining only positive exact counts. -/
 private def attentionCounts (statuses : List Status) : List (Status × Nat) :=
-  ([.wantsYou, .exitedBad, .unknown] : List Status).filterMap fun status =>
+  attention.filterMap fun status =>
     let count := statuses.count status
     if count == 0 then none else some (status, count)
 
@@ -128,5 +127,23 @@ icon for each attention group, separated by one space with no trailing newline. 
 def summary (statuses : List Status) : String :=
   String.intercalate " "
     ((attentionCounts statuses).map fun (status, count) => (toString count).push (icon status))
+
+/-- What linger saw, in the words `linger help` gives each status. -/
+def seen : Status → String
+  | .working => "output right now"
+  | .wantsYou => "new output, then it stopped"
+  | .idle => "nothing new since you looked"
+  | .exitedOk => "ended with status 0"
+  | .exitedBad => "ended with a failure status or a signal"
+  | .resumable => "not running, saved: attach resumes it"
+  | .unknown => "no answer"
+
+/-- The statuses in the order `linger help` lists them: a running program's, an ended one's,
+then a session with no program running. -/
+def legendOrder : List Status :=
+  [.working, .wantsYou, .idle, .exitedOk, .exitedBad, .resumable, .unknown]
+
+/-- The legend `linger help` prints: one line per status, its glyph and what linger saw. -/
+def legend : List String := legendOrder.map fun status => s!"{icon status}  {seen status}"
 
 end Linger.Display.Status

@@ -106,13 +106,13 @@ theorem attentionCounts_exact (statuses : List Status) :
       (if statuses.count .wantsYou = 0 then [] else [(.wantsYou, statuses.count .wantsYou)]) ++
         (if statuses.count .exitedBad = 0 then [] else [(.exitedBad, statuses.count .exitedBad)]) ++
         (if statuses.count .unknown = 0 then [] else [(.unknown, statuses.count .unknown)]) := by
-  simp only [attentionCounts, List.filterMap_cons, List.filterMap_nil]
+  simp only [attentionCounts, attention, List.filterMap_cons, List.filterMap_nil]
   split <;> split <;> split <;> simp_all
 
 /-- Neither zero counts nor ordinary activity can occur in an attention group. -/
 theorem attentionCounts_mem (statuses : List Status) (s : Status) (n : Nat) :
     (s, n) ∈ Linger.Display.Status.attentionCounts statuses ↔
-      s ∈ [.wantsYou, .exitedBad, .unknown] ∧ n = statuses.count s ∧ n ≠ 0 := by
+      s ∈ attention ∧ n = statuses.count s ∧ n ≠ 0 := by
   simp only [attentionCounts, List.mem_filterMap]
   constructor
   · rintro ⟨st, hm, he⟩
@@ -154,7 +154,7 @@ theorem summary_token_clean (statuses : List Status) (s : Status) (n : Nat)
     exact Nat.isDigit_of_mem_toDigits (by decide) (by decide) hc
   · right
     have hs := ((attentionCounts_mem statuses s n).mp h).1
-    simp only [List.mem_cons, List.not_mem_nil, or_false] at hs
+    simp only [attention, List.mem_cons, List.not_mem_nil, or_false] at hs
     rcases hs with rfl | rfl | rfl <;> decide
 
 /-- Summary text contains only decimal digits, spaces and attention glyphs.
@@ -198,5 +198,35 @@ theorem summary_printable (statuses : List Status) :
     omega
   · simp only [List.mem_cons, List.not_mem_nil, or_false] at hi
     rcases hi with rfl | rfl | rfl | rfl <;> decide
+
+/-! ## The legend `linger help` prints -/
+
+/-- The legend lists every status: no session can show a glyph `linger help` does not explain. -/
+theorem legendOrder_complete (s : Status) : s ∈ legendOrder := by cases s <;> simp [legendOrder]
+
+/-- …each once. -/
+theorem legendOrder_nodup : legendOrder.Nodup := by decide
+
+/-- Each status's line in the legend is its glyph and what linger saw. -/
+theorem legend_mem (s : Status) : s!"{icon s}  {seen s}" ∈ legend :=
+  List.mem_map_of_mem (f := fun status => s!"{icon status}  {seen status}") (legendOrder_complete s)
+
+/-- Distinct statuses are described in distinct words, as they are shown with distinct glyphs
+(`icon_injective`). -/
+theorem seen_injective (s t : Status) (h : seen s = seen t) : s = t := by
+  cases s <;> cases t <;>
+    first
+    | rfl
+    | exact absurd h (by decide)
+
+/-- Titles and `ls --summary` count a status exactly when it is in `attention`. -/
+theorem attention_counted (statuses : List Status) (s : Status) :
+    (∃ n, (s, n) ∈ attentionCounts statuses) ↔ s ∈ attention ∧ statuses.count s ≠ 0 := by
+  constructor
+  · rintro ⟨n, h⟩
+    obtain ⟨hs, rfl, hn⟩ := (attentionCounts_mem statuses s n).mp h
+    exact ⟨hs, hn⟩
+  · rintro ⟨hs, hn⟩
+    exact ⟨_, (attentionCounts_mem statuses s _).mpr ⟨hs, rfl, hn⟩⟩
 
 end Linger.Display.Status

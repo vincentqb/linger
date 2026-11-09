@@ -31,7 +31,7 @@ holes for the program's parts, [Claims](Theorems/Claims.lean) proves them of the
 | Incremental replay | Each step preserves the complete repaint stream and respects its byte budget; positive budgets make progress and terminate. | [Replay](Linger/Terminal/Proofs/Replay.lean): `start_faithful`, `next_faithful`, `next_bounded`, `next_progress`, `drain_start` |
 | Text output | Capture, history, `info` replies and plain listing rows encode no C0, DEL or C1 control character beyond their own line and field separators. | [History](Linger/Terminal/Proofs/Render/History.lean): `screenText_text`, `history_text`; [Session](Linger/Session/Proofs/Session.lean): `infoText_text`; [Listing](Linger/Display/Proofs/Listing.lean): `humanRow_text` |
 | Terminal handback | Cleanup establishes canonical parser, modes, character sets, screen selection, pen and empty title for receivers at least two rows tall. | [Sticky](Linger/Terminal/Proofs/Render/Sticky.lean): `leave_canonical_all` |
-| Status and titles | Classification matches the status predicates, summaries count attention exactly, and attention is the final title segment. | [Status](Linger/Display/Proofs/Status.lean): `classify_iff`, `summary_exact`; [Title](Linger/Display/Proofs/Title.lean): `compose_attention_last` |
+| Status and titles | Classification matches the status predicates, summaries count exactly the statuses that ask for someone, and attention is the final title segment. `linger help` explains every status once, each in its own words. | [Status](Linger/Display/Proofs/Status.lean): `classify_iff`, `summary_exact`, `attention_counted`, `legendOrder_complete`, `legendOrder_nodup`, `seen_injective`; [Title](Linger/Display/Proofs/Title.lean): `compose_attention_last` |
 
 ## Command policies
 

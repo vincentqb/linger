@@ -415,6 +415,19 @@ example (w : Vt.Vt) (h2 : 2 ≤ w.rows) :
 example (o : Status.Obs) (s : Status.Status) : Status.classify o = s ↔ Status.Is s o := by
   with_reducible exact Status.classify_iff o s
 
+example (statuses : List Status.Status) (s : Status.Status) :
+    (∃ n, (s, n) ∈ Status.attentionCounts statuses) ↔
+      s ∈ Status.attention ∧ statuses.count s ≠ 0 := by
+  with_reducible exact Status.attention_counted statuses s
+
+example (s : Status.Status) : s ∈ Status.legendOrder := by
+  with_reducible exact Status.legendOrder_complete s
+
+example : Status.legendOrder.Nodup := by with_reducible exact Status.legendOrder_nodup
+
+example (s t : Status.Status) (h : Status.seen s = Status.seen t) : s = t := by
+  with_reducible exact Status.seen_injective s t h
+
 example (statuses : List Status.Status) :
     Status.summary statuses =
       " ".intercalate
