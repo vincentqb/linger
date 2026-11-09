@@ -40,7 +40,7 @@ it stopped, `⣀` nothing new since you looked, `✓` ended with status 0, `!` e
 
 Each theorem below is stated over definitions in the components' `Spec` modules and over the
 program parts declared below as holes: each hole is `sorry` here, the program supplies it, and
-the claims say what it must do. `Theorems/Claims.lean` proves the same statements of the
+the claims say what it must do. `Theorems/Solution.lean` proves the same statements of the
 program's parts, and `./lake comparator` checks that it proves exactly these, that each part has
 the declared type, and that no axiom beyond `propext`, `Quot.sound` and `Classical.choice` is
 used. Changing a statement or a hole here changes what linger claims. Each part's section says
@@ -243,7 +243,7 @@ def Linger.Session.Buf.bufAdvance : Buf.Buf → Nat → Buf.Buf := sorry
 @[expose]
 def Linger.Session.Buf.owedLen : Buf.Buf → Nat := sorry
 
-namespace Linger.Claims
+namespace Linger
 
 /-! ## 1. Transparency
 
@@ -667,4 +667,4 @@ theorem leave_canonical_all_rejects_escape :
             (w.feed ([0x1B] : Render.Bytes)).windowTitle = "" := by
   sorry
 
-end Linger.Claims
+end Linger

@@ -63,7 +63,7 @@ structure BufRec where
   deriving Inhabited
 
 /-- A byte queue, as the headline theorems name it: a definition over the sealed record
-`BufRec`, because `Manifest.lean` declares the type as a hole the program fills. -/
+`BufRec`, because `Challenge.lean` declares the type as a hole the program fills. -/
 abbrev Buf : Type := BufRec
 
 /-- The empty queue. The public door where `{}` used to be: a private field

@@ -1572,7 +1572,7 @@ theorem observe_dims (v : Vt) (bytes : List UInt8) (h : Good v) :
 
 The observations the headline theorems read: on a fresh terminal, after a resize and after
 forgetting partial parser state, in general; and after a few short inputs to a fresh terminal,
-which `Manifest.lean` states so that its claims cannot hold of parts that do nothing. -/
+which `Challenge.lean` states so that its claims cannot hold of parts that do nothing. -/
 
 /-- A fresh terminal has the clamped size, blank rows, the cursor at the top left, default
 modes and pen, no history, the whole screen as its scroll region, ASCII character sets with G0

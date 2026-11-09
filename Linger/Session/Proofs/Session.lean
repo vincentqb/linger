@@ -2079,7 +2079,7 @@ theorem onMsg_info_faithful (s : State) (c : Client) (ha : c.answered = false)
 
 /-! ## What a session shows
 
-The observations the headline theorems read, pinned for `Manifest.lean`: what a daemon boots
+The observations the headline theorems read, pinned for `Challenge.lean`: what a daemon boots
 with, how `run` composes single events and finds a client, and what connecting, closing and pty
 output do to them. -/
 

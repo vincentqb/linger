@@ -189,7 +189,7 @@ say "2c. verifier regression tests (CI policy, caches and suite isolation)"
 ./.lake/build/bin/suites --suites ci:58 hygiene:56 \
   || fail "verifier regression checks (see $logs/linger-ci.out and linger-hygiene.out)"
 
-say "2d. headline theorems (Manifest.lean against Theorems/Claims.lean)"
+say "2d. headline theorems (Challenge.lean against Theorems/Solution.lean)"
 # `lake comparator` builds both modules, exports them and replays the claims' proofs through
 # the kernel in a separate process; it accepts only when every statement matches and no axiom
 # outside comparator.json's list is used. Its bwrap sandbox protects a judge from code the
@@ -199,10 +199,10 @@ say "2d. headline theorems (Manifest.lean against Theorems/Claims.lean)"
   || { grep -v '^Exporting' "$logs/comparator.log" | tail -20; fail "lake comparator rejected the headline theorems (see $logs/comparator.log)"; }
 [ "$(tail -1 "$logs/comparator.log")" = 'Your solution is okay!' ] \
   || fail "lake comparator did not accept the headline theorems (see $logs/comparator.log)"
-# The Manifest library silences only `sorry`, whose every use scripts/gates.sh checks in the
+# The Challenge library silences only `sorry`, whose every use scripts/gates.sh checks in the
 # source, so building it warns about nothing.
 if grep '^warning' "$logs/comparator.log"; then
-  fail "Manifest.lean has warnings (see $logs/comparator.log)"
+  fail "Challenge.lean has warnings (see $logs/comparator.log)"
 fi
 
 say "3. posix shim smoke tests"

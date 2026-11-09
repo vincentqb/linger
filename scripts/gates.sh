@@ -443,34 +443,34 @@ layer_bad="$(module_imports 'Linger/*' ':!Linger/*/Suites/*' \
   printf '%s\n' "$layer_bad" >&2
   fail "a component imports a peer or a higher layer (layers: $component_layers)"; }
 
-# Headline theorems. Manifest.lean declares the program parts the headlines name as holes
+# Headline theorems. Challenge.lean declares the program parts the headlines name as holes
 # (`@[expose]`, then `def <full name> : <type> := sorry`) and states the headlines with `sorry`;
-# Theorems/Claims.lean proves the same statements of the program's parts; comparator.json names
+# Theorems/Solution.lean proves the same statements of the program's parts; comparator.json names
 # both; and `./lake comparator` (scripts/verify.sh) checks that each part has its declared type,
 # that each proof matches its statement, and that no other axiom is used. These gates keep the
 # lists equal, so neither a headline nor a hole can leave that check by being dropped from one
-# of them, and keep the statements' meaning out of the program: the Manifest and the Spec
+# of them, and keep the statements' meaning out of the program: the challenge and the Spec
 # modules import only Spec modules.
 headline_names() {                           # headline_names <file>: theorem names, in order
   code_grep '^theorem [A-Za-z_][A-Za-z0-9_]*' "$1" | sed 's/^[^:]*:[0-9]*://; s/^theorem //; s/[[:space:]].*//'
 }
-manifest_names="$(headline_names Manifest.lean)"
-manifest_count="$(printf '%s\n' "$manifest_names" | awk 'END { print NR }')"
-[ -n "$manifest_names" ] || fail "Manifest.lean states no headline theorem"
-[ "$(headline_names Theorems/Claims.lean)" = "$manifest_names" ] \
-  || fail "Theorems/Claims.lean must prove exactly the theorems Manifest.lean states, in its order"
-hole_names="$(awk 'prev == "@[expose]" && /^def Linger[.]/ { print $2 } { prev = $0 }' Manifest.lean)"
+headlines="$(headline_names Challenge.lean)"
+headline_count="$(printf '%s\n' "$headlines" | awk 'END { print NR }')"
+[ -n "$headlines" ] || fail "Challenge.lean states no headline theorem"
+[ "$(headline_names Theorems/Solution.lean)" = "$headlines" ] \
+  || fail "Theorems/Solution.lean must prove exactly the theorems Challenge.lean states, in its order"
+hole_names="$(awk 'prev == "@[expose]" && /^def Linger[.]/ { print $2 } { prev = $0 }' Challenge.lean)"
 hole_count="$(printf '%s' "$hole_names" | awk 'END { print NR }')"
-config_want="$(printf '%s\n' "$manifest_names" "--" "$hole_names" | awk '
+config_want="$(printf '%s\n' "$headlines" "--" "$hole_names" | awk '
   $0 == "--" { holes = 1; next }
   !holes { names[++n] = $0; next }
   $0 != "" { defs[++m] = $0 }
   END {
     print "{"
-    print "  \"challenge_module\": \"Manifest\","
-    print "  \"solution_module\": \"Theorems.Claims\","
+    print "  \"challenge_module\": \"Challenge\","
+    print "  \"solution_module\": \"Theorems.Solution\","
     print "  \"theorem_names\": ["
-    for (i = 1; i <= n; i++) printf "    \"Linger.Claims.%s\"%s\n", names[i], (i < n ? "," : "")
+    for (i = 1; i <= n; i++) printf "    \"Linger.%s\"%s\n", names[i], (i < n ? "," : "")
     print "  ],"
     if (m == 0) print "  \"definition_names\": [],"
     else {
@@ -481,36 +481,36 @@ config_want="$(printf '%s\n' "$manifest_names" "--" "$hole_names" | awk '
     print "  \"permitted_axioms\": [\"propext\", \"Quot.sound\", \"Classical.choice\"]"
     print "}" }')"
 [ "$(cat comparator.json)" = "$config_want" ] \
-  || fail "comparator.json must list exactly the theorems and holes Manifest.lean declares, in its order, with the three standard axioms"
+  || fail "comparator.json must list exactly the theorems and holes Challenge.lean declares, in its order, with the three standard axioms"
 # Each headline's proof is `by sorry` and each hole's body `sorry`, however the formatter breaks
-# the line, and the Manifest declares nothing else. Statements may contain `:=` (structure
+# the line, and the challenge declares nothing else. Statements may contain `:=` (structure
 # instances), so the check counts each `sorry`, each `:= by sorry` and each `:= sorry`.
-manifest_code="$(code_grep '.' Manifest.lean | sed 's/^[^:]*:[0-9]*://' | tr '\n' ' ' | tr -s ' \t' '  ')"
-[ "$(code_count 'sorry' Manifest.lean)" -eq "$((manifest_count + hole_count))" ] \
-  && [ "$(printf '%s\n' "$manifest_code" | awk '{ print gsub(/:= by sorry([^[:alnum:]_]|$)/, "") }')" -eq "$manifest_count" ] \
-  && [ "$(printf '%s\n' "$manifest_code" | awk '{ print gsub(/:= sorry([^[:alnum:]_]|$)/, "") }')" -eq "$hole_count" ] \
-  || fail "every Manifest.lean theorem must be proved by exactly 'by sorry', and every hole be exactly 'sorry'"
+challenge_code="$(code_grep '.' Challenge.lean | sed 's/^[^:]*:[0-9]*://' | tr '\n' ' ' | tr -s ' \t' '  ')"
+[ "$(code_count 'sorry' Challenge.lean)" -eq "$((headline_count + hole_count))" ] \
+  && [ "$(printf '%s\n' "$challenge_code" | awk '{ print gsub(/:= by sorry([^[:alnum:]_]|$)/, "") }')" -eq "$headline_count" ] \
+  && [ "$(printf '%s\n' "$challenge_code" | awk '{ print gsub(/:= sorry([^[:alnum:]_]|$)/, "") }')" -eq "$hole_count" ] \
+  || fail "every Challenge.lean theorem must be proved by exactly 'by sorry', and every hole be exactly 'sorry'"
 ! code_grep '^(@[[][^]]*[]][[:space:]]*)?((private|public|protected|noncomputable)[[:space:]]+)*(abbrev|instance|axiom|opaque|structure|inductive|class|example|lemma)([^[:alnum:]_]|$)' \
-    Manifest.lean \
-  || fail "Manifest.lean declares something other than a hole or a headline theorem"
-hole_lines="$(awk 'prev == "@[expose]" && /^def Linger[.]/ { print FNR } { prev = $0 }' Manifest.lean)"
-! code_grep '(^|[[:space:]])def[[:space:]]' Manifest.lean | awk -F: -v holes="$hole_lines" '
+    Challenge.lean \
+  || fail "Challenge.lean declares something other than a hole or a headline theorem"
+hole_lines="$(awk 'prev == "@[expose]" && /^def Linger[.]/ { print FNR } { prev = $0 }' Challenge.lean)"
+! code_grep '(^|[[:space:]])def[[:space:]]' Challenge.lean | awk -F: -v holes="$hole_lines" '
     BEGIN { n = split(holes, h, "\n"); for (i = 1; i <= n; i++) hole[h[i]] = 1 }
     !($2 in hole) { print; bad = 1 }
     END { exit !bad }' \
-  || fail "a Manifest.lean definition must be a hole: '@[expose]', then 'def' and the full name"
+  || fail "a Challenge.lean definition must be a hole: '@[expose]', then 'def' and the full name"
 # Each hole and headline says in words what it is or guarantees: a docstring ends on the line
 # above it.
 awk '(/^theorem / || /^@[[]expose[]]$/) && prev !~ /-[/]$/ { print FILENAME ":" FNR ": " $0; bad = 1 }
   { prev = $0 }
-  END { exit bad }' Manifest.lean >&2 \
-  || fail "every Manifest.lean hole and theorem needs a docstring"
-manifest_imports_bad="$(module_imports Manifest.lean | awk -F: "$IMPORT_AWK"'
+  END { exit bad }' Challenge.lean >&2 \
+  || fail "every Challenge.lean hole and theorem needs a docstring"
+challenge_imports_bad="$(module_imports Challenge.lean | awk -F: "$IMPORT_AWK"'
   { if ($3 !~ /^public[[:space:]]+import[[:space:]]+Linger[.]/ || $3 ~ /import[[:space:]]+all[[:space:]]/ \
         || import_mod($3) !~ /^Linger[.][A-Z][A-Za-z]*[.]Spec$/) print "  " $0 }')"
-[ -z "$manifest_imports_bad" ] || {
-  printf '%s\n' "$manifest_imports_bad" >&2
-  fail "Manifest.lean imports only Spec modules, publicly"; }
+[ -z "$challenge_imports_bad" ] || {
+  printf '%s\n' "$challenge_imports_bad" >&2
+  fail "Challenge.lean imports only Spec modules, publicly"; }
 spec_imports_bad="$(module_imports 'Linger/*/Spec.lean' | awk -F: "$IMPORT_AWK"'
   { if ($3 ~ /import[[:space:]]+all[[:space:]]/ || (import_mod($3) !~ /^Linger[.][A-Z][A-Za-z]*[.]Spec$/ \
         && import_mod($3) != "SoftwareChallenge.Commands"))
@@ -518,10 +518,10 @@ spec_imports_bad="$(module_imports 'Linger/*/Spec.lean' | awk -F: "$IMPORT_AWK"'
 [ -z "$spec_imports_bad" ] || {
   printf '%s\n' "$spec_imports_bad" >&2
   fail "Spec modules import only Spec modules and SoftwareChallenge.Commands"; }
-[ "$(library_decl Manifest)" = "lean_lib Manifest where leanOptions := #[⟨\`warn.sorry, false⟩, ⟨\`linter.missingDocs, true⟩] " ] \
-  || fail "the Manifest library may silence only its sorry warnings, and must require docstrings: $(library_decl Manifest)"
-! grep -qE '^@[[]default_target[]][[:space:]]+lean_lib Manifest' lakefile.lean \
-  || fail "the Manifest library proves nothing; keep it out of the default targets"
+[ "$(library_decl Challenge)" = "lean_lib Challenge where leanOptions := #[⟨\`warn.sorry, false⟩, ⟨\`linter.missingDocs, true⟩] " ] \
+  || fail "the Challenge library may silence only its sorry warnings, and must require docstrings: $(library_decl Challenge)"
+! grep -qE '^@[[]default_target[]][[:space:]]+lean_lib Challenge' lakefile.lean \
+  || fail "the Challenge library proves nothing; keep it out of the default targets"
 
 # Pure route proofs do not observe terminal IO or inspect Main's call sites.
 # Pin dispatch before terminal observations, exact argv and executable identity;

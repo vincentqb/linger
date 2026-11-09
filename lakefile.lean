@@ -90,10 +90,10 @@ lean_lib Verify where
 
 lean_exe suites where root := `Verify.Main
 
-/-- The headline theorems, stated with `sorry` for `./lake comparator`, which builds this
-library and checks that `Theorems.Claims` proves the same statements. `scripts/gates.sh` checks
+/-- The headline theorems and their kills, stated with `sorry` for `./lake comparator`, which
+builds this library and checks that `Theorems.Solution` proves the same statements. `scripts/gates.sh` checks
 that each statement and hole is exactly `sorry`, so the build does not warn about them. -/
-lean_lib Manifest where leanOptions := #[⟨`warn.sorry, false⟩, ⟨`linter.missingDocs, true⟩]
+lean_lib Challenge where leanOptions := #[⟨`warn.sorry, false⟩, ⟨`linter.missingDocs, true⟩]
 
 @[default_target] lean_exe linger where root := `Main
 

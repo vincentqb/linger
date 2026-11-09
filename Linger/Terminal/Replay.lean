@@ -32,7 +32,7 @@ structure PlanRec where
   deriving Repr, DecidableEq
 
 /-- A captured repaint, as the headline theorems name it: a definition over the sealed record
-`PlanRec`, because `Manifest.lean` declares the type as a hole the program fills. -/
+`PlanRec`, because `Challenge.lean` declares the type as a hole the program fills. -/
 abbrev Plan : Type := PlanRec
 
 /-- Capture at the pure event point, before later messages can resize or feed

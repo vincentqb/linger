@@ -87,7 +87,7 @@ structure StateRec where
   private lastOutMs : Option Nat := none
 
 /-- The session's state, as the headline theorems name it: a definition over the sealed record
-`StateRec`, because `Manifest.lean` declares the type as a hole the program fills. -/
+`StateRec`, because `Challenge.lean` declares the type as a hole the program fills. -/
 abbrev State : Type := StateRec
 
 /-- The session's terminal, as the headline theorems observe it. -/

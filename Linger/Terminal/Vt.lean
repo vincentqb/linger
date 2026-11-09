@@ -430,7 +430,7 @@ structure VtRec where
   private u8acc : Nat := 0 -- accumulated codepoint bits
   private bell : Bool := false -- sticky until the runtime clears it (activity signal)
 
-/-- The emulator state, as the headline theorems name it: a definition, because `Manifest.lean`
+/-- The emulator state, as the headline theorems name it: a definition, because `Challenge.lean`
 declares the type as a hole the program fills, over the sealed record `VtRec`. -/
 abbrev Vt : Type := VtRec
 

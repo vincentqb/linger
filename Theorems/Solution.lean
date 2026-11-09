@@ -30,14 +30,14 @@ import all Linger.Terminal.Proofs.Render.Sticky
 import all Linger.Terminal.Proofs.Replay
 import all Linger.Terminal.Proofs.Vt.State
 
-/-! # Proofs of the headline theorems
+/-! # Proofs of the headline theorems and their kills
 
-`Manifest.lean` states these theorems; each proof here cites the component theorems it
+`Challenge.lean` states these theorems; each proof here cites the component theorems it
 restates. `./lake comparator` checks that the statements match. -/
 
 public section
 
-namespace Linger.Claims
+namespace Linger
 
 open Linger.Session Linger.Target Linger.Terminal
 
@@ -502,4 +502,4 @@ theorem leave_canonical_all_rejects_escape :
   intro h
   exact absurd (h (Vt.Vt.init 2 2) (by decide +kernel)).1 (by decide +kernel)
 
-end Linger.Claims
+end Linger

@@ -332,7 +332,7 @@ theorem run_exited {m : Type → Type} [Monad m]
 /-! ## Succeeding effects
 
 When every effect succeeds, nothing is fed back, so the driver runs exactly the session's
-trace. This pins `run` to `Session.run` for `Manifest.lean`. -/
+trace. This pins `run` to `Session.run` for `Challenge.lean`. -/
 
 /-- A succeeding effect feeds nothing back. -/
 theorem feedback_success (eff : Effect Plan) : feedback eff (success eff) = [] := by

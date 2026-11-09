@@ -56,13 +56,13 @@ brought commits, and on manual dispatch. Pushes and pull requests do not trigger
 - `Linger/Import/`: importing tmux-resurrect saves: the `Resurrect` policy, and `Shell.lean`
   runs it.
 - `Linger/App/`: the command line: the `Entry` route and, in `Shell.lean`, the commands.
-- `Manifest.lean`: the program parts headline theorems name, declared as holes, and the
-  headline theorems, stated with `sorry`. It imports only `Spec` modules; `comparator.json`
+- `Challenge.lean`: the program parts headline theorems name, declared as holes, and the
+  headline theorems and their kills, stated with `sorry`. It imports only `Spec` modules; `comparator.json`
   names the holes and theorems for `lake comparator`.
 - `Audit.lean`: the Lean Software Challenge role of each module prefix; `./lake build` runs the audit.
   List a new component there: a module no entry covers is tooling, which program code
   cannot import.
-- `Theorems/`: the headline proofs (`Claims.lean`), the cross-component contracts and the
+- `Theorems/`: the headline proofs (`Solution.lean`), the cross-component contracts and the
   coverage census; `Verify/`: the verifier's harness, runner and own suites.
 - `scripts/`: build and verification orchestration.
 
@@ -84,12 +84,12 @@ Lean erases proofs regardless of file placement.
   theorem whose type contains its exact fully qualified constant in the same
   commit, checked by `Theorems/Coverage.lean`; generated lemmas do not count.
   State invariants in `THEOREMS.md` and design code for provability.
-- The files the audit lists as `Owned:` (`Manifest.lean`, `comparator.json`, `Audit.lean`,
+- The files the audit lists as `Owned:` (`Challenge.lean`, `comparator.json`, `Audit.lean`,
   each `Spec.lean`, `Linger/Os/Boundary.lean`, the Lake configuration and the toolchain) say
   what linger claims. Change them to change a claim, never to make a proof pass, and restate a
   theorem there no weaker than its source.
-- Every headline in `Manifest.lean` needs a kill: a theorem there stating the headline's
-  negation with a wrong part in place of a hole, proved in `Theorems/Claims.lean`.
+- Every headline in `Challenge.lean` needs a kill: a theorem there stating the headline's
+  negation with a wrong part in place of a hole, proved in `Theorems/Solution.lean`.
 - State each assumption about the outside world as a `WorldClaim` in a `Spec.lean`, and mark
   the suites that exercise it with `@[exercises]`.
 - Every public declaration in a library needs a docstring: `lakefile.lean` enables
