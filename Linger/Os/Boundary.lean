@@ -75,6 +75,9 @@ private opaque alive (pid : UInt32) (valid : 0 < pid ∧ pid ≤ 0x7FFFFFFF) : I
 private opaque waitpidNohang (pid : UInt32) (keep : Bool) (valid : 0 < pid ∧ pid ≤ 0x7FFFFFFF) :
     IO Int64
 
+@[extern "linger_child_end_fd"]
+private opaque childEndFd : IO UInt32
+
 @[extern "linger_signal_session"]
 private opaque signalSession (sid sig : UInt32) (valid : 0 < sid ∧ sid ≤ 0x7FFFFFFF) : IO UInt32
 

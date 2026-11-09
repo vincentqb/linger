@@ -961,7 +961,7 @@ code_grep "$VT_ALL_RE" '*.lean' \
 # deliberate, reviewable act — the checkpoint for "does this genuinely
 # need a syscall wrapper, or does Lean core already have it?" (see the
 # C-vs-Rust and shrink-the-shim notes in SCRATCHPAD.md).
-SHIM_CAP=22
+SHIM_CAP=23
 shim_n="$(code_count 'LEAN_EXPORT' 'c/shim.c')"
 [ "$shim_n" -le "$SHIM_CAP" ] \
   || fail "shim grew to $shim_n wrappers (cap $SHIM_CAP); justify the new syscall and bump the cap"

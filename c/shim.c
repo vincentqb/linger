@@ -822,6 +822,57 @@ LEAN_EXPORT lean_obj_res linger_waitpid_nohang(uint32_t pid, uint8_t keep) {
     return lean_io_result_mk_ok(lean_box_uint64((uint64_t)out));
 }
 
+/* The write end of the pipe linger_child_end_fd makes, for its handler: set once, before the
+ * handler is installed, and never changed after. */
+static volatile sig_atomic_t child_end_write = -1;
+
+/* SIGCHLD: write one byte, so that a poll() waiting on the read end wakes. A full pipe
+ * already holds an unread wake-up, and a closed read end has no reader left (the Lean runtime
+ * ignores SIGPIPE, so that write fails with EPIPE), so a write that fails loses nothing. The
+ * handler restores errno for the code the signal interrupted. */
+static void on_child_end(int sig) {
+    (void)sig;
+    int saved = errno;
+    ssize_t n = write((int)child_end_write, "", 1);
+    (void)n;
+    errno = saved;
+}
+
+/* linger_child_end_fd : IO UInt32
+ * A descriptor that becomes readable whenever a child of this process ends: the read end of
+ * a pipe a SIGCHLD handler writes one byte to. Both ends are nonblocking and close on exec,
+ * so a program the daemon starts inherits neither. poll() cannot wait for a process and Lean
+ * core has no pipe, so a daemon that sleeps until something happens needs this to hear its
+ * program end. Call it once, before starting the program. SA_NOCLDSTOP: a stop is no end;
+ * SA_RESTART: read and write resume after the signal (poll still returns EINTR, which
+ * linger_poll reports as no event, and the next poll sees the byte). */
+LEAN_EXPORT lean_obj_res linger_child_end_fd(void) {
+    int fds[2];
+    if (pipe(fds) < 0) return io_err("pipe");
+    for (int i = 0; i < 2; i++) {
+        if (fcntl(fds[i], F_SETFD, FD_CLOEXEC) < 0 || set_nonblock(fds[i]) < 0) {
+            int e = errno;
+            close(fds[0]);
+            close(fds[1]);
+            return io_err_code("fcntl", e);
+        }
+    }
+    child_end_write = fds[1];
+    struct sigaction sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_handler = on_child_end;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+    if (sigaction(SIGCHLD, &sa, NULL) < 0) {
+        int e = errno;
+        child_end_write = -1;
+        close(fds[0]);
+        close(fds[1]);
+        return io_err_code("sigaction", e);
+    }
+    return lean_io_result_mk_ok(lean_box_uint32((uint32_t)fds[0]));
+}
+
 /* linger_signal_session : UInt32 -> UInt32 -> IO UInt32
  * Send sig (0 only tests) to every process whose session id is sid, other
  * than sid itself, and return how many it reached. Processes of another

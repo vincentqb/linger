@@ -138,6 +138,9 @@ structure Rt where
   can exit while its background jobs hold the terminal, and a program can close its terminal and
   keep running. Only the program's own exit ends the session. -/
   ptyOpen : Bool := true
+  /-- The descriptor `childEndFd` made readable when a child of the daemon ends, or `none` when
+  it could not be made, and every poll round then asks whether the program has ended. -/
+  childEnd : Option UInt32 := none
   /-- How the program ended, once a wait has said. The program stays unreaped until `serve` has
   ended the rest of its terminal session, so its pid stays its own until then. -/
   ending : Option Outcome := none
@@ -397,12 +400,15 @@ private def programEnd (pid : UInt32) : IO (Option Outcome) := do
   | .unreapable =>
     return some .unknown
 
-/-- One poll round: gather events from fd readiness. -/
+/-- One poll round: gather events from fd readiness. The program's end is asked after only when
+the child-end descriptor says a child ended, or every round without one. -/
 def pollRound (rt : Rt) : IO (Rt × List Event) := do
   let now ← monotonicMs
   let rt ← expireConns rt now
-  -- once the terminal has closed, the program's end usually follows at once
-  let mut timeout := if rt.ptyOpen || rt.ending.isSome then 1000 else rt.reapWaitMs
+  -- once the terminal has closed, the program's end usually follows at once; without a
+  -- child-end descriptor, only a poll timeout can notice it
+  let mut timeout :=
+    if rt.ptyOpen || rt.ending.isSome || rt.childEnd.isSome then 1000 else rt.reapWaitMs
   for c in rt.conns do
     if let some deadline := c.closeBy then
       timeout := min timeout (deadline - now)
@@ -413,9 +419,13 @@ def pollRound (rt : Rt) : IO (Rt × List Event) := do
   -- snapshot: only these conns are in the poll set; accepts during
   -- this round join the NEXT one (revs stays index-aligned)
   let polled := rt.conns
-  let mut fds : Array UInt32 := #[rt.listenFd, if rt.ptyOpen then rt.ptyFd else closedFd]
+  let watchEnd := rt.ending.isNone && rt.childEnd.isSome
+  let mut fds : Array UInt32 :=
+    #[rt.listenFd, if rt.ptyOpen then rt.ptyFd else closedFd,
+      if watchEnd then rt.childEnd.getD closedFd else closedFd]
   let mut evts : Array UInt32 :=
-    #[(if accepting then POLLIN else 0), POLLIN ||| (if owedLen rt.ptyIn != 0 then POLLOUT else 0)]
+    #[(if accepting then POLLIN else 0), POLLIN ||| (if owedLen rt.ptyIn != 0 then POLLOUT else 0),
+      POLLIN]
   for c in polled do
     fds := fds.push c.fd
     evts := evts.push ((if c.closing then 0 else POLLIN) ||| (if c.pending then POLLOUT else 0))
@@ -460,7 +470,7 @@ def pollRound (rt : Rt) : IO (Rt × List Event) := do
       -- the terminal closed; the session lasts until its program ends
       rt := { rt with ptyOpen := false }
   -- clients (the polled snapshot only)
-  let mut idx := 2
+  let mut idx := 3
   for c in polled do
     let r := revs[idx]!
     idx := idx + 1
@@ -498,8 +508,19 @@ def pollRound (rt : Rt) : IO (Rt × List Event) := do
         | none =>
           rt ← rt.closeConn c.fd
           events := events ++ [.closed c.fd.toNat]
-  -- the program's end, whatever still holds its terminal
-  if rt.ending.isNone then
+  -- the program's end, whatever still holds its terminal: asked after when a child ended, and
+  -- every round when no descriptor says so. The byte is read first, so an end the signal
+  -- reports after this read wakes the next round.
+  let asked ←
+    if watchEnd then
+      if revs[2]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
+        discard <| (read (rt.childEnd.getD closedFd) 65536).toBaseIO
+        pure true
+      else
+        pure false
+    else
+      pure true
+  if rt.ending.isNone && asked then
     match ← programEnd rt.childPid with
     | none =>
       if !rt.ptyOpen then
@@ -722,6 +743,15 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
         -- the syscall boundary; resizing the restored VT would reset its margins.
         let vt0 := Linger.Session.bootVt (restore.map (·.1))
         let created ← realtimeS
+        -- before the program starts, so its end always reaches the descriptor; without one, every
+        -- poll round asks whether the program has ended
+        let childEnd ←
+          match ← childEndFd.toBaseIO with
+          | .ok fd =>
+            pure (some fd)
+          | .error err =>
+            report s!"linger: waiting for the program's end on a timer: {err}"
+            pure none
         -- The name is this session's from here on: should the daemon end without saying how
         -- its program ended, a reader that holds the name hears that the ending is unknown,
         -- never the previous session's. A record that cannot be written starts nothing, and a
@@ -756,7 +786,8 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
               (moved.map (fun dir => [("saved_dir", dir)])).getD [])
         -- The cleanup reads the runtime as each round left it, the program's ending included,
         -- whatever fails after that round.
-        let latest ← IO.mkRef ({ st, listenFd, ptyFd, childPid := pid, saveCkpt, dropCkpt } : Rt)
+        let latest ←
+          IO.mkRef ({ st, listenFd, ptyFd, childPid := pid, childEnd, saveCkpt, dropCkpt } : Rt)
         try
           setNonblock ptyFd
           let mut rt ← latest.get
@@ -786,6 +817,8 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
             report s!"linger: ending the session's processes failed: {err}"
           discard <| reapNohang rt.childPid
           close rt.ptyFd
+          if let some fd := rt.childEnd then
+            close fd
       finally
         close listenFd
         try

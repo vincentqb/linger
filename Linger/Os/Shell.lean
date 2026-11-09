@@ -269,6 +269,12 @@ def reapNohang (pid : UInt32) : IO Reaped := waitNohang "reapNohang" pid false
 the id of the session it leads, from every other process until a reap. -/
 def peekNohang (pid : UInt32) : IO Reaped := waitNohang "peekNohang" pid true
 
+/-- A descriptor that becomes readable whenever a child of this process ends, so a poll loop
+can wait for its program's end instead of asking on a timer. Each end makes at least one byte
+readable; read it all before the next wait. Call it once per process, before starting the
+program: it installs the process's SIGCHLD handler. -/
+def childEndFd : IO UInt32 := Boundary.childEndFd
+
 /-- Send `sig` to every process whose session id is `sid`, other than `sid` itself, and return
 how many it reached; signal 0 only counts them. The caller keeps the session's leader, its
 child, unreaped meanwhile (`peekNohang`), so no other session can have the id. On Linux a pid
