@@ -759,4 +759,29 @@ example :
       true := by
   native_decide
 
+/-- Work follows events: output schedules the tick that ends its freshness, unsaved changes the
+tick that saves them, and a session with neither needs no tick at all. -/
+example :
+    (let (fresh, _) := run []
+     let (saved, _) := run [.ptyOut "x".toUTF8.toList, .tick 70000]
+      let (stale, _) := step saved (.tick 71000)
+      let (busy, _) :=
+        run [.ptyOut "x".toUTF8.toList, .tick 70000, .ptyOut "y".toUTF8.toList, .tick 70500]
+      let (unsaved, _) := step busy (.tick 71500)
+      fresh.nextTick == none && saved.nextTick == some 71000 && stale.nextTick == none &&
+        busy.nextTick == some 71500 &&
+        unsaved.nextTick == some (70000 + ckptIntervalMs)) =
+      true := by
+  native_decide
+
+/-- Output counts as right now for `freshMs` from the tick that saw it, whatever other ticks
+happen meanwhile, as when a question wakes the daemon: `info` reports it fresh until then. -/
+example :
+    (let (seen, _) := run [.ptyOut "x".toUTF8.toList, .tick 70000]
+     let (asked, _) := step seen (.tick 70200)
+      let (later, _) := step asked (.tick (70000 + freshMs))
+      asked.freshFlag && !later.freshFlag && (infoFields asked).contains ("fresh", toString true)) =
+      true := by
+  native_decide
+
 end Linger.Session.Tests

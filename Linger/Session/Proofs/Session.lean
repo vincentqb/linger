@@ -510,7 +510,7 @@ theorem step_tick_before_interval (s : State) (now : Nat)
       (step s (.tick now)).1.lastCkptMs = s.lastCkptMs ∧
       (step s (.tick now)).1.dirty = s.dirty := by
   have htime : ¬now ≥ s.lastCkptMs + ckptIntervalMs := by omega
-  simp [step, htime]
+  simp [step, htime, State.ticked]
 
 /-- Every periodic save has at least one full interval since its previous
 attempt, for arbitrary natural-number clocks. -/
@@ -525,6 +525,70 @@ theorem step_tick_checkpoint_elapsed (s : State) (now : Nat)
 making it retryable. No effect is emitted, so a storage failure cannot spin. -/
 theorem step_checkpointFailed (s : State) :
     step s .checkpointFailed = ({ s with dirty := true }, []) := rfl
+
+/-! ### Work follows events
+
+A daemon sleeps until an event or its session's next tick (`State.nextTick`). These say when a
+session needs a tick: only while it has unsaved changes or fresh output, and never later than
+the cadence or the freshness window require. -/
+
+/-- A tick records when the last output it saw arrived and whether that is still fresh, and
+changes nothing else the session holds: its screen, roster, labels and unsaved changes. -/
+theorem ticked_frame (s : State) (now : Nat) :
+    (s.ticked now).vt = s.vt ∧
+      (s.ticked now).clients = s.clients ∧
+      (s.ticked now).labels = s.labels ∧
+      (s.ticked now).dirty = s.dirty ∧
+      (s.ticked now).lastOutMs = (if s.tickOutSeq < s.outSeq then some now else s.lastOutMs) :=
+  ⟨rfl, rfl, rfl, rfl, rfl⟩
+
+/-- A session needs a tick exactly while it has unsaved changes or fresh output. -/
+theorem nextTick_eq_none (s : State) :
+    s.nextTick = none ↔ s.dirty = false ∧ (s.freshFlag = false ∨ s.lastOutMs = none) := by
+  unfold State.nextTick
+  cases s.dirty <;> cases s.freshFlag <;> cases s.lastOutMs <;> simp
+
+/-- Unsaved changes get their tick no later than the cadence allows a save. -/
+theorem nextTick_save (s : State) (h : s.dirty = true) :
+    ∃ due, s.nextTick = some due ∧ due ≤ s.lastCkptMs + ckptIntervalMs := by
+  unfold State.nextTick
+  simp only [h, ↓reduceIte]
+  cases s.freshFlag <;> cases s.lastOutMs <;> simp [Nat.min_le_left]
+
+/-- Fresh output gets its tick no later than the moment it stops being fresh. -/
+theorem nextTick_stale (s : State) {t : Nat} (h : s.freshFlag = true) (ho : s.lastOutMs = some t) :
+    ∃ due, s.nextTick = some due ∧ due ≤ t + freshMs := by
+  unfold State.nextTick
+  simp only [h, ho, ↓reduceIte, Option.map_some]
+  cases s.dirty <;> simp [Nat.min_le_right]
+
+/-- Output since the previous tick is fresh at this one, and schedules the tick that ends its
+freshness. -/
+theorem step_tick_fresh (s : State) (now : Nat) (hout : s.tickOutSeq < s.outSeq) :
+    (step s (.tick now)).1.freshFlag = true ∧
+      ∃ due, (step s (.tick now)).1.nextTick = some due ∧ due ≤ now + freshMs := by
+  have hfresh :
+    (step s (.tick now)).1.freshFlag = true ∧ (step s (.tick now)).1.lastOutMs = some now := by
+    simp only [step]
+    split <;> simp [State.ticked, hout, freshMs]
+  exact ⟨hfresh.1, nextTick_stale _ hfresh.1 hfresh.2⟩
+
+/-- **Idle is free**: a tick that finds nothing unsaved, no output since the previous tick and
+the last output already stale leaves the session needing no tick, so its daemon sleeps until
+the next event. -/
+theorem step_tick_sleeps (s : State) (now : Nat) (hd : s.dirty = false)
+    (hout : s.tickOutSeq = s.outSeq) (hstale : ∀ t, s.lastOutMs = some t → t + freshMs ≤ now) :
+    (step s (.tick now)).1.nextTick = none := by
+  have hlt : ¬s.tickOutSeq < s.outSeq := by omega
+  rw [nextTick_eq_none]
+  simp only [step, hd, Bool.false_and, Bool.false_eq_true, ↓reduceIte, State.ticked, hlt]
+  refine ⟨trivial, Or.inl ?_⟩
+  cases ho : s.lastOutMs with
+  | none => rfl
+  | some t =>
+    have := hstale t ho
+    simp only [Option.any_some, decide_eq_false_iff_not]
+    omega
 
 theorem setClient_length (s : State) (c : Client) :
     (s.setClient c).clients.length = s.clients.length := by simp [State.setClient]

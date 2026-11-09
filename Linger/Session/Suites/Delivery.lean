@@ -94,7 +94,7 @@ def collect (rt : Rt) (peer : UInt32) (size : Nat) (wantEof : Bool := false) : I
     if rt.conns.isEmpty then
       IO.sleep 1
     else
-      let (rt', events) ← pollRound rt
+      let (rt', events) ← pollRound rt (limitMs := some 100)
       rt ← pump rt' events
   return (rt, r)
 
@@ -143,7 +143,7 @@ private def largeReplay (dir : String) (marks : Bool) : IO Unit := do
       expect (repaint.size > outbufCap) s!"delivery/{label}/exceeds-cap"
       let request := Wire.encode (.attach 0 0)
       writeAll peer (ByteArray.mk request.toArray)
-      let (rt, events) ← pollRound rt
+      let (rt, events) ← pollRound rt (limitMs := some 100)
       let rt ← pump rt events
       let rt ← stall rt fd
       let ready ←
@@ -312,7 +312,7 @@ def closeGrace (dir : String) (shutdown : Bool) : IO Unit := do
         rt ← drainConns rt
       else
         while (rt.conn? fd).isSome && (← IO.monoMsNow) - began < drainTimeoutMs + 1500 do
-          let (rt', events) ← pollRound rt
+          let (rt', events) ← pollRound rt (limitMs := some 100)
           rt ← pump rt' events
       expect ((rt.conn? fd).isNone && (← IO.monoMsNow) - began < drainTimeoutMs + 2000)
           s!"delivery/{tag}/nonreader-released"
@@ -337,7 +337,7 @@ def closingBound (dir : String) : IO Unit := do
             throw (IO.userError "closing-bound connect failed")
           peers.modify (peer.toUInt64.toUInt32 :: ·)
           let old := rt.conns.map (·.fd)
-          let (rt', events) ← pollRound rt
+          let (rt', events) ← pollRound rt (limitMs := some 100)
           rt ← pump rt' events
           let added := rt.conns.filter (fun c => !old.contains c.fd)
           for c in added do

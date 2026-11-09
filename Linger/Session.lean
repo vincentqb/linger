@@ -76,12 +76,14 @@ structure StateRec where
   property of the **session**, not of a viewer — "last looked" is a session
   event, so no per-client bookkeeping is created for a one-off connection. -/
   private lookSeq : Nat := 0
-  /-- `outSeq` as of the previous `.tick`, and whether output arrived since
-  it. Freshness from a *counter comparison across ticks* rather than a stored
-  timestamp: the poll loop already ticks, so "output since the last tick" is
-  the signal, and the core needs no clock arithmetic. -/
+  /-- `outSeq` as of the previous `.tick`. Output since then is what the next tick records as
+  the time of the last output (`lastOutMs`), so the output event itself needs no clock. -/
   private tickOutSeq : Nat := 0
+  /-- Whether the last output arrived within `freshMs` of the latest tick: `⣷`, which `info`
+  reports as `fresh`. -/
   private freshFlag : Bool := false
+  /-- When the last output arrived, as the first tick after it saw it; `none` before any. -/
+  private lastOutMs : Option Nat := none
 
 /-- The session's state, as the headline theorems name it: a definition over the sealed record
 `StateRec`, because `Manifest.lean` declares the type as a hole the program fills. -/
@@ -125,6 +127,9 @@ def bootVt (restored : Option Vt.Vt) : Vt.Vt := restored.getD (Vt.Vt.init 80 24)
 /-- Checkpoint cadence (§ reboot-resume): at most one periodic save per minute.
 Natural-number milliseconds keep deadline addition from wrapping. -/
 def ckptIntervalMs : Nat := 60000
+
+/-- How long output counts as happening right now (`⣷`): from the tick that saw it. -/
+def freshMs : Nat := 1000
 
 /-- A label payload decoded as text: a bare key for `.labelUnset`, a `k=v` pair
 for `.labelSet`. Invalid UTF-8 becomes `""`, which is the safe direction —
@@ -197,6 +202,24 @@ private def unseen (s : State) : Bool := s.lookSeq < s.outSeq
 /-- How much arrived unseen — free from the counter, where a boolean would
 have thrown it away. -/
 private def behind (s : State) : Nat := s.outSeq - s.lookSeq
+
+/-- What a tick at `now` observes: output since the previous tick makes `now` the time of the
+last output, which stays fresh for `freshMs`. -/
+private def State.ticked (s : State) (now : Nat) : State :=
+  let lastOut := if s.tickOutSeq < s.outSeq then some now else s.lastOutMs
+  { s with
+    lastOutMs := lastOut, freshFlag := lastOut.any (now < · + freshMs), tickOutSeq := s.outSeq }
+
+/-- When the session next needs a tick, if ever: when its checkpoint falls due while it has
+unsaved changes, and when its last output stops being fresh. `none` when it needs neither, and
+the daemon then waits only for events. -/
+def State.nextTick (s : State) : Option Nat :=
+  let save := if s.dirty then some (s.lastCkptMs + ckptIntervalMs) else none
+  let stale := if s.freshFlag then s.lastOutMs.map (· + freshMs) else none
+  match save, stale with
+  | some a, some b => some (min a b)
+  | a, none => a
+  | none, b => b
 
 /-- How `info` reports an ending: `exit` holds the status a shell would report, and a field
 only a signal or an unseen ending has says which those are, so two endings never read the
@@ -551,18 +574,13 @@ def step (s : State) (ev : Event) : State × List (Effect Plan) :=
     -- discards it or a writable attach resumes it
     (s, flush ++ notify ++ closes ++ [.checkpoint, .exit])
   | .tick now =>
-    -- the activity flag is refreshed in both branches as a field value: a
-    -- `let` before the `if` would hide the `if` from the proofs that `split`
-    -- on this handler
+    -- the activity fields are refreshed in both branches by one helper: a `let` before the
+    -- `if` would hide the `if` from the proofs that `split` on this handler
     if s.dirty && now ≥ s.lastCkptMs + ckptIntervalMs then
-      ({ s with
-          dirty := false, lastCkptMs := now, freshFlag := s.tickOutSeq < s.outSeq,
-          tickOutSeq := s.outSeq },
+      ({ s.ticked now with
+          dirty := false, lastCkptMs := now },
         [.checkpoint])
-    else
-      ({ s with
-          freshFlag := s.tickOutSeq < s.outSeq, tickOutSeq := s.outSeq },
-        [])
+    else (s.ticked now, [])
   | .checkpointFailed =>
     -- Keep the attempt time: retry at the next cadence, without needing more
     -- output and without spinning while storage remains unavailable.

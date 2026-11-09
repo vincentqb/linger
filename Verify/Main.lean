@@ -19,6 +19,7 @@ import Linger.Target.Suites.RemoteLive
 import Verify.Ci
 import Verify.Hygiene
 import Linger.Session.Suites.Identity
+import Linger.Session.Suites.Quiet
 import Verify.Runner
 
 public section
@@ -47,7 +48,7 @@ def suites : List (String × IO UInt32) :=
     ("remote-live", Linger.Target.Suites.RemoteLive.run),
     -- Verifier regression checks, separate from the live product suites.
     ("ci", Verify.Ci.run), ("hygiene", Verify.Hygiene.run),
-    ("identity", Linger.Session.Suites.Identity.run)]
+    ("identity", Linger.Session.Suites.Identity.run), ("quiet", Linger.Session.Suites.Quiet.run)]
 
 def main (args : List String) : IO UInt32 := do
   match args with

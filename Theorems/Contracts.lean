@@ -201,6 +201,29 @@ example (v : Vt.Vt) (cap count : Nat) (f : Vt.Vt → Vt.Vt) :
     v.repeatAtMost cap count f = Nat.repeat f (min count cap) v := by
   with_reducible exact Vt.repeatAtMost_eq_repeat v cap count f
 
+-- Waking
+example (s : Session.State) :
+    s.nextTick = none ↔ s.dirty = false ∧ (s.freshFlag = false ∨ s.lastOutMs = none) := by
+  with_reducible exact Session.nextTick_eq_none s
+
+example (s : Session.State) (h : s.dirty = true) :
+    ∃ due, s.nextTick = some due ∧ due ≤ s.lastCkptMs + Session.ckptIntervalMs := by
+  with_reducible exact Session.nextTick_save s h
+
+example (s : Session.State) {t : Nat} (h : s.freshFlag = true) (ho : s.lastOutMs = some t) :
+    ∃ due, s.nextTick = some due ∧ due ≤ t + Session.freshMs := by
+  with_reducible exact Session.nextTick_stale s h ho
+
+example (s : Session.State) (now : Nat) (hout : s.tickOutSeq < s.outSeq) :
+    (Session.step s (.tick now)).1.freshFlag = true ∧
+      ∃ due, (Session.step s (.tick now)).1.nextTick = some due ∧ due ≤ now + Session.freshMs := by
+  with_reducible exact Session.step_tick_fresh s now hout
+
+example (s : Session.State) (now : Nat) (hd : s.dirty = false) (hout : s.tickOutSeq = s.outSeq)
+    (hstale : ∀ t, s.lastOutMs = some t → t + Session.freshMs ≤ now) :
+    (Session.step s (.tick now)).1.nextTick = none := by
+  with_reducible exact Session.step_tick_sleeps s now hd hout hstale
+
 -- Focus reports
 example (s : Session.State) (c : Session.Client) (cols rows : UInt32) (hc : s.client? c.id = some c)
     (h : c.attached = false) (hsize : (cols != 0 && rows != 0) = true)

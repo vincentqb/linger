@@ -27,9 +27,11 @@ Active and retired client transports share `maxClients`. Logical close reports
 `.closed` immediately; accepted bytes may drain until the connection's fixed
 deadline. Final shutdown also has a finite drain grace period.
 
-The session ends when its program does. Every poll round reaps the program without blocking,
-whether or not a background job still holds the terminal, and reports how it ended; the
-terminal's end of file ends nothing by itself.
+The session ends when its program does. The daemon hears a child end through the descriptor
+`childEndFd` makes, whether or not a background job still holds the terminal, and then reaps
+the program without blocking and reports how it ended; the terminal's end of file ends nothing
+by itself. Between events it sleeps until the session's next tick (`State.nextTick`), so an
+idle session costs no wakeup.
 
 `Linger/Session/Proofs/Buf.lean` proves the byte-buffer caps, shared allowance and removal of
 written prefixes. `Linger/Terminal/Proofs/Replay.lean` proves the cursor's exact stream,
@@ -144,9 +146,10 @@ structure Rt where
   /-- How the program ended, once a wait has said. The program stays unreaped until `serve` has
   ended the rest of its terminal session, so its pid stays its own until then. -/
   ending : Option Outcome := none
-  /-- How long the next poll waits for the program's end while its terminal is closed. The end
-  usually follows at once, so the wait starts at 10 ms; it doubles each round up to a second, so
-  a program that runs on without its terminal wakes the daemon once a second. -/
+  /-- Without a child-end descriptor, how long the next poll waits for the program's end while
+  its terminal is closed. The end usually follows at once, so the wait starts at 10 ms; it
+  doubles each round up to a second, so a program that runs on without its terminal wakes the
+  daemon once a second. -/
   reapWaitMs : Nat := 10
   /-- Set once the machine emits `.exit`; the poll loop then stops and `drainConns` runs. -/
   exiting : Bool := false
@@ -400,21 +403,34 @@ private def programEnd (pid : UInt32) : IO (Option Outcome) := do
   | .unreapable =>
     return some .unknown
 
-/-- One poll round: gather events from fd readiness. The program's end is asked after only when
-the child-end descriptor says a child ended, or every round without one. -/
-def pollRound (rt : Rt) : IO (Rt × List Event) := do
+/-- The earlier of the deadline already set, if any, and `due`. -/
+private def soonest (wake : Option Nat) (due : Nat) : Option Nat := some (wake.elim due (min · due))
+
+/-- One poll round: gather events from fd readiness. It sleeps until an event or its first
+deadline: the session's next tick, a retired transport's drain, admission's retry, and without
+a child-end descriptor a timer that asks whether the program has ended. With none, it waits for
+an event however long that takes, unless the caller bounds the wait with `limitMs`, as a suite
+that drives the round by hand does. The program's end is asked after only when the child-end
+descriptor says a child ended, or every round without one. -/
+def pollRound (rt : Rt) (limitMs : Option Nat := none) : IO (Rt × List Event) := do
   let now ← monotonicMs
   let rt ← expireConns rt now
-  -- once the terminal has closed, the program's end usually follows at once; without a
-  -- child-end descriptor, only a poll timeout can notice it
-  let mut timeout :=
-    if rt.ptyOpen || rt.ending.isSome || rt.childEnd.isSome then 1000 else rt.reapWaitMs
+  let mut wake := rt.st.nextTick
+  if let some limit := limitMs then
+    wake := soonest wake (now + limit)
+  -- once the terminal has closed, the program's end usually follows at once
+  if rt.childEnd.isNone && rt.ending.isNone then
+    wake := soonest wake (now + if rt.ptyOpen then 1000 else rt.reapWaitMs)
   for c in rt.conns do
     if let some deadline := c.closeBy then
-      timeout := min timeout (deadline - now)
+      wake := soonest wake deadline
   if let some retryAt := rt.acceptAfter then
     if now < retryAt then
-      timeout := min timeout (retryAt - now)
+      wake := soonest wake retryAt
+  let timeout : Int32 :=
+    match wake with
+    | some due => Int32.ofNat (min (due - now) 2147483647)
+    | none => -1
   let accepting := rt.conns.length < maxClients && rt.acceptAfter.all (now ≥ ·)
   -- snapshot: only these conns are in the poll set; accepts during
   -- this round join the NEXT one (revs stays index-aligned)
@@ -429,7 +445,7 @@ def pollRound (rt : Rt) : IO (Rt × List Event) := do
   for c in polled do
     fds := fds.push c.fd
     evts := evts.push ((if c.closing then 0 else POLLIN) ||| (if c.pending then POLLOUT else 0))
-  let revs ← poll fds evts (Int32.ofNat timeout)
+  let revs ← poll fds evts timeout
   let mut rt := rt
   let mut events : List Event := []
   -- listen fd
