@@ -730,4 +730,33 @@ example :
       maxLabels := by
   native_decide
 
+/-- Focus reports: a program that enabled focus reporting hears `CSI I` when the first client
+that can type attaches, nothing from a watcher or a second typist, and `CSI O` when the last
+typist leaves. -/
+example :
+    (let focusOn := [0x1B, 0x5B, 0x3F, 0x31, 0x30, 0x30, 0x34, 0x68]
+     let (s1, _) := run [.ptyOut focusOn, .connected 1, .connected 2, .connected 3]
+      let (s2, watch) := step s1 (.bytes 1 (encode (.attach 0 0)))
+      let (s3, first) := step s2 (.bytes 2 (encode (.attach 80 24)))
+      let (s4, second) := step s3 (.bytes 3 (encode (.attach 80 24)))
+      let (s5, leaveOne) := step s4 (.closed 2)
+      let (s6, leaveLast) := step s5 (.closed 3)
+      let (_, leaveWatcher) := step s6 (.closed 1)
+      let reports := fun (effs : List (Effect Plan)) =>
+        effs.filter fun e => e == .writePty (focusReport true) || e == .writePty (focusReport false)
+      reports watch == [] && reports first == [.writePty [0x1B, 0x5B, 0x49]] &&
+        reports second == [] &&
+        reports leaveOne == [] &&
+        reports leaveLast == [.writePty [0x1B, 0x5B, 0x4F]] &&
+        reports leaveWatcher == []) =
+      true := by
+  native_decide
+
+/-- A program that did not enable focus reporting hears no focus report. -/
+example :
+    (let (_, effs) := run [.connected 1, .bytes 1 (encode (.attach 80 24)), .closed 1]
+     !effs.any fun e => e == .writePty (focusReport true) || e == .writePty (focusReport false)) =
+      true := by
+  native_decide
+
 end Linger.Session.Tests

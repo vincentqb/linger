@@ -145,11 +145,60 @@ private def jobEnds (path : String) : IO Bool := do
     Linger.Os.Shell.kill job 9
   return ended
 
+/-- Focus reports reach the program. One that enabled focus reporting reads nothing from a
+watcher, then `Session.focusReport true` when a client that can type attaches and
+`Session.focusReport false` when it detaches; one that did not enable it reads none. Each
+program copies every byte it reads to a file, and a marker sent after each step orders what
+must already be there. -/
+def focusChecks (e : Env) : IO Unit := do
+  let inputOf := fun (name : String) => s!"{e.dir}/{name}.input"
+  let read : String → IO (List UInt8) := fun name => do
+    return ((← (IO.FS.readBinFile (inputOf name)).toBaseIO).toOption.map (·.toList)).getD []
+  -- pass every byte through at once, maybe enable focus reporting, say so, then copy input
+  let script :=
+    "stty -icanon -echo min 1; printf \"$1\"; printf ready; exec dd bs=1 of=\"$2\" 2>/dev/null"
+  let startProbe : String → String → IO Unit := fun name enable => do
+    let _ ← e.cli #["start", name, "/bin/sh", "-c", script, "sh", enable, inputOf name]
+  let readyIn : String → IO Bool := fun name =>
+    waitFor 5000 (return has (← e.out #["capture", "--history", name]) "ready")
+  let attachAndLeave : Array String → String → IO Bool := fun args name => do
+    let client ← e.spawn args 80 24
+    let joined ← waitFor 4000 (return (← e.info name "clients") == some "1")
+    client.bye
+    let left ← waitFor 4000 (return (← e.info name "clients") == some "0")
+    return joined && left
+  let mark := "W".toUTF8.toList
+  -- `send` delivers the marker after everything the step before it wrote to the program
+  let marked : String → List UInt8 → IO Bool := fun name expected => do
+    let _ ← e.cli #["send", name, "W"]
+    waitFor 4000 (return (← read name) == expected)
+  startProbe "focus" "\\033[?1004h"
+  startProbe "nofocus" ""
+  let ready := (← readyIn "focus") && (← readyIn "nofocus")
+  let watched ← attachAndLeave #["attach", "--read-only", "focus"] "focus"
+  expect (ready && watched && (← marked "focus" mark))
+      s!"a program that enabled focus reporting reads nothing from a watcher ({← read "focus"})"
+  let typist ← e.spawn #["attach", "focus"] 80 24
+  let focusedIn ← waitFor 4000 (return (← read "focus") == mark ++ Linger.Session.focusReport true)
+  typist.bye
+  let focusedOut ←
+    waitFor 4000 do
+        return (← read "focus") ==
+            mark ++ Linger.Session.focusReport true ++ Linger.Session.focusReport false
+  expect (focusedIn && focusedOut)
+      s!"a program that enabled focus reporting reads focus in on attach and out on detach \
+        ({← read "focus"})"
+  let plain ← attachAndLeave #["attach", "nofocus"] "nofocus"
+  expect (plain && (← marked "nofocus" mark))
+      s!"a program that did not enable focus reporting reads no focus report ({← read "nofocus"})"
+  e.killAll #["focus", "nofocus"]
+
 /-- The attach suite: attach, detach, reattach, mirroring, waiting, hand-back and
 scrollback. -/
 def run : IO UInt32 :=
   Env.suite "attach" fun e => do
     closeFeedback e
+    focusChecks e
     -- one source for the pty geometry and for the off-the-screen window below
     let cols : UInt32 := 80
     let rows : UInt32 := 24

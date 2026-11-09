@@ -38,8 +38,7 @@ theorem step_depth (s : State) (ev : Event) :
   cases ev with
   | closed id =>
     intro eff h
-    rw [Session.closed_effects s id eff h]
-    simp [effectDepth, eventDepth]
+    rcases Session.closed_effects s id eff h with rfl | rfl <;> simp [effectDepth, eventDepth]
   | checkpointFailed => simp [Session.checkpointFailed_effects]
   | _ =>
     intro eff _

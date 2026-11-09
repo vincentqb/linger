@@ -160,14 +160,33 @@ private def State.setClient (s : State) (c : Client) : State :=
 private def State.dropClient (s : State) (id : Nat) : State :=
   { s with clients := s.clients.filter (·.id != id) }
 
+/-- The report a terminal sends a program that enabled focus reporting (private mode 1004) when
+its window gains focus (`CSI I`) or loses it (`CSI O`). -/
+def focusReport (focused : Bool) : List UInt8 := [0x1B, 0x5B, if focused then 0x49 else 0x4F]
+
+/-- Whether someone can type into the session: a client is attached with a terminal of its own,
+as a window has focus while it gets the keys. A watcher cannot type, so it never counts. -/
+def State.focused (s : State) : Bool := s.clients.any (fun c => c.attached && c.sizer)
+
+/-- What a client that can type owes the program when it attaches or leaves, from focus `before`:
+its focus report, when focus changed and the program enabled focus reporting. A watcher, which
+cannot type, owes nothing (`typist` is false). -/
+private def focusEffects (typist before : Bool) (s : State) : List (Effect Plan) :=
+  if typist && before != s.focused && s.vt.getModes.focusEvents then
+    [.writePty (focusReport s.focused)]
+  else []
+
 /-- One disconnect transition for EOF and malformed traffic. Decide whether
-the last attacher needs a checkpoint before removing its record. -/
+the last attacher needs a checkpoint before removing its record, and tell a program that
+enabled focus reporting when the last client that could type leaves. The record the identifier
+finds decides whether the leaver could type, as it does for every message. -/
 private def closeClient (s : State) (id : Nat) : State × List (Effect Plan) :=
   let hadAttached := s.clients.any (fun c => c.id == id && c.attached)
   let s' := s.dropClient id
+  let focus := focusEffects ((s.client? id).any (·.sizer)) s.focused s'
   if s.dirty && hadAttached && s'.clients.all (fun c => !c.attached) then
-    ({ s' with dirty := false }, [.checkpoint])
-  else (s', [])
+    ({ s' with dirty := false }, focus ++ [.checkpoint])
+  else (s', focus)
 
 /-- Unread: output arrived while nobody was watching. What
 `Status.wantsYou` is derived from — a property of the **session**, since
@@ -331,6 +350,7 @@ private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Pla
       -- 0×0 marks a read-only observer: it mirrors output
       -- but never owns the size and its input is dropped.
       let sizer := cols != 0 && rows != 0
+      let before := s.focused
       let c :=
         { c with
           attached := true, sizer, seq := s.attachSeq, cols, rows }
@@ -340,7 +360,7 @@ private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Pla
       let (s, effs) := resizeOwned s c
       -- Capture here: feedMsgs can change the VT again before effects run.
       (s,
-        effs ++ [.replay c.id (Replay.start s.vt)] ++
+        effs ++ focusEffects sizer before s ++ [.replay c.id (Replay.start s.vt)] ++
           (match s.exited with
           | some outcome => [.send c.id (.ended outcome), .send c.id (.exited outcome.status)]
           | none => []))
@@ -548,12 +568,38 @@ def step (s : State) (ev : Event) : State × List (Effect Plan) :=
     -- output and without spinning while storage remains unavailable.
     ({ s with dirty := true }, [])
 
-/-- Disconnect feedback can request persistence, but cannot create more
-transport work. Used by the driver's termination argument. -/
+/-- Removing a client can only take focus away. -/
+private theorem focused_dropClient (s : State) (id : Nat) (h : (s.dropClient id).focused = true) :
+    s.focused = true := by
+  simp only [State.focused, State.dropClient, List.any_eq_true, List.mem_filter] at h ⊢
+  obtain ⟨c, ⟨hc, _⟩, hf⟩ := h
+  exact ⟨c, hc, hf⟩
+
+/-- Disconnect feedback can request persistence and tell the program it lost focus, but cannot
+create more transport work. Used by the driver's termination argument. -/
 theorem closed_effects (s : State) (id : Nat) :
-    ∀ eff ∈ (step s (.closed id)).2, eff = .checkpoint := by
-  simp only [step, closeClient]
-  split <;> simp
+    ∀ eff ∈ (step s (.closed id)).2, eff = .checkpoint ∨ eff = .writePty (focusReport false) := by
+  have hfocus :
+    ∀ eff ∈ focusEffects ((s.client? id).any (·.sizer)) s.focused (s.dropClient id),
+      eff = .writePty (focusReport false) := by
+    intro eff h
+    unfold focusEffects at h
+    split at h
+    · rename_i hc
+      simp only [List.mem_singleton] at h
+      subst h
+      cases hd : (s.dropClient id).focused
+      · rfl
+      · simp [focused_dropClient s id hd, hd] at hc
+    · simp at h
+  intro eff h
+  simp only [step, closeClient] at h
+  split at h
+  · rcases List.mem_append.mp h with h | h
+    · exact .inr (hfocus eff h)
+    · simp only [List.mem_singleton] at h
+      exact .inl h
+  · exact .inr (hfocus eff h)
 
 /-- A failed checkpoint marks the state dirty without immediately retrying. -/
 theorem checkpointFailed_effects (s : State) : (step s .checkpointFailed).2 = [] := by rfl

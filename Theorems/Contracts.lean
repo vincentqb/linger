@@ -201,6 +201,28 @@ example (v : Vt.Vt) (cap count : Nat) (f : Vt.Vt → Vt.Vt) :
     v.repeatAtMost cap count f = Nat.repeat f (min count cap) v := by
   with_reducible exact Vt.repeatAtMost_eq_repeat v cap count f
 
+-- Focus reports
+example (s : Session.State) (c : Session.Client) (cols rows : UInt32) (hc : s.client? c.id = some c)
+    (h : c.attached = false) (hsize : (cols != 0 && rows != 0) = true)
+    (hunfocused : s.focused = false) (hmode : s.vt.getModes.focusEvents = true) :
+    Session.Effect.writePty (Session.focusReport true) ∈
+      (Session.onMsg s c (.attach cols rows)).2 := by
+  with_reducible exact Session.onMsg_attach_focus s c cols rows hc h hsize hunfocused hmode
+
+example (s : Session.State) (id : Nat) {c : Session.Client} (hc : s.client? id = some c)
+    (hs : c.sizer = true) (hfocused : s.focused = true) (hlast : (s.dropClient id).focused = false)
+    (hmode : s.vt.getModes.focusEvents = true) :
+    Session.Effect.writePty (Session.focusReport false) ∈ (Session.closeClient s id).2 := by
+  with_reducible exact Session.closeClient_focus s id hc hs hfocused hlast hmode
+
+example (s : Session.State) (id : Nat) {c : Session.Client} (hc : s.client? id = some c)
+    (hs : c.sizer = false) : ∀ e ∈ (Session.closeClient s id).2, e = .checkpoint := by
+  with_reducible exact Session.closeClient_watcher s id hc hs
+
+example (typist before : Bool) (s : Session.State) (h : s.vt.getModes.focusEvents = false) :
+    Session.focusEffects typist before s = [] := by
+  with_reducible exact Session.focusEffects_off typist before s h
+
 -- Request replies
 example (s : Session.State) (id : Nat) (chunk : List UInt8) :
     ∃ pre ans post,

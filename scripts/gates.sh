@@ -1002,7 +1002,7 @@ code_grep '^theorem onMsg_attach_snapshot ' 'Linger/Session/Proofs/Session.lean'
   || fail "the attach snapshot theorem disappeared"
 code_grep '^theorem onMsg_attach_already ' 'Linger/Session/Proofs/Session.lean' > /dev/null \
   || fail "the repeated-attach refusal theorem disappeared"
-code_grep '^[[:space:]]+effs [+][+] [[][.]replay c[.]id [(]Replay[.]start s[.]vt[)][]] [+][+]$' 'Linger/Session.lean' > /dev/null \
+code_grep '^[[:space:]]+effs [+][+] focusEffects sizer before s [+][+] [[][.]replay c[.]id [(]Replay[.]start s[.]vt[)][]] [+][+]$' 'Linger/Session.lean' > /dev/null \
   || fail "attach no longer captures its resulting snapshot"
 code_grep '^[[:space:]]+replay : Option Replay[.]Plan := none$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "each connection must retain one optional replay cursor"

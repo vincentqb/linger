@@ -193,8 +193,7 @@ theorem feedback_step_no_exit (st : State) (ev : Event) (h : eventDepth ev < 2) 
   cases ev with
   | closed id =>
     intro hexit
-    have impossible := Session.closed_effects st id .exit hexit
-    cases impossible
+    rcases Session.closed_effects st id .exit hexit with h | h <;> cases h
   | checkpointFailed => simp [Session.checkpointFailed_effects]
   | _ => simp [eventDepth] at h
 

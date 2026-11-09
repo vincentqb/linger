@@ -163,12 +163,30 @@ theorem onMsg_labelClear_empty (s : State) (c : Client)
 /-! ## §Detach -/
 
 /-- Last-attacher detection uses the old roster; dirty state is saved exactly
-once even when the bytes handler removes a malformed peer immediately. -/
+once even when the bytes handler removes a malformed peer immediately, after any focus report
+the leaver owes the program. -/
 theorem closeClient_last_dirty (s : State) (id : Nat) (hd : s.dirty = true)
     (ha : s.clients.any (fun c => c.id == id && c.attached) = true)
     (hl : (s.dropClient id).clients.all (fun c => !c.attached) = true) :
-    closeClient s id = ({ s.dropClient id with dirty := false }, [.checkpoint]) := by
+    closeClient s id =
+      ({ s.dropClient id with dirty := false },
+        focusEffects ((s.client? id).any (·.sizer)) s.focused (s.dropClient id) ++
+          [.checkpoint]) := by
   simp [closeClient, hd, ha, hl]
+
+/-- Every effect of a disconnect is a checkpoint or the focus report that tells the program
+nobody can type into it any more. -/
+theorem closeClient_effects (s : State) (id : Nat) :
+    ∀ e ∈ (closeClient s id).2, e = .checkpoint ∨ e = .writePty (focusReport false) :=
+  closed_effects s id
+
+/-- A watcher's disconnect owes the program no focus report: it could not type. -/
+theorem closeClient_watcher (s : State) (id : Nat) {c : Client} (hc : s.client? id = some c)
+    (hs : c.sizer = false) : ∀ e ∈ (closeClient s id).2, e = .checkpoint := by
+  unfold closeClient focusEffects
+  simp only [hc, Option.any_some, hs, Bool.false_and, Bool.false_eq_true, ↓reduceIte,
+    List.nil_append]
+  split <;> simp
 
 @[simp]
 theorem closeClient_vt (s : State) (id : Nat) : (closeClient s id).1.vt = s.vt := by
@@ -191,15 +209,19 @@ theorem step_bytes_malformed_close (s : State) (id : Nat) (chunk : List UInt8) (
   simp [step, hc, he]
 
 /-- Closing a client preserves every field except its roster entry and the
-dirty flag. Its complete effect list is empty or one checkpoint. The runtime must
-deliver this event after intentional closes as well as after EOF; the IO consumer
-is checked in `Linger.Session.Suites.Attach`. -/
+dirty flag. Its complete effect list is the focus report the leaver owes the program, if any,
+then possibly one checkpoint. The runtime must deliver this event after intentional closes as
+well as after EOF; the IO consumer is checked in `Linger.Session.Suites.Attach`. -/
 theorem step_closed_frame (s : State) (id : Nat) :
     (step s (.closed id)).1 =
         { s with
           clients := s.clients.filter (·.id != id), dirty := (step s (.closed id)).1.dirty } ∧
-      ((step s (.closed id)).2 = [] ∨ (step s (.closed id)).2 = [.checkpoint]) := by
-  unfold step closeClient State.dropClient
+      ((step s (.closed id)).2 =
+          focusEffects ((s.client? id).any (·.sizer)) s.focused (s.dropClient id) ∨
+        (step s (.closed id)).2 =
+          focusEffects ((s.client? id).any (·.sizer)) s.focused (s.dropClient id) ++
+            [.checkpoint]) := by
+  unfold step closeClient
   dsimp only
   split
   · exact ⟨rfl, Or.inr rfl⟩
@@ -404,7 +426,7 @@ theorem onMsg_attach_snapshot (s : State) (c : Client) (cols rows : UInt32)
       [(c.id, Replay.start (onMsg s c (.attach cols rows)).1.vt)] := by
   unfold onMsg
   simp only [h, Bool.false_eq_true, ↓reduceIte]
-  unfold resizeOwned resize
+  unfold resizeOwned resize focusEffects
   dsimp only
   repeat' split
   all_goals simp
@@ -1240,7 +1262,7 @@ theorem onMsg_resizePty_agrees (s : State) (c : Client) (m : Msg) (ec er : UInt3
     (h : Effect.resizePty ec er ∈ (onMsg s c m).2) :
     ec.toNat = (onMsg s c m).1.vt.colCount ∧ er.toNat = (onMsg s c m).1.vt.rowCount := by
   revert h
-  unfold onMsg controlResize resizeOwned
+  unfold onMsg controlResize resizeOwned focusEffects
   dsimp only
   repeat' split
   all_goals intro h
@@ -1405,6 +1427,83 @@ theorem resize_clients (s : State) (cols rows : UInt32) :
     (resize s cols rows).1.clients = s.clients := by
   unfold resize; split <;> rfl
 
+/-! ### Focus follows typing -/
+
+/-- A resize by the size owner changes the terminal's geometry, never the roster or the modes
+the program set. -/
+theorem resizeOwned_frame (s : State) (c : Client) :
+    (resizeOwned s c).1.clients = s.clients ∧ (resizeOwned s c).1.vt.getModes = s.vt.getModes := by
+  unfold resizeOwned resize
+  repeat' split
+  all_goals exact ⟨rfl, rfl⟩
+
+/-- Attaching a record that can type, under an identifier the roster holds, focuses the session. -/
+theorem focused_setClient {s : State} {c c0 : Client} (h : s.client? c.id = some c0)
+    (ha : c.attached = true) (hs : c.sizer = true) : (s.setClient c).focused = true := by
+  have h1 := client?_setClient (c := c) h
+  unfold State.client? at h1
+  simp only [State.focused, List.any_eq_true]
+  exact ⟨c, List.mem_of_find?_eq_some h1, by simp [ha, hs]⟩
+
+/-- **Focus follows typing**: when a client with a terminal of its own attaches to a session
+nobody could type into, a program that enabled focus reporting hears that it gained focus. -/
+theorem onMsg_attach_focus (s : State) (c : Client) (cols rows : UInt32)
+    (hc : s.client? c.id = some c) (h : c.attached = false)
+    (hsize : (cols != 0 && rows != 0) = true) (hunfocused : s.focused = false)
+    (hmode : s.vt.getModes.focusEvents = true) :
+    Effect.writePty (focusReport true) ∈ (onMsg s c (.attach cols rows)).2 := by
+  let c' : Client :=
+    { c with
+      attached := true, sizer := cols != 0 && rows != 0, seq := s.attachSeq, cols, rows }
+  let s1 : State :=
+    { s.setClient c' with
+      attachSeq := s.attachSeq + 1, lookSeq := s.outSeq }
+  have hfocused : (resizeOwned s1 c').1.focused = true := by
+    have hf : s1.focused = true := focused_setClient (c := c') hc rfl hsize
+    simp only [State.focused, (resizeOwned_frame s1 c').1]
+    exact hf
+  have hmodes : (resizeOwned s1 c').1.vt.getModes = s.vt.getModes := (resizeOwned_frame s1 c').2
+  have key :
+    focusEffects (cols != 0 && rows != 0) s.focused (resizeOwned s1 c').1 =
+      [.writePty (focusReport true)] := by
+    simp only [focusEffects, hsize, hunfocused, hfocused, hmodes, hmode]
+    rfl
+  unfold onMsg
+  dsimp only
+  simp only [h, Bool.false_eq_true, ↓reduceIte]
+  show
+    Effect.writePty (focusReport true) ∈
+      (resizeOwned s1 c').2 ++
+        focusEffects (cols != 0 && rows != 0) s.focused (resizeOwned s1 c').1 ++
+        _ ++
+        _
+  rw [key]
+  simp
+
+/-- …and when the last client that could type leaves, the program hears that it lost focus. -/
+theorem closeClient_focus (s : State) (id : Nat) {c : Client} (hc : s.client? id = some c)
+    (hs : c.sizer = true) (hfocused : s.focused = true) (hlast : (s.dropClient id).focused = false)
+    (hmode : s.vt.getModes.focusEvents = true) :
+    Effect.writePty (focusReport false) ∈ (closeClient s id).2 := by
+  have key :
+    focusEffects ((s.client? id).any (·.sizer)) s.focused (s.dropClient id) =
+      [.writePty (focusReport false)] := by
+    have hm : (s.dropClient id).vt.getModes.focusEvents = true := hmode
+    simp only [focusEffects, hc, Option.any_some, hs, hfocused, hlast, hm]
+    rfl
+  unfold closeClient
+  dsimp only
+  rw [key]
+  split <;> simp
+
+/-- A program that did not enable focus reporting never hears a focus report, whoever attaches
+or leaves. -/
+theorem focusEffects_off (typist before : Bool) (s : State)
+    (h : s.vt.getModes.focusEvents = false) : focusEffects typist before s = [] := by
+  unfold focusEffects
+  rw [h]
+  simp
+
 /-- The sender's record after one message: answered once a costly request is, and never
 detached by it. -/
 theorem onMsg_sender (s : State) (c : Client) (m : Msg) (hc : s.client? c.id = some c) :
@@ -1488,7 +1587,7 @@ theorem onMsg_unrendered (s : State) (c : Client) (m : Msg)
     (h : c.answered = true ∨ costly c m = false) : (onMsg s c m).2.all (!rendered ·) := by
   cases m <;> simp only [costly, or_true] at h
   all_goals
-    unfold onMsg resizeOwned resize controlResize
+    unfold onMsg resizeOwned resize controlResize focusEffects
     dsimp only
     repeat' split
   all_goals simp_all [rendered]
@@ -1501,7 +1600,7 @@ theorem onMsg_unresized (s : State) (c : Client) (m : Msg)
   case attach cols rows => exact absurd rfl (hm cols rows)
   all_goals
     simp only [costly, ha, or_true] at h
-    unfold onMsg resizeOwned resize controlResize
+    unfold onMsg resizeOwned resize controlResize focusEffects
     dsimp only
     repeat' split
   all_goals simp_all [resizes]
@@ -1620,15 +1719,20 @@ theorem step_bytes_one_reply (s : State) (id : Nat) (chunk : List UInt8) :
   · exact quiet _ _ [] rfl (fun _ => rfl)
   · rename_i c hfind
     split
-    · have hcl : ∀ e ∈ (closeClient s id).2, e = .checkpoint := by
-        unfold closeClient; dsimp only; split <;> simp
-      have hall (p : Effect Plan → Bool) (hp : p (.close id) = false) (hq : p .checkpoint = false) :
+    · have hcl := closeClient_effects s id
+      have hall (p : Effect Plan → Bool) (hp : p (.close id) = false) (hq : p .checkpoint = false)
+        (hw : p (.writePty (focusReport false)) = false) :
         (Effect.close id :: (closeClient s id).2).all (!p ·) := by
         simp only [List.all_cons, hp, Bool.not_false, Bool.true_and, List.all_eq_true]
         intro e he
-        rw [hcl e he, hq]
-        rfl
-      exact quiet _ _ (.close id :: (closeClient s id).2) (hall _ rfl rfl) (fun _ => hall _ rfl rfl)
+        rcases hcl e he with rfl | rfl
+        · rw [hq]
+          rfl
+        · rw [hw]
+          rfl
+      exact
+        quiet _ _ (.close id :: (closeClient s id).2) (hall _ rfl rfl rfl)
+          (fun _ => hall _ rfl rfl rfl)
     · have hid := client?_id hfind
       have h1 (c1 : Client) (he : c1.id = id) : (s.setClient c1).client? id = some c1 := by
         rw [← he]; exact client?_setClient (he ▸ hfind)
@@ -2131,8 +2235,7 @@ theorem step_bytes_watcher (s : State) (id : Nat) (chunk : List UInt8) (hw : Wat
     · refine ⟨fun c' h' => ?_, closeClient_vt s id, closeClient_labels s id, ?_⟩
       · rw [closeClient_client?] at h'
         cases h'
-      · have hcl : ∀ e ∈ (closeClient s id).2, e = .checkpoint := by
-          unfold closeClient; dsimp only; split <;> simp
+      · have hcl := closeClient_watcher s id hc hs
         have hq : (closeClient s id).2.all (watcherEffect id) = true := by
           rw [List.all_eq_true]
           intro e he
