@@ -1122,8 +1122,13 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def pump [(]rt : Rt[)] [(]e
   || fail "daemon pump must use the proved driver with its actual state and exit flag"
 code_grep '^private def executeEffect [(]st : State[)] [(]rt : Rt[)] : [(]eff : Effect Plan[)] → IO [(]Rt × Driver[.]Reply eff[)]$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "effect interpreter must implement the driver's dependent reply type"
-code_grep '^[[:space:]]+rt[.]saveCkpt st$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
-  || fail "checkpoint interpreter must save the driver's current state"
+for tie in \
+  '[|] [.]checkpoint => do if rt[.]saving[.]isSome then return [(][{] rt with pendingSave := some st [}], false[)] return [(]← startSave rt st, false[)]' \
+  'def startSave [(]rt : Rt[)] [(]st : State[)] : IO Rt := do return [{] rt with saving := some [(]← IO[.]asTask [(]rt[.]saveCkpt st[)] Task[.]Priority[.]dedicated[)] [}]' \
+  'if let some st := rt[.]pendingSave then rt ← startSave [{] rt with pendingSave := none [}] st'; do
+  printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "checkpoint interpreter must save the driver's current state, on a thread of its own: $tie"
+done
 
 # An info answer can span several frames. The pure producer proves the bound;
 # keep the IO accumulator on that same policy rather than a copied number.

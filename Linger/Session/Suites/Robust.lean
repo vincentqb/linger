@@ -317,11 +317,14 @@ def failedDiagnostics : IO Unit := do
     (Linger.Session.Buf.bufOffer ptyInCap .empty (ByteArray.mk (Array.replicate ptyInCap 0))).1
   let cases : List (String × IO Bool) :=
     [("checkpoint save", do
-        let (_, feedback) ← Linger.Session.Shell.Daemon.runEffect rt .checkpoint
+        -- the save runs on its own thread; its failure is reported when the daemon collects it
+        let (started, now) ← Linger.Session.Shell.Daemon.runEffect rt .checkpoint
+        let (_, later) ← Linger.Session.Shell.Daemon.collectSave started true
         pure
-            (match feedback with
-            | [.checkpointFailed] => true
-            | _ => false)),
+            (now.isEmpty &&
+              match later with
+              | [.checkpointFailed] => true
+              | _ => false)),
       ("checkpoint delete", do
         let (_, feedback) ← Linger.Session.Shell.Daemon.runEffect rt .dropCheckpoint
         pure feedback.isEmpty),
@@ -344,6 +347,32 @@ def failedDiagnostics : IO Unit := do
             pure false
     expect (recovered && (← attempts.get) == 1)
         s!"{label} recovery survives a failed diagnostic write"
+
+/-- A checkpoint save the disk holds up delays no answer (theorem 10: required work never waits
+on optional work). The save's temporary file is a FIFO with no reader, so writing it blocks
+until this check opens it; meanwhile the daemon must still answer `info`, which a save on its
+loop would hold up past the reply window. -/
+def slowSave (e : Env) : IO Unit := do
+  let name := "slow-save"
+  let tmp := s!"{e.dir}/{name}.ckpt.tmp"
+  try
+    let (startRc, _, _) ← e.cli #["start", name, "/bin/sh", "-c", "exec sleep 1000"]
+    let made ← IO.Process.output { cmd := "mkfifo", args := #[tmp] }
+    -- a label makes the session dirty, and its first tick saves at once, in the same round
+    let (setRc, _, _) ← e.cli #["set", name, "slow=save"]
+    let began ← Linger.Os.Shell.monotonicMs
+    let answered ← waitFor 3000 (return (← e.info name "pid").isSome)
+    let answerMs := (← Linger.Os.Shell.monotonicMs) - began
+    expect (startRc == 0 && made.exitCode == 0 && setRc == 0 && answered && answerMs < 2000)
+        s!"a daemon whose checkpoint save is stuck on the disk still answers ({answerMs} ms)"
+  finally
+    -- a reader lets the stuck save finish, so the session can end
+    let reader ←
+      IO.Process.spawn
+          { cmd := "/bin/sh", args := #["-c", "exec cat \"$1\" > /dev/null", "sh", tmp],
+            stdin := .null, stdout := .null, stderr := .null }
+    e.killAll #[name]
+    reapOrKill reader 2000
 
 /-- The robust suite: runtime boundaries under adverse timing. -/
 def run : IO UInt32 :=
@@ -662,5 +691,6 @@ def run : IO UInt32 :=
     inputBurst e
     failedDiagnostics
     admissionPressure e
+    slowSave e
 
 end Linger.Session.Suites.Robust

@@ -44,9 +44,12 @@ def checkpointRetry : IO Unit := do
       dropCkpt := pure () }
   let interval := Linger.Session.ckptIntervalMs
   let rt ← Linger.Session.Shell.Daemon.pump rt [.ptyOut [65], .tick interval]
-  let rt ← Linger.Session.Shell.Daemon.pump rt [.tick (interval + 1)]
+  -- the save runs on its own thread; its failure comes back as the next round's event
+  let (rt, failed) ← Linger.Session.Shell.Daemon.collectSave rt true
+  let rt ← Linger.Session.Shell.Daemon.pump rt (failed ++ [.tick (interval + 1)])
   let before ← attempts.get
-  let _ ← Linger.Session.Shell.Daemon.pump rt [.tick (interval + interval)]
+  let rt ← Linger.Session.Shell.Daemon.pump rt [.tick (interval + interval)]
+  let _ ← Linger.Session.Shell.Daemon.finishSaves rt
   expect (before == 1 && (← attempts.get) == 2 && (← saved.get) == labels)
       "a failed quiet checkpoint retries at the next cadence with its state intact"
 
@@ -91,14 +94,16 @@ private def scaleChecks (e : Env) : IO Unit := do
         let replayMs := (← Linger.Os.Shell.monotonicMs) - start
         let start ← Linger.Os.Shell.monotonicMs
         client.detach
-        -- The daemon saves on the last detach before it answers a later request.
-        let saved ← waitFor saveBudget (return (← e.info name "clients") == some "0")
+        -- The detach save runs on its own thread, so the daemon answers at once: the save is
+        -- done when the checkpoint on disk holds the full ring, which the rename makes whole.
+        let ckpt := System.FilePath.mk s!"{e.dir}/{name}.ckpt"
+        let full := (Linger.Terminal.Vt.sbCap * 200).toUInt64
+        let sizeOf : IO UInt64 := do
+          return ((← ckpt.metadata.toBaseIO).toOption.map (·.byteSize)).getD 0
+        let saved ← waitFor saveBudget (return (← sizeOf) ≥ full)
         let saveMs := (← Linger.Os.Shell.monotonicMs) - start
-        let size := (← (System.FilePath.mk s!"{e.dir}/{name}.ckpt").metadata).byteSize
-        expect
-            (replayed && saved && size ≥ (Linger.Terminal.Vt.sbCap * 200).toUInt64 &&
-              replayMs ≤ replayBudget &&
-              saveMs ≤ saveBudget)
+        let size ← sizeOf
+        expect (replayed && saved && size ≥ full && replayMs ≤ replayBudget && saveMs ≤ saveBudget)
             s!"reattach replays and detach checkpoints a full ring within budget (replay {replayMs} ms, save {saveMs} ms, {size} bytes)"
         pure saved
       finally
@@ -182,9 +187,16 @@ def run : IO UInt32 :=
     let _ ← e.cli #["set", "boot", "k=v"]
     -- detach (last attached client): the machine checkpoints here
     boot.detach
-    -- the daemon saves before it answers a later request, so an empty roster
-    -- means the last-detach checkpoint is on disk
+    -- the save runs on its own thread, so the daemon answers at once: it is on disk once the
+    -- checkpoint holds the label set just before the detach
     let _ ← waitFor 4000 (return (← e.info "boot" "clients") == some "0")
+    let _ ←
+      waitFor 4000 do
+          match ← (IO.FS.readBinFile s!"{e.dir}/boot.ckpt").toBaseIO with
+          | .ok bytes =>
+            return (Linger.Session.Checkpoint.loadBytes bytes).any (·.labels.contains ("k", "v"))
+          | .error _ =>
+            return false
     boot.bye (sendDetach := false) -- fd and zombie only; the client already left
     let ckpts ← e.dirNames ".ckpt"
     let ckptOk := ckpts == ["boot.ckpt"]
@@ -282,6 +294,14 @@ def run : IO UInt32 :=
     let _ ← drain geom.fd 1200
     geom.detach -- last detach → checkpoint at 100x40
     let _ ← waitFor 4000 (return (← e.info "geom" "clients") == some "0")
+    -- the save runs on its own thread: wait for a checkpoint at the attached size
+    let _ ←
+      waitFor 4000 do
+          match ← (IO.FS.readBinFile s!"{e.dir}/geom.ckpt").toBaseIO with
+          | .ok bytes =>
+            return (Linger.Session.Checkpoint.loadBytes bytes).any (·.vt.colCount == gCols.toNat)
+          | .error _ =>
+            return false
     geom.bye (sendDetach := false)
     let _ ← e.crashDaemon "geom" -- simulated reboot; tolerated if already gone
     let sizePath := s!"{e.dir}/geom.size"

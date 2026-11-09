@@ -61,6 +61,8 @@ def closeFeedback (e : Env) : IO Unit := do
           if exiting then [.childExited (.exited 0), .tick Linger.Session.ckptIntervalMs]
           else [.bytes fd.toNat (Linger.Session.Wire.encode .detachAll)]
         let after ← Linger.Session.Shell.Daemon.pump rt events
+        -- saves run on their own thread; wait for them as the daemon does before exiting
+        let after ← Linger.Session.Shell.Daemon.finishSaves after
         let clients := (Linger.Session.infoFields after.st).lookup "clients"
         if exiting then
           -- the end saves the last screen once; the queued tick, which would save again, is

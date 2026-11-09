@@ -455,6 +455,8 @@ def closeOrder (dir : String) : IO Unit := do
           if variant == "packet" then [.bytes id (detach ++ later)]
           else [.bytes (if variant == "other-client" then control else id) detach, .bytes id later]
         let rt ← pump rt events
+        -- saves run on their own thread; wait for them as the daemon does before exiting
+        let rt ← finishSaves rt
         expect
             (rt.st.labels.isEmpty && (← saved.get) == [[]] && (rt.st.client? id).isNone &&
               (rt.conn? fd).any (·.closing))
@@ -487,6 +489,9 @@ def failureFeedback (dir : String) : IO Unit :=
     let rt ←
       pump rt
           [.ptyOut [0x41], .bytes fd.toNat (Wire.encode (.labelSet "stale=input".toUTF8.toList))]
+    -- the save runs on its own thread, and its failure comes back as the next round's event
+    let (rt, failed) ← collectSave rt true
+    let rt ← pump rt failed
     let first ← saved.get
     let correctState := fun fields : List (String × String) =>
       fields.contains ("clients", "0") && fields.contains ("outseq", "1")
@@ -494,9 +499,13 @@ def failureFeedback (dir : String) : IO Unit :=
         (!rt.exiting && rt.conns.isEmpty && (rt.st.client? fd.toNat).isNone &&
           rt.st.labels.isEmpty &&
           first.length == 1 &&
-          first.all correctState)
+          first.all correctState &&
+          (match failed with
+          | [.checkpointFailed] => true
+          | _ => false))
         "delivery/feedback/disconnect-and-save-failure-settle"
     let rt ← pump rt [.tick Session.ckptIntervalMs]
+    let (rt, _) ← collectSave rt true
     let retry ← saved.get
     expect (!rt.exiting && retry.length == 2 && retry.all correctState)
         "delivery/feedback/retry-at-later-cadence"

@@ -39,7 +39,9 @@ progress and storage bound. Runtime scheduling and short-write handling are
 `IO`, so source gates tie these proved operations to their actual consumers.
 
 Checkpoint effects are wired to checkpoint hooks from `Linger.Session.Shell.Resume`:
-the daemon knows *when*, that module knows *what*.
+the daemon knows *when*, that module knows *what*. A save runs on a thread of its own, one at a
+time, and a later request replaces any that waits, so a slow disk holds up no answer and no
+output (`collectSave`); before the daemon gives the name up it waits for them (`finishSaves`).
 -/
 
 namespace Linger.Session.Shell.Daemon
@@ -80,6 +82,11 @@ def drainTimeoutMs : Nat := 3000
 
 /-- Retry admission without spinning on a readable listener under resource pressure. -/
 def acceptRetryMs : Nat := 1000
+
+/-- How often a daemon whose checkpoint is being saved looks whether the save has ended. A save
+usually ends within milliseconds; its end matters only to start the save that waited for it or
+to retry a failure, so the daemon need not hear it at once. -/
+def saveCheckMs : Nat := 50
 
 /-- A stopped-reading *child* cannot grow the daemon either: past this many
 unwritten bytes the newest whole `.input` frame is dropped, as a tty drops input
@@ -157,6 +164,12 @@ structure Rt where
   saveCkpt : State → IO Unit
   /-- Delete the session's checkpoint; a failure is reported, not fatal. -/
   dropCkpt : IO Unit
+  /-- The checkpoint save running on its own thread, if any: at most one runs at a time, so a
+  disk that stalls holds up no answer, no output and no other session. -/
+  saving : Option (Task (Except IO.Error Unit)) := none
+  /-- The latest state a checkpoint asked for while a save ran. It is saved when that one ends,
+  and a later request replaces it, so saves are coalesced and never queue. -/
+  pendingSave : Option State := none
 
 /-- A diagnostic write failure must not turn recovery into session loss. -/
 private def report (message : String) : IO Unit := do
@@ -176,6 +189,41 @@ def Rt.setConn (rt : Rt) (c : Conn) : Rt :=
 def Rt.closeConn (rt : Rt) (fd : UInt32) : IO Rt := do
   close fd
   return { rt with conns := rt.conns.filter (·.fd != fd) }
+
+/-- Save `st` on a thread of its own. -/
+private def startSave (rt : Rt) (st : State) : IO Rt := do
+  return { rt with saving := some (← IO.asTask (rt.saveCkpt st) Task.Priority.dedicated) }
+
+/-- The end of the running save, once it has ended, or after waiting for it when `block`: a
+failure is reported and fed back to the session as `.checkpointFailed`, so it retries at its
+next cadence, and the state that waited is saved next. -/
+def collectSave (rt : Rt) (block : Bool := false) : IO (Rt × List Event) := do
+  let some task := rt.saving | return (rt, [])
+  unless block || (← IO.hasFinished task) do
+    return (rt, [])
+  let mut rt := { rt with saving := none }
+  let mut events := []
+  if let .error err← IO.wait task then
+    report s!"linger: checkpoint save failed: {err}"
+    events := [.checkpointFailed]
+  if let some st := rt.pendingSave then
+    rt ← startSave { rt with pendingSave := none } st
+  return (rt, events)
+
+/-- Wait for the running save and the one waiting for it, as before giving the name up: what a
+session leaves must be on disk while it still holds the name. A save the disk holds up longer
+than a second says so. Failures are reported and not retried. -/
+def finishSaves (rt : Rt) : IO Rt := do
+  let mut rt := rt
+  -- the running save, then the one that waited for it: no other can start meanwhile
+  for _ in [0:2] do
+    let some task := rt.saving | break
+    unless ← IO.hasFinished task do
+      let timer ← IO.asTask (IO.sleep 1000) Task.Priority.dedicated
+      unless ← IO.waitAny [task.map (fun _ => true), timer.map (fun _ => false)] do
+        report "linger: waiting for the session's checkpoint to reach the disk"
+    rt := (← collectSave rt true).1
+  return rt
 
 /-- Retired transports still own buffers and a snapshot. Their deadline
 releases that ownership even while the rest of the session stays alive. -/
@@ -352,14 +400,16 @@ private def executeEffect (st : State) (rt : Rt) : (eff : Effect Plan) → IO (R
       kill rt.childPid 1 -- SIGHUP
     discard <| signalSession rt.childPid 1
     return (rt, ())
+  -- a save waits on the disk, which answers and output must never wait on: it runs on its own
+  -- thread, one at a time, and a request that finds one running replaces any that waits for
+  -- it; `collectSave` feeds a failure back to the session later
   | .checkpoint => do
-    try
-      rt.saveCkpt st
-      return (rt, false)
-    catch err =>
-      report s!"linger: checkpoint save failed: {err}"
-      return (rt, true)
+    if rt.saving.isSome then
+      return ({ rt with pendingSave := some st }, false)
+    return (← startSave rt st, false)
   | .dropCheckpoint => do
+    -- a save still running would put the checkpoint back after the delete
+    let rt ← finishSaves { rt with pendingSave := none }
     try
       rt.dropCkpt
     catch err =>
@@ -415,7 +465,11 @@ descriptor says a child ended, or every round without one. -/
 def pollRound (rt : Rt) (limitMs : Option Nat := none) : IO (Rt × List Event) := do
   let now ← monotonicMs
   let rt ← expireConns rt now
+  -- a save that has ended feeds back first, and the one that waited for it starts
+  let (rt, saved) ← collectSave rt
   let mut wake := rt.st.nextTick
+  if rt.saving.isSome then
+    wake := soonest wake (now + saveCheckMs)
   if let some limit := limitMs then
     wake := soonest wake (now + limit)
   -- once the terminal has closed, the program's end usually follows at once
@@ -447,7 +501,7 @@ def pollRound (rt : Rt) (limitMs : Option Nat := none) : IO (Rt × List Event) :
     evts := evts.push ((if c.closing then 0 else POLLIN) ||| (if c.pending then POLLOUT else 0))
   let revs ← poll fds evts timeout
   let mut rt := rt
-  let mut events : List Event := []
+  let mut events : List Event := saved
   -- listen fd
   if revs[0]! &&& POLLIN != 0 then
     -- The same cap covers every owned transport, including logical closes
@@ -825,6 +879,8 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
             record.save (.ended outcome)
           catch err =>
             report s!"linger: recording how the program ended failed: {err}"
+          -- the session's last screen reaches the disk while the name is still this session's
+          discard <| finishSaves rt
           -- the program is reaped last: until then its zombie keeps its pid, which is its
           -- session's id, so ending the session's other processes reaches no one else
           try
