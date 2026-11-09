@@ -7,6 +7,7 @@ import Linger.Display.Listing
 public import Linger.Display.Status
 import Linger.Target.Remote
 import Linger.Terminal.Vt
+import Linger.Display.View
 
 public section
 
@@ -253,5 +254,106 @@ def step (s : State) (key : Linger.Selector.Key) : Outcome :=
     | some (.create target) => .create target
     | none => .stay s
   | .cancel => .cancel
+
+/-- How many listed rows the query matches: what the query line shows beside it. -/
+def matchCount (s : State) : Nat := (visible s.candidates s.query).length
+
+/-- What a picker shows, as lines of text pieces with their styles, for a terminal `rows` tall:
+the header, which counts every listed row and, with `statusOf`, those that ask for someone
+(`View.headerParts`); the query, with how many rows it matches; the rows around the cursor; a
+line that sums up the matching rows the window leaves out (`View.hidden`); and the keys. It
+never has more lines than the terminal (`frameLines_length`). -/
+def frameLines (state : State) (snapshot : Snapshot)
+    (statusOf : String → Linger.Display.Status.Status) (loaded withColor savedTmux : Bool)
+    (rows : Nat) : List (List (String × String)) :=
+  let height := max 1 rows
+  let choices := items state.candidates state.query state.allowCreate
+  let nameCol :=
+    Linger.Display.Listing.nameWidth (snapshot.candidates.map fun target => [("name", target)])
+  let labels := if savedTmux then ["tmux save"] else if state.allowCreate then [] else ["read-only"]
+  let title : List (List (String × String)) :=
+    if height ≥ 7 then
+      -- the counts once there is a listing to count
+      let header :=
+        "  " ++
+          String.intercalate " · "
+            (if loaded then
+              Linger.Display.View.headerParts labels (snapshot.candidates.map statusOf)
+            else "linger" :: labels)
+      let globals := snapshot.records.takeWhile (fun fields => fields.head? != some "name")
+      let metadata : List String :=
+        if savedTmux then
+          (globals.filterMap fun fields =>
+                match fields with
+                | ["source", value] => some s!"  source  {value}"
+                | ["saved", value] => some s!"  saved   {value}"
+                | _ => none).take
+            (height - 7)
+        else []
+      [[(header, "")]] ++ metadata.map (fun text => [(text, "\x1b[2m")]) ++ [[]]
+    else []
+  let query : List (List (String × String)) :=
+    if height > 1 then
+      let placeholder :=
+        if savedTmux then "Find a saved pane"
+        else if state.allowCreate then "Find or create a session" else "Find a session"
+      let line :=
+        if state.query.isEmpty then [("  › ", ""), (placeholder, "\x1b[2m")]
+        else [("  › ", ""), (state.query, ""), (s!" {matchCount state}", "\x1b[2m")]
+      [line] ++ if height ≥ 6 then [[]] else []
+    else []
+  let footerRows := if height ≥ 6 then 2 else if height > 2 then 1 else 0
+  let slots := max 1 (height - (title.length + query.length) - footerRows)
+  let body : List (List (String × String)) :=
+    if !loaded then
+      [[(if savedTmux then "  Loading saved panes…" else "  Loading sessions…", "\x1b[2m")]]
+    else
+      if choices.isEmpty then
+        [[(if savedTmux then "  No matching saved panes"
+              else if state.allowCreate then "  No valid target" else "  No matching sessions",
+              "\x1b[2m")]]
+      else
+        -- the matching rows a window this short leaves out are summed up on its last line
+        let summarize := slots ≥ 2 && choices.length > slots
+        let shown := if summarize then slots - 1 else slots
+        let start := state.cursor + 1 - shown
+        let window :=
+          ((choices.drop start).take shown).zipIdx start |>.map fun (item, index) =>
+            let chosen := index == state.cursor
+            let selection := if chosen then "\x1b[7m" else ""
+            (if chosen then "  ▸ " else "    ", selection) ::
+              (emphasizeCells (highlightedPresentation snapshot nameCol state.query item)).map
+                fun char =>
+                (String.singleton char.char,
+                  selection ++
+                    (if withColor then (char.status.map Linger.Display.Status.style).getD ""
+                    else "") ++
+                    if char.matched then "\x1b[4m" else "")
+        let left :=
+          (choices.take start ++ choices.drop (start + shown)).filterMap fun item =>
+            match item with
+            | .existing target => some target
+            | .create _ => none
+        let (count, named) := Linger.Display.View.hidden left
+        let summary :=
+          s!"    … {count} more" ++
+            if named.isEmpty then ""
+            else ": " ++ String.intercalate " · " (named.map fun (key, n) => s!"{key} {n}")
+        window ++ if summarize && !left.isEmpty then [[(summary, "\x1b[2m")]] else []
+  let footer : List (List (String × String)) :=
+    if height > 2 then
+      let action :=
+        if !loaded then "  Type to search"
+        else
+          match selected state with
+          | some (.existing _) =>
+            if savedTmux then "  ↵ import / attach"
+            else if state.allowCreate then "  ↵ attach" else "  ↵ view"
+          | some (.create _) => "  ↵ create"
+          | none => if state.allowCreate then "  Type a valid name" else "  Type to search"
+      (if height ≥ 6 then [[]] else []) ++
+        [[(s!"{action}  ·  ↑↓ move  ·  esc / ^C quit", "\x1b[2m")]]
+    else []
+  (title ++ query ++ body ++ footer).take height
 
 end Linger.Selector.Picker

@@ -9,6 +9,7 @@ import Linger.Target.Proofs.Name
 import Linger.Selector.Proofs.Fuzzy
 import Linger.Target.Proofs.Remote
 import Linger.Selector.Proofs.Input
+import all Linger.Display.Proofs.View
 
 /-! Selection contracts within and between listing snapshots.
 
@@ -910,5 +911,60 @@ theorem step_full_query (s : State) (char : Char) (h : maxQueryLength ≤ s.quer
     step s (.text char) = .stay s := by
   have hn : ¬s.query.length < maxQueryLength := by omega
   simp [step, hn]
+
+/-- A character added to a query matches only targets the shorter query matched. -/
+theorem matches_push (query target : String) (c : Char)
+    (h : Linger.Selector.Picker.matches (query.push c) target = true) :
+    Linger.Selector.Picker.matches query target = true := by
+  rw [matches_iff_sublist] at h ⊢
+  refine List.Sublist.trans ?_ h
+  simp only [String.toList_push, List.map_append]
+  exact List.sublist_append_left _ _
+
+/-- **Typing narrows**: a character added to the query keeps only rows the shorter query kept,
+in their order. -/
+theorem visible_push_sublist (candidates : List String) (query : String) (c : Char) :
+    (visible candidates (query.push c)).Sublist (visible candidates query) := by
+  have heq :
+    visible candidates (query.push c) =
+      (visible candidates query).filter (Linger.Selector.Picker.matches (query.push c)) := by
+    unfold visible
+    rw [List.filter_filter]
+    apply List.filter_congr
+    intro x _
+    cases h : Linger.Selector.Picker.matches (query.push c) x
+    · simp
+    · simp [matches_push query x c h]
+  rw [heq]
+  exact List.filter_sublist
+
+/-- …so the count beside the query never grows as it is typed. -/
+theorem matchCount_push (s : State) (c : Char) :
+    matchCount { s with query := s.query.push c } ≤ matchCount s :=
+  (visible_push_sublist s.candidates s.query c).length_le
+
+/-- **Groups are typeable**: typing a group's name keeps every row of the group. -/
+theorem stem_visible (candidates : List String) (target : String) (depth : Nat)
+    (h : target ∈ candidates) :
+    target ∈ visible candidates (Linger.Display.View.stem depth target) := by
+  rw [mem_visible]
+  refine ⟨h, ?_⟩
+  rw [matches_iff_sublist]
+  exact (Linger.Display.View.stem_prefix depth target).sublist.map _
+
+/-- …so a group's name, typed as the query, leaves each of its rows to choose. -/
+theorem stem_items (candidates : List String) (target : String) (depth : Nat) (allowCreate : Bool)
+    (h : target ∈ candidates) :
+    Item.existing target ∈ items candidates (Linger.Display.View.stem depth target) allowCreate :=
+  (mem_items_existing candidates _ target allowCreate).mpr
+    ((mem_visible candidates _ target).mp (stem_visible candidates target depth h))
+
+/-- **A frame never has more lines than the terminal.** -/
+theorem frameLines_length (state : State) (snapshot : Snapshot)
+    (statusOf : String → Linger.Display.Status.Status) (loaded withColor savedTmux : Bool)
+    (rows : Nat) :
+    (frameLines state snapshot statusOf loaded withColor savedTmux rows).length ≤ max 1 rows := by
+  unfold frameLines
+  exact List.length_take_le _ _
 
 end Linger.Selector.Picker

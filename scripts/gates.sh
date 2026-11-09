@@ -373,7 +373,8 @@ module_imports Linger/Terminal/Proofs/Vt.lean 'Linger/Terminal/Proofs/Vt/*' Ling
 import_closure Linger/Import/Resurrect.lean 'import Linger.Target.Name;import Linger.Display.Status;public import Linger.Terminal.Vt;public import Linger.Session.Spec;'
 import_closure Linger/Selector/Key.lean 'public import Linger.Selector.Input;'
 import_closure Linger/Selector/Fuzzy.lean ''
-import_closure Linger/Selector/Picker.lean 'public import Linger.Selector.Key;import Linger.Selector.Fuzzy;import Linger.Target.Name;import Linger.Display.Listing;public import Linger.Display.Status;import Linger.Target.Remote;import Linger.Terminal.Vt;'
+import_closure Linger/Selector/Picker.lean 'public import Linger.Selector.Key;import Linger.Selector.Fuzzy;import Linger.Target.Name;import Linger.Display.Listing;public import Linger.Display.Status;import Linger.Target.Remote;import Linger.Terminal.Vt;import Linger.Display.View;'
+import_closure Linger/Display/View.lean 'public import Linger.Display.Status;'
 import_closure Linger/Selector/Input.lean ''
 import_closure Linger/Selector/Proofs/Input.lean 'public import Linger.Selector.Input;import all Linger.Selector.Input;'
 import_closure Linger/App/Entry.lean ''
@@ -396,7 +397,7 @@ shell_all="$(module_imports '*.lean' | awk -F: "$IMPORT_AWK"'
 import_closure Linger/Os/Shell/Command.lean 'import Linger.Os.Shell;'
 import_closure Linger/Import/Shell.lean 'import Linger.Import.Resurrect;import Linger.Session.Checkpoint;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Session.Shell.Paths;import Linger.Session.Shell.Resume;import Linger.Session.Shell.Inventory;import Linger.Os.Shell.Command;import Linger.Target.Remote;import Linger.Selector.Shell;import Std.Async.System;'
 import_closure Linger/Selector/Shell.lean \
-  'public import Linger.Selector.Picker;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Target.Remote;import Linger.Terminal.Title;import Linger.Os.Shell.Command;'
+  'public import Linger.Selector.Picker;import Linger.Os.Shell;import Linger.Target.Remote;import Linger.Terminal.Title;import Linger.Os.Shell.Command;import Linger.Display.View;import Std.Data.HashMap.Basic;'
 import_closure Main.lean \
   'import Linger.App.Shell;import Linger.App.Entry;import Linger.Selector.Shell;import Linger.Import.Shell;'
 # `lean_lib Linger` builds the umbrella's closure, so this list is what `./lake build`
@@ -404,7 +405,7 @@ import_closure Main.lean \
 import_closure Linger.lean "$(printf 'public import Linger.%s;' Session.Buf Os.Shell Session.Wire \
   Terminal.Vt Terminal.Render Terminal.Mediation Terminal.Title Target.Name Session \
   Session.Driver Session.Checkpoint \
-  Target.Remote Display.Listing Display.Status Display.Title Os.Env Session.Shell.Paths \
+  Target.Remote Display.Listing Display.Status Display.Title Display.View Os.Env Session.Shell.Paths \
   Os.Shell.Command Session.Shell.Daemon Session.Shell.Client Session.Shell.Inventory App.Shell \
   Session.Shell.Resume)"
 module_imports Linger/Session.lean ':(glob)Linger/Session/*.lean' 'Linger/Session/Shell/*' \
@@ -676,7 +677,6 @@ done
 for tie in \
   'let listed ← IO[.]ofExcept [(]Linger[.]Selector[.]Picker[.]parseSnapshot result[.]stdout[)]' \
   'let incoming := if full then listed else listed[.]withRemote lastFull' \
-  'let items := Linger[.]Selector[.]Picker[.]items state[.]candidates state[.]query state[.]allowCreate' \
   'let mut state := Linger[.]Selector[.]Picker[.]init [[]] [(]!savedTmux && !readOnly[)]' \
   'let mut decoder := Linger[.]Selector[.]Input[.]init' \
   'let fds := #[[]stdinFd[]]' \
@@ -699,13 +699,12 @@ picker_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Selector/Shell.lean)"
 # application binding before dispatch.
 for tie in \
   'for byte in bytes do let [(]next, emitted[)] := Linger[.]Selector[.]Input[.]feed decoder byte decoder := next keys := keys [+][+] [(]emitted[.]filterMap Linger[.]Selector[.]Key[.]ofInput[)][.]toArray else if Linger[.]Selector[.]Input[.]pending decoder && [(]← monotonicMs[)] - lastInput ≥ 150 then let [(]next, emitted[)] := Linger[.]Selector[.]Input[.]flush decoder decoder := next keys := [(]emitted[.]filterMap Linger[.]Selector[.]Key[.]ofInput[)][.]toArray for key in keys do' \
-  'let nameCol := Linger[.]Display[.]Listing[.]nameWidth [(]snapshot[.]candidates[.]map fun target => [[][(]"name", target[)][]][)]' \
-  'let mut index := start for item in [(]items[.]drop start[)][.]take slots do let chosen := index == state[.]cursor let selection := if chosen then "\\x1b[[]7m" else "" let mut pieces := #[[][(]if chosen then " ▸ " else " ", selection[)][]] let chars := Linger[.]Selector[.]Picker[.]highlightedPresentation snapshot nameCol state[.]query item for char in Linger[.]Selector[.]Picker[.]emphasizeCells chars do let statusStyle := if withColor then [(]char[.]status[.]map Linger[.]Display[.]Status[.]style[)][.]getD "" else "" let emphasis := if char[.]matched then "\\x1b[[]4m" else "" pieces := pieces[.]push [(]String[.]singleton char[.]char, selection [+][+] statusStyle [+][+] emphasis[)] lines := lines[.]push pieces index := index [+] 1' \
+  'let lines := Linger[.]Selector[.]Picker[.]frameLines state snapshot statusOf loaded withColor savedTmux rows[.]toNat let mut frame :=' \
   'let mut frame := "\\x1b[[]0m\\x1b[[]H\\x1b[[]2J" let mut first := true for line in lines do if !first then frame := frame [+][+] "\\r\\n" first := false let mut used := 0 let mut clipped := false let mut activeStyle := "" for [(]text, style[)] in line do if clipped then break if style != activeStyle then frame := frame [+][+] "\\x1b[[]0m" [+][+] style activeStyle := style for raw in text[.]toList do let c := if Linger[.]Selector[.]Input[.]printable raw then raw else '"'"'[?]'"'"' let cells := Linger[.]Terminal[.]Vt[.]charWidth c if used [+] cells > width then clipped := true break frame := frame[.]push c used := used [+] cells if !activeStyle[.]isEmpty then frame := frame [+][+] "\\x1b[[]0m" return frame' \
-  'let next := if loaded then Linger[.]Selector[.]Picker[.]refresh state incoming[.]candidates else [{] [(]Linger[.]Selector[.]Picker[.]init incoming[.]candidates state[.]allowCreate[)] with query := state[.]query [}] dirty := dirty [|][|] !loaded [|][|] next != state [|][|] incoming != snapshot state := next snapshot := incoming loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
-  'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let frame := draw state snapshot loaded withColor savedTmux current[.]1 current[.]2 if frame != lastFrame [|][|] current != size then writeAll stdoutFd frame[.]toUTF8 lastFrame := frame size := current dirty := false let ready ← poll fds events 50' \
+  'let incomingStatuses := statusesOf incoming let ordered := Linger[.]Display[.]View[.]sort [(]incomingStatuses[.]getD · [.]unknown[)] incoming[.]candidates let next := if loaded then Linger[.]Selector[.]Picker[.]refresh state ordered else [{] [(]Linger[.]Selector[.]Picker[.]init ordered state[.]allowCreate[)] with query := state[.]query [}] dirty := dirty [|][|] !loaded [|][|] next != state [|][|] incoming != snapshot state := next snapshot := incoming statuses := incomingStatuses loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
+  'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let frame := draw state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor savedTmux current[.]1 current[.]2 if frame != lastFrame [|][|] current != size then writeAll stdoutFd frame[.]toUTF8 lastFrame := frame size := current dirty := false let ready ← poll fds events 50' \
   'for key in keys do if !loaded && key == [.]accept then continue match Linger[.]Selector[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target snapshot [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Linger[.]Os[.]Shell[.]Command[.]poll pending then' \
-  'if full then lastFull := listed nextRemote := [(]← monotonicMs[)] [+] remoteRefreshMs let incoming := if full then listed else listed[.]withRemote lastFull let next :=' \
+  'if full then lastFull := listed nextRemote := [(]← monotonicMs[)] [+] remoteRefreshMs let incoming := if full then listed else listed[.]withRemote lastFull' \
   'nextListing := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextListing then full := savedTmux [|][|] [(]← monotonicMs[)] ≥ nextRemote let args := if full then fullArgs else #[[]"ls", "--porcelain"[]] pending[.]set [(]some [(]← Linger[.]Os[.]Shell[.]Command[.]start executable args[)][)] return [.]cancel finally' \
   'finally Linger[.]Os[.]Shell[.]Command[.]stop pending [(]if savedTmux then 0 else 1000[)]' \
   'let fullArgs := if savedTmux then #[[]"tmux", "ls", "--porcelain"[]] [+][+] save[.]toArray else #[[]"ls", "-r", "--porcelain"[]]' \
@@ -753,7 +752,7 @@ for tie in \
   'match Linger[.]Target[.]Remote[.]checkHosts hosts with [|] [.]ok l => return l [|] [.]error e => throw [(]IO[.]userError e[)]' \
   'for [(]host, output[)] in remotes[.]zip remote[.]toList do for row in Linger[.]Target[.]Remote[.]parse output do' \
   '[|] some [(]porcelain, remoteFlag[)] => cmdList porcelain [(]← resolveRemotes remoteFlag[)]' \
-  'let withColor := [(]← [(]← IO[.]getStdout[)][.]isTty[)] && [(]← IO[.]getEnv "NO_COLOR"[)][.]isNone writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor rows[)][.]toArray[)]' \
+  'let withColor := [(]← [(]← IO[.]getStdout[)][.]isTty[)] && [(]← IO[.]getEnv "NO_COLOR"[)][.]isNone let ordered := Linger[.]Display[.]View[.]sort [(]fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD ""[)][)] rows writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor ordered[)][.]toArray[)]' \
   'def summaryText : IO String := do let rows ← localRows [(]some [(][(]← monotonicMs[)] [+] 250[)][)] [(]statusOnly := true[)] return Linger[.]Display[.]Status[.]summary [(]rows[.]map fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD "unknown"[)][)]' \
   'def cmdSummary : IO UInt32 := do let summary ← summaryText if !summary[.]isEmpty then IO[.]println summary return 0' \
   'let fd ← connectUpsert name cmd some <[$]> Client[.]attach name fd summaryText' \

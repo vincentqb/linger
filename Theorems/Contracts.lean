@@ -9,6 +9,7 @@ import all Linger.Os.Proofs.Env
 import all Linger.Selector.Proofs.Fuzzy
 import all Linger.Selector.Proofs.Input
 import all Linger.Display.Proofs.Listing
+import all Linger.Display.Proofs.View
 import all Linger.Target.Proofs.Name
 import all Linger.Selector.Proofs.Picker
 import all Linger.Target.Proofs.Remote
@@ -606,6 +607,66 @@ example (s : Picker.State) (candidates : List String) (item : Picker.Item)
     Option.map Picker.Item.target (Picker.selected (Picker.refresh s candidates)) =
       some item.target := by
   with_reducible exact Picker.refresh_selected s candidates item hselected hpresent
+
+-- Views
+example {α : Type} (status : α → Display.Status.Status) (rows : List α) :
+    (Display.View.sort status rows).Perm rows := by
+  with_reducible exact Display.View.sort_perm status rows
+
+example {α : Type} (status : α → Display.Status.Status) (rows : List α) :
+    ∃ first rest,
+      Display.View.sort status rows = first ++ rest ∧
+        (∀ x ∈ first, status x ∈ Display.Status.attention) ∧
+        ∀ x ∈ rest, status x ∉ Display.Status.attention := by
+  with_reducible exact Display.View.sort_attention_first status rows
+
+example {α : Type} (status : α → Display.Status.Status) (rows : List α)
+    (st : Display.Status.Status) :
+    (Display.View.sort status rows).filter (status · == st) = rows.filter (status · == st) := by
+  with_reducible exact Display.View.sort_stable status rows st
+
+example (labels : List String) (statuses : List Display.Status.Status)
+    (h : (Display.Status.summary statuses).isEmpty = false) :
+    Display.Status.summary statuses ∈ Display.View.headerParts labels statuses := by
+  with_reducible exact Display.View.headerParts_summary labels statuses h
+
+example (keys : List String) (k : String) (n : Nat) (h : (k, n) ∈ Display.View.groups keys) :
+    n = keys.count k := by with_reducible exact Display.View.groups_count keys k n h
+
+example (keys : List String) : ((Display.View.groups keys).map (·.2)).sum = keys.length := by
+  with_reducible exact Display.View.groups_sum keys
+
+example (depth : Nat) (target : String) :
+    (Display.View.stem depth target).toList <+: target.toList := by
+  with_reducible exact Display.View.stem_prefix depth target
+
+example (targets : List String) (depth : Nat) (h : Display.View.chooseDepth targets = some depth) :
+    Display.View.useful depth targets = true ∧
+      ∀ other ∈ Display.View.depths,
+        Display.View.useful other targets = true →
+          Display.View.largest depth targets ≤ Display.View.largest other targets := by
+  with_reducible exact Display.View.chooseDepth_best targets depth h
+
+example (targets : List String) :
+    (Display.View.hidden targets).2 = [] ∨
+      (((Display.View.hidden targets).2).map (·.2)).sum = (Display.View.hidden targets).1 := by
+  with_reducible exact Display.View.hidden_adds_up targets
+
+example (s : Picker.State) (c : Char) :
+    Picker.matchCount { s with query := s.query.push c } ≤ Picker.matchCount s := by
+  with_reducible exact Picker.matchCount_push s c
+
+example (candidates : List String) (target : String) (depth : Nat) (allowCreate : Bool)
+    (h : target ∈ candidates) :
+    Picker.Item.existing target ∈
+      Picker.items candidates (Display.View.stem depth target) allowCreate := by
+  with_reducible exact Picker.stem_items candidates target depth allowCreate h
+
+example (state : Picker.State) (snapshot : Picker.Snapshot)
+    (statusOf : String → Display.Status.Status) (loaded withColor savedTmux : Bool) (rows : Nat) :
+    (Picker.frameLines state snapshot statusOf loaded withColor savedTmux rows).length ≤
+      max 1 rows := by
+  with_reducible exact Picker.frameLines_length _ _ _ _ _ _ _
 
 -- Interactive fuzzy matching
 example (config : Fuzzy.Config) (query target : String) (a b : Fuzzy.Alignment)

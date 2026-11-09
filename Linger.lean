@@ -15,6 +15,7 @@ public import Linger.Target.Remote
 public import Linger.Display.Listing
 public import Linger.Display.Status
 public import Linger.Display.Title
+public import Linger.Display.View
 public import Linger.Os.Env
 public import Linger.Session.Shell.Paths
 public import Linger.Os.Shell.Command

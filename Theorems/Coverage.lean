@@ -19,6 +19,7 @@ import all Linger.Session.Proofs.Record
 import all Linger.Session.Proofs.Start
 import all Linger.Display.Proofs.Status
 import all Linger.Display.Proofs.Title
+import all Linger.Display.Proofs.View
 import all Linger.Import.Proofs.Resurrect
 import all Linger.Selector.Proofs.Fuzzy
 import all Linger.Selector.Proofs.Picker

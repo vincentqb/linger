@@ -239,7 +239,7 @@ say "4. live suites (separate processes, at most four at once)"
 # Ordinary child spawning preserves SIGINT, unlike a shell's asynchronous list.
 # No suite shares an Env directory, and the runner waits for all of them on failure.
 ./.lake/build/bin/suites --suites \
-  manager:127 delivery:37 attach:64 agent:62 \
+  manager:128 delivery:37 attach:64 agent:63 \
   resume:24 watch:50 title:18 graphics:9 robust:31 \
   interop:72 recipes:58 status:18 terminal:12 overview:15 remote:68 identity:25 quiet:4 \
   || fail "live suites (see $logs/linger-*.out)"

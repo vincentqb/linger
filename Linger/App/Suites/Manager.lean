@@ -3,6 +3,7 @@ module
 import Linger.Selector.Shell
 import Linger.Import.Shell
 import Linger.Display.Listing
+import Linger.Display.View
 import Linger.Target.Name
 import Linger.Target.Remote
 import Linger.Target.Spec
@@ -1161,21 +1162,28 @@ private def statusChecks (e : Env) : IO Unit := do
                 String.join (row.map fun (key, value) => s!"{key}\t{value}\n")))
         if let some value := noColor then
           IO.FS.writeFile (f.root / "no-color") value
+        -- the picker lists them as `ls` does, what asks for someone first (`View.sort`), each
+        -- with its badge's color and dimness
+        let expectedColors : List Linger.Terminal.Vt.Color :=
+          [.idx 6, .idx 3, .idx 2, .idx 1, .default, .default, .idx 3]
+        let shown :=
+          Linger.Display.View.sort (fun (_, status, _) => status)
+            ((fields.zip statuses).zip expectedColors |>.map fun ((info, status), color) =>
+              (info, status, color))
         withPrompt f.picker #[]
             (fun s => do
               let vt ← s.capture slug 100 20
-              let expectedColors : List Linger.Terminal.Vt.Color :=
-                [.idx 6, .idx 3, .idx 2, .idx 1, .default, .default, .idx 3]
               let rowsMatch := fun (frame : Vt) =>
-                fields.zipIdx |>.all fun (info, index) =>
+                shown.zipIdx |>.all fun ((info, status, color), index) =>
                   let badge := frame.getCell 4 (4 + index)
                   let name := frame.getCell 6 (4 + index)
                   let expected :=
                     String.fromUTF8! (ByteArray.mk (Linger.Display.Listing.humanRow 5 info).toArray)
                   rowText frame (4 + index) ==
                       (if index == 0 then "  ▸ " else "    ") ++ expected &&
-                    badge.pen.fg == (if noColor.isSome then .default else expectedColors[index]!) &&
-                    badge.pen.dim == (!noColor.isSome && (index == 4 || index == 5)) &&
+                    badge.pen.fg == (if noColor.isSome then .default else color) &&
+                    badge.pen.dim ==
+                      (!noColor.isSome && (status == .idle || status == .resumable)) &&
                     (List.range (4 + expected.length)).all
                       (fun col => (frame.getCell col (4 + index)).pen.reverse == (index == 0)) &&
                     name.pen.fg == .default &&
@@ -1213,13 +1221,16 @@ private def statusChecks (e : Env) : IO Unit := do
           unless ← s.until "pid 2  new" start do
             return false
           let after ← s.capture "metadata-after"
+          -- what asks for someone comes first, and the cursor stays on the row it was on
           let changed :=
-            has (rowText before 4) "old  [project=before]  +1" &&
-              rowText after 4 == "  ▸ ! alpha pid 2  new  [project=after]  +3" &&
-              rowText after 2 == "  › a" &&
+            rowText before 4 == "  ▸ ⣷ beta  other" &&
+              has (rowText before 5) "old  [project=before]  +1" &&
+              rowText after 4 == "    ! alpha pid 2  new  [project=after]  +3" &&
+              rowText after 5 == "  ▸ ⣷ beta  other" &&
+              rowText after 2 == "  › a 2" &&
               (after.getCell 4 4).pen.fg == .idx 1 &&
-              (after.getCell 6 4).pen.reverse
-          return changed && (← acceptThenCancel s) && (← f.visits) == attachVisit ["alpha"]
+              (after.getCell 6 5).pen.reverse
+          return changed && (← acceptThenCancel s) && (← f.visits) == attachVisit ["beta"]
   check e "status-control-text"
       "picker keeps hostile metadata out of terminal controls while retaining ordinary details"
       fun f => do
@@ -1227,13 +1238,14 @@ private def statusChecks (e : Env) : IO Unit := do
           "name\talpha\nstatus\tworking\ncmd\tvi\x1b[31m\u009b31m\nlabel.project\tok\x07\nclients\t2\nname\tbeta\n"
       withPrompt f.picker #[] fun s => do
           let vt ← s.capture "metadata-controls"
-          let row := rowText vt 4
+          -- beta reports no status, so it asks for someone and comes first
+          let row := rowText vt 5
           let output ← s.output.get
           let safe :=
             has row "vi�[31m�31m" && has row "[project=ok�]" && !hasText output "\u009b" &&
               !hasText output "vi\x1b" &&
-              (vt.getCell 6 4).pen.fg == .default &&
-              rowText vt 5 == "    ? beta  (busy)"
+              (vt.getCell 6 5).pen.fg == .default &&
+              rowText vt 4 == "  ▸ ? beta  (busy)"
           s.text "\x03"
           return safe && (← restored s 130)
 
@@ -1388,7 +1400,10 @@ private def displayChecks (e : Env) : IO Unit := do
         let vt ← s.capture "normal-frame"
         let footer := (List.range vt.rowCount).find? fun row => has (rowText vt row) "↵ attach"
         let layout :=
-          (rowText vt 0).trimAscii.toString == "linger" && rowText vt 1 == "" &&
+          (rowText vt 0).trimAscii.toString ==
+              String.intercalate " · "
+                (Linger.Display.View.headerParts [] [.unknown, .unknown, .unknown]) &&
+            rowText vt 1 == "" &&
             rowText vt 2 == "  › Find or create a session" &&
             rowText vt 3 == "" &&
             rowText vt 4 == "  ▸ ? Alpha (busy)" &&
@@ -1420,7 +1435,8 @@ private def displayChecks (e : Env) : IO Unit := do
         let vt ← s.capture "create-frame"
         let screen := String.fromUTF8! (ByteArray.mk (screenText vt).toArray)
         let shown :=
-          rowText vt 2 == "  › new-session" && !(vt.getCell 4 2).pen.dim &&
+          rowText vt 2 == "  › new-session 0" && !(vt.getCell 4 2).pen.dim &&
+            (vt.getCell 16 2).pen.dim &&
             rowText vt 4 == "  ▸ + Create new-session" &&
             (vt.getCell 4 4).pen.reverse &&
             has screen "  ↵ create" &&
@@ -1431,6 +1447,29 @@ private def displayChecks (e : Env) : IO Unit := do
             (List.range vt.rowCount).all (fun row => (underlined vt row).isEmpty) &&
             lastColumnBlank vt
         return shown && (← acceptThenCancel s) && (← f.visits) == attachVisit ["new-session"]
+  check e "hidden-groups"
+      "picker sums up the rows its window leaves out by typeable groups whose counts add up"
+      fun f => do
+      let names := (List.range 4).map (s!"ag-build-{·}") ++ (List.range 6).map (s!"ag-test-{·}")
+      f.listing (String.join (names.map (s!"name\t{·}\n")))
+      withPrompt f.picker #[] fun s => do
+          let vt ← s.capture "hidden-groups"
+          -- five rows fit with the summary below them; the five left out share one group
+          let header :=
+            (rowText vt 0).trimAscii.toString ==
+              String.intercalate " · "
+                (Linger.Display.View.headerParts [] (names.map fun _ => .unknown))
+          let window :=
+            rowText vt 4 == "  ▸ ? ag-build-0 (busy)" &&
+              rowText vt 8 == "    ? ag-test-0  (busy)" &&
+              rowText vt 9 == "    … 5 more: ag-test 5" &&
+              (vt.getCell 4 9).pen.dim
+          unless ← s.typeQuery "ag-test" "ag-test" do
+            return false
+          let narrowed ← s.capture "hidden-groups-typed"
+          let typed := rowText narrowed 2 == "  › ag-test 6" && rowText narrowed 9 == "    … 1 more"
+          s.text "\x03"
+          return header && window && typed && (← restored s 130)
   check e "unchanged-keys"
       "picker clamped movement, empty editing and ignored controls cause no repaint" fun f =>
       withPrompt f.picker #[] fun s => do

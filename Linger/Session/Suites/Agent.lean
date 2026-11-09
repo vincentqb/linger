@@ -324,6 +324,10 @@ private def endedChecks (e : Env) : IO Unit := do
       (says "end-ok" "ended (status 0)" && says "end-bad" "ended (status 3)" &&
         says "end-sig" "ended (killed by signal 15)")
       s!"the listing says how each ended session's program ended ({human})"
+  -- what asks for someone comes first: the failed endings before the clean one
+  let order := human.filterMap fun row => ["end-bad", "end-ok", "end-sig"].find? (has row s!" {·} ")
+  expect (order == ["end-bad", "end-sig", "end-ok"])
+      s!"the listing puts the failed endings before the clean one ({order})"
   let (sumRc, summary, _) ← e.cli #["ls", "--summary"]
   expect (sumRc == 0 && summary == Linger.Display.Status.summary [.exitedBad, .exitedBad] ++ "\n")
       s!"the attention summary counts failed endings and not a clean one ({summary})"

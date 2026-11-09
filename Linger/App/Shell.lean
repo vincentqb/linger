@@ -9,6 +9,7 @@ import Linger.Session.Shell.Inventory
 import Linger.Target.Remote
 import Linger.Terminal.Render
 import Linger.Display.Listing
+import Linger.Display.View
 import Linger.Os.Shell.Command
 import Linger.Session.Shell.Resume
 import Linger.Session.Shell.Record
@@ -465,9 +466,14 @@ private def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
       IO.println ""
   else
     -- The selector consumes these same row pieces. Only the status badge has
-    -- a palette style; redirected output and NO_COLOR retain the plain row.
+    -- a palette style; redirected output and NO_COLOR retain the plain row. What asks for
+    -- someone comes first, as in the selector (`View.sort`).
     let withColor := (← (← IO.getStdout).isTty) && (← IO.getEnv "NO_COLOR").isNone
-    writeAll stdoutFd (ByteArray.mk (Linger.Display.Listing.terminalListing withColor rows).toArray)
+    let ordered :=
+      Linger.Display.View.sort
+        (fun info => Linger.Display.Status.ofName ((info.lookup "status").getD "")) rows
+    writeAll stdoutFd
+        (ByteArray.mk (Linger.Display.Listing.terminalListing withColor ordered).toArray)
   return 0
 
 /-- Parse the `ls` argument set: an optional `--porcelain` and an

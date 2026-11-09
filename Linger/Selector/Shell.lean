@@ -2,10 +2,11 @@ module
 
 public import Linger.Selector.Picker
 import Linger.Os.Shell
-import Linger.Display.Listing
 import Linger.Target.Remote
 import Linger.Terminal.Title
 import Linger.Os.Shell.Command
+import Linger.Display.View
+import Std.Data.HashMap.Basic
 
 public section
 
@@ -26,83 +27,37 @@ inductive Choice where
   /-- A listing exited nonzero, with its exit status and standard error. -/
   | failed (status : UInt32) (stderr : String)
 
-/-- The viewport follows the bounded selection. Keep the final column unused
-so neither a full-width name nor a resize induces an automatic line wrap.
-In short terminals the selected row takes priority over decoration and help.
-Before the first snapshot the query is editable, but there is no selectable row. -/
+/-- Each listed target's status, read once per listing in one pass over its records: a name
+record starts a row, a blank record ends it, and its `status` record says its status, as
+`Picker.Snapshot.row` reads it. A target without one is unknown. -/
+private def statusesOf (snapshot : Linger.Selector.Picker.Snapshot) :
+    Std.HashMap String Linger.Display.Status.Status :=
+  Id.run do
+    let mut current : Option String := none
+    let mut statuses := {}
+    for fields in snapshot.records do
+      match fields with
+      | ["name", target] =>
+        current := some target
+      | [""] =>
+        current := none
+      | ["status", name] =>
+        if let some target := current then
+          statuses := statuses.insert target (Linger.Display.Status.ofName name)
+      | _ =>
+        pure ()
+    return statuses
+
+/-- The terminal bytes of a picker frame (`Picker.frameLines`). Keep the final column unused
+so neither a full-width name nor a resize induces an automatic line wrap. -/
 private def draw (state : Linger.Selector.Picker.State) (snapshot : Linger.Selector.Picker.Snapshot)
-    (loaded withColor savedTmux : Bool) (cols rows : UInt32) : String :=
+    (statusOf : String → Linger.Display.Status.Status) (loaded withColor savedTmux : Bool)
+    (cols rows : UInt32) : String :=
   Id.run do
     let width := cols.toNat - 1
-    let height := max 1 rows.toNat
-    let items := Linger.Selector.Picker.items state.candidates state.query state.allowCreate
-    let nameCol :=
-      Linger.Display.Listing.nameWidth (snapshot.candidates.map fun target => [("name", target)])
-    let mut lines : Array (Array (String × String)) := #[]
-    if height ≥ 7 then
-      let title :=
-        if savedTmux then "  linger · tmux save"
-        else if state.allowCreate then "  linger" else "  linger · read-only"
-      lines := lines.push #[(title, "")]
-      if savedTmux then
-        let globals := snapshot.records.takeWhile (fun fields => fields.head? != some "name")
-        let metadata :=
-          globals.filterMap fun fields =>
-            match fields with
-            | ["source", value] => some s!"  source  {value}"
-            | ["saved", value] => some s!"  saved   {value}"
-            | _ => none
-        for text in metadata.take (height - 7) do
-          lines := lines.push #[(text, "\x1b[2m")]
-      lines := lines.push #[]
-    if height > 1 then
-      let placeholder :=
-        if savedTmux then "Find a saved pane"
-        else if state.allowCreate then "Find or create a session" else "Find a session"
-      let text := if state.query.isEmpty then placeholder else state.query
-      let style := if state.query.isEmpty then "\x1b[2m" else ""
-      lines := lines.push #[("  › ", ""), (text, style)]
-      if height ≥ 6 then
-        lines := lines.push #[]
-    let footerRows := if height ≥ 6 then 2 else if height > 2 then 1 else 0
-    let slots := max 1 (height - lines.size - footerRows)
-    let start := state.cursor + 1 - slots
-    if !loaded then
-      let text := if savedTmux then "  Loading saved panes…" else "  Loading sessions…"
-      lines := lines.push #[(text, "\x1b[2m")]
-    else if items.isEmpty then
-      let text :=
-        if savedTmux then "  No matching saved panes"
-        else if state.allowCreate then "  No valid target" else "  No matching sessions"
-      lines := lines.push #[(text, "\x1b[2m")]
-    else
-      let mut index := start
-      for item in (items.drop start).take slots do
-        let chosen := index == state.cursor
-        let selection := if chosen then "\x1b[7m" else ""
-        let mut pieces := #[(if chosen then "  ▸ " else "    ", selection)]
-        let chars :=
-          Linger.Selector.Picker.highlightedPresentation snapshot nameCol state.query item
-        for char in Linger.Selector.Picker.emphasizeCells chars do
-          let statusStyle :=
-            if withColor then (char.status.map Linger.Display.Status.style).getD "" else ""
-          let emphasis := if char.matched then "\x1b[4m" else ""
-          pieces := pieces.push (String.singleton char.char, selection ++ statusStyle ++ emphasis)
-        lines := lines.push pieces
-        index := index + 1
-    if height > 2 then
-      if height ≥ 6 then
-        lines := lines.push #[]
-      let action :=
-        if !loaded then "  Type to search"
-        else
-          match Linger.Selector.Picker.selected state with
-          | some (.existing _) =>
-            if savedTmux then "  ↵ import / attach"
-            else if state.allowCreate then "  ↵ attach" else "  ↵ view"
-          | some (.create _) => "  ↵ create"
-          | none => if state.allowCreate then "  Type a valid name" else "  Type to search"
-      lines := lines.push #[(s!"{action}  ·  ↑↓ move  ·  esc / ^C quit", "\x1b[2m")]
+    let lines :=
+      Linger.Selector.Picker.frameLines state snapshot statusOf loaded withColor savedTmux
+        rows.toNat
     let mut frame := "\x1b[0m\x1b[H\x1b[2J"
     let mut first := true
     for line in lines do
@@ -159,6 +114,7 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
     let events := #[POLLIN]
     let mut state := Linger.Selector.Picker.init [] (!savedTmux && !readOnly)
     let mut snapshot : Linger.Selector.Picker.Snapshot := {}
+    let mut statuses : Std.HashMap String Linger.Display.Status.Status := {}
     let mut loaded := false
     let mut decoder := Linger.Selector.Input.init
     let mut lastInput ← monotonicMs
@@ -172,7 +128,9 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
     while true do
       let current ← winsizeGet stdoutFd
       if dirty || current != size then
-        let frame := draw state snapshot loaded withColor savedTmux current.1 current.2
+        let frame :=
+          draw state snapshot (statuses.getD · .unknown) loaded withColor savedTmux current.1
+            current.2
         if frame != lastFrame || current != size then
           writeAll stdoutFd frame.toUTF8
           lastFrame := frame
@@ -217,14 +175,17 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
           lastFull := listed
           nextRemote := (← monotonicMs) + remoteRefreshMs
         let incoming := if full then listed else listed.withRemote lastFull
+        -- what asks for someone first, as `ls` lists it (`View.sort`)
+        let incomingStatuses := statusesOf incoming
+        let ordered :=
+          Linger.Display.View.sort (incomingStatuses.getD · .unknown) incoming.candidates
         let next :=
-          if loaded then Linger.Selector.Picker.refresh state incoming.candidates
-          else
-            { (Linger.Selector.Picker.init incoming.candidates state.allowCreate) with
-              query := state.query }
+          if loaded then Linger.Selector.Picker.refresh state ordered
+          else { (Linger.Selector.Picker.init ordered state.allowCreate) with query := state.query }
         dirty := dirty || !loaded || next != state || incoming != snapshot
         state := next
         snapshot := incoming
+        statuses := incomingStatuses
         loaded := true
         nextListing := (← monotonicMs) + 1000
       if (← pending.get).isNone && (← monotonicMs) ≥ nextListing then
