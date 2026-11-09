@@ -276,31 +276,30 @@ def run : IO UInt32 :=
         "shell exit clears the title on both attached terminals"
     c2.bye (sendDetach := false)
     c3.bye (sendDetach := false)
-    -- 7. wait returns the exit status. `run` types its command into the session
+    -- 7. wait returns the exit status. `typeIn` types its command into the session
     -- shell, so the command must `exec` to make its status the shell's.
-    let _ ← e.cli #["run", "w2", "exec sh -c \"sleep 0.5; exit 7\""]
+    let _ ← e.typeIn "w2" #["exec sh -c \"sleep 0.5; exit 7\""]
     let t0 ← Linger.Os.Shell.monotonicMs
     let (rc, _, _) ← e.cli #["wait", "w2"]
     let took := (← Linger.Os.Shell.monotonicMs) - t0
     expect (rc == 7 && took ≥ 200)
         s!"wait blocks until exit and returns status (rc={rc}, took={took}ms)"
     -- A death by signal reads as 128 plus its number, and wait says which signal it was.
-    let _ ← e.cli #["run", "w3", "exec sh -c 'sleep 0.5; kill -TERM $$'"]
+    let _ ← e.typeIn "w3" #["exec sh -c 'sleep 0.5; kill -TERM $$'"]
     let (termRc, _, termErr) ← e.cli #["wait", "w3"]
     expect (termRc == 143 && has termErr "killed by signal 15")
         s!"wait reports a death by signal (rc={termRc})"
     -- The session ends with its program, even while a background job holds its terminal, and
     -- the job ends with it.
     let jobFile := s!"{e.dir}/w4.job"
-    let _ ←
-      e.cli #["run", "w4", s!"sleep 600 & echo $! > {jobFile}; exec sh -c 'sleep 0.5; exit 3'"]
+    let _ ← e.typeIn "w4" #[s!"sleep 600 & echo $! > {jobFile}; exec sh -c 'sleep 0.5; exit 3'"]
     let waited ← e.cliTimeout #["wait", "w4"] 5000
     let jobEnded ← jobEnds jobFile
     expect (waited.map (·.1) == some 3 && jobEnded)
         "a session ends with its program while a background job holds its terminal, and so does the job"
     -- A session that ended with nobody waiting still answers, from its name's end record, and
     -- stays listed as ended with its status.
-    let _ ← e.cli #["run", "w5", "exec sh -c 'exit 37'"]
+    let _ ← e.typeIn "w5" #["exec sh -c 'exit 37'"]
     let ended ←
       waitFor 5000 do
           return (← e.status "w5") == .exitedBad && (← e.field "w5" "exit") == some "37"
@@ -313,7 +312,7 @@ def run : IO UInt32 :=
     let (bothRc, _, _) ← e.cli #["wait", "w3", "w5"]
     expect (bothRc == 37) s!"wait reports the last of several sessions (rc={bothRc})"
     -- A time limit stops the wait with 124 and leaves the session running.
-    let _ ← e.cli #["run", "w6", "exec sleep 30"]
+    let _ ← e.typeIn "w6" #["exec sleep 30"]
     let limitStart ← Linger.Os.Shell.monotonicMs
     let limited ← e.cliTimeout #["wait", "--timeout", "0.5", "w6"] 5000
     let limitMs := (← Linger.Os.Shell.monotonicMs) - limitStart
@@ -330,8 +329,7 @@ def run : IO UInt32 :=
         s!"kill returns once the session has ended (rc={killRc})"
     let trapFile := s!"{e.dir}/w7.trapped"
     let _ ←
-      e.cli
-          #["run", "w7", s!"exec sh -c \"trap '' HUP; : > {trapFile}; while :; do sleep 1; done\""]
+      e.typeIn "w7" #[s!"exec sh -c \"trap '' HUP; : > {trapFile}; while :; do sleep 1; done\""]
     let trapped ← waitFor 3000 (System.FilePath.pathExists trapFile)
     let (stubbornRc, _, _) ← e.cli #["kill", "w7"]
     let (_, stubbornInfo, _) ← e.cli #["info", "w7"]
@@ -340,14 +338,13 @@ def run : IO UInt32 :=
     -- Nothing of the session's terminal session outlives it: not a background job of a shell
     -- that kill ends, nor one that ignores SIGHUP after its program exits by itself.
     let job8 := s!"{e.dir}/w8.job"
-    let _ ← e.cli #["run", "w8", s!"sleep 600 & echo $! > {job8}"]
+    let _ ← e.typeIn "w8" #[s!"sleep 600 & echo $! > {job8}"]
     let started ← waitFor 3000 (System.FilePath.pathExists job8)
     let (bgKillRc, _, _) ← e.cli #["kill", "w8"]
     let bgEnded ← jobEnds job8
     expect (started && bgKillRc == 0 && bgEnded) "kill ends the session's background jobs"
     let job9 := s!"{e.dir}/w9.job"
-    let _ ←
-      e.cli #["run", "w9", s!"exec sh -c \"trap '' HUP; sleep 600 & echo \\$! > {job9}; exit 37\""]
+    let _ ← e.typeIn "w9" #[s!"exec sh -c \"trap '' HUP; sleep 600 & echo \\$! > {job9}; exit 37\""]
     let (ownRc, _, _) ← e.cli #["wait", "w9"]
     let ownEnded ← jobEnds job9
     expect (ownRc == 37 && ownEnded)
@@ -387,7 +384,7 @@ def run : IO UInt32 :=
         (hasBytes lostBytes emptyTitle && lostHanded.windowTitle.isEmpty && lostHanded.atBoundary)
         "connection loss clears the title after a truncated OSC"
     lost.bye (sendDetach := false)
-    let _ ← e.cli #["run", "wait-lost", "sleep", "600"]
+    let _ ← e.typeIn "wait-lost" #["sleep", "600"]
     let waiter ←
       IO.Process.spawn
           { cmd := e.bin, args := #["wait", "wait-lost"], env := e.procEnv, stdout := .null,
@@ -468,7 +465,7 @@ def run : IO UInt32 :=
     -- second terminal, so attach passes its tty check and enters raw mode; closing that
     -- terminal's only master while attached makes the hand-back write fail. The shells
     -- publish each file the check waits for by rename, so a file that exists is complete.
-    let _ ← e.cli #["run", "raw-cleanup", "sleep", "600"]
+    let _ ← e.typeIn "raw-cleanup" #["sleep", "600"]
     let text (path : String) : IO String := return (← readText path).trimAscii.toString
     let outTty := s!"{e.dir}/raw-cleanup.out-tty"
     let (outPid, outFd) ←

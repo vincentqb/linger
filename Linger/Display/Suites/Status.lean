@@ -115,7 +115,7 @@ def run : IO UInt32 :=
     expect (emptyCode == 0 && empty.isEmpty) "empty attention summary prints nothing"
     -- a long-lived child, so nothing exits under us and the row stays classifiable
     -- as idle/wants-you rather than exited-ok
-    let _ ← e.cli #["run", "st", "sh", "-c", "sleep 60"]
+    let _ ← e.typeIn "st" #["sh", "-c", "sleep 60"]
     IO.sleep 1500
     -- 1. a session nobody has watched, that has produced output, is unread
     expect ((← e.status "st") == Status.wantsYou) "unwatched output reads wants-you"

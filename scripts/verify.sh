@@ -228,7 +228,7 @@ cleanup_sentinel() {
   [ ! -e "$sentinel_dir" ] || rm -r "$sentinel_dir"
 }
 trap cleanup_sentinel EXIT HUP TERM
-LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger run "$sentinel_name" sleep 600
+LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger start "$sentinel_name" sleep 600
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \
   || fail "sentinel session did not start"
 
@@ -240,7 +240,7 @@ say "4. live suites (separate processes, at most four at once)"
 # No suite shares an Env directory, and the runner waits for all of them on failure.
 ./.lake/build/bin/suites --suites \
   manager:128 delivery:37 attach:64 agent:63 \
-  resume:26 watch:50 title:18 graphics:9 robust:31 \
+  resume:27 watch:50 title:18 graphics:9 robust:31 \
   interop:72 recipes:58 status:18 terminal:12 overview:15 remote:68 identity:25 quiet:5 \
   || fail "live suites (see $logs/linger-*.out)"
 

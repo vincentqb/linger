@@ -79,7 +79,7 @@ private def Fixture.cwdIs (f : Fixture) (name : String) (dir : System.FilePath) 
 
 private def Fixture.start (f : Fixture) (name : String) (dir : System.FilePath) : IO Unit := do
   f.own name
-  let (code, _, err) ← f.cli #["run", name, "true"] (cwd := some dir)
+  let (code, _, err) ← f.cli #["start", name, "/bin/sh"] (cwd := some dir)
   unless code == 0 && (← f.cwdIs name dir) do
     throw (IO.userError s!"session did not start in {dir}: {name}: {err}")
 
@@ -532,7 +532,7 @@ private def topologyChange (f : Fixture) (remove : Bool) : IO Bool := do
 private def liveCwd (f : Fixture) : IO Bool := do
   setupRaw f
   let changed := f.root / "home"
-  let (code, _, _) ← f.cli #["run", "foreign-w7-p2", "cd", changed.toString]
+  let (code, _, _) ← f.cli #["send", "foreign-w7-p2", s!"cd {changed}\n"]
   return code == 0 && (← f.cwdIs "foreign-w7-p2" changed) &&
       (← f.exportFields "changed-cwd" [("foreign-w7-p2", changed.toString)])
 
@@ -562,7 +562,7 @@ private def resumableCwd (f : Fixture) : IO Bool := do
   f.start name (f.root / "home")
   let changed := f.root / "saved cwd"
   IO.FS.createDirAll changed
-  let (code, _, _) ← f.cli #["run", name, s!"cd '{changed}'"]
+  let (code, _, _) ← f.cli #["send", name, s!"cd '{changed}'\n"]
   unless code == 0 && (← f.cwdIs name changed) do
     throw (IO.userError "live fixture cwd did not change")
   let some shellPid ← f.pid name | throw (IO.userError "fixture shell pid is missing")
@@ -685,7 +685,7 @@ private def unrepresentableCwd (f : Fixture) : IO Bool := do
 private def discardedCommands (f : Fixture) : IO Bool := do
   setupRaw f
   let barrier := f.root / "barrier"
-  let (code, _, _) ← f.cli #["run", "foreign-w7-p2", s!"printf ready > '{barrier}'"]
+  let (code, _, _) ← f.cli #["send", "foreign-w7-p2", s!"printf ready > '{barrier}'\n"]
   let ready ←
     waitFor 5000 do
         return (← readBytes barrier) == some "ready".toUTF8
@@ -794,8 +794,8 @@ private def captureImport (f : Fixture) : IO Bool := do
         (fun key => f.info "captured-w3-p0" ("label." ++ key))
   let barrier := f.root / "shell-ready"
   let secondBarrier := f.root / "second-shell-ready"
-  let (ran, _, _) ← f.cli #["run", "captured-w3-p0", s!"printf ready > '{barrier}'"]
-  let (secondRan, _, _) ← f.cli #["run", "captured-w3-p1", s!"printf ready > '{secondBarrier}'"]
+  let (ran, _, _) ← f.cli #["send", "captured-w3-p0", s!"printf ready > '{barrier}'\n"]
+  let (secondRan, _, _) ← f.cli #["send", "captured-w3-p1", s!"printf ready > '{secondBarrier}'\n"]
   let ready ←
     waitFor 5000 do
         return (← readBytes barrier) == some "ready".toUTF8 &&

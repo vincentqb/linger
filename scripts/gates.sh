@@ -1169,7 +1169,7 @@ attach_words="$(code_grep '"attach"[[:space:]]*(,|[]]|::)' 'Linger/*/Shell.lean'
   || fail "noninteractive command lookup must not fuzzy-match or rewrite a name"
 code_grep '^[[:space:]]+Linger[.]Target[.]Remote[.]targetValid target = true ∧ target ∉ candidates := by$' Linger/Selector/Proofs/Picker.lean >/dev/null \
   || fail "selector creation and command arguments no longer share the target grammar"
-for verb in attach run start send detach kill info capture resize get set unset clear; do
+for verb in attach start resume send detach kill info capture resize get set unset clear; do
   code_grep "^[[:space:]]+withTarget \"$verb\" " Linger/App/Shell.lean >/dev/null \
     || fail "session command bypassed the common exact target boundary: $verb"
 done
@@ -1245,7 +1245,7 @@ done
 # is withLock or withSessionLock, one attempt each, and only the claim names a retrying
 # acquisition, so no reader can pass a retry by position. The Claim model reads each
 # failed attempt as an unchanged step. Linger.Session.Suites.Robust holds an offline capture's locks
-# while run starts the session, and checks that a claim finding both free logs no wait.
+# while resume starts the session, and checks that a claim finding both free logs no wait.
 code_grep '^private def claimWaitMs : Nat := [1-9][0-9]*$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "the startup claim must wait a positive, fixed time"
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])if [(]← monotonicMs[)] ≥ deadline then return false let live ← unixConnect sockPath if live ≥ 0 then close live[.]toUInt64[.]toUInt32 return false([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \

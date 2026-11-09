@@ -331,6 +331,9 @@ example (command : App.Commands.Command) (h : command.args.isEmpty = false) :
     App.Commands.usageLine command = s!"usage: linger {command.word} {command.args}" := by
   with_reducible exact App.Commands.usageLine_args command h
 
+example : ∀ entry ∈ App.Commands.retired, App.Commands.lookup entry.1 = none := by
+  with_reducible exact App.Commands.retired_free
+
 -- Starting a session
 example (live saved : Bool) :
     Session.Start.plan live saved = .take ↔ live = false ∧ saved = false := by

@@ -380,6 +380,29 @@ def Env.cliEnv (e : Env) (extra : Array (String × Option String)) (args : Array
 /-- `Env.cliEnv` with no extra environment. -/
 def Env.cli (e : Env) (args : Array String) : IO (UInt32 × String × String) := e.cliEnv #[] args
 
+/-- Type `words`, joined by spaces and ended with a newline, into session `name`'s shell under
+the extra environment `extra`: a saved session is resumed first, and when no session holds the
+name, a new one starts the shell `extra` names, else `/bin/sh`, in this directory. The status is
+that of the first command that failed, else `send`'s. -/
+def Env.typeInEnv (e : Env) (extra : Array (String × Option String)) (name : String)
+    (words : Array String) : IO (UInt32 × String × String) := do
+  let resumed ← e.cliEnv extra #["resume", name]
+  if resumed.1 == 127 then
+    let shell :=
+      match (extra.find? (·.1 == "SHELL")).bind (·.2) with
+      | some program => if program.isEmpty then "/bin/sh" else program
+      | none => "/bin/sh"
+    let started ← e.cliEnv extra #["start", name, shell]
+    if started.1 != 0 then
+      return started
+  else if resumed.1 != 0 then
+    return resumed
+  e.cliEnv extra #["send", name, String.intercalate " " words.toList ++ "\n"]
+
+/-- `Env.typeInEnv` with no extra environment. -/
+def Env.typeIn (e : Env) (name : String) (words : Array String) : IO (UInt32 × String × String) :=
+  e.typeInEnv #[] name words
+
 /-- `linger <args>` stdout only, for the common case. -/
 def Env.out (e : Env) (args : Array String) : IO String := do
   return (← e.cli args).2.1

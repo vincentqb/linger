@@ -285,7 +285,7 @@ def run : IO UInt32 :=
     let ptyPath : Array String :=
       #[s!"PATH={newPath}", s!"LINGER_REMOTE_ARGS={remoteArgs}",
         s!"LINGER_REMOTE_STDIN={remoteStdin}"]
-    let _ ← e.cliEnv procPath #["run", "localsess", "echo local-content"]
+    let _ ← e.typeInEnv procPath "localsess" #["echo local-content"]
     let tag := s!"{goodName}@{devHost}"
     try
       let (drc, _, derr) ← e.cliEnv procPath #["-r", s!"{devHost},{devHost}"]
@@ -378,7 +378,7 @@ def run : IO UInt32 :=
             "remote attach separates options from an option-like session name"
         literal.bye (sendDetach := false)
       for (verb, canonical, options, args) in
-        [("run", "run", [], words), ("r", "run", [], ["echo", "yes"]), ("send", "send", [], words),
+        [("start", "start", [], words), ("resume", "resume", [], []), ("send", "send", [], words),
           ("s", "send", [], ["two words"]), ("detach", "detach", [], []), ("kill", "kill", [], []),
           ("info", "info", [], []), ("capture", "capture", [], []), ("c", "capture", [], []),
           ("capture", "capture", ["--history"], []), ("c", "capture", ["--history"], []),

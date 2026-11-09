@@ -293,9 +293,16 @@ private def startChecks (e : Env) : IO Unit := do
         ({lockedRun.exitCode})"
   e.killAll #["st1"]
   let (runRc, _, runErr) ← e.cli #["run", "st-run", "true"]
-  expect (runRc == 0 && has runErr "deprecated" && has runErr "start" && has runErr "send")
-      "run says it is deprecated, and points to start and send"
-  e.killAll #["st-run"]
+  let (shortRc, _, shortErr) ← e.cli #["r", "st-run"]
+  let (infoRc, _, _) ← e.cli #["info", "st-run"]
+  expect
+      (runRc == 2 && shortRc == 2 && shortErr == runErr && has runErr "removed" &&
+        has runErr "start" &&
+        has runErr "resume" &&
+        has runErr "send" &&
+        infoRc == 127)
+      s!"run is removed: it returns 2, points to start, resume and send, and starts nothing \
+        ({runRc}, {shortRc}, {infoRc})"
 
 /-- An ended session is a result: it stays listed with how its program ended and what it left on
 the screen, `start` refuses its name, and `kill` discards it, after which `wait` still answers
@@ -369,7 +376,7 @@ def run : IO UInt32 :=
     checkInfo e "complete" none
     checkInfo e "empty" none
     -- ── Step 1: info ──────────────────────────────────────────────────────────
-    let _ ← e.cli #["run", "ag", "true"] -- upsert a headless session (default shell)
+    let _ ← e.typeIn "ag" #["true"] -- upsert a headless session (default shell)
     IO.sleep 1500
     let fresh := Linger.Session.bootVt none
     expect
@@ -382,7 +389,7 @@ def run : IO UInt32 :=
     expect ((num (← e.info "ag" "outseq")).isSome) "outseq is reported as a number"
     -- outseq moves when output happens — the change cursor
     let before := (num (← e.info "ag" "outseq")).getD 0
-    let _ ← e.cli #["run", "ag", "echo", "MOVED"]
+    let _ ← e.typeIn "ag" #["echo", "MOVED"]
     expect (← waitFor 4000 (return (num (← e.info "ag" "outseq")).getD 0 > before))
         "outseq increases after output"
     -- geometry follows an attached terminal. `Env.spawn` sets the winsize before
@@ -424,7 +431,7 @@ def run : IO UInt32 :=
     expect (serverRc == 0 && mrc == 1 && has merr "invalid response")
         "a malformed daemon response exits 1"
     -- ── Step 2: capture ───────────────────────────────────────────────────────
-    let _ ← e.cli #["run", "ag", "echo", "CAPTURED-MARKER"]
+    let _ ← e.typeIn "ag" #["echo", "CAPTURED-MARKER"]
     -- the command's own output line, then the prompt after it: the shell is idle
     -- again, so the capture below sees everything it printed. `--history` leaves
     -- attention alone for the seen check.
@@ -443,12 +450,12 @@ def run : IO UInt32 :=
         ((← e.info "ag" "unseen") == some (toString false) &&
           num (← e.info "ag" "behind") == some 0)
         "capture marks the session seen"
-    let _ ← e.cli #["run", "ag", "echo", "again"]
+    let _ ← e.typeIn "ag" #["echo", "again"]
     expect (← waitFor 4000 (return (← e.info "ag" "unseen") == some (toString true)))
         "output after a capture reads unseen again"
     -- capture is the screen, not the transcript: flood past one screen and the
     -- capture stays `rows` lines while history grows beyond it
-    let _ ← e.cli #["run", "ag", "seq", "1", "60"]
+    let _ ← e.typeIn "ag" #["seq", "1", "60"]
     let _ ←
       waitFor 4000 do
           return ((← e.out #["capture", "--history", "ag"]).splitOn "\n").length > rows + 1
@@ -483,7 +490,7 @@ def run : IO UInt32 :=
     -- environment is now refused rather than described: see the "SIGINT must be
     -- deliverable" check in `scripts/verify.sh`, which holds the probe, the measurement and
     -- the reasoning, and is the only copy of them.
-    let _ ← e.cli #["run", "ag", "sh -c 'echo RUN\"\"NING-NOW; sleep 100'"]
+    let _ ← e.typeIn "ag" #["sh -c 'echo RUN\"\"NING-NOW; sleep 100'"]
     expect
         (←
           waitFor 5000
@@ -492,7 +499,7 @@ def run : IO UInt32 :=
         "send - the foreground child is up (the ^C below has something to interrupt)"
     let _ ← sendStdin e "ag" "\x03"
     IO.sleep 500
-    let _ ← e.cli #["run", "ag", "echo", "INTER\"\"RUPTED-OK"]
+    let _ ← e.typeIn "ag" #["echo", "INTER\"\"RUPTED-OK"]
     expect
         (←
           waitFor 5000
@@ -503,7 +510,7 @@ def run : IO UInt32 :=
     expect ((← sendStdin e "nosuch" "x") == 127) "send - on a missing session exits 127"
     -- Keep stdin open and idle, then crash the daemon. The sender must observe the
     -- socket, not wait forever for producer EOF.
-    let _ ← e.cli #["run", "send-lost", "sleep", "600"]
+    let _ ← e.typeIn "send-lost" #["sleep", "600"]
     let sender0 ←
       IO.Process.spawn
           { cmd := e.bin, args := #["send", "send-lost", "-"], env := e.procEnv, stdin := .piped,
@@ -522,7 +529,7 @@ def run : IO UInt32 :=
         "send - exits 1 when the daemon dies while stdin is idle"
     e.killAll #["ag"]
     -- ── Step 4: resize ────────────────────────────────────────────────────────
-    let _ ← e.cli #["run", "rz", "true"]
+    let _ ← e.typeIn "rz" #["true"]
     let rzCols : UInt32 := 120
     let rzRows : UInt32 := 40
     let (rrc, _, _) ← e.cli #["resize", "rz", toString rzCols, toString rzRows]
@@ -536,7 +543,7 @@ def run : IO UInt32 :=
     -- the pty winsize followed too: the child's own stty sees it (SIGWINCH path).
     -- `stty size` prints rows then cols, so the expected string is built from the
     -- two numbers above rather than being a third copy of them.
-    let _ ← e.cli #["run", "rz", "stty", "size"]
+    let _ ← e.typeIn "rz" #["stty", "size"]
     expect (← waitFor 4000 (return has (← e.out #["capture", "rz"]) s!"{rzRows} {rzCols}"))
         "the child observes the new winsize (stty size: 40 120)"
     -- an attached client owns the size: refused, loudly, and nothing moves
@@ -567,21 +574,25 @@ def run : IO UInt32 :=
     expect ((← e.cli #["resize", "nosuch", "80", "24"]).1 == 127)
         "resize on a missing session exits 127"
     e.killAll #["rz"]
-    -- An empty or unset SHELL names no program: creation falls back to the default
-    -- shell (`shellOf_absent`). The harness sets SHELL for every other session.
+    -- An empty or unset SHELL names no program: a resume falls back to the default shell
+    -- (`shellOf_absent`). The harness sets SHELL for every other session.
     for (kind, shell) in [("empty", some ""), ("unset", none)] do
       let name := s!"shell-{kind}"
-      let created ←
+      let (startRc, _, _) ← e.cli #["start", name, "/bin/sh", "-c", "exit 0"]
+      let ended ← waitFor 5000 (return (← e.status name) == .exitedOk)
+      let resumed ←
         IO.Process.output
-            { cmd := e.bin, args := #["run", name, s!"echo {kind}-shell-$((40+2))"],
+            { cmd := e.bin, args := #["resume", name],
               env := #[("LINGER_DIR", some e.dir), ("SHELL", shell)] }
+      let (sendRc, _, _) ← e.cli #["send", name, s!"echo {kind}-shell-$((40+2))\n"]
       expect
-          (created.exitCode == 0 &&
+          (startRc == 0 && ended && resumed.exitCode == 0 && sendRc == 0 &&
             (←
               waitFor 5000
                   (do
                     return has (← e.out #["capture", name]) s!"{kind}-shell-42")))
-          s!"an {kind} SHELL still creates a session running the default shell"
+          s!"an {kind} SHELL still resumes a session running the default shell \
+            ({startRc}, {resumed.exitCode}, {sendRc})"
       e.killAll #[name]
 
 end Linger.Session.Suites.Agent

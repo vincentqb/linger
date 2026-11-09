@@ -26,7 +26,7 @@ state. -/
 def run : IO UInt32 :=
   Env.suite "identity" fun e => do
     try
-      let _ ← e.cli #["run", "a_b", "true"]
+      let _ ← e.typeIn "a_b" #["true"]
       let pid ← e.info "a_b" "pid"
       for name in ["a b", "a/b", "", ".hidden", String.ofList (List.replicate 81 'a')] do
         let (rc, _, _) ← e.cli #["info", name]
@@ -79,13 +79,13 @@ def run : IO UInt32 :=
       expect (badRc != 0 && badOut.isEmpty) "corrupt offline data fails without output"
       let host := Linger.Target.Name.sanitize (← gethostname)
       let checkpoint := s!"{e.dir}/state/linger/{host}/work.ckpt"
-      let (firstRc, _, _) ← e.cliEnv (splitEnv e 1) #["run", "work", "true"]
+      let (firstRc, _, _) ← e.typeInEnv (splitEnv e 1) "work" #["true"]
       let saved ← waitFor 3000 (System.FilePath.pathExists checkpoint)
       let first := records (← e.cliEnv (splitEnv e 1) #["info", "work"]).2.1
       let firstPid := first.find? (·.1 == "pid")
       expect (firstRc == 0 && saved && firstPid.isSome)
           "first runtime owns a live session and its checkpoint"
-      let (secondRc, _, _) ← e.cliEnv (splitEnv e 2) #["run", "work", "true"]
+      let (secondRc, _, _) ← e.cliEnv (splitEnv e 2) #["resume", "work"]
       expect (secondRc != 0) "another runtime directory cannot claim the same saved session"
       let (offlineRc, offlineOut, _) ← e.cliEnv (splitEnv e 2) #["capture", "--history", "work"]
       expect (offlineRc != 0 && offlineOut.isEmpty)
@@ -103,7 +103,7 @@ def run : IO UInt32 :=
             (← System.FilePath.pathExists checkpoint))
           "commands in the other runtime cannot delete the live owner's saved state"
       let isolated := isolatedEnv e
-      let (isolatedRc, _, _) ← e.cliEnv isolated #["run", "work", "true"]
+      let (isolatedRc, _, _) ← e.typeInEnv isolated "work" #["true"]
       let separate := records (← e.cliEnv isolated #["info", "work"]).2.1
       let separatePid := separate.find? (·.1 == "pid")
       expect (isolatedRc == 0 && separatePid.isSome && separatePid != firstPid)
@@ -116,7 +116,7 @@ def run : IO UInt32 :=
       let released ←
         waitFor 3000 do
             return !(← System.FilePath.pathExists s!"{e.dir}/r1/linger/work.sock")
-      let (handoffRc, _, _) ← e.cliEnv (splitEnv e 2) #["run", "work", "true"]
+      let (handoffRc, _, _) ← e.typeInEnv (splitEnv e 2) "work" #["true"]
       let successor := records (← e.cliEnv (splitEnv e 2) #["info", "work"]).2.1
       expect
           (released && handoffRc == 0 && (successor.find? (·.1 == "pid")).isSome &&

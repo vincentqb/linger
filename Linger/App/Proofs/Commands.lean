@@ -13,6 +13,9 @@ namespace Linger.App.Commands
 word. -/
 theorem words_nodup : words.Nodup := by decide
 
+/-- A removed command's words name no command. -/
+theorem retired_free : ∀ entry ∈ retired, lookup entry.1 = none := by decide
+
 /-- Every command answers to its word, -/
 theorem lookup_word : ∀ command ∈ table, lookup command.word = some command := by decide
 

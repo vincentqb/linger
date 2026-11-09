@@ -672,8 +672,8 @@ private def usageChecks (e : Env) : IO Unit := do
           [err, shortErr, helpErr, hErr].all String.isEmpty &&
           out.endsWith "\n" &&
           rows.map (fun line => (line.splitOn " ").headD "") ==
-            ["attach", "ls", "tmux", "run", "start", "resume", "send", "detach", "kill", "info",
-              "capture", "resize", "wait", "get", "set", "unset", "clear", "version", "help"] &&
+            ["attach", "ls", "tmux", "start", "resume", "send", "detach", "kill", "info", "capture",
+              "resize", "wait", "get", "set", "unset", "clear", "version", "help"] &&
           rows.all
             (fun line =>
               line == line.trimAscii.toString &&
@@ -699,7 +699,8 @@ private def usageChecks (e : Env) : IO Unit := do
       for args in
         [#["work"], #["--unknown"], #["--help", "extra"], #["-h", "extra"], #["help", "extra"],
           #["ls", "--unknown"], #["select"], #["status"], #["--summary"], #["watch", "work"],
-          #["history", "work"], #["hi", "work"], #["attach", "--unknown"], #["attach", "--"],
+          #["history", "work"], #["hi", "work"], #["run", "work", "true"], #["r", "work"],
+          #["attach", "--unknown"], #["attach", "--"],
           #["attach", "--read-only", "work", "/bin/sh"], #["capture", "--unknown"],
           #["capture", "--"], #["capture", "--history"], #["capture", "--history", "work", "extra"],
           #["capture", "work", "--history"], #["ls", "--summary", "--porcelain"],
@@ -1873,7 +1874,7 @@ private def realCheck (e : Env) : IO Unit := do
           let create ←
             withLaunchLock <|
                 IO.Process.spawn
-                  { cmd := e.bin, args := #["run", name, "true"], env := f.env, stdin := .null,
+                  { cmd := e.bin, args := #["start", name, "/bin/sh"], env := f.env, stdin := .null,
                     stdout := .piped, stderr := .piped }
           let rc ← waitChild create 5000
           if rc != 0 then
@@ -2254,7 +2255,7 @@ private def savedChecks (e : Env) : IO Unit := do
         return false
       f.listing catalog
       let seeded := { f with cwd := some dir }
-      let (created, _, _) ← seeded.piped #["run", "saved-chosen", "true"]
+      let (created, _, _) ← seeded.piped #["start", "saved-chosen", "/bin/sh"]
       unless created == 0 do
         return false
       let some oldPid := (← withLaunchLock (owned.info "saved-chosen" "pid")).bind String.toNat?
@@ -2327,16 +2328,19 @@ private def savedChecks (e : Env) : IO Unit := do
               s!"repointed-catalog={changed}\nrefreshed={refreshed}\nterminal-restored={clean}\nnames={repr names}\n"
           return changed && refreshed && clean && names.isEmpty
 
+/-- Start session `name` running a shell, and the session program probe in it, so Ctrl-C ends the
+probe and returns to the shell. -/
 private def startProgram (f : Fixture) (owned : Env) (name : String) : IO Bool := do
-  let child ←
-    withLaunchLock <|
-        IO.Process.spawn
-          { cmd := owned.bin,
-            args := #["run", name, s!"{quote f.self} --manager-probe session-program"],
-            env := f.env, stdin := .null, stdout := .piped, stderr := .piped }
-  let rc ← waitChild child 5000
-  if rc != 0 then
-    throw (IO.userError s!"session program launch failed: {← child.stderr.readToEnd}")
+  let probe := s!"{quote f.self} --manager-probe session-program\n"
+  for args in [#["start", name, "/bin/sh"], #["send", name, probe]] do
+    let child ←
+      withLaunchLock <|
+          IO.Process.spawn
+            { cmd := owned.bin, args, env := f.env, stdin := .null, stdout := .piped,
+              stderr := .piped }
+    let rc ← waitChild child 5000
+    if rc != 0 then
+      throw (IO.userError s!"session program launch failed: {← child.stderr.readToEnd}")
   return ←
       waitFor 5000 do
           return (← numberFile (f.root / "session-program-pid")) > 0 &&

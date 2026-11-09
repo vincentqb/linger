@@ -300,7 +300,7 @@ def run : IO UInt32 :=
     let marker := ((System.FilePath.mk e.dir) / "fish-command-ran").toString
     let fishEnv : Array (String × Option String) :=
       #[("SHELL", some fish), ("TERM", some "inherited-fish-term")]
-    let _ ← e.cliEnv fishEnv #["run", "fish-regression", "printf", "ok", ">", marker]
+    let _ ← e.typeInEnv fishEnv "fish-regression" #["printf", "ok", ">", marker]
     expect (← waitFor 6000 (System.FilePath.pathExists marker))
         "fish regression: detached command executes before attach"
     let _ ← e.cliEnv fishEnv #["kill", "fish-regression"]

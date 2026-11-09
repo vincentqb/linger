@@ -7,7 +7,8 @@ public section
 **One command table.** Every command the CLI accepts is one row here: the word that names it, its
 other spellings, the arguments it takes and what it does. `linger help` prints the table
 (`helpText`), a usage error quotes its command's row (`usageLine`), and no two commands share a
-word (`words_nodup`), so each word means one command. -/
+word (`words_nodup`), so each word means one command. A removed command's words name none and say
+what to use instead (`retired`). -/
 
 namespace Linger.App.Commands
 
@@ -30,8 +31,6 @@ def table : List Command :=
     { word := "ls", aliases := ["list", "l"], args := "[-r [hosts]] [--summary|--porcelain]",
       summary := "List sessions or attention counts" },
     { word := "tmux", args := "<command> [SAVE]", summary := "Saved tmux panes; see tmux help" },
-    { word := "run", aliases := ["r"], args := "<name> <command...>",
-      summary := "Deprecated: type into a shell; use start, send" },
     { word := "start", args := "<name> <program> [args...]",
       summary := "Start a program, exactly, in a new session" },
     { word := "resume", args := "<name>",
@@ -54,6 +53,14 @@ def table : List Command :=
     { word := "clear", aliases := ["cl"], args := "<name>", summary := "Remove all labels" },
     { word := "version", aliases := ["v"], args := "", summary := "Print version and state paths" },
     { word := "help", aliases := ["h", "--help", "-h"], args := "", summary := "Show commands" }]
+
+/-- Words of removed commands, each with what to use instead. A removed word names no command
+(`retired_free`), so it never comes back meaning something else. -/
+def retired : List (String × String) :=
+  let run :=
+    "use start to run a program in a new session, resume to run a saved session's program \
+      again, or send to type into a session"
+  [("run", run), ("r", run)]
 
 /-- Every word a command answers to: each command's word, then its other spellings. -/
 def words : List String := table.flatMap fun command => command.word :: command.aliases

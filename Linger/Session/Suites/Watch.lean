@@ -322,7 +322,7 @@ def run : IO UInt32 :=
     obs2.bye
     expect (← waitFor 4000 (return (← e.status "w") != Status.wantsYou))
         "watching marks the session seen (a read-only verb that writes)"
-    let _ ← e.cli #["run", "watch-lost", "sleep", "600"]
+    let _ ← e.typeIn "watch-lost" #["sleep", "600"]
     let lost ← e.spawn #["attach", "--read-only", "watch-lost"] 80 24
     let _ ← waitFor 4000 (return (← e.info "watch-lost" "clients") == some "1")
     let _ ← drain lost.fd 300

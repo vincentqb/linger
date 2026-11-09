@@ -21,7 +21,7 @@ public section
 
 /-! # Linger.App.Shell — session argv dispatch
 
-Verb surface: attach and run create if needed; read-only attach and capture also
+Verb surface: attach creates if needed; read-only attach and capture also
 read offline checkpoints. Every session verb accepts an exact name or name@host.
 `Main` routes terminal selection and import before
 entering this session backend. Bare invocation reaches help; `ls` prints an
@@ -45,6 +45,12 @@ status 2. -/
 private def usageError (word : String) : IO UInt32 := do
   if let some command := Linger.App.Commands.lookup word then
     IO.eprintln (Linger.App.Commands.usageLine command)
+  return 2
+
+/-- A removed command's word: what to use instead (`Commands.retired`), and exit status 2. -/
+private def retiredCommand (word : String) : IO UInt32 := do
+  if let some advice := Linger.App.Commands.retired.lookup word then
+    IO.eprintln s!"linger: {word} was removed: {advice}"
   return 2
 
 /-- What `linger help` prints after the commands: the seven statuses a session can show, which
@@ -218,12 +224,24 @@ private def serveResume (report name cwd : String) : IO Unit := do
         tell (.failed 125 err.toString.toUTF8.toList)
     throw err
 
-/-- `resume`'s status for its daemon's report: 0 once the program runs again or when a live session
-already runs it; 127, as for a session that does not exist, when no session holds the name; and
-for a saved session that cannot be read or a program that cannot start, 1 or what a shell or
-`env` reports. A report that is no report is linger's own failure, 125. -/
+/-- A resumed session whose directory is gone runs in `$HOME`: say where it runs and where it was
+saved, from its info fields start_dir and saved_dir. -/
+private def sayMoved (name : String) : IO Unit := do
+  if let some (.ok info)← queryInfo name then
+    if let some saved := info.lookup "saved_dir" then
+      let ran := (info.lookup "start_dir").getD "$HOME"
+      IO.eprintln s!"linger: session '{name}' resumed in {ran}: its directory {saved} is gone"
+
+/-- `resume`'s status for its daemon's report: 0 once the program runs again, saying where when its
+directory is gone, or when a live session already runs it; 127, as for a session that does not
+exist, when no session holds the name; and for a saved session that cannot be read or a program
+that cannot start, 1 or what a shell or `env` reports. A report that is no report is linger's own
+failure, 125. -/
 private def resumeStatus (name : String) : Option Linger.Session.Start.Report → IO UInt32
-  | some .started | some .running => return 0
+  | some .started => do
+    sayMoved name
+    return 0
+  | some .running => return 0
   | some (.failed 127 _) => noSession name
   | some (.failed status why) => do
     IO.eprintln s!"linger: session '{name}' did not resume: {Client.replyText "no reason" why}"
@@ -285,11 +303,7 @@ private def connectUpsert (name : String) (cmd : List String) : IO UInt32 := do
       fdOpt ← Client.connect name
     match fdOpt with
     | some fd =>
-      -- a resume whose directory is gone runs in $HOME, and says where it was saved
-      if let some (.ok info)← queryInfo name then
-        if let some saved := info.lookup "saved_dir" then
-          let ran := (info.lookup "start_dir").getD "$HOME"
-          IO.eprintln s!"linger: session '{name}' resumed in {ran}: its directory {saved} is gone"
+      sayMoved name
       return fd
     | none =>
       let log ← Paths.logPath name
@@ -310,7 +324,9 @@ private def runTarget (verb : String) (target : Linger.Target.Remote.Target) (ar
     (localAction : String → IO UInt32) (options : List String := []) : IO UInt32 := do
   let interactive := verb == "attach"
   if interactive && (!(← stdinIsTty) || !(← (← IO.getStdout).isTty)) then
-    throw (IO.userError s!"{verb} needs terminal input and output (use `run`/`send` for scripting)")
+    throw
+        (IO.userError
+          s!"{verb} needs terminal input and output (use `start`, `resume` or `send` for scripting)")
   match target.host with
   | none =>
     localAction target.name
@@ -948,21 +964,8 @@ def main (args : List String) : IO UInt32 := do
     withTarget "start" name argv (cmdStart · argv)
   | "attach" :: rest | "a" :: rest =>
     attachArgs rest
-  | "run" :: name :: cmd | "r" :: name :: cmd =>
-    if cmd.isEmpty then
-      return ← usageError "run"
-    withTarget "run" name cmd fun name => do
-        -- the shell it types into reinterprets the words, and the shell is the session's program
-        IO.eprintln
-            "linger: run is deprecated and will be removed: it types its words into the session's \
-            shell. Use start to run a program in a new session, resume to run a saved one's again, \
-            or send to type into a session."
-        let fd ← connectUpsert name []
-        try
-          Client.sendMsg fd (.input (String.intercalate " " cmd ++ "\n").toUTF8.toList)
-          return 0
-        finally
-          close fd
+  | "run" :: _ | "r" :: _ =>
+    retiredCommand "run"
   | "send" :: name :: text | "s" :: name :: text =>
     if text.isEmpty then
       return ← usageError "send"

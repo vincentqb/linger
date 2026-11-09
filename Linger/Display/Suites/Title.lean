@@ -5,7 +5,6 @@ import Linger.Terminal.Mediation
 import Linger.Terminal.Title
 import Linger.Display.Title
 import Linger.Session.Shell.Client
-import Linger.Target.Remote
 
 public section
 
@@ -146,9 +145,7 @@ private def since (s : Receiver) (start : Nat) : ByteArray := s.bytes.extract st
 
 private def startProbe (e : Env) (name : String) : IO Bool := do
   let self ← IO.appPath
-  let (code, _, _) ←
-    e.cliEnv #[("ENV", none), ("BASH_ENV", none)]
-        #["run", name, s!"exec {Linger.Target.Remote.shellQuote self.toString} --title-probe"]
+  let (code, _, _) ← e.cli #["start", name, self.toString, "--title-probe"]
   let ready ←
     waitFor 4000 do
         return has (← e.out #["capture", name]) "TITLE-READY"

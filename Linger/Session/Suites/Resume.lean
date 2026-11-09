@@ -69,13 +69,12 @@ private def scaleChecks (e : Env) : IO Unit := do
   let name := "scale"
   let (fillBudget, captureBudget, replayBudget, saveBudget) := scaleBudgetMs
   try
-    let _ ← e.cli #["run", name, "true"]
+    let _ ← e.typeIn name #["true"]
     let _ ← e.cli #["resize", name, "200", "50"]
     let start ← Linger.Os.Shell.monotonicMs
     let _ ←
-      e.cli
-          #["run", name,
-            "awk 'BEGIN { for (i = 0; i < 10050; i++) { s = \"\"; for (j = 0; j < 20; j++) s = s sprintf(\"%09d \", 20 * i + j); print s } }'; echo SCALE-$((40+2))"]
+      e.typeIn name
+          #["awk 'BEGIN { for (i = 0; i < 10050; i++) { s = \"\"; for (j = 0; j < 20; j++) s = s sprintf(\"%09d \", 20 * i + j); print s } }'; echo SCALE-$((40+2))"]
     let filled ← waitFor fillBudget (return has (← e.out #["capture", name]) "SCALE-42")
     let fillMs := (← Linger.Os.Shell.monotonicMs) - start
     let start ← Linger.Os.Shell.monotonicMs
@@ -131,13 +130,13 @@ private def directoryChecks (e : Env) : IO Unit := do
     IO.FS.writeBinFile s!"{e.dir}/{name}.ckpt"
       (Linger.Session.Checkpoint.saveBytes ⟨Linger.Terminal.Vt.Vt.init 40 5, dir, []⟩)
   save "rk" kept
-  let (keptRc, _, _) ← e.cliEnv #[("HOME", some home)] #["run", "rk", "true"]
+  let (keptRc, _, _) ← e.cliEnv #[("HOME", some home)] #["resume", "rk"]
   expect
       (keptRc == 0 && (← e.info "rk" "start_dir") == some kept &&
         (← e.info "rk" "saved_dir").isNone)
       "a resume runs in its saved directory"
   save "rm" gone
-  let (movedRc, _, movedErr) ← e.cliEnv #[("HOME", some home)] #["run", "rm", "true"]
+  let (movedRc, _, movedErr) ← e.cliEnv #[("HOME", some home)] #["resume", "rm"]
   expect
       (movedRc == 0 && has movedErr s!"resumed in {home}" &&
         (← e.info "rm" "start_dir") == some home &&
@@ -146,7 +145,7 @@ private def directoryChecks (e : Env) : IO Unit := do
   let mut refused := true
   for (name, value) in [("ru", none), ("re", some "")] do
     save name gone
-    let (rc, _, _) ← e.cliEnv #[("HOME", value)] #["run", name, "true"]
+    let (rc, _, _) ← e.cliEnv #[("HOME", value)] #["resume", name]
     refused :=
       refused && rc != 0 && (← e.info name "pid").isNone &&
         (← System.FilePath.pathExists s!"{e.dir}/{name}.ckpt")
@@ -291,18 +290,29 @@ def run : IO UInt32 :=
     -- 0xFF — all continuation bytes, so it runs off the end of the list and `load`
     -- is `none` for certain. A random body is a random branch, and a flake here
     -- would be unreproducible.
-    IO.FS.writeBinFile s!"{e.dir}/corrupt.ckpt"
-        (ByteArray.mk
-          (Linger.Session.Checkpoint.magic ++ [80, 24] ++
-              List.replicate 198 (0xFF : UInt8)).toArray)
-    let _ ← e.cli #["run", "corrupt", "echo fresh-start-ok"]
+    let corrupt := Linger.Session.Checkpoint.magic ++ [80, 24] ++ List.replicate 198 (0xFF : UInt8)
+    IO.FS.writeBinFile s!"{e.dir}/corrupt.ckpt" (ByteArray.mk corrupt.toArray)
+    -- a resume runs a saved session's program again or nothing, so it refuses what it cannot
+    -- read and leaves it where it is
+    let (refusedRc, _, refusedErr) ← e.cli #["resume", "corrupt"]
+    let kept ← (IO.FS.readBinFile s!"{e.dir}/corrupt.ckpt").toBaseIO
+    expect
+        (refusedRc == 1 && has refusedErr "cannot be read" &&
+          kept.toOption.map (·.toList) == some corrupt &&
+          (← e.info "corrupt" "pid").isNone)
+        s!"corrupt checkpoint: resume refuses it and leaves it (rc={refusedRc})"
+    -- …while attach starts fresh
+    let fresh ← e.spawn #["attach", "corrupt"] cols rows
+    let _ ← waitFor 4000 (return (← e.info "corrupt" "clients") == some "1")
+    fresh.type "echo fresh-start-$((40+2))\r"
     expect
         (←
-          waitFor 4000 (return has (← e.out #["capture", "--history", "corrupt"]) "fresh-start-ok"))
-        "corrupt checkpoint: daemon starts fresh, no crash"
+          waitFor 4000 (return has (← e.out #["capture", "--history", "corrupt"]) "fresh-start-42"))
+        "corrupt checkpoint: attach starts fresh, no crash"
+    fresh.bye
     e.killAll #["corrupt"]
     -- ── the resumed pty is born at the CHECKPOINT's size, not a fixed 80x24 ────
-    -- Measured with NO sizing attach: `run` sends only `.input`, never `.attach`,
+    -- Measured with NO sizing attach: `resume` and `send` never send `.attach`,
     -- so nothing reconciles the pty with the restored Vt. With an attach the
     -- assertion passes either way (`.resizePty` fixes the winsize in
     -- milliseconds), which is the version of this test that cannot fail.
@@ -329,7 +339,7 @@ def run : IO UInt32 :=
     -- already a Lean child probe for the terminal suite, so reuse it rather than
     -- embedding a second-language ioctl script.
     let probe ← IO.appPath
-    let _ ← e.cli #["run", "geom", probe.toString, "--winsize-probe", sizePath]
+    let _ ← e.typeIn "geom" #[probe.toString, "--winsize-probe", sizePath]
     -- `writeFile` creates the file before it writes, so wait for its contents
     let _ ←
       waitFor 5000 do
@@ -372,24 +382,33 @@ def run : IO UInt32 :=
         s!"checkpoint save failure is reported without killing the daemon (pid={savePid}, log='{saveLog}')"
     IO.FS.removeDirAll saveTmp
     e.killAll #["save-fail"]
-    -- Existing but unreadable recovery state is not equivalent to no checkpoint. Its
-    -- daemon exits, so the client gives up after the 3 s floor, long before the 30 s cap.
+    -- Existing but unreadable recovery state is not equivalent to no checkpoint. A resume
+    -- says why at once. An attach's daemon exits, so the client gives up after the 3 s floor,
+    -- long before the 30 s cap.
     let readPath := s!"{e.dir}/read-fail.ckpt"
     IO.FS.createDirAll readPath
     let readStart ← Linger.Os.Shell.monotonicMs
-    let readRun ← e.cliTimeout #["run", "read-fail", "echo", "must-not-start"] 10000
+    let readResume ← e.cliTimeout #["resume", "read-fail"] 10000
+    let reader ← e.spawn #["attach", "read-fail"] cols rows
+    let readOut ← IO.mkRef ByteArray.empty
+    let gaveUp ← reader.awaitText readOut (hasText · "see ") (ms := 10000)
+    let readRc ← reader.reap 1000
+    reader.bye (sendDetach := false)
     let readMs := (← Linger.Os.Shell.monotonicMs) - readStart
     let readSockets ← e.dirNames ".sock"
     let readLog ← e.log "read-fail"
     expect
-        (readRun.any (fun (rc, _, err) => rc == 1 && has err "see ") &&
+        (readResume.any (fun (rc, _, err) => rc == 125 && has err "checkpoint read failed") &&
+          gaveUp &&
+          readRc == 1 &&
           has readLog "checkpoint read failed" &&
           !readSockets.contains "read-fail.sock")
-        s!"checkpoint read failure is visible, does not start fresh and ends within 10 s ({readMs} ms)"
+        s!"checkpoint read failure is visible, does not start fresh and ends within 10 s \
+          ({readResume.map (·.1)}, {readRc}, {readMs} ms)"
     e.killAll #["read-fail"]
     IO.FS.removeDirAll readPath
     -- A daemon that holds its locks but needs longer than the 3 s floor to listen still
-    -- serves the client that started it; a FIFO checkpoint holds its load for 4 s.
+    -- serves the attach that started it; a FIFO checkpoint holds its load for 4 s.
     let slowPath := s!"{e.dir}/slow.ckpt"
     let made ← IO.Process.output { cmd := "mkfifo", args := #[slowPath] }
     let release ←
@@ -397,15 +416,17 @@ def run : IO UInt32 :=
           { cmd := "sh", args := #["-c", s!"sleep 4; printf not-a-checkpoint > '{slowPath}'"],
             stdin := .null, stdout := .null, stderr := .null }
     let slowStart ← Linger.Os.Shell.monotonicMs
-    let (slowRc, _, slowErr) ← e.cli #["run", "slow", "true"]
+    let slow ← e.spawn #["attach", "slow"] cols rows
+    let attached ← waitFor 10000 (return (← e.info "slow" "clients") == some "1")
     let slowMs := (← Linger.Os.Shell.monotonicMs) - slowStart
     let _ ← waitOrKill release 10000
-    expect (made.exitCode == 0 && slowRc == 0 && slowMs ≥ 3000)
-        s!"a daemon slower than the 3 s window to listen still connects (rc={slowRc}, {slowMs} ms, {slowErr})"
+    slow.bye
+    expect (made.exitCode == 0 && attached && slowMs ≥ 3000)
+        s!"a daemon slower than the 3 s window to listen still connects ({slowMs} ms)"
     e.killAll #["slow"]
     -- Delete failure is observable in the daemon log instead of silently leaving
     -- recovery state behind.
-    let _ ← e.cli #["run", "drop-fail", "sleep", "600"]
+    let _ ← e.typeIn "drop-fail" #["sleep", "600"]
     let dropPath := s!"{e.dir}/drop-fail.ckpt"
     try
       IO.FS.removeFile dropPath

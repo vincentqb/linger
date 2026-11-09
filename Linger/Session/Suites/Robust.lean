@@ -33,7 +33,7 @@ WHAT COULD NOT BE MADE STRUCTURAL: counting daemons needs a process enumeration,
 and `Env.daemonPid` cannot do it — it asks over `<LINGER_DIR>/<name>.sock`, so it
 returns at most one pid by construction and counting its answers would be vacuous.
 This suite instead makes the session NAME unique to the run (`claim-<pid>`), so a
-`ps` scan for `__daemon claim-<pid>` cannot see a real session of the developer's
+`ps` scan for the daemons of `claim-<pid>` cannot see a real session of the developer's
 own — no `/proc`, no `lsof`, no platform split. -/
 
 namespace Linger.Session.Suites.Robust
@@ -48,7 +48,7 @@ open Linger.Session.Shell.Daemon (outbufCap ptyInCap claimWaitLine)
 /-- `ps -eo pid,ppid,args` as (pid, ppid, whole-line) triples.
 
 `-ww` because the daemon's argv begins with an absolute binary path (~49 bytes
-here) and `__daemon <name>` lands past column 60: macOS `ps` truncates to 80
+here) and the session name lands past column 60: macOS `ps` truncates to 80
 columns even into a pipe, which would cut the name off the end of the line. If a
 `ps` did reject `-ww` the table comes back empty and the counts below FAIL rather
 than pass — fail-closed. -/
@@ -218,14 +218,14 @@ private def hostileInput (e : Env) : IO Unit := do
   let name := "hostile"
   let (writeBudget, infoBudget) := hostileBudgetMs
   try
-    let _ ← e.cli #["run", name, "true"]
+    let _ ← e.typeIn name #["true"]
     let _ ← e.cli #["resize", name, "1000", "1000"]
     let counts :=
       String.join (["S", "T", "I", "Z", "@", "L", "M", "P", "X"].map (s!"\\033[65535{·}"))
     let tabs := s!"{e.dir}/hostile-tabs"
     IO.FS.writeFile tabs (String.join (List.replicate 200 "\x1b[999I\x1b[999Z"))
     let start ← Linger.Os.Shell.monotonicMs
-    let _ ← e.cli #["run", name, s!"printf '{counts}'; cat {tabs}; echo HOSTILE-$((40+2))"]
+    let _ ← e.typeIn name #[s!"printf '{counts}'; cat {tabs}; echo HOSTILE-$((40+2))"]
     let written ← waitFor writeBudget (return has (← e.out #["capture", name]) "HOSTILE-42")
     let writeMs := (← Linger.Os.Shell.monotonicMs) - start
     let raw ← Linger.Os.Shell.unixConnect s!"{e.dir}/{name}.sock"
@@ -273,7 +273,7 @@ connection is answered after every frame before it, and the daemon makes fewer t
 private def inputBurst (e : Env) : IO Unit := do
   let name := "input-burst"
   try
-    let _ ← e.cli #["run", name, "stty raw -echo; echo BURST-$((40+2)); exec cat > /dev/null"]
+    let _ ← e.typeIn name #["stty raw -echo; echo BURST-$((40+2)); exec cat > /dev/null"]
     let reading ← waitFor 3000 (return has (← e.out #["capture", name]) "BURST-42")
     let raw ← Linger.Os.Shell.unixConnect s!"{e.dir}/{name}.sock"
     unless raw ≥ 0 do
@@ -378,7 +378,7 @@ def slowSave (e : Env) : IO Unit := do
 def run : IO UInt32 :=
   Env.suite "robust" fun e => do
     -- ── 1. busy daemon still lists correctly ──────────────────────────────────
-    let _ ← e.cli #["run", "busy", "echo hi"]
+    let _ ← e.typeIn "busy" #["echo hi"]
     -- captured while the daemon is still HEALTHY, before the SIGSTOP: `info` has to
     -- be answered for `Env.daemonPid` to work. Aborts rather than printing a check:
     -- with no pid there is nothing below this line left to mean anything.
@@ -417,23 +417,29 @@ def run : IO UInt32 :=
     -- own session of the same name (see the module docstring), the same trick
     -- `Env.make` already uses for the directory.
     let claim := s!"claim-{← Linger.Os.Shell.getpid}"
-    let _ ← e.cli #["run", claim, "echo one"]
+    let _ ← e.typeIn claim #["echo one"]
+    -- a crashed session is a saved one only once its checkpoint is on disk
+    unless (← waitFor 3000 (System.FilePath.pathExists s!"{e.dir}/{claim}.ckpt")) do
+      throw (IO.userError s!"daemon for '{claim}' saved no checkpoint")
     unless (← e.crashDaemon claim) do
       throw (IO.userError s!"daemon for '{claim}' did not crash")
     let stale ← e.dirNames ".sock"
     expect (stale == [s!"{claim}.sock"]) s!"stale socket present for the race ({stale})"
-    -- eight concurrent `run <name>`, spawned before any is waited on
+    -- eight concurrent `resume <name>`, spawned before any is waited on
     let cfg : IO.Process.SpawnArgs :=
-      { cmd := e.bin, args := #["run", claim, "echo two"], env := e.procEnv, stdin := .null,
-        stdout := .null, stderr := .null }
+      { cmd := e.bin, args := #["resume", claim], env := e.procEnv, stdin := .null, stdout := .null,
+        stderr := .null }
     let kids ← (List.range 8).mapM fun _ => IO.Process.spawn cfg
     for k in kids do
       let _ ← k.wait
-    -- The daemons serving `claim` and the shells they started, from one `ps` read.
+    -- The daemons serving `claim`, whichever command started them, and the shells they
+    -- started, from one `ps` read.
     let census : IO (Nat × Nat) := do
       let ps ← psTable
       let owners :=
-        ps.filterMap fun (pid, _, args) => if has args s!"__daemon {claim}" then some pid else none
+        ps.filterMap fun (pid, _, args) =>
+          if has args claim && ["__daemon ", "__start ", "__resume "].any (has args ·) then some pid
+          else none
       let shells := ps.filter fun (_, ppid, args) => owners.contains ppid && has args "/bin/sh"
       return (owners.length, shells.length)
     let _ ← waitFor 5000 (return (← census) == (1, 1))
@@ -460,7 +466,7 @@ def run : IO UInt32 :=
     -- the lock must be re-acquirable once the owner is gone (kernel released it). The old
     -- daemon unlinks its socket before it releases its locks and exits, so `ps` can list
     -- both daemons for a moment.
-    let (rerun, _, _) ← e.cli #["run", claim, "echo three"]
+    let (rerun, _, _) ← e.typeIn claim #["echo three"]
     expect (rerun == 0 && (← waitFor 4000 (return (← census).1 == 1)))
         "name is re-claimable after the owner exits (no stale lock)"
     e.killAll #[claim]
@@ -476,7 +482,7 @@ def run : IO UInt32 :=
     -- 3 s), because the BSD tty layer discards an over-long canonical line instead
     -- of pushing back, so `ptyIn` never grew and the cap never tripped. With lines
     -- it is EAGAIN after ~1 KB, as on Linux.
-    let _ ← e.cli #["run", "stall", "echo STALL-$((40+2)); exec sleep 600"]
+    let _ ← e.typeIn "stall" #["echo STALL-$((40+2)); exec sleep 600"]
     let _ ← waitFor 3000 (return has (← e.out #["capture", "stall"]) "STALL-42")
     -- only whether a daemon answers matters here, not its pid
     let sp ← e.daemonPid "stall"
@@ -616,7 +622,7 @@ def run : IO UInt32 :=
     -- ── 8. cancelling an unread reply cannot kill the session ────────────────
     let resetName := "peer-reset"
     try
-      let _ ← e.cli #["run", resetName, "true"]
+      let _ ← e.typeIn resetName #["true"]
       let initialPid ← e.info resetName "pid"
       let raw ← Linger.Os.Shell.unixConnect s!"{e.dir}/{resetName}.sock"
       unless raw ≥ 0 do
@@ -645,18 +651,18 @@ def run : IO UInt32 :=
       e.killAll #[resetName]
     -- ── 9. a starting daemon waits out an offline reader ───────────────────────
     -- A daemon that finds both locks free logs no wait. It claims them before it
-    -- listens on the socket `run` waits for, so the log is complete when `run` returns.
+    -- reports to `start`, so the log is complete when `start` returns.
     let free := "free-claim"
     try
-      let (code, _, _) ← e.cli #["run", free, "true"]
+      let (code, _, _) ← e.typeIn free #["true"]
       let log ← e.log free
       let shown := log.trimAscii.toString.replace "\n" "; "
       expect (code == 0 && !has log (claimWaitLine free))
-          s!"a daemon that finds its locks free logs no wait (run exit {code}, log '{shown}')"
+          s!"a daemon that finds its locks free logs no wait (exit {code}, log '{shown}')"
     finally
       e.killAll #[free]
     -- `capture --history` holds both locks while it writes, and a pty nobody reads
-    -- keeps it writing. The daemon `run` starts meanwhile must wait for the lock
+    -- keeps it writing. The daemon `resume` starts meanwhile must wait for the lock
     -- rather than exit; its log says when it found the lock held.
     let reader := "offline-reader"
     try
@@ -670,8 +676,8 @@ def run : IO UInt32 :=
       let holding := (← Linger.Os.Shell.poll #[capture.fd] #[Linger.Os.Shell.POLLIN] 5000)[0]! != 0
       let starter ←
         IO.Process.spawn
-            { cmd := e.bin, args := #["run", reader, "echo resumed-$((40+2))"], env := e.procEnv,
-              stdin := .null, stdout := .null, stderr := .null }
+            { cmd := e.bin, args := #["resume", reader], env := e.procEnv, stdin := .null,
+              stdout := .null, stderr := .null }
       let found ←
         waitFor 5000 do
             let log ← e.log reader
@@ -680,11 +686,13 @@ def run : IO UInt32 :=
       let captureCode ← capture.reap 3000
       capture.bye (sendDetach := false)
       let startCode ← waitOrKill starter 5000
+      let (sendCode, _, _) ← e.cli #["send", reader, "echo resumed-$((40+2))\n"]
       let resumed ← waitFor 5000 (return has (← e.out #["capture", reader]) "resumed-42")
       expect
           (holding && found && hasText read "row 3999" && captureCode == 0 && startCode == some 0 &&
+            sendCode == 0 &&
             resumed)
-          s!"a daemon started during an offline read waits for the lock and resumes (run exit {startCode})"
+          s!"a daemon started during an offline read waits for the lock and resumes (resume exit {startCode})"
     finally
       e.killAll #[reader]
     hostileInput e

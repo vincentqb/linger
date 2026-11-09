@@ -42,8 +42,8 @@ def run : IO UInt32 :=
       expect (rc == 0 && out.toUTF8 == ByteArray.mk emptyLine.toArray && err.isEmpty)
           "linger ls prints exactly the empty overview and exits"
     -- two live sessions: both names survive in the explicit listing
-    let _ ← e.cli #["run", "alpha", "true"]
-    let _ ← e.cli #["run", "beta", "true"]
+    let _ ← e.typeIn "alpha" #["true"]
+    let _ ← e.typeIn "beta" #["true"]
     match ← e.cliTimeout #["ls"] 15000 with
     | none =>
       expect false "linger ls exits (it hung — a picker?)"
