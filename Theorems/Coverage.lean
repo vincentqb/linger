@@ -26,6 +26,7 @@ import all Linger.Selector.Proofs.Picker
 import all Linger.Selector.Proofs.Input
 import all Linger.Selector.Proofs.Key
 import all Linger.App.Proofs.Entry
+import all Linger.App.Proofs.Commands
 import all Linger.Os.Proofs.Env
 import all Theorems.Claims
 import all Theorems.Contracts

@@ -5,6 +5,7 @@ import all Linger.Session.Proofs.Checkpoint
 import all Linger.Session.Proofs.Claim
 import all Linger.Session.Proofs.Driver
 import all Linger.App.Proofs.Entry
+import all Linger.App.Proofs.Commands
 import all Linger.Os.Proofs.Env
 import all Linger.Selector.Proofs.Fuzzy
 import all Linger.Selector.Proofs.Input
@@ -314,6 +315,21 @@ example (file : Option (List UInt8)) : (Session.Record.answer file).isSome = fil
 example {file : Option (List UInt8)} {known : Option Session.Outcome}
     (h : Session.Record.settled file = some known) : Session.Record.answer file = known := by
   with_reducible exact Session.Record.settled_answer h
+
+-- Command table
+example : App.Commands.words.Nodup := by with_reducible exact App.Commands.words_nodup
+
+example : ∀ command ∈ App.Commands.table, App.Commands.lookup command.word = some command := by
+  with_reducible exact App.Commands.lookup_word
+
+example :
+    ∀ command ∈ App.Commands.table,
+      ∀ word ∈ command.aliases, App.Commands.lookup word = some command := by
+  with_reducible exact App.Commands.lookup_alias
+
+example (command : App.Commands.Command) (h : command.args.isEmpty = false) :
+    App.Commands.usageLine command = s!"usage: linger {command.word} {command.args}" := by
+  with_reducible exact App.Commands.usageLine_args command h
 
 -- Starting a session
 example (live saved : Bool) :

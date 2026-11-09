@@ -406,7 +406,8 @@ import_closure Linger.lean "$(printf 'public import Linger.%s;' Session.Buf Os.S
   Terminal.Vt Terminal.Render Terminal.Mediation Terminal.Title Target.Name Session \
   Session.Driver Session.Checkpoint \
   Target.Remote Display.Listing Display.Status Display.Title Display.View Os.Env Session.Shell.Paths \
-  Os.Shell.Command Session.Shell.Daemon Session.Shell.Client Session.Shell.Inventory App.Shell \
+  Os.Shell.Command Session.Shell.Daemon Session.Shell.Client Session.Shell.Inventory App.Commands \
+  App.Shell \
   Session.Shell.Resume)"
 module_imports Linger/Session.lean ':(glob)Linger/Session/*.lean' 'Linger/Session/Shell/*' \
     Linger/Os/Shell/Command.lean Linger/App/Shell.lean Linger/Os/Boundary.lean Linger/Os/Shell.lean \
@@ -416,7 +417,7 @@ module_imports Linger/Session.lean ':(glob)Linger/Session/*.lean' 'Linger/Sessio
     Linger/Terminal/Replay.lean Linger.lean \
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
-    if (mod !~ /^(Linger[.]Session|Linger[.](Session|Os|Target|Display|Terminal)[.][[:alnum:]_.]+|Linger[.]App[.]Shell|Std[.]Async[.](System|Signal))$/ \
+    if (mod !~ /^(Linger[.]Session|Linger[.](Session|Os|Target|Display|Terminal)[.][[:alnum:]_.]+|Linger[.]App[.](Shell|Commands)|Std[.]Async[.](System|Signal))$/ \
         && mod != "SoftwareChallenge.Commands") {
       print "  " $0; bad = 1
     }
@@ -1802,6 +1803,14 @@ Linger/Session/Shell/Inventory.lean: let revs ← poll #[fd] #[POLLIN] (Int32.of
 [ "$timers" = "$expected_timers" ] \
   || fail "the program's timers changed; name each here with its bound, or wait on an event instead:
 $timers"
+# One command table: help prints it and every usage error quotes its command's row, so no usage
+# text is written anywhere else.
+! code_grep '"usage: linger' Linger/App/Shell.lean \
+  || fail "a usage error bypasses the command table (Commands.usageLine)"
+printf '%s\n' "$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/Shell.lean)" \
+  | CG_RE='(^|[[:space:]])private def usage : String := Linger[.]App[.]Commands[.]helpText([[:space:]]|$)' \
+    awk "$CODE_AWK" >/dev/null \
+  || fail "help no longer prints the command table"
 # Every one-shot request is given up after replySilenceMs of silence; only `wait` passes its own
 # budget, its deadline's, or none when it has none, since it waits for a program to end.
 printf '%s\n' "$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Client.lean)" \

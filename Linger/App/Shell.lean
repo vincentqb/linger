@@ -10,6 +10,7 @@ import Linger.Target.Remote
 import Linger.Terminal.Render
 import Linger.Display.Listing
 import Linger.Display.View
+import Linger.App.Commands
 import Linger.Os.Shell.Command
 import Linger.Session.Shell.Resume
 import Linger.Session.Shell.Record
@@ -35,28 +36,16 @@ open Linger.Session.Shell.Inventory
 open Linger.Os.Shell
 open Linger.Session.Wire (Msg)
 
-/-- One line per command, printed by help and bare invocation, or to stderr when
-`overview` cannot parse the arguments as listing options. -/
-private def usage : String :=
-  "attach [--read-only] [name] [command...]  Choose, create or attach to a session
-ls [-r [hosts]] [--summary|--porcelain]   List sessions or attention counts
-tmux <command> [SAVE]                     Saved tmux panes; see tmux help
-run <name> <command...>                   Deprecated: type into a shell; use start, send
-start <name> <program> [args...]          Start a program, exactly, in a new session
-resume <name>                             Run a saved or ended session's program again
-send <name> <text...|->                   Send raw input; - reads stdin
-detach <name>                             Detach all clients from a session
-kill <name>                               End a session, or discard a saved or ended one
-info <name>                               Print session details
-capture [--history] <name>                Print the live or saved screen
-resize <name> <cols> <rows>               Resize a detached session
-wait [--timeout SECONDS] <name>...        Wait for programs to end; 124 on timeout
-get <name>                                Print session labels
-set <name> <k=v>...                       Set labels
-unset <name> <key>...                     Remove labels
-clear <name>                              Remove all labels
-version                                   Print version and state paths
-help                                      Show commands"
+/-- One line per command, from the command table, printed by help and bare invocation, or to
+stderr when `overview` cannot parse the arguments as listing options. -/
+private def usage : String := Linger.App.Commands.helpText
+
+/-- A command's usage error, its row of the command table (`Commands.usageLine`), and exit
+status 2. -/
+private def usageError (word : String) : IO UInt32 := do
+  if let some command := Linger.App.Commands.lookup word then
+    IO.eprintln (Linger.App.Commands.usageLine command)
+  return 2
 
 /-- What `linger help` prints after the commands: the seven statuses a session can show, which
 of them titles and `ls --summary` count, and the exit statuses every command shares. -/
@@ -788,8 +777,7 @@ does with several jobs. With a time limit in milliseconds, all of them share one
 124 means it passed. -/
 private def waitAll (names : List String) (limit : Option Nat) : IO UInt32 := do
   if names.isEmpty then
-    IO.eprintln "usage: linger wait [--timeout SECONDS] <name>..."
-    return 2
+    return ← usageError "wait"
   let some targets := names.mapM Linger.Target.Remote.parseTarget | invalidTarget
   let deadline ←
     limit.mapM fun ms => do
@@ -918,8 +906,7 @@ private def attachArgs (args : List String) : IO UInt32 := do
   let args := if readOnly then args.tail else args
   let some (name, cmd) := Linger.Target.Remote.targetArgs args |
     do
-      IO.eprintln "usage: linger attach [--read-only] [--] <name> [command...]"
-      return 2
+      return ← usageError "attach"
   if readOnly && !cmd.isEmpty then
     IO.eprintln "linger: read-only attach does not accept a command"
     return 2
@@ -930,8 +917,7 @@ private def captureArgs (args : List String) : IO UInt32 := do
   let args := if history then args.tail else args
   let some (name, []) := Linger.Target.Remote.targetArgs args |
     do
-      IO.eprintln "usage: linger capture [--history] [--] <name>"
-      return 2
+      return ← usageError "capture"
   withTarget "capture" name []
       (cmdRead · (if history then .history else .screen)
         (if history then Linger.Terminal.Render.history else Linger.Terminal.Render.screenText))
@@ -955,19 +941,16 @@ def main (args : List String) : IO UInt32 := do
   | ["resume", name] =>
     withTarget "resume" name [] cmdResume
   | "resume" :: _ =>
-    IO.eprintln "usage: linger resume <name>"
-    return 2
+    return ← usageError "resume"
   | "start" :: name :: argv =>
     if argv.isEmpty then
-      IO.eprintln "usage: linger start <name> <program> [args...]"
-      return 2
+      return ← usageError "start"
     withTarget "start" name argv (cmdStart · argv)
   | "attach" :: rest | "a" :: rest =>
     attachArgs rest
   | "run" :: name :: cmd | "r" :: name :: cmd =>
     if cmd.isEmpty then
-      IO.eprintln "usage: linger run <name> <command...>"
-      return 2
+      return ← usageError "run"
     withTarget "run" name cmd fun name => do
         -- the shell it types into reinterprets the words, and the shell is the session's program
         IO.eprintln
@@ -982,8 +965,7 @@ def main (args : List String) : IO UInt32 := do
           close fd
   | "send" :: name :: text | "s" :: name :: text =>
     if text.isEmpty then
-      IO.eprintln "usage: linger send <name> <text...>  (or: linger send <name> -)"
-      return 2
+      return ← usageError "send"
     withTarget "send" name text fun name =>
         if text == ["-"] then cmdSendStdin name
         else requireLiveSend name (.input (String.intercalate " " text).toUTF8.toList)
@@ -1008,23 +990,20 @@ def main (args : List String) : IO UInt32 := do
             (requireLive · (.resize (UInt32.ofNat cols) (UInt32.ofNat rows)))
     | _, _ =>
       do
-        IO.eprintln "usage: linger resize <name> <cols> <rows>"
-        return 2
+        return ← usageError "resize"
   | "wait" :: "--timeout" :: seconds :: names | "w" :: "--timeout" :: seconds :: names =>
     match parseSeconds seconds with
     | some ms =>
       waitAll names (some ms)
     | none =>
-      IO.eprintln "usage: linger wait [--timeout SECONDS] <name>..."
-      return 2
+      return ← usageError "wait"
   | "wait" :: names | "w" :: names =>
     waitAll names none
   | ["get", name] | ["g", name] =>
     withTarget "get" name [] cmdGet
   | "set" :: name :: kvs =>
     if kvs.isEmpty || kvs.any (fun pair => !pair.contains '=' || pair.startsWith "=") then
-      IO.eprintln "usage: linger set <name> k=v ..."
-      return 2
+      return ← usageError "set"
     withTarget "set" name kvs fun name => do
         let mut rc : UInt32 := 0
         for kvp in kvs do
@@ -1032,8 +1011,7 @@ def main (args : List String) : IO UInt32 := do
         return rc
   | "unset" :: name :: ks | "un" :: name :: ks =>
     if ks.isEmpty || ks.any (·.isEmpty) then
-      IO.eprintln "usage: linger unset <name> <key>..."
-      return 2
+      return ← usageError "unset"
     withTarget "unset" name ks fun name => do
         let mut rc : UInt32 := 0
         for k in ks do

@@ -22,6 +22,7 @@ public import Linger.Os.Shell.Command
 public import Linger.Session.Shell.Daemon
 public import Linger.Session.Shell.Client
 public import Linger.Session.Shell.Inventory
+public import Linger.App.Commands
 public import Linger.App.Shell
 public import Linger.Session.Shell.Resume
 
