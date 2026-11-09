@@ -98,18 +98,16 @@ structure Listed where private mk ::
   /-- The name, spelled as on disk. -/
   name : String
 
-/-- `dir/<name><suffix>`, after creating `dir` with `ensureDir`. A name a listing read is
-taken as spelled; any other must pass `checkName` and then `checkSpelling`. -/
+/-- `dir/<name><suffix>`. A name a listing read is taken as spelled, in the directory the listing
+made sure of (`listNames`), so its paths cost no system call; any other must pass `checkName`,
+and then `checkSpelling` after `ensureDir` creates `dir`. -/
 private def pathIn (dir name suffix : String) (listed : Bool) : IO String := do
-  let name ←
-    if listed then
-      pure name
-    else
-      checkName name
+  if listed then
+    return s!"{dir}/{name}{suffix}"
+  let name ← checkName name
   ensureDir dir
   let path := s!"{dir}/{name}{suffix}"
-  unless listed do
-    checkSpelling path
+  checkSpelling path
   return path
 
 /-- `dir/<name><suffix>` once `checkName` accepts `name`, after creating `dir` with
@@ -196,11 +194,13 @@ def withSessionLock {α : Type} (name : String) (action : IO α) : IO α :=
 def Listed.withLock {α : Type} (n : Listed) (action : IO α) : IO α := do
   withLockRetrying (← pathIn (← socketDir) n.name ".lock" true) (pure false) action (listed := true)
 
-/-- `withSessionLock` for a session a listing named. -/
+/-- `withSessionLock` for a session a listing named. A listing makes sure of the directories it
+reads, not of the persistent lock directory, so this does. -/
 def Listed.withSessionLock {α : Type} (n : Listed) (action : IO α) : IO α := do
   n.withLock do
-      withLockRetrying (← pathIn ((← stateDir) ++ "/.locks") n.name ".lock" true) (pure false)
-          action (listed := true)
+      let locks := (← stateDir) ++ "/.locks"
+      ensureDir locks
+      withLockRetrying (← pathIn locks n.name ".lock" true) (pure false) action (listed := true)
 
 /-- Valid session names among `dir`'s entries ending in `suffix`, as the directory spells them. -/
 private def listNames (dir suffix : String) : IO (List Listed) := do
