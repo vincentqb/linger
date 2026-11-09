@@ -1755,4 +1755,58 @@ ed_n="$(code_count '(^|[^[:alnum:]_.])drain(Str)?[[:space:]]+[^[:space:]]+[[:spa
 [ "$ed_n" -le "$SUITE_DRAIN_CAP" ] \
   || fail "suite fixed drain windows grew to $ed_n (cap $SUITE_DRAIN_CAP); wait for a positive condition with awaitText"
 
+# The program's timers, each with what bounds it. Work follows events: a wakeup no event paid
+# for belongs only on this list, and every wait on it is bounded and says what it missed, so a
+# loaded host slows linger down without hanging it. A new sleep or poll joins the list with its
+# bound, or waits on an event instead.
+#   App/Shell: a started daemon's report, every 10 ms for at most startWaitMs (30 s); a spawned
+#     daemon's socket, every 30 ms for socketWaitFloorMs (3 s), then while that daemon lives,
+#     up to socketWaitCapMs (30 s); remote listings, every 5 ms for at most
+#     remoteQueryTimeoutMs (3 s); `send -` wakes only for input, replies and closes; `wait`
+#     and `kill` look at a held name every 20 ms for at most heldNameMs (8 s).
+#   Import/Shell: tmux's configuration and a pane archive, every 10 ms for at most 1 s and 5 s.
+#   Os/Shell/Command: a stopped command's output, every 5 ms for its grace period.
+#   Selector/Shell: the picker, every 50 ms while it is open, for keys, the escape deadline and
+#     a listing each second.
+#   Session/Shell/Client: a one-shot reply, until replySilenceMs (10 s) of silence; a saved view
+#     and an attach, every 200 ms for a resize, and an attach's title sample once a second.
+#   Session/Shell/Daemon: a write waiting on the disk says so after a second; the loop, until an
+#     event or a deadline; the final drain, at most drainTimeoutMs (3 s); stopping a program, in
+#     10 ms steps for at most 2 s, and the rest of its session, in 50 ms steps for at most 2 s;
+#     a held startup claim, every 10 ms for at most claimWaitMs (1 s).
+#   Session/Shell/Inventory: an info reply, until the request's deadline.
+timers="$(code_grep '(IO[.]sleep [^[:space:]]|← poll [^[:space:]])' 'Linger/*.lean' \
+    ':!Linger/*/Suites/*' ':!Linger/*/Proofs/*' ':!Linger/*/Tests/*' \
+  | sed -E 's/^([^:]+):[0-9]+:[[:space:]]*/\1: /')"
+expected_timers='Linger/App/Shell.lean: IO.sleep 10
+Linger/App/Shell.lean: IO.sleep 30
+Linger/App/Shell.lean: IO.sleep 5
+Linger/App/Shell.lean: let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] (-1)
+Linger/App/Shell.lean: IO.sleep 20
+Linger/App/Shell.lean: IO.sleep 20
+Linger/Import/Shell.lean: IO.sleep 10
+Linger/Import/Shell.lean: IO.sleep 10
+Linger/Os/Shell/Command.lean: IO.sleep 5
+Linger/Selector/Shell.lean: let ready ← poll fds events 50
+Linger/Session/Shell/Client.lean: let revs ← poll #[fd] #[POLLIN] silenceMs
+Linger/Session/Shell/Client.lean: let ready ← poll fds events 200
+Linger/Session/Shell/Client.lean: let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] 200
+Linger/Session/Shell/Daemon.lean: let timer ← IO.asTask (IO.sleep 1000) Task.Priority.dedicated
+Linger/Session/Shell/Daemon.lean: let revs ← poll fds evts timeout
+Linger/Session/Shell/Daemon.lean: let revs ← poll fds (Array.replicate fds.size POLLOUT) (Int32.ofNat (min 100 (deadline - now)))
+Linger/Session/Shell/Daemon.lean: IO.sleep step.toUInt32
+Linger/Session/Shell/Daemon.lean: IO.sleep 10
+Linger/Session/Shell/Inventory.lean: let revs ← poll #[fd] #[POLLIN] (Int32.ofNat (min 100 remaining))'
+[ "$timers" = "$expected_timers" ] \
+  || fail "the program's timers changed; name each here with its bound, or wait on an event instead:
+$timers"
+# Every one-shot request is given up after replySilenceMs of silence; only `wait` passes its own
+# budget, its deadline's, or none when it has none, since it waits for a program to end.
+printf '%s\n' "$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Client.lean)" \
+  | CG_RE='(^|[[:space:]])def oneShot [(]name : String[)] [(]m : Msg[)] [(]untilDone : Bool := true[)] [(]silenceMs : Int32 := replySilenceMs[)] : IO [(]Option Drained[)] := do([[:space:]]|$)' \
+    awk "$CODE_AWK" >/dev/null \
+  || fail "a one-shot request must default to the reply silence budget"
+[ "$(code_count 'silenceMs := ' 'Linger/App/*.lean' 'Linger/Session/Shell/*.lean')" -eq 1 ] \
+  || fail "only wait may choose a one-shot request's silence budget"
+
 printf 'gates OK — purity, the OS and unsafe surfaces, the Vt friend set, the runtime ties, documentation contracts, and the ratchets\n'

@@ -114,8 +114,8 @@ private def connectListed (n : Paths.Listed) (nonblocking : Bool) : IO (Option U
 /-- Maximum simultaneous local overview queries. -/
 private abbrev localQueryLimit : Nat := 32
 
-/-- Bounded socket conversations run against the same deadline.
-Results retain their input positions; every started task is joined, even on error. -/
+/-- Bounded socket conversations run against the same deadline, and the caller sleeps until one
+ends. Results retain their input positions; every started task is joined, even on error. -/
 private def queryInfos (names : Array Paths.Listed) (deadline : Nat) (retainUnavailable : Bool) :
     IO (Array (Option (Except IO.Error (List (String × String))))) := do
   let unknown := some (.error (IO.userError "overview deadline reached"))
@@ -150,8 +150,12 @@ private def queryInfos (names : Array Paths.Listed) (deadline : Nat) (retainUnav
       pending.set running
       if running.isEmpty && (← monotonicMs) ≥ deadline then
         break
-      if !running.isEmpty then
-        IO.sleep 1
+      -- sleep until a query ends: each ends by the shared deadline
+      match running.toList.map (·.2) with
+      | [] =>
+        pure ()
+      | first :: rest =>
+        discard <| IO.waitAny (first :: rest)
     return results
   finally
     for (_, task) in ← pending.get do

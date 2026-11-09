@@ -507,11 +507,10 @@ private def noSession (name : String) : IO UInt32 := do
   IO.eprintln s!"linger: no session '{name}'"
   return 127
 
-/-- One request to a live session. Pass `Client.replySilenceMs` for verbs a
-pre-upgrade daemon does not know, which would otherwise hang the untimed drain
-(spec agent-cli, Decision 4). -/
-private def requireLive (name : String) (m : Msg) (silenceMs : Int32 := -1) : IO UInt32 := do
-  match ← Client.oneShot name m (silenceMs := silenceMs) with
+/-- One request to a live session, given up after `Client.replySilenceMs` of silence, as every
+one-shot request is (`Client.oneShot`). -/
+private def requireLive (name : String) (m : Msg) : IO UInt32 := do
+  match ← Client.oneShot name m with
   | none =>
     noSession name
   | some result =>
@@ -528,7 +527,7 @@ connection followed by successful ownership acquisition permits an offline read.
 Hold both locks through loading and rendering; never start or modify a session. -/
 private def cmdRead (name : String) (m : Msg) (render : Linger.Terminal.Vt.Vt → List UInt8) :
     IO UInt32 := do
-  match ← Client.oneShot name m (silenceMs := Client.replySilenceMs) with
+  match ← Client.oneShot name m with
   | some result =>
     requestStatus name result
   | none =>
@@ -546,7 +545,8 @@ frame per read (≤ 64 KiB, so every frame satisfies `Msg.WF`). The agent's raw 
 path — Enter, ^C, ESC, arrow sequences, exact whitespace: everything argv
 cannot carry (agent-cli Decision 5). Poll-then-read so EOF (`read` = `none`)
 is distinguished from would-block (`some #[]`, looped past) without spinning;
-no timeout on purpose — a slow producer feeding a pipe is legitimate. Stdin EOF
+no timeout on purpose — a slow producer feeding a pipe is legitimate, and every event the loop
+answers, input, a reply or either side closing, wakes the poll. Stdin EOF
 returns 0, and a missing session 127; a refusal, an invalid reply, the session's exit or a
 lost connection returns 1. Nothing accumulates (each chunk is sent and dropped), so no
 `Buf` is involved. -/
@@ -559,7 +559,7 @@ private def cmdSendStdin (name : String) : IO UInt32 := do
       let mut dec : Linger.Session.Wire.Decoder := {}
       let mut go := true
       while go do
-        let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] 200
+        let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] (-1)
         if revs[1]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
           match ← read fd 65536 with
           | none =>
@@ -785,7 +785,7 @@ private def cmdKill (name : String) : IO UInt32 := do
 the last session to hold it ended, from the name's end record. No session returns 127; a refusal
 or a failed reply prints a diagnostic and returns 1. -/
 private def cmdInfo (name : String) : IO UInt32 := do
-  match ← Client.oneShot name .info (silenceMs := Client.replySilenceMs) with
+  match ← Client.oneShot name .info with
   | some result =>
     requestStatus name result
   | none =>
@@ -916,7 +916,7 @@ def main (args : List String) : IO UInt32 := do
           return 2
       else
         withTarget "resize" name [cs, rs]
-            (requireLive · (.resize (UInt32.ofNat cols) (UInt32.ofNat rows)) Client.replySilenceMs)
+            (requireLive · (.resize (UInt32.ofNat cols) (UInt32.ofNat rows)))
     | _, _ =>
       do
         IO.eprintln "usage: linger resize <name> <cols> <rows>"

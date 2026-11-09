@@ -91,16 +91,18 @@ inductive Drained where
 def replyText (fallback : String) (bytes : List UInt8) : String :=
   Linger.Target.Remote.scrub (String.fromUTF8? (ByteArray.mk bytes.toArray) |>.getD fallback)
 
-/-- The silence budget for a reply that a pre-upgrade daemon may never send. -/
-def replySilenceMs : Int32 := 2000
+/-- The silence budget of every one-shot request: past it the request reports that no reply came,
+instead of waiting on a daemon that never answers, as one from before a verb existed or a stopped
+one. Generous, because a daemon rendering a long history on a loaded host is silent while it
+works. -/
+def replySilenceMs : Int32 := 10000
 
 /-- Read frames until the daemon closes or the requested terminator arrives.
-A nonnegative `silenceMs` gives up after that much *silence*, for the one-shot
-verbs a pre-upgrade daemon does not know: a daemon reporting `protocol` 1 or later refuses an
-unknown tag, but one from before that drops it without a trace, and the untimed drain would
-hang the client forever — the deadline has to be owned here. Output payloads stream to stdout
-as they come (`capture` is such a stream); the timeout is per poll round, so a long reply that
-keeps arriving never trips it. -/
+A nonnegative `silenceMs` gives up after that much *silence*: a daemon that never answers, as a
+pre-upgrade daemon that drops a verb it does not know without a trace, or a stopped one, would
+hang the untimed drain forever, so the deadline has to be owned here. Output payloads stream to
+stdout as they come (`capture` is such a stream); the timeout is per poll round, so a long reply
+that keeps arriving never trips it. -/
 private def drainReplies (fd : UInt32) (untilDone : Bool) (silenceMs : Int32 := -1) : IO Drained :=
   do
   let mut dec : Decoder := {}
@@ -155,10 +157,11 @@ def sendOnly (name : String) (m : Msg) : IO Bool := do
     finally
       close fd
 
-/-- One-shot request/reply. `none` means no live daemon; every connected
-conversation preserves its actual outcome. -/
-def oneShot (name : String) (m : Msg) (untilDone : Bool := true) (silenceMs : Int32 := -1) :
-    IO (Option Drained) := do
+/-- One-shot request/reply, given up after `silenceMs` of silence (`replySilenceMs` unless the
+caller passes a negative budget, as a wait for a program's end does). `none` means no live
+daemon; every connected conversation preserves its actual outcome. -/
+def oneShot (name : String) (m : Msg) (untilDone : Bool := true)
+    (silenceMs : Int32 := replySilenceMs) : IO (Option Drained) := do
   match ← connect name with
   | none =>
     return none

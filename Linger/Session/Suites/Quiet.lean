@@ -53,9 +53,10 @@ def wakeupsDuring {α : Type} (pid : Option UInt32) (action : IO α) : IO (Optio
       | _, _ => none,
       result)
 
-/-- The quiet suite: idle sessions, and sessions whose output has stopped, sleep, and a summary
-reads what their daemons published instead of waking them. Nothing asks either daemon anything
-between finding its pid and the last measurement, since a question is an event that wakes it. -/
+/-- The quiet suite: idle sessions, and sessions whose output has stopped, sleep, a summary reads
+what their daemons published instead of waking them, and a `send -` waiting for input sleeps.
+Nothing asks either daemon anything between finding its pid and the last measurement, since a
+question is an event that wakes it. -/
 def run : IO UInt32 :=
   Env.suite "quiet" fun e => do
     let (idleRc, _, _) ← e.cli #["start", "q-idle", "/bin/sh", "-c", "exec sleep 1000"]
@@ -64,14 +65,28 @@ def run : IO UInt32 :=
       e.cli #["start", "q-burst", "/bin/sh", "-c", "echo QUIET-$((6*7)); exec sleep 1000"]
     let idlePid ← e.daemonPid "q-idle"
     let burstPid ← e.daemonPid "q-burst"
+    -- a `send -` that waits for input, connected before the settling sleep: it wakes only for
+    -- input, a reply or a close, and its idle connection asks the daemon nothing
+    let sender0 ←
+      IO.Process.spawn
+          { cmd := e.bin, args := #["send", "q-idle", "-"], env := e.procEnv, stdin := .piped,
+            stdout := .null, stderr := .null }
+    let (senderIn, sender) ← sender0.takeStdin
     -- longer than the freshness window, so the output's own deadline has passed, and the
     -- questions that found the pids are long answered
     IO.sleep (Linger.Session.freshMs + 1500).toUInt32
-    let (idle, burst) ←
+    let (idle, burst, sending) ←
       do
         let measured ← IO.asTask (wakeupsOver idlePid 3000) Task.Priority.dedicated
+        let sent ← IO.asTask (wakeupsOver (some sender.pid) 3000) Task.Priority.dedicated
         let burst ← wakeupsOver burstPid 3000
-        pure (← IO.ofExcept (← IO.wait measured), burst)
+        pure (← IO.ofExcept (← IO.wait measured), burst, ← IO.ofExcept (← IO.wait sent))
+    -- the sender's input stays open until here, so it was waiting throughout
+    try
+      senderIn.flush
+    catch _ =>
+      pure ()
+    reapOrKill sender 0
     -- the burst arrived while nobody looked, so a summary counts it, as asking would
     let (idleAsked, burstAsked, summaries) ←
       do
@@ -90,6 +105,7 @@ def run : IO UInt32 :=
         (idleAsked.all (· == 0) && burstAsked.all (· == 0) &&
           summaries.all (fun (rc, text, _) => rc == 0 && text == unread))
         s!"a summary reads what each daemon published and wakes none ({idleAsked} and {burstAsked} wakeups over three summaries: {summaries.map (·.2.1)})"
+    expect (sending.all (· == 0)) s!"a send - waiting for input sleeps ({sending} wakeups in 3 s)"
     e.killAll #["q-idle", "q-burst"]
 
 end Linger.Session.Suites.Quiet
