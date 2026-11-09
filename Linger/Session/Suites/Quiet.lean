@@ -106,6 +106,18 @@ def run : IO UInt32 :=
           summaries.all (fun (rc, text, _) => rc == 0 && text == unread))
         s!"a summary reads what each daemon published and wakes none ({idleAsked} and {burstAsked} wakeups over three summaries: {summaries.map (·.2.1)})"
     expect (sending.all (· == 0)) s!"a send - waiting for input sleeps ({sending} wakeups in 3 s)"
-    e.killAll #["q-idle", "q-burst"]
+    -- a new daemon publishes what it sees before it first sleeps, so even the first summary
+    -- after it starts need not wake it
+    let (freshRc, _, _) ← e.cli #["start", "q-fresh", "/bin/sh", "-c", "exec sleep 1000"]
+    let published ←
+      waitFor 2000 do
+          match ← (IO.FS.readBinFile s!"{e.dir}/q-fresh.end").toBaseIO with
+          | .ok bytes =>
+            return (Linger.Session.Record.published bytes.toList).isSome
+          | .error _ =>
+            return false
+    expect (freshRc == 0 && published)
+        "a new daemon says in its end record what it sees before anyone asks it"
+    e.killAll #["q-idle", "q-burst", "q-fresh"]
 
 end Linger.Session.Suites.Quiet

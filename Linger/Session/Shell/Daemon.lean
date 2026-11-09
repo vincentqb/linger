@@ -958,6 +958,10 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
         try
           setNonblock ptyFd
           let mut rt ← latest.get
+          -- what the record says this daemon sees, before it first sleeps: a summary then reads it
+          -- instead of waking the daemon to ask
+          rt ← publish rt
+          latest.set rt
           while !rt.exiting do
             let (rt', events) ← pollRound rt
             latest.set rt'
