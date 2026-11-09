@@ -6,7 +6,8 @@ public import Linger.Terminal.Spec
 
 /-! # Headline theorems
 
-The guarantees linger must keep, in ten parts:
+The guarantees linger must keep, in ten parts. Each part's section states its headline theorems,
+each with a kill, and says what it does not claim yet:
 
 1. Transparency: a client that attaches shows the session's terminal, losing only history beyond
    the replay budget, and the program reads exactly what its writers sent.
@@ -34,22 +35,19 @@ The guarantees linger must keep, in ten parts:
    session, every wait is bounded and says what it missed, and optional work is skipped or
    coalesced, never queued.
 
-A session's status is one glyph for one observation: `⣷` output right now, `⣿` new output, then
-it stopped, `⣀` nothing new since you looked, `✓` ended with status 0, `!` ended any other way,
-`~` saved with no daemon, and `?` no answer. Titles and `ls --summary` count `⣿`, `!` and `?`.
-
 Each theorem below is stated over definitions in the components' `Spec` modules and over the
 program parts declared below as holes: each hole is `sorry` here, the program supplies it, and
 the claims say what it must do. `Theorems/Solution.lean` proves the same statements of the
 program's parts, and `./lake comparator` checks that it proves exactly these, that each part has
 the declared type, and that no axiom beyond `propext`, `Quot.sound` and `Classical.choice` is
-used. Changing a statement or a hole here changes what linger claims. Each part's section says
-what it does not claim yet.
+used. Changing a statement or a hole here changes what linger claims.
 
 Not claimed: anything about the IO executors, the C shim or the operating system, which suites
-test instead. Parts 9 and 10 and the status rule have no headline statement here: what holds of
-them is in `THEOREMS.md` (waking, status and titles, views), and `scripts/gates.sh` lists every
-timer the program sets, with its bound. -/
+test instead, and the status rule: a session's status is one glyph for one observation, `⣷`
+output right now, `⣿` new output, then it stopped, `⣀` nothing new since you looked, `✓` ended
+with status 0, `!` ended any other way, `~` saved with no daemon and `?` no answer, and titles and
+`ls --summary` count `⣿`, `!` and `?`. No `Spec` module holds its types yet;
+`Linger/Display/Proofs/Status.lean` proves it of the program. -/
 
 public section
 
@@ -190,6 +188,10 @@ def Linger.Session.State.labelList : State → List (String × String) := sorry
 /-- The state of the scanner the pty's output passes through. -/
 @[expose]
 def Linger.Session.State.scanner : State → Mediation.Scan := sorry
+
+/-- When the session next needs a tick, if ever: `none` when it waits only for events. -/
+@[expose]
+def Linger.Session.State.nextTick : State → Option Nat := sorry
 
 /-- The terminal a daemon boots with, given the one its checkpoint restored, if any. -/
 @[expose]
@@ -666,5 +668,40 @@ theorem leave_canonical_all_rejects_escape :
             (w.feed ([0x1B] : Render.Bytes)).getPen = ({} : Vt.Pen) ∧
             (w.feed ([0x1B] : Render.Bytes)).windowTitle = "" := by
   sorry
+
+/-! ## 9. Work follows events
+
+Not claimed yet: that an event's work follows its size and its audience, never the number of
+sessions, and that a daemon sleeps until its session's next tick or its next event.
+`scripts/gates.sh` lists every timer the program sets, with its bound, and the quiet suite counts
+the wakeups of idle sessions. -/
+
+/-- After the last event, a session's daemon wakes at most twice on its own: ticking at the
+deadlines the session sets, for its save and for the end of its output's freshness, it then needs
+no tick until the next event. -/
+theorem ticks_settle (s : State) (now t₁ t₂ : Nat)
+    (h₁ : (Session.trace Session.step s [.tick now]).1.nextTick = some t₁)
+    (h₂ : (Session.trace Session.step s [.tick now, .tick t₁]).1.nextTick = some t₂) :
+    (Session.trace Session.step s [.tick now, .tick t₁, .tick t₂]).1.nextTick = none := by sorry
+
+/-- `ticks_settle` rejects a session that always asks for another tick, as a daemon that polls
+would. -/
+theorem ticks_settle_rejects_poll :
+    ¬∀ (s : State) (now t₁ t₂ : Nat),
+        (fun (_ : State) => (some 0 : Option Nat)) (Session.trace Session.step s [.tick now]).1 =
+            some t₁ →
+          (fun (_ : State) => (some 0 : Option Nat))
+              (Session.trace Session.step s [.tick now, .tick t₁]).1 =
+            some t₂ →
+          (fun (_ : State) => (some 0 : Option Nat))
+              (Session.trace Session.step s [.tick now, .tick t₁, .tick t₂]).1 =
+            none := by
+  sorry
+
+/-! ## 10. Graceful under load
+
+Not claimed yet: that work a request needs never waits on optional work or on another session,
+that every wait is bounded and says what it missed, and that optional work is skipped or
+coalesced. The robust suite tests it. -/
 
 end Linger

@@ -597,6 +597,64 @@ theorem step_tick_sleeps (s : State) (now : Nat) (hd : s.dirty = false)
     simp only [Option.any_some, decide_eq_false_iff_not]
     omega
 
+/-- What a tick leaves of the reasons to tick again: it has seen all output so far, its unsaved
+changes outlive it only while their save is not yet due, its output is fresh exactly while the
+last output it knows of is younger than `freshMs`, and when it had seen all output already, the
+last output it knows of is the one it knew. -/
+theorem tick_facts (s : State) (now : Nat) :
+    let s' := (step s (.tick now)).1
+    s'.tickOutSeq = s'.outSeq ∧
+      (s'.dirty = true →
+        s.dirty = true ∧ now < s.lastCkptMs + ckptIntervalMs ∧ s'.lastCkptMs = s.lastCkptMs) ∧
+      s'.freshFlag = s'.lastOutMs.any (now < · + freshMs) ∧
+      (s.tickOutSeq = s.outSeq → s'.lastOutMs = s.lastOutMs) := by
+  simp only [step, State.ticked]
+  split <;> simp_all
+
+/-- A session's next tick is the earlier of its save, while it has unsaved changes, and the end
+of its output's freshness, while that output is fresh. -/
+theorem nextTick_some (s : State) {t : Nat} (h : s.nextTick = some t) :
+    (s.dirty = true → t ≤ s.lastCkptMs + ckptIntervalMs) ∧
+      (∀ l, s.freshFlag = true → s.lastOutMs = some l → t ≤ l + freshMs) ∧
+      (s.dirty = true ∧ t = s.lastCkptMs + ckptIntervalMs ∨
+        ∃ l, s.freshFlag = true ∧ s.lastOutMs = some l ∧ t = l + freshMs) := by
+  unfold State.nextTick at h
+  cases hd : s.dirty <;> cases hf : s.freshFlag <;> cases hl : s.lastOutMs <;> simp_all
+  all_goals omega
+
+/-- **After the last event, a daemon wakes at most twice on its own.** Ticking at the deadlines
+its session sets, for its save and for the end of its output's freshness, the session then needs
+no tick until the next event. The tick that ends an event's poll round has seen all output, so
+the last output stays the one it knows, the deadlines only move later, and each tick at the
+earlier one settles its reason without reviving the other. -/
+theorem ticks_settle (s : State) (now t₁ t₂ : Nat)
+    (h₁ : (trace step s [.tick now]).1.nextTick = some t₁)
+    (h₂ : (trace step s [.tick now, .tick t₁]).1.nextTick = some t₂) :
+    (trace step s [.tick now, .tick t₁, .tick t₂]).1.nextTick = none := by
+  simp only [trace] at h₁ h₂ ⊢
+  obtain ⟨q0, d0, f0, -⟩ := tick_facts s now
+  obtain ⟨q1, d1, f1, l1⟩ := tick_facts (step s (.tick now)).1 t₁
+  obtain ⟨-, d2, f2, l2⟩ := tick_facts (step (step s (.tick now)).1 (.tick t₁)).1 t₂
+  have n1 := nextTick_some _ h₁
+  have n2 := nextTick_some _ h₂
+  rw [nextTick_eq_none]
+  generalize (step s (.tick now)).1 = s0 at *
+  generalize (step s0 (.tick t₁)).1 = s1 at *
+  generalize (step s1 (.tick t₂)).1 = s2 at *
+  have l1 := l1 q0
+  have l2 := l2 q1
+  rw [l1] at l2
+  rw [l1] at f1 n2
+  rw [l2] at f2 ⊢
+  clear h₁ h₂ q0 q1 l1 l2
+  revert d0 d1 d2 f0 f1 f2 n1 n2
+  cases s0.lastOutMs <;> cases s0.dirty <;> cases s1.dirty <;> cases s2.dirty <;>
+    cases s0.freshFlag <;>
+    cases s1.freshFlag <;>
+    cases s2.freshFlag <;>
+    simp <;>
+    omega
+
 theorem setClient_length (s : State) (c : Client) :
     (s.setClient c).clients.length = s.clients.length := by simp [State.setClient]
 

@@ -502,4 +502,23 @@ theorem leave_canonical_all_rejects_escape :
   intro h
   exact absurd (h (Vt.Vt.init 2 2) (by decide +kernel)).1 (by decide +kernel)
 
+theorem ticks_settle (s : State) (now t₁ t₂ : Nat)
+    (h₁ : (Session.trace Session.step s [.tick now]).1.nextTick = some t₁)
+    (h₂ : (Session.trace Session.step s [.tick now, .tick t₁]).1.nextTick = some t₂) :
+    (Session.trace Session.step s [.tick now, .tick t₁, .tick t₂]).1.nextTick = none :=
+  Session.ticks_settle s now t₁ t₂ h₁ h₂
+
+theorem ticks_settle_rejects_poll :
+    ¬∀ (s : State) (now t₁ t₂ : Nat),
+        (fun (_ : State) => (some 0 : Option Nat)) (Session.trace Session.step s [.tick now]).1 =
+            some t₁ →
+          (fun (_ : State) => (some 0 : Option Nat))
+              (Session.trace Session.step s [.tick now, .tick t₁]).1 =
+            some t₂ →
+          (fun (_ : State) => (some 0 : Option Nat))
+              (Session.trace Session.step s [.tick now, .tick t₁, .tick t₂]).1 =
+            none := by
+  intro h
+  exact absurd (h (State.boot (Vt.Vt.init 1 1) [] []) 0 0 0 rfl rfl) (by simp)
+
 end Linger

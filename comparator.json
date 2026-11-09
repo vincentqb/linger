@@ -33,7 +33,9 @@
     "Linger.screenText_text",
     "Linger.screenText_text_rejects_escape",
     "Linger.leave_canonical_all",
-    "Linger.leave_canonical_all_rejects_escape"
+    "Linger.leave_canonical_all_rejects_escape",
+    "Linger.ticks_settle",
+    "Linger.ticks_settle_rejects_poll"
   ],
   "definition_names": [
     "Linger.Target.Name.check",
@@ -67,6 +69,7 @@
     "Linger.Session.State.roster",
     "Linger.Session.State.labelList",
     "Linger.Session.State.scanner",
+    "Linger.Session.State.nextTick",
     "Linger.Session.bootVt",
     "Linger.Session.Driver.run",
     "Linger.Session.Checkpoint.saveBytes",

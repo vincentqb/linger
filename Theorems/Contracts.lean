@@ -242,6 +242,12 @@ example (s : Session.State) (now : Nat) (hd : s.dirty = false) (hout : s.tickOut
     (Session.step s (.tick now)).1.nextTick = none := by
   with_reducible exact Session.step_tick_sleeps s now hd hout hstale
 
+example (s : Session.State) (now t₁ t₂ : Nat)
+    (h₁ : (Session.trace Session.step s [.tick now]).1.nextTick = some t₁)
+    (h₂ : (Session.trace Session.step s [.tick now, .tick t₁]).1.nextTick = some t₂) :
+    (Session.trace Session.step s [.tick now, .tick t₁, .tick t₂]).1.nextTick = none := by
+  with_reducible exact Session.ticks_settle s now t₁ t₂ h₁ h₂
+
 -- Focus reports
 example (s : Session.State) (c : Session.Client) (cols rows : UInt32) (hc : s.client? c.id = some c)
     (h : c.attached = false) (hsize : (cols != 0 && rows != 0) = true)
