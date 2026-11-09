@@ -6,7 +6,7 @@ public import Linger.Terminal.Spec
 
 /-! # Headline theorems
 
-The guarantees linger must keep, in eight parts:
+The guarantees linger must keep, in ten parts:
 
 1. Transparency: a client that attaches shows the session's terminal, losing only history beyond
    the replay budget, and the program reads exactly what its writers sent.
@@ -24,6 +24,19 @@ The guarantees linger must keep, in eight parts:
    control sequence.
 8. Clean terminal: what linger writes to a terminal on its own account is safe text or one of
    its fixed sequences, and handing a terminal back leaves it canonical.
+9. Work follows events: linger works only in response to an event, a byte, a request, a program
+   ending or a deadline an earlier event set, and each event sets at most a fixed number of
+   deadlines. An event costs in proportion to its size and its audience, never to how many
+   sessions exist, so every linger process goes quiet after the last event. Parts 1 to 8 decide
+   what linger does and this one how cheaply: work no event pays for is allowed only where it is
+   named, with its bound.
+10. Graceful under load: work a request needs never waits on optional work or on another
+   session, every wait is bounded and says what it missed, and optional work is skipped or
+   coalesced, never queued.
+
+A session's status is one glyph for one observation: `⣷` output right now, `⣿` new output, then
+it stopped, `⣀` nothing new since you looked, `✓` ended with status 0, `!` ended any other way,
+`~` saved with no daemon, and `?` no answer. Titles and `ls --summary` count `⣿`, `!` and `?`.
 
 Each theorem below is stated over definitions in the components' `Spec` modules and over the
 program parts declared below as holes: each hole is `sorry` here, the program supplies it, and
@@ -34,7 +47,9 @@ used. Changing a statement or a hole here changes what linger claims. Each part'
 what it does not claim yet.
 
 Not claimed: anything about the IO executors, the C shim or the operating system, which suites
-test instead. -/
+test instead. Parts 9 and 10 and the status rule have no headline statement here: what holds of
+them is in `THEOREMS.md` (waking, status and titles, views), and `scripts/gates.sh` lists every
+timer the program sets, with its bound. -/
 
 public section
 
