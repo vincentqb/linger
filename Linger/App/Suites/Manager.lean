@@ -202,8 +202,8 @@ private def recordCommand (root : System.FilePath) (args : List String) : IO UIn
     return UInt32.ofNat (← numberFile (root / "attach-rc") 7)
   | _ =>
     let executable ← readText (root / "real-executable")
-    if !executable.isEmpty && (args == ["ls", "--porcelain"] || args.head? == some "run") then
-      if args.head? == some "run" then
+    if !executable.isEmpty && (args == ["ls", "--porcelain"] || args.head? == some "resume") then
+      if args.head? == some "resume" then
         IO.FS.writeFile (root / "run-cwd") (← IO.currentDir).toString
       let child ← withLaunchLock <| IO.Process.spawn { cmd := executable, args := args.toArray }
       return ← waitChild child 5000
@@ -672,8 +672,8 @@ private def usageChecks (e : Env) : IO Unit := do
           [err, shortErr, helpErr, hErr].all String.isEmpty &&
           out.endsWith "\n" &&
           rows.map (fun line => (line.splitOn " ").headD "") ==
-            ["attach", "ls", "tmux", "run", "start", "send", "detach", "kill", "info", "capture",
-              "resize", "wait", "get", "set", "unset", "clear", "version", "help"] &&
+            ["attach", "ls", "tmux", "run", "start", "resume", "send", "detach", "kill", "info",
+              "capture", "resize", "wait", "get", "set", "unset", "clear", "version", "help"] &&
           rows.all
             (fun line =>
               line == line.trimAscii.toString &&
@@ -2164,7 +2164,7 @@ private def savedChecks (e : Env) : IO Unit := do
               discard <| f.archive [("saved-chosen", "different saved screen with more bytes\n")]
             s.text "\r"
             let refused ← failureRestored s 1 "pane capture archive changed"
-            return refused && !has (← f.calls) (call ["run", "saved-chosen", "true"]) &&
+            return refused && !has (← f.calls) (call ["resume", "saved-chosen"]) &&
                 (← f.nativeNames).isEmpty &&
                 !(← (System.FilePath.mk owned.dir / "saved-chosen.ckpt").pathExists)
   for (slug, content, error) in
@@ -2226,7 +2226,7 @@ private def savedChecks (e : Env) : IO Unit := do
           let calls ← f.calls
           let exact :=
             has calls (call ["tmux", "ls", "--porcelain", save.toString]) &&
-              has calls (call ["run", "saved-chosen", "true"]) &&
+              has calls (call ["resume", "saved-chosen"]) &&
               has calls (call ["attach", "saved-chosen"])
           let pid := (← withLaunchLock (owned.info "saved-chosen" "pid")).bind String.toNat?
           let cwd ←
@@ -2287,8 +2287,7 @@ private def savedChecks (e : Env) : IO Unit := do
           let clean ← termiosRestored s 130
           let calls ← f.calls
           let skippedCreation :=
-            has calls (call ["ls", "--porcelain"]) &&
-              !has calls (call ["run", "saved-chosen", "true"])
+            has calls (call ["ls", "--porcelain"]) && !has calls (call ["resume", "saved-chosen"])
           IO.FS.writeFile (f.root / "recreation-observation")
               s!"old-pid={oldPid}\nnew-pid={repr newPid}\nvanished={vanished}\nskipped-creation={skippedCreation}\nexpected-cwd={repr dir.toString}\nattach-cwd={repr attachCwd}\nshell-cwd={repr actual}\nanswered={answered}\nreturned={returned}\nterminal-restored={clean}\n"
           return vanished == "true" && skippedCreation && newPid.isSome && newPid != some oldPid &&

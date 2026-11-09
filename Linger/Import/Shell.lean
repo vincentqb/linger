@@ -295,7 +295,8 @@ private def seedPane (pane : Pane) (contents : Option String) : IO Bool :=
     return true
 
 /-- Both bulk import and individual selection preflight before effects, then
-skip existing identities. Only the fixed shell-starting command is executed. -/
+skip existing identities. Each pane's seeded checkpoint is resumed with the fixed
+`resume` command, which runs a fresh shell on the pane's contents in its directory. -/
 private def createPanes (executable : String) (origin : System.FilePath) (panes : List Pane)
     (archive : IO (Option Archive)) : IO Unit := do
   preflight origin panes
@@ -314,7 +315,7 @@ private def createPanes (executable : String) (origin : System.FilePath) (panes 
       continue
     let created ←
       IO.Process.output
-          { cmd := executable, args := #["run", pane.name, "true"],
+          { cmd := executable, args := #["resume", pane.name],
             cwd := some (System.FilePath.mk pane.dir) }
     unless created.exitCode == 0 do
       throw

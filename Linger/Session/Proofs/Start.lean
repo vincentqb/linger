@@ -19,6 +19,17 @@ theorem plan_take_iff (live saved : Bool) :
     plan live saved = .take ↔ live = false ∧ saved = false := by
   cases live <;> cases saved <;> simp [plan]
 
+/-- **`resume` starts only a saved session**: it runs a program exactly when no live session holds
+the name and a saved one does, -/
+theorem resumePlan_resume_iff (live saved : Bool) :
+    resumePlan live saved = .resume ↔ live = false ∧ saved = true := by
+  cases live <;> cases saved <;> simp [resumePlan]
+
+/-- …and starts nothing for a name no session holds. -/
+theorem resumePlan_missing_iff (live saved : Bool) :
+    resumePlan live saved = .missing ↔ live = false ∧ saved = false := by
+  cases live <;> cases saved <;> simp [resumePlan]
+
 /-- A report reads back as itself. -/
 theorem decode_encode (r : Report) : Report.decode r.encode = some r := by
   cases r with

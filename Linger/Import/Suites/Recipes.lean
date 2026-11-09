@@ -364,13 +364,12 @@ exit 0
     return (rc, err, ← IO.FS.readFile callsFile)
   let args := #[save.toString]
   let listCall := call ["linger", "ls", "--porcelain"]
-  let createCall := call ["linger", "run", "first-w2-p0", "true"]
-  let secondCall := call ["linger", "run", "second-w2-p1", "true"]
+  let createCall := call ["linger", "resume", "first-w2-p0"]
+  let secondCall := call ["linger", "resume", "second-w2-p1"]
   let (rc, _, calls) ← invoke panes "" "0" args
   expect
       (rc == 0 &&
-        calls ==
-          listCall ++ createCall ++ secondCall ++ call ["linger", "run", "third-w2-p2", "true"])
+        calls == listCall ++ createCall ++ secondCall ++ call ["linger", "resume", "third-w2-p2"])
       "linger tmux import skips every existing identity and creates shells without saved commands"
   let (rc, _, calls) ←
     invoke (paneLine "live" "1" "0" home command ++ paneLine "resume" "1" "0" home "") "" "0" args
@@ -521,7 +520,7 @@ fi
     expect
         (present == impostor && out.exitCode == 0 &&
           (← IO.FS.readFile callsFile) ==
-            listCalls ++ call ["linger", "run", "lookup-w1-p0", "true"] ++
+            listCalls ++ call ["linger", "resume", "lookup-w1-p0"] ++
               call ["cwd", paneDir.toString])
         s!"linger tmux import uses the supplied executable past an exported Bash function (PATH/cwd impostor: {impostor})"
   IO.FS.removeFile (origin / "linger")
@@ -551,7 +550,7 @@ fi
     expect
         (out.exitCode == 0 &&
           (← IO.FS.readFile callsFile) ==
-            listCalls ++ envCall ++ call ["linger", "run", s!"{session}-w1-p0", "true"] ++
+            listCalls ++ envCall ++ call ["linger", "resume", s!"{session}-w1-p0"] ++
               call ["cwd", paneDir.toString] ++
               envCall)
         s!"linger tmux import freezes physical home and child state environment ({label})"
@@ -601,7 +600,7 @@ fi
     expect
         (out.exitCode == 0 && homeOk &&
           calls ==
-            listCalls ++ call ["linger", "run", s!"{session}-w1-p0", "true"] ++
+            listCalls ++ call ["linger", "resume", s!"{session}-w1-p0"] ++
               call ["cwd", accountHome.toString])
         s!"linger tmux import uses account home for saved tilde and every child (HOME {label})"
 

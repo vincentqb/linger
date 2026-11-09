@@ -4,10 +4,11 @@ public import Linger.Session.Spec
 
 public section
 
-/-! # Linger.Session.Start — what `start` does with a name
+/-! # Linger.Session.Start — what `start` and `resume` do with a name
 
 `start` runs a program in a new session under a name no session holds. It never takes a name
-from a live session or from a saved one, and never resumes one (`plan`). The daemon decides
+from a live session or from a saved one, and never resumes one (`plan`). `resume` runs a saved
+session's program again and never starts a new session (`resumePlan`). The daemon decides
 holding the name, and tells the command that started it what it did (`Report`), through a file
 that command named. -/
 
@@ -16,6 +17,22 @@ namespace Linger.Session.Start
 /-- What `start` does with a name, given whether a live session and a saved one hold it. A live
 session comes first: its daemon owns the saved state too. -/
 def plan (live saved : Bool) : Plan := if live then .running else if saved then .saved else .take
+
+/-- What `resume` does with a name. -/
+inductive Resumption where
+  /-- A live session holds the name: its program already runs, and nothing changes. -/
+  | running
+  /-- A saved session holds the name, an ended one included: its program runs again, in its
+  saved directory and on its last screen. -/
+  | resume
+  /-- No session holds the name, and none starts. -/
+  | missing
+  deriving Repr, DecidableEq
+
+/-- What `resume` does with a name, given whether a live session and a saved one hold it: it
+starts only a saved session, never a new one, and a live session comes first. -/
+def resumePlan (live saved : Bool) : Resumption :=
+  if live then .running else if saved then .resume else .missing
 
 /-- What a daemon started for `start` tells the command that started it. -/
 inductive Report where

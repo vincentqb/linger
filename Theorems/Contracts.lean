@@ -323,6 +323,14 @@ example (live saved : Bool) :
 example (r : Session.Start.Report) : Session.Start.Report.decode r.encode = some r := by
   with_reducible exact Session.Start.decode_encode r
 
+example (live saved : Bool) :
+    Session.Start.resumePlan live saved = .resume ↔ live = false ∧ saved = true := by
+  with_reducible exact Session.Start.resumePlan_resume_iff live saved
+
+example (live saved : Bool) :
+    Session.Start.resumePlan live saved = .missing ↔ live = false ∧ saved = false := by
+  with_reducible exact Session.Start.resumePlan_missing_iff live saved
+
 -- Transport
 example (ms : List Wire.Msg) (hms : ∀ (m : Wire.Msg), m ∈ ms → m.WF) (chunks : List (List UInt8))
     (hc : chunks.flatten = List.flatMap Wire.encode ms) :

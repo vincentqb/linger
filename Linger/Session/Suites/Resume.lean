@@ -256,6 +256,26 @@ def run : IO UInt32 :=
     boot3.type "exit\r"
     let _ ← waitFor 5000 (return (← e.status "boot") == Status.exitedOk)
     boot3.bye (sendDetach := false)
+    -- `resume` runs an ended session's program again without attaching and leaves a live one as
+    -- it is; a name no session holds starts nothing
+    let (resumedRc, _, _) ← e.cli #["resume", "boot"]
+    let live ←
+      waitFor 4000 do
+          return (← e.status "boot") != Status.exitedOk && (← e.info "boot" "pid").isSome
+    let pid ← e.info "boot" "pid"
+    let (againRc, _, _) ← e.cli #["resume", "boot"]
+    expect
+        (resumedRc == 0 && live && has (← e.out #["capture", "--history", "boot"]) "LAST-42" &&
+          has (← e.out #["get", "boot"]) "k=v" &&
+          againRc == 0 &&
+          (← e.info "boot" "pid") == pid)
+        "resume runs an ended session's program again on its last screen, and leaves a live one as it is"
+    let (missingRc, _, missingErr) ← e.cli #["resume", "nosuch"]
+    expect
+        (missingRc == 127 && has missingErr "no session 'nosuch'" &&
+          !(← System.FilePath.pathExists s!"{e.dir}/nosuch.ckpt") &&
+          !(← System.FilePath.pathExists s!"{e.dir}/nosuch.sock"))
+        "resume of a name no session holds starts nothing and exits 127"
     e.killAll #["boot"]
     let ckpts3 ← e.dirNames ".ckpt"
     expect (ckpts3 == [] && !has (← e.out #["ls"]) "boot")

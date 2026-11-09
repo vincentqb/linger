@@ -820,11 +820,13 @@ cannot start leaves the record as it was.
 
 With `start`, the daemon takes the name only when no live or saved session holds it, never
 resumes one (`Start.plan`), runs the program in `cwd` or not at all, and tells `start` what it
-did. -/
+did. With `resume` as well, it runs only a saved session's program again, an ended one included,
+and starts nothing for a live session or a name no session holds (`Start.resumePlan`). -/
 def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State → IO Unit)
     (dropCkpt : IO Unit)
     (loadCkpt : IO (Option (Linger.Terminal.Vt.Vt × String × List (String × String))))
-    (record : RecordFile) (start : Option (Start.Report → IO Unit) := none) : IO Unit := do
+    (record : RecordFile) (start : Option (Start.Report → IO Unit) := none)
+    (resume : Bool := false) : IO Unit := do
   let deadline := (← monotonicMs) + claimWaitMs
   let reported ← IO.mkRef false
   let retry := claimRetry name (← Paths.socketPath name) deadline reported
@@ -836,22 +838,40 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
       if live then
         close r.toUInt64.toUInt32
       if let some tell := start then
-        match Start.plan live (← System.FilePath.pathExists (← Paths.ckptPath name)) with
-        | .running =>
-          tell .running
-          return
-        | .saved =>
-          tell .saved
-          return
-        | .take =>
-          pure ()
+        let saved ← System.FilePath.pathExists (← Paths.ckptPath name)
+        if resume then
+          match Start.resumePlan live saved with
+          | .running =>
+            tell .running
+            return
+          | .missing =>
+            tell (.failed 127 s!"no session '{name}'".toUTF8.toList)
+            return
+          | .resume =>
+            pure ()
+        else
+          match Start.plan live saved with
+          | .running =>
+            tell .running
+            return
+          | .saved =>
+            tell .saved
+            return
+          | .take =>
+            pure ()
       if live then
         throw (IO.userError s!"session '{name}' already running")
       let saved ←
-        if start.isSome then
+        if start.isSome && !resume then
           pure none
         else
           loadCkpt
+      -- a resume runs a saved session's program again or none: a checkpoint it cannot read
+      -- starts nothing
+      if resume && saved.isNone then
+        if let some tell := start then
+          tell (.failed 1 "its saved session cannot be read".toUTF8.toList)
+        return
       -- A new session runs in `cwd` or not at all. A resume runs in its saved directory, or in
       -- $HOME when that is gone (`Env.resumeDir`), and then says so in the info field saved_dir
       -- and in the log.

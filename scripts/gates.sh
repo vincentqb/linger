@@ -571,8 +571,8 @@ code_grep '^[[:space:]]+let panes ← IO[.]ofExcept [(]parseSave home content[)]
 code_grep '^[[:space:]]+for pane in plan existing panes do$' Linger/Import/Shell.lean >/dev/null \
   || fail "importer no longer iterates the proved import plan"
 import_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Import/Shell.lean)"
-printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])let created ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"run", pane[.]name, "true"[]], cwd := some [(]System[.]FilePath[.]mk pane[.]dir[)] [}] unless created[.]exitCode == 0 do throw [(]IO[.]userError s!"could not create session: [{]pane[.]name[}]: [{]created[.]stdout[}][{]created[.]stderr[}]"[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
-  || fail "importer bypasses planned creation argv/cwd, captured output or its diagnostic catch"
+printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])let created ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"resume", pane[.]name[]], cwd := some [(]System[.]FilePath[.]mk pane[.]dir[)] [}] unless created[.]exitCode == 0 do throw [(]IO[.]userError s!"could not create session: [{]pane[.]name[}]: [{]created[.]stdout[}][{]created[.]stderr[}]"[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "importer bypasses planned resume argv/cwd, captured output or its diagnostic catch"
 printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])[|] "import" => importSave executable paths[.]head[?]; return 0([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "importer no longer forwards the entry point executable"
 code_grep '^[[:space:]]+let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]] [}]$' Linger/Import/Shell.lean >/dev/null \
@@ -1228,12 +1228,15 @@ printf '%s\n' "$client_code" | CG_RE='(^|[[:space:]])try Paths[.]checkSpelling p
   || fail "successful connects must reject case-folded aliases and close on failure"
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])IO Unit := do let deadline := [(]← monotonicMs[)] [+] claimWaitMs let reported ← IO[.]mkRef false let retry := claimRetry name [(]← Paths[.]socketPath name[)] deadline reported Paths[.]withSessionLockRetrying name retry do ignoreSighup let sockPath ← Paths[.]socketPath name([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "daemon recovery and lifetime must execute inside both ownership locks"
-# A start takes a name only by Start.plan, decided holding the name, and never loads a checkpoint.
+# A start takes a name only by Start.plan, decided holding the name, and never loads a checkpoint;
+# a resume runs only a saved session's program, by Start.resumePlan, or nothing.
 for tie in \
-  'if let some tell := start then match Start[.]plan live [(]← System[.]FilePath[.]pathExists [(]← Paths[.]ckptPath name[)][)] with' \
-  'let saved ← if start[.]isSome then pure none else loadCkpt'; do
+  'if let some tell := start then let saved ← System[.]FilePath[.]pathExists [(]← Paths[.]ckptPath name[)] if resume then match Start[.]resumePlan live saved with' \
+  'else match Start[.]plan live saved with' \
+  'let saved ← if start[.]isSome && !resume then pure none else loadCkpt' \
+  'if resume && saved[.]isNone then if let some tell := start then tell [(][.]failed 1 "its saved session cannot be read"[.]toUTF8[.]toList[)] return'; do
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
-    || fail "a start took a name outside Start.plan or resumed a saved session: $tie"
+    || fail "a start took a name outside Start.plan, or a resume started anything but a saved session: $tie"
 done
 # An offline reader holds both locks briefly, so the daemon's startup claim retries a
 # held lock for a bounded, positive time, and stops at once when a live daemon answers

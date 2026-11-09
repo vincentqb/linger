@@ -43,6 +43,7 @@ ls [-r [hosts]] [--summary|--porcelain]   List sessions or attention counts
 tmux <command> [SAVE]                     Saved tmux panes; see tmux help
 run <name> <command...>                   Deprecated: type into a shell; use start, send
 start <name> <program> [args...]          Start a program, exactly, in a new session
+resume <name>                             Run a saved or ended session's program again
 send <name> <text...|->                   Send raw input; - reads stdin
 detach <name>                             Detach all clients from a session
 kill <name>                               End a session, or discard a saved or ended one
@@ -127,6 +128,26 @@ private def takeReport (path : String) : IO (Option (Option Linger.Session.Start
   IO.FS.removeFile path
   return some (Linger.Session.Start.Report.decode bytes.toList)
 
+/-- A command named a session that does not exist: say so and return 127, which a shell reports
+for a command it cannot find. -/
+private def noSession (name : String) : IO UInt32 := do
+  IO.eprintln s!"linger: no session '{name}'"
+  return 127
+
+/-- The report a daemon this command started writes, looked for every 10 ms while that daemon lives
+and for at most `startWaitMs`, with one last look once it has ended, since it may have reported
+just before: `none` when it wrote none. -/
+private def awaitReport (pid : UInt32) (report : String) :
+    IO (Option (Option Linger.Session.Start.Report)) := do
+  let deadline := (← monotonicMs) + startWaitMs
+  repeat
+    if let some told← takeReport report then
+      return some told
+    if !(← alive pid) || (← monotonicMs) ≥ deadline then
+      return ← takeReport report
+    IO.sleep 10
+  return none
+
 /-- `start`'s status for its daemon's report: 0 once the program runs; 1, saying which session
 holds the name, for a refusal, and for a saved one whether its program ended; and for a program
 that could not start, the status a shell or `env` reports. A report that is no report is
@@ -182,18 +203,77 @@ private def cmdStart (name : String) (argv : List String) : IO UInt32 := do
     let pid ←
       spawnDetached (← IO.appPath).toString
           (⟨["__start", report, name, cwd] ++ argv⟩ : Array String) log
-    let deadline := (← monotonicMs) + startWaitMs
-    repeat
-      if let some told← takeReport report then
-        return ← startStatus name told
-      if !(← alive pid) || (← monotonicMs) ≥ deadline then
-        -- one last look: the daemon may have reported just before it ended
-        if let some told← takeReport report then
-          return ← startStatus name told
-        IO.eprintln
-            s!"linger: session '{name}' did not start: its daemon did not report (see {log})"
-        return 125
-      IO.sleep 10
+    match ← awaitReport pid report with
+    | some told =>
+      startStatus name told
+    | none =>
+      IO.eprintln s!"linger: session '{name}' did not start: its daemon did not report (see {log})"
+      return 125
+
+/-- The daemon `resume` began: `serveStart`'s, running only a saved session's program again. -/
+private def serveResume (report name cwd : String) : IO Unit := do
+  let told ← IO.mkRef false
+  let tell (r : Linger.Session.Start.Report) : IO Unit := do
+    told.set true
+    writeReport report r
+  try
+    Daemon.serve name cwd [] (← Resume.saver name) (Resume.dropCkpt name) (Resume.loadCkpt name)
+        (recordFile name) (some tell) (resume := true)
+  catch err =>
+    unless ← told.get do
+      match ← Client.connect name with
+      | some fd =>
+        close fd
+        tell .running
+      | none =>
+        tell (.failed 125 err.toString.toUTF8.toList)
+    throw err
+
+/-- `resume`'s status for its daemon's report: 0 once the program runs again or when a live session
+already runs it; 127, as for a session that does not exist, when no session holds the name; and
+for a saved session that cannot be read or a program that cannot start, 1 or what a shell or
+`env` reports. A report that is no report is linger's own failure, 125. -/
+private def resumeStatus (name : String) : Option Linger.Session.Start.Report → IO UInt32
+  | some .started | some .running => return 0
+  | some (.failed 127 _) => noSession name
+  | some (.failed status why) => do
+    IO.eprintln s!"linger: session '{name}' did not resume: {Client.replyText "no reason" why}"
+    return status.toUInt32
+  | some .saved | none => do
+    IO.eprintln s!"linger: session '{name}' did not resume: the daemon's report is unreadable"
+    return 125
+
+/-- `resume`: run a saved session's program again, an ended session's included, in its saved
+directory and on its last screen, without attaching, and return once it runs. A live session is
+left as it is, and a name no session holds starts nothing (`Start.resumePlan`); the daemon decides
+again holding the name. -/
+private def cmdResume (name : String) : IO UInt32 := do
+  let live ←
+    match ← Client.connect name with
+    | some fd =>
+      do
+        close fd
+        pure true
+    | none =>
+      pure false
+  let saved ← System.FilePath.pathExists (← Paths.ckptPath name)
+  match Linger.Session.Start.resumePlan live saved with
+  | .running =>
+    return 0
+  | .missing =>
+    noSession name
+  | .resume =>
+    let report ← Paths.startReportPath name s!"{← getpid}-{← IO.rand 0 0xFFFFFFFF}"
+    let cwd := (← IO.Process.getCurrentDir).toString
+    let log ← Paths.logPath name
+    let pid ←
+      spawnDetached (← IO.appPath).toString (⟨["__resume", report, name, cwd]⟩ : Array String) log
+    match ← awaitReport pid report with
+    | some told =>
+      resumeStatus name told
+    | none =>
+      IO.eprintln s!"linger: session '{name}' did not resume: its daemon did not report (see {log})"
+      return 125
 
 /-- Connect, spawning the daemon first if needed (attach-is-upsert). Without a socket it
 gives up no sooner than `socketWaitFloorMs`; after that it keeps waiting only while the
@@ -506,12 +586,6 @@ private def requestStatus (name : String) (result : Client.Drained) : IO UInt32 
   | .silent =>
     IO.eprintln s!"linger: no reply from '{name}'"
   return 1
-
-/-- A command named a session that does not exist: say so and return 127, which a shell reports
-for a command it cannot find. -/
-private def noSession (name : String) : IO UInt32 := do
-  IO.eprintln s!"linger: no session '{name}'"
-  return 127
 
 /-- One request to a live session, given up after `Client.replySilenceMs` of silence, as every
 one-shot request is (`Client.oneShot`). -/
@@ -875,6 +949,14 @@ def main (args : List String) : IO UInt32 := do
   | "__start" :: report :: name :: cwd :: argv =>
     serveStart report name cwd argv
     return 0
+  | ["__resume", report, name, cwd] =>
+    serveResume report name cwd
+    return 0
+  | ["resume", name] =>
+    withTarget "resume" name [] cmdResume
+  | "resume" :: _ =>
+    IO.eprintln "usage: linger resume <name>"
+    return 2
   | "start" :: name :: argv =>
     if argv.isEmpty then
       IO.eprintln "usage: linger start <name> <program> [args...]"
@@ -890,7 +972,8 @@ def main (args : List String) : IO UInt32 := do
         -- the shell it types into reinterprets the words, and the shell is the session's program
         IO.eprintln
             "linger: run is deprecated and will be removed: it types its words into the session's \
-            shell. Use start to run a program in a new session, or send to type into a session."
+            shell. Use start to run a program in a new session, resume to run a saved one's again, \
+            or send to type into a session."
         let fd ← connectUpsert name []
         try
           Client.sendMsg fd (.input (String.intercalate " " cmd ++ "\n").toUTF8.toList)
