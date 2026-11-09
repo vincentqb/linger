@@ -9,7 +9,8 @@ public section
 
 Work follows events: a daemon sleeps until something happens or its session's next tick
 (`Session.State.nextTick`), so a session whose program is quiet and whose state is saved wakes
-its daemon for nothing at all. Wakeups are the context switches `/proc` counts for every thread
+its daemon for nothing at all, and a summary reads what each daemon published to its name's end
+record instead of asking it. Wakeups are the context switches `/proc` counts for every thread
 of the daemon; where there is no `/proc` (macOS) the counts are absent and those checks pass
 vacuously, as the resident-set check in `Linger.Session.Suites.Resume` does. -/
 
@@ -41,9 +42,20 @@ def wakeupsOver (pid : Option UInt32) (ms : Nat) : IO (Option Nat) := do
   let some after ← wakeups pid | return none
   return some (after - before)
 
-/-- The quiet suite: idle sessions, and sessions whose output has stopped, sleep. Nothing asks
-either daemon anything between finding its pid and the last measurement, since a question is
-an event that wakes it. -/
+/-- How many times the daemon `pid` woke while `action` ran, and what `action` gave; the count is
+`none` where there is no `/proc` or no pid. -/
+def wakeupsDuring {α : Type} (pid : Option UInt32) (action : IO α) : IO (Option Nat × α) := do
+  let before ← pid.mapM wakeups
+  let result ← action
+  let after ← pid.mapM wakeups
+  return (match before.join, after.join with
+      | some b, some a => some (a - b)
+      | _, _ => none,
+      result)
+
+/-- The quiet suite: idle sessions, and sessions whose output has stopped, sleep, and a summary
+reads what their daemons published instead of waking them. Nothing asks either daemon anything
+between finding its pid and the last measurement, since a question is an event that wakes it. -/
 def run : IO UInt32 :=
   Env.suite "quiet" fun e => do
     let (idleRc, _, _) ← e.cli #["start", "q-idle", "/bin/sh", "-c", "exec sleep 1000"]
@@ -60,12 +72,24 @@ def run : IO UInt32 :=
         let measured ← IO.asTask (wakeupsOver idlePid 3000) Task.Priority.dedicated
         let burst ← wakeupsOver burstPid 3000
         pure (← IO.ofExcept (← IO.wait measured), burst)
+    -- the burst arrived while nobody looked, so a summary counts it, as asking would
+    let (idleAsked, burstAsked, summaries) ←
+      do
+        let (idleAsked, (burstAsked, summaries)) ←
+          wakeupsDuring idlePid <|
+              wakeupsDuring burstPid <| (List.range 3).mapM fun _ => e.cli #["ls", "--summary"]
+        pure (idleAsked, burstAsked, summaries)
     expect (idleRc == 0 && idlePid.isSome && idle.all (· == 0))
         s!"a session whose program prints nothing never wakes its daemon ({idle} in 3 s)"
     expect
         (burstRc == 0 && burstPid.isSome && burst.all (· == 0) &&
           has (← e.out #["capture", "--history", "q-burst"]) "QUIET-42")
         s!"a session whose output stopped and is saved sleeps ({burst} wakeups in 3 s)"
+    let unread := s!"1{Linger.Display.Status.icon .wantsYou}\n"
+    expect
+        (idleAsked.all (· == 0) && burstAsked.all (· == 0) &&
+          summaries.all (fun (rc, text, _) => rc == 0 && text == unread))
+        s!"a summary reads what each daemon published and wakes none ({idleAsked} and {burstAsked} wakeups over three summaries: {summaries.map (·.2.1)})"
     e.killAll #["q-idle", "q-burst"]
 
 end Linger.Session.Suites.Quiet

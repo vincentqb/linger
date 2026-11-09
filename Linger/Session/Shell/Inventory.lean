@@ -15,8 +15,9 @@ public section
 
 One info conversation per live socket under an absolute deadline, a bounded number at once,
 and a failed-connect socket removed only under its name lock; then each checkpoint whose
-name no live session confirmed. The listing, the prompt summary, `get` and the tmux importer
-all read sessions through this module. -/
+name no live session confirmed. A summary asks only the daemons whose end record does not say
+what they saw. The listing, the prompt summary, `get` and the tmux importer all read sessions
+through this module. -/
 
 namespace Linger.Session.Shell.Inventory
 
@@ -182,22 +183,54 @@ def savedRow (record : Except IO.Error (Option (List UInt8))) :
     | some (.ended outcome) => (.ended outcome.status.toNat, Linger.Session.outcomeFields outcome)
     | _ => (.stale, [])
 
+/-- What a session's end record says its daemon saw, while that daemon holds the name, so a
+summary need not wake it; `none` leaves the summary to ask. A held name lock is a daemon that
+holds the name, which wrote the record: one that ended said so in it before giving the name up. -/
+private def publishedSeen (listed : Paths.Listed) : IO (Option Linger.Session.Seen) := do
+  let some seen :=
+    (← (Record.loadListed listed).toBaseIO).toOption.bind
+      (·.bind Linger.Session.Record.published) | return none
+  let free ←
+    try
+      listed.withLock (pure true)
+    catch _ =>
+      pure false
+  return if free then none else some seen
+
 /-- Common local snapshot for the listing and prompt. Concurrent queries share
 one deadline (two seconds for a listing); unqueried peers stay unknown. The names come from
 the directories, so no path here needs a spelling check. A saved session is listed as its end
-record says (`savedRow`), read while holding the name. -/
-def localRows (stopAt : Option Nat := none) : IO (List (List (String × String))) := do
+record says (`savedRow`), read while holding the name. With `statusOnly`, as for a summary, a
+row carries only its status, and a live session whose end record says what its daemon saw is
+read from the record without waking the daemon (`rowStatus_published`). -/
+def localRows (stopAt : Option Nat := none) (statusOnly : Bool := false) :
+    IO (List (List (String × String))) := do
   let deadline := stopAt.getD ((← monotonicMs) + 2000)
   let sockets := (← Paths.listSocketNames).toArray.qsort (·.name < ·.name)
   let ckpts := (← Paths.listCkptNames).toArray.qsort (·.name < ·.name) |>.toList
-  let infos ← queryInfos sockets deadline stopAt.isSome
   let liveRow := fun name info =>
     Linger.Display.Listing.rowFields name info ++
       [("state", "live"),
         ("status", Linger.Display.Status.name (Linger.Display.Listing.rowStatus (.live info)))]
   let mut confirmedLive : List String := []
   let mut rows : List (List (String × String)) := []
-  for (listed, result) in sockets.zip infos do
+  let mut asked := sockets
+  if statusOnly then
+    asked := #[]
+    for listed in sockets do
+      match ← publishedSeen listed with
+      | some seen =>
+        confirmedLive := confirmedLive ++ [listed.name]
+        let row := Linger.Display.Listing.Row.published seen.fresh seen.unseen
+        rows :=
+          rows ++
+            [Linger.Display.Listing.rowFields listed.name
+                [("state", "live"),
+                  ("status", Linger.Display.Status.name (Linger.Display.Listing.rowStatus row))]]
+      | none =>
+        asked := asked.push listed
+  let infos ← queryInfos asked deadline stopAt.isSome
+  for (listed, result) in asked.zip infos do
     let name := listed.name
     match result with
     | some info =>

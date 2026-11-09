@@ -241,7 +241,7 @@ say "4. live suites (separate processes, at most four at once)"
 ./.lake/build/bin/suites --suites \
   manager:127 delivery:37 attach:64 agent:62 \
   resume:24 watch:50 title:18 graphics:9 robust:31 \
-  interop:72 recipes:58 status:17 terminal:12 overview:15 remote:68 identity:25 quiet:2 \
+  interop:72 recipes:58 status:18 terminal:12 overview:15 remote:68 identity:25 quiet:3 \
   || fail "live suites (see $logs/linger-*.out)"
 
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \

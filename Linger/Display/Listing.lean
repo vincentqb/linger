@@ -76,6 +76,10 @@ inductive Row where
   /-- From a peer's porcelain over ssh: whether the peer lists the session live,
   and the peer's own `status` name, read by `Status.ofName`. -/
   | remote (live : Bool) (peerStatus : String)
+  /-- A socket whose daemon holds the name, read from the name's end record instead of asking:
+  whether the daemon last saw fresh output, and output since the session was last looked at
+  (`Session.Record.published`). -/
+  | published (fresh unseen : Bool)
   deriving Repr
 
 /-- The status a row displays. Only a live row consults the daemon's reply, and a remote row
@@ -98,6 +102,7 @@ def rowStatus : Row → Status
     -- running session can show
     let status := ofName peerStatus
     if live || status == .exitedOk || status == .exitedBad then status else .resumable
+  | .published fresh unseen => classify { fresh, unseen }
 
 /-! ## Rendering the human-readable listing
 

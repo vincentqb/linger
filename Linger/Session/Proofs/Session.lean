@@ -62,6 +62,13 @@ theorem infoFields_protocol (s : State) :
       ("version", Terminal.Mediation.versionNumber) ∈ infoFields s := by
   simp [infoFields]
 
+/-- What the name's end record publishes is what `info` reports: a summary that reads the record
+sees the daemon's own `fresh` and `unseen`. -/
+theorem infoFields_seen (s : State) :
+    ("fresh", toString s.seen.fresh) ∈ infoFields s ∧
+      ("unseen", toString s.seen.unseen) ∈ infoFields s := by
+  simp [infoFields, State.seen]
+
 /-- Distinct numbers print differently. -/
 theorem toString_nat_inj {a b : Nat} (h : toString a = toString b) : a = b := by
   have digits : Nat.toDigits 10 a = Nat.toDigits 10 b := by

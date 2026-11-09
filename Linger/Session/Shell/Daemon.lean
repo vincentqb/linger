@@ -41,7 +41,9 @@ progress and storage bound. Runtime scheduling and short-write handling are
 Checkpoint effects are wired to checkpoint hooks from `Linger.Session.Shell.Resume`:
 the daemon knows *when*, that module knows *what*. A save runs on a thread of its own, one at a
 time, and a later request replaces any that waits, so a slow disk holds up no answer and no
-output (`collectSave`); before the daemon gives the name up it waits for them (`finishSaves`).
+output (`Offloop`, `collectSave`); before the daemon gives the name up it waits for them
+(`finishSaves`). The name's end record is written the same way whenever what the daemon sees of
+the output changes (`publish`), so a summary reads the record instead of waking the daemon.
 -/
 
 namespace Linger.Session.Shell.Daemon
@@ -93,6 +95,35 @@ unwritten bytes the newest whole `.input` frame is dropped, as a tty drops input
 when its own buffer fills (`IMAXBEL`). One frame is one read of the keyboard, so
 no UTF-8 sequence or escape is split. -/
 def ptyInCap : Nat := outbufCap
+
+/-- Writes of one kind that the daemon does off its loop: at most one runs, on a thread of its
+own, and a later one replaces any that waits for it. So a slow disk holds up no answer and no
+output, and writes are coalesced and never queue. -/
+structure Offloop where
+  /-- The write running on its own thread, if any. -/
+  running : Option (Task (Except IO.Error Unit)) := none
+  /-- The latest write asked for while one ran; it runs when that one ends. -/
+  waiting : Option (IO Unit) := none
+
+/-- Run `write` on its own thread now, or after the running write in place of any that waits. -/
+def Offloop.ask (w : Offloop) (write : IO Unit) : IO Offloop := do
+  if w.running.isSome then
+    return { w with waiting := some write }
+  return { running := some (← IO.asTask write Task.Priority.dedicated) }
+
+/-- How the running write ended, once it has, or after waiting for it with `block`; the write
+that waited for it then starts. `none` while it runs, or when none does. -/
+def Offloop.collect (w : Offloop) (block : Bool := false) :
+    IO (Offloop × Option (Except IO.Error Unit)) := do
+  let some task := w.running | return (w, none)
+  unless block || (← IO.hasFinished task) do
+    return (w, none)
+  let ended ← IO.wait task
+  match w.waiting with
+  | some write =>
+    return ({ running := some (← IO.asTask write Task.Priority.dedicated) }, some ended)
+  | none =>
+    return ({}, some ended)
 
 /-- One accepted client transport: its socket and the output still owed to it. -/
 structure Conn where
@@ -164,12 +195,18 @@ structure Rt where
   saveCkpt : State → IO Unit
   /-- Delete the session's checkpoint; a failure is reported, not fatal. -/
   dropCkpt : IO Unit
-  /-- The checkpoint save running on its own thread, if any: at most one runs at a time, so a
-  disk that stalls holds up no answer, no output and no other session. -/
-  saving : Option (Task (Except IO.Error Unit)) := none
-  /-- The latest state a checkpoint asked for while a save ran. It is saved when that one ends,
-  and a later request replaces it, so saves are coalesced and never queue. -/
-  pendingSave : Option State := none
+  /-- Checkpoint saves, off the loop. -/
+  saves : Offloop := {}
+  /-- Replace the name's end record, as `RecordFile.save` does; nothing in a suite that serves
+  without one. -/
+  saveRecord : Linger.Session.Record → IO Unit := fun _ => pure ()
+  /-- Writes of what the daemon saw to the name's end record, off the loop. -/
+  records : Offloop := {}
+  /-- What the daemon last asked the record to say it saw. -/
+  published : Option Linger.Session.Seen := none
+  /-- Whether the last record write failed, so the log records the failure once rather than
+  once per event. -/
+  recordFailed : Bool := false
 
 /-- A diagnostic write failure must not turn recovery into session loss. -/
 private def report (message : String) : IO Unit := do
@@ -190,40 +227,78 @@ def Rt.closeConn (rt : Rt) (fd : UInt32) : IO Rt := do
   close fd
   return { rt with conns := rt.conns.filter (·.fd != fd) }
 
-/-- Save `st` on a thread of its own. -/
-private def startSave (rt : Rt) (st : State) : IO Rt := do
-  return { rt with saving := some (← IO.asTask (rt.saveCkpt st) Task.Priority.dedicated) }
+/-- Wait for the running write and the one waiting for it, and give how each ended: no other can
+start meanwhile. A write the disk holds up longer than a second says so once, naming `what`. -/
+def Offloop.finish (w : Offloop) (what : String) : IO (List (Except IO.Error Unit)) := do
+  let mut w := w
+  let mut ended : List (Except IO.Error Unit) := []
+  let mut told := false
+  for _ in [0:2] do
+    let some task := w.running | break
+    unless told || (← IO.hasFinished task) do
+      let timer ← IO.asTask (IO.sleep 1000) Task.Priority.dedicated
+      unless ← IO.waitAny [task.map (fun _ => true), timer.map (fun _ => false)] do
+        report s!"linger: waiting for {what} to reach the disk"
+        told := true
+    let (next, result) ← w.collect true
+    w := next
+    ended := ended ++ result.toList
+  return ended
 
 /-- The end of the running save, once it has ended, or after waiting for it when `block`: a
 failure is reported and fed back to the session as `.checkpointFailed`, so it retries at its
 next cadence, and the state that waited is saved next. -/
 def collectSave (rt : Rt) (block : Bool := false) : IO (Rt × List Event) := do
-  let some task := rt.saving | return (rt, [])
-  unless block || (← IO.hasFinished task) do
-    return (rt, [])
-  let mut rt := { rt with saving := none }
-  let mut events := []
-  if let .error err← IO.wait task then
+  let (saves, ended) ← rt.saves.collect block
+  if let some (.error err) := ended then
     report s!"linger: checkpoint save failed: {err}"
-    events := [.checkpointFailed]
-  if let some st := rt.pendingSave then
-    rt ← startSave { rt with pendingSave := none } st
-  return (rt, events)
+    return ({ rt with saves }, [.checkpointFailed])
+  return ({ rt with saves }, [])
 
 /-- Wait for the running save and the one waiting for it, as before giving the name up: what a
-session leaves must be on disk while it still holds the name. A save the disk holds up longer
-than a second says so. Failures are reported and not retried. -/
+session leaves must be on disk while it still holds the name. Failures are reported and not
+retried. -/
 def finishSaves (rt : Rt) : IO Rt := do
-  let mut rt := rt
-  -- the running save, then the one that waited for it: no other can start meanwhile
-  for _ in [0:2] do
-    let some task := rt.saving | break
-    unless ← IO.hasFinished task do
-      let timer ← IO.asTask (IO.sleep 1000) Task.Priority.dedicated
-      unless ← IO.waitAny [task.map (fun _ => true), timer.map (fun _ => false)] do
-        report "linger: waiting for the session's checkpoint to reach the disk"
-    rt := (← collectSave rt true).1
-  return rt
+  for ended in ← rt.saves.finish "the session's checkpoint" do
+    if let .error err := ended then
+      report s!"linger: checkpoint save failed: {err}"
+  return { rt with saves := {} }
+
+/-- Ask the name's end record to say what the daemon now sees of the output, when that changed
+since it last asked: output arriving, output going stale and someone looking each change it once,
+so a burst of output asks at most twice. The write runs off the loop (`records`). -/
+def publish (rt : Rt) : IO Rt := do
+  let seen := rt.st.seen
+  if rt.published == some seen then
+    return rt
+  let records ← rt.records.ask (rt.saveRecord (.running (some seen)))
+  return { rt with
+      records, published := some seen }
+
+/-- The end of the running record write, once it has ended, or after waiting for it when
+`block`. A failed write is reported once until one succeeds; the record may then say less than
+the daemon saw, so the next event asks again. -/
+def collectRecord (rt : Rt) (block : Bool := false) : IO Rt := do
+  let (records, ended) ← rt.records.collect block
+  match ended with
+  | some (.error err) =>
+    unless rt.recordFailed do
+      report s!"linger: writing the session's record failed: {err}"
+    return { rt with
+        records, published := none, recordFailed := true }
+  | some (.ok ()) =>
+    return { rt with
+        records, recordFailed := false }
+  | none =>
+    return { rt with records }
+
+/-- Wait for the record write that runs, dropping any that waits, as before the record says how
+the program ended: a write still running would replace that. -/
+def settleRecord (rt : Rt) : IO Rt := do
+  for ended in ← Offloop.finish { rt.records with waiting := none } "the session's record" do
+    if let .error err := ended then
+      report s!"linger: writing the session's record failed: {err}"
+  return { rt with records := {} }
 
 /-- Retired transports still own buffers and a snapshot. Their deadline
 releases that ownership even while the rest of the session stays alive. -/
@@ -404,12 +479,10 @@ private def executeEffect (st : State) (rt : Rt) : (eff : Effect Plan) → IO (R
   -- thread, one at a time, and a request that finds one running replaces any that waits for
   -- it; `collectSave` feeds a failure back to the session later
   | .checkpoint => do
-    if rt.saving.isSome then
-      return ({ rt with pendingSave := some st }, false)
-    return (← startSave rt st, false)
+    return ({ rt with saves := ← rt.saves.ask (rt.saveCkpt st) }, false)
   | .dropCheckpoint => do
     -- a save still running would put the checkpoint back after the delete
-    let rt ← finishSaves { rt with pendingSave := none }
+    let rt ← finishSaves { rt with saves := { rt.saves with waiting := none } }
     try
       rt.dropCkpt
     catch err =>
@@ -465,10 +538,11 @@ descriptor says a child ended, or every round without one. -/
 def pollRound (rt : Rt) (limitMs : Option Nat := none) : IO (Rt × List Event) := do
   let now ← monotonicMs
   let rt ← expireConns rt now
-  -- a save that has ended feeds back first, and the one that waited for it starts
+  -- a write that has ended feeds back first, and the one that waited for it starts
   let (rt, saved) ← collectSave rt
+  let rt ← collectRecord rt
   let mut wake := rt.st.nextTick
-  if rt.saving.isSome then
+  if rt.saves.running.isSome || rt.records.running.isSome then
     wake := soonest wake (now + saveCheckMs)
   if let some limit := limitMs then
     wake := soonest wake (now + limit)
@@ -827,7 +901,7 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
         -- never the previous session's. A record that cannot be written starts nothing, and a
         -- program that cannot start puts the previous record back.
         let previous ← record.load
-        record.save .running
+        record.save (.running none)
         let spawned ←
           try
             trySpawnPty (UInt32.ofNat (Linger.Terminal.Vt.clampDim vt0.colCount))
@@ -857,7 +931,10 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
         -- The cleanup reads the runtime as each round left it, the program's ending included,
         -- whatever fails after that round.
         let latest ←
-          IO.mkRef ({ st, listenFd, ptyFd, childPid := pid, childEnd, saveCkpt, dropCkpt } : Rt)
+          IO.mkRef
+              ({ st, listenFd, ptyFd, childPid := pid, childEnd, saveCkpt, dropCkpt,
+                 saveRecord := record.save } :
+                Rt)
         try
           setNonblock ptyFd
           let mut rt ← latest.get
@@ -867,6 +944,8 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
             let now ← monotonicMs
             rt ← pump rt' (events ++ [.tick now])
             rt ← flushPty rt
+            if !rt.exiting then
+              rt ← publish rt
             latest.set rt
           rt ← drainConns rt
           latest.set rt
@@ -875,6 +954,7 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
           for c in rt.conns do
             close c.fd
           let outcome ← stopProgram rt
+          let rt ← settleRecord rt
           try
             record.save (.ended outcome)
           catch err =>

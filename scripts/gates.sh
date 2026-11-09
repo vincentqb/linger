@@ -754,7 +754,7 @@ for tie in \
   'for [(]host, output[)] in remotes[.]zip remote[.]toList do for row in Linger[.]Target[.]Remote[.]parse output do' \
   '[|] some [(]porcelain, remoteFlag[)] => cmdList porcelain [(]← resolveRemotes remoteFlag[)]' \
   'let withColor := [(]← [(]← IO[.]getStdout[)][.]isTty[)] && [(]← IO[.]getEnv "NO_COLOR"[)][.]isNone writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor rows[)][.]toArray[)]' \
-  'def summaryText : IO String := do let rows ← localRows [(]some [(][(]← monotonicMs[)] [+] 250[)][)] return Linger[.]Display[.]Status[.]summary [(]rows[.]map fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD "unknown"[)][)]' \
+  'def summaryText : IO String := do let rows ← localRows [(]some [(][(]← monotonicMs[)] [+] 250[)][)] [(]statusOnly := true[)] return Linger[.]Display[.]Status[.]summary [(]rows[.]map fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD "unknown"[)][)]' \
   'def cmdSummary : IO UInt32 := do let summary ← summaryText if !summary[.]isEmpty then IO[.]println summary return 0' \
   'let fd ← connectUpsert name cmd some <[$]> Client[.]attach name fd summaryText' \
   '[|] [[]"ls", "--summary"[]] [|] [[]"list", "--summary"[]] [|] [[]"l", "--summary"[]] => cmdSummary'; do
@@ -769,8 +769,9 @@ for tie in \
   'while go && [(]← monotonicMs[)] < deadline do let remaining := deadline - [(]← monotonicMs[)] let revs ← poll #[[]fd[]] #[[]POLLIN[]] [(]Int32[.]ofNat [(]min 100 remaining[)][)]' \
   'queryWith [(]Client[.]connect name ·[)] stopAt retainUnavailable' \
   'IO[.]asTask [(]queryWith [(]connectListed listed ·[)] [(]some deadline[)] retainUnavailable[)]' \
-  'let infos ← queryInfos sockets deadline stopAt[.]isSome' \
-  'for [(]listed, result[)] in sockets[.]zip infos do let name := listed[.]name match result with [|] some info => confirmedLive := confirmedLive [+][+] [[]name[]] rows := rows [+][+] [[]liveRow name [(]info[.]toOption[.]getD [[][]][)][]] [|] none => if ![(]← removeStaleSocket listed[)] then'; do
+  'let infos ← queryInfos asked deadline stopAt[.]isSome' \
+  'let free ← try listed[.]withLock [(]pure true[)] catch _ => pure false return if free then none else some seen' \
+  'for [(]listed, result[)] in asked[.]zip infos do let name := listed[.]name match result with [|] some info => confirmedLive := confirmedLive [+][+] [[]name[]] rows := rows [+][+] [[]liveRow name [(]info[.]toOption[.]getD [[][]][)][]] [|] none => if ![(]← removeStaleSocket listed[)] then'; do
   printf '%s\n' "$inventory_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "listing or prompt bypassed its shared policy: $tie"
 done
@@ -1123,11 +1124,13 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def pump [(]rt : Rt[)] [(]e
 code_grep '^private def executeEffect [(]st : State[)] [(]rt : Rt[)] : [(]eff : Effect Plan[)] → IO [(]Rt × Driver[.]Reply eff[)]$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "effect interpreter must implement the driver's dependent reply type"
 for tie in \
-  '[|] [.]checkpoint => do if rt[.]saving[.]isSome then return [(][{] rt with pendingSave := some st [}], false[)] return [(]← startSave rt st, false[)]' \
-  'def startSave [(]rt : Rt[)] [(]st : State[)] : IO Rt := do return [{] rt with saving := some [(]← IO[.]asTask [(]rt[.]saveCkpt st[)] Task[.]Priority[.]dedicated[)] [}]' \
-  'if let some st := rt[.]pendingSave then rt ← startSave [{] rt with pendingSave := none [}] st'; do
+  '[|] [.]checkpoint => do return [(][{] rt with saves := ← rt[.]saves[.]ask [(]rt[.]saveCkpt st[)] [}], false[)]' \
+  'def Offloop[.]ask [(]w : Offloop[)] [(]write : IO Unit[)] : IO Offloop := do if w[.]running[.]isSome then return [{] w with waiting := some write [}] return [{] running := some [(]← IO[.]asTask write Task[.]Priority[.]dedicated[)] [}]' \
+  '[|] some write => return [(][{] running := some [(]← IO[.]asTask write Task[.]Priority[.]dedicated[)] [}], some ended[)]' \
+  'let seen := rt[.]st[.]seen if rt[.]published == some seen then return rt let records ← rt[.]records[.]ask [(]rt[.]saveRecord [(][.]running [(]some seen[)][)][)]' \
+  'rt ← flushPty rt if !rt[.]exiting then rt ← publish rt latest[.]set rt'; do
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
-    || fail "checkpoint interpreter must save the driver's current state, on a thread of its own: $tie"
+    || fail "checkpoint and record writes must carry the driver's current state, on a thread of their own: $tie"
 done
 
 # An info answer can span several frames. The pure producer proves the bound;
@@ -1250,8 +1253,8 @@ retrying="$(code_grep '(^|[^[:alnum:]_])with(Session)?LockRetrying([^[:alnum:]_]
   || fail "only the daemon's startup claim may retry a held lock: ${retrying:-no retrying claim}"
 for tie in \
   'finally close listenFd try IO[.]FS[.]removeFile sockPath catch _ => pure [(][)][[:space:]]+end Linger[.]Session[.]Shell[.]Daemon' \
-  'finally let rt ← latest[.]get for c in rt[.]conns do close c[.]fd let outcome ← stopProgram rt try record[.]save [(][.]ended outcome[)]' \
-  'let previous ← record[.]load record[.]save [.]running let spawned ← try trySpawnPty'; do
+  'finally let rt ← latest[.]get for c in rt[.]conns do close c[.]fd let outcome ← stopProgram rt let rt ← settleRecord rt try record[.]save [(][.]ended outcome[)]' \
+  'let previous ← record[.]load record[.]save [(][.]running none[)] let spawned ← try trySpawnPty'; do
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "daemon resource cleanup escaped its ownership lifetime: $tie"
 done

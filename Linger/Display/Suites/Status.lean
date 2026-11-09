@@ -101,6 +101,13 @@ def checkBacklog (e : Env) : IO Unit := do
         if fd ≥ 0 then
           Linger.Os.Shell.close fd.toUInt64.toUInt32
 
+/-- Whether `linger ls --summary` prints `expected` within four seconds: a daemon writes what it
+sees to its name's end record on a thread of its own, a moment after it sees it. -/
+private def summaryBecomes (e : Env) (expected : String) : IO Bool :=
+  waitFor 4000 do
+    let (code, text, _) ← e.cli #["ls", "--summary"]
+    return code == 0 && text == expected
+
 /-- The status suite: attaching marks a session seen and detached output marks it unread. -/
 def run : IO UInt32 :=
   Env.suite "status" fun e => do
@@ -114,8 +121,7 @@ def run : IO UInt32 :=
     expect ((← e.status "st") == Status.wantsYou) "unwatched output reads wants-you"
     let unread := s!"1{Linger.Display.Status.icon Status.wantsYou}\n"
     let before ← e.field "st" "behind"
-    let (summaryCode, summary, _) ← e.cli #["ls", "--summary"]
-    expect (summaryCode == 0 && summary == unread) "summary counts unread with the shared glyph"
+    expect (← summaryBecomes e unread) "summary counts unread with the shared glyph"
     expect ((← e.field "st" "behind") == before) "summary does not acknowledge unread output"
     -- 2. attaching marks it seen: detach with no further output and it is idle.
     let c ← e.spawn #["attach", "st"] 80 24
@@ -124,8 +130,7 @@ def run : IO UInt32 :=
     let _ ← waitFor 4000 (return (← e.info "st" "clients") == some "0")
     c.bye (sendDetach := false)
     expect ((← e.status "st") == Status.idle) "attach marks the session seen"
-    let (quietCode, quiet, _) ← e.cli #["ls", "--summary"]
-    expect (quietCode == 0 && quiet.isEmpty) "idle session does not clutter the summary"
+    expect (← summaryBecomes e "") "idle session does not clutter the summary"
     -- 3. output while detached makes it unread again
     let _ ← e.cli #["send", "st", "echo", "later"]
     expect (← waitFor 4000 (return (← e.status "st") == Status.wantsYou))
@@ -153,14 +158,30 @@ def run : IO UInt32 :=
       unless ← waitFor 5000 (System.FilePath.pathExists s!"{e.dir}/failed.ready") do
         throw (IO.userError "failed info server did not become ready")
       let failed := (← e.status "failed") == Status.exitedBad
-      let (mixedCode, mixed, _) ← e.cli #["ls", "--summary"]
-      expect
-          (failed && mixedCode == 0 &&
-            mixed ==
-              s!"1{Linger.Display.Status.icon Status.wantsYou} 1{Linger.Display.Status.icon Status.exitedBad}\n")
+      let mixed :=
+        s!"1{Linger.Display.Status.icon Status.wantsYou} 1{Linger.Display.Status.icon Status.exitedBad}\n"
+      expect (failed && (← summaryBecomes e mixed))
           "summary keeps unread output and a reported failed exit distinct"
     finally
       reapOrKill failedServer 0
+      -- a daemon removes its socket when it ends; the fixture's own is removed here
+      try
+        IO.FS.removeFile s!"{e.dir}/failed.sock"
+      catch _ =>
+        pure ()
+    -- a record is read only while its daemon holds the name: a daemon killed before it could say
+    -- how its program ended is counted as not answering, not from what it last wrote
+    let program := ((← e.info "st" "pid").bind (·.toNat?)).map UInt32.ofNat
+    let daemon ← e.daemonPid "st"
+    for pid in [daemon, program] do
+      if let some pid := pid then
+        try
+          Linger.Os.Shell.kill pid 9
+        catch _ =>
+          pure ()
+    let unanswered := s!"1{Linger.Display.Status.icon Status.unknown}\n"
+    expect (daemon.isSome && program.isSome && (← summaryBecomes e unanswered))
+        "a summary counts a killed daemon as not answering, not from what it last wrote"
     e.killAll #["st"]
     checkDeadline e
     checkBacklog e

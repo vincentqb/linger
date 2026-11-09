@@ -368,9 +368,10 @@ private def listRemotes (hosts : Array String) : IO (Option (Array String)) := d
       waiter.stop
 
 /-- Local attention counts under one 250 ms reply window: the text `ls --summary`
-prints and an attached title shows, computed in the calling process. -/
+prints and an attached title shows, computed in the calling process. A daemon whose end record
+says what it saw is not asked. -/
 private def summaryText : IO String := do
-  let rows ← localRows (some ((← monotonicMs) + 250))
+  let rows ← localRows (some ((← monotonicMs) + 250)) (statusOnly := true)
   return Linger.Display.Status.summary
       (rows.map fun info => Linger.Display.Status.ofName ((info.lookup "status").getD "unknown"))
 

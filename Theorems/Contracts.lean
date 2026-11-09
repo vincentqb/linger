@@ -121,6 +121,22 @@ example (st : Status.Status) :
       if st = .exitedOk ∨ st = .exitedBad then st else .resumable := by
   with_reducible exact Listing.rowStatus_remote_saved st
 
+example (fresh unseen : Bool) (info : List (String × String))
+    (hans : info.any (fun kv => (kv.1 == "pid" || kv.1 == "cmd") && kv.2 != "") = true)
+    (hexit : info.lookup "exit" = none) (hfresh : (info.lookup "fresh" == some "true") = fresh)
+    (hunseen : (info.lookup "unseen" == some "true") = unseen) :
+    Listing.rowStatus (.published fresh unseen) = Listing.rowStatus (.live info) := by
+  with_reducible exact Listing.rowStatus_published fresh unseen info hans hexit hfresh hunseen
+
+example (seen : Option Session.Seen) :
+    Session.Record.published (Session.Record.encode (.running seen)) = seen := by
+  with_reducible exact Session.Record.published_running seen
+
+example (s : Session.State) :
+    ("fresh", toString s.seen.fresh) ∈ Session.infoFields s ∧
+      ("unseen", toString s.seen.unseen) ∈ Session.infoFields s := by
+  with_reducible exact Session.infoFields_seen s
+
 -- Event driver
 example {World ε : Type}
     (execute :

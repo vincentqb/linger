@@ -13,8 +13,31 @@ namespace Linger.Session.Record
 /-- A record reads back as itself. -/
 theorem decode_encode (r : Record) : decode (encode r) = some r := by
   cases r with
-  | running => rfl
+  | running seen =>
+    cases seen with
+    | none => rfl
+    | some seen =>
+      obtain ⟨fresh, unseen⟩ := seen
+      cases fresh <;> cases unseen <;> rfl
   | ended outcome => cases outcome <;> rfl
+
+/-- Each of the four answers to a daemon's two questions has its own byte. -/
+theorem seenByte_injective (a b : Seen) (h : seenByte a = seenByte b) : a = b := by
+  obtain ⟨f₁, u₁⟩ := a
+  obtain ⟨f₂, u₂⟩ := b
+  cases f₁ <;> cases u₁ <;> cases f₂ <;> cases u₂
+  all_goals
+    revert h
+    decide
+
+/-- A reader reads back what a daemon published that it saw: a summary that reads records shows
+what the daemon would have answered. -/
+theorem published_running (seen : Option Seen) : published (encode (.running seen)) = seen := by
+  simp only [published, decode_encode]
+
+/-- …and nothing from a record that says how its program ended. -/
+theorem published_ended (outcome : Outcome) : published (encode (.ended outcome)) = none := by
+  simp only [published, decode_encode]
 
 /-- With no record file, no session has taken the name. -/
 theorem answer_none : answer none = none := rfl
@@ -25,8 +48,8 @@ theorem answer_ended (outcome : Outcome) :
 
 /-- A running record found by a reader holding the name, whose session therefore gave the name
 up without saying how its program ended, answers that the ending is unknown. -/
-theorem answer_running : answer (some (encode .running)) = some .unknown := by
-  simp [answer, decode_encode]
+theorem answer_running (seen : Option Seen) :
+    answer (some (encode (.running seen))) = some .unknown := by simp [answer, decode_encode]
 
 /-- Any record file answers, even one that is no record: once a session has taken the name, a
 reader always hears something. -/

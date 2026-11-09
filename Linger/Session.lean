@@ -1,6 +1,7 @@
 module
 
 public import Linger.Session.Wire
+public import Linger.Session.Record
 public import Linger.Terminal.Vt
 public import Linger.Terminal.Replay
 import Linger.Terminal.Mediation
@@ -220,6 +221,11 @@ def State.nextTick (s : State) : Option Nat :=
   | some a, some b => some (min a b)
   | a, none => a
   | none, b => b
+
+/-- What the daemon sees of the output, which its name's end record publishes for a summary that
+reads the record instead of asking: the `fresh` and `unseen` that `info` reports
+(`infoFields_seen`). -/
+def State.seen (s : State) : Seen := ⟨s.freshFlag, unseen s⟩
 
 /-- How `info` reports an ending: `exit` holds the status a shell would report, and a field
 only a signal or an unseen ending has says which those are, so two endings never read the
