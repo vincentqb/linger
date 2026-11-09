@@ -15,8 +15,9 @@ import Std.Async.System
 public section
 
 /-! tmux-resurrect interchange. Pure parsing and export policy live in
-`Linger.Import.Resurrect`. Imports seed one checkpoint and fresh shell per pane.
-Exports publish current native names and directories atomically. -/
+`Linger.Import.Resurrect`. An import writes one checkpoint per pane and starts nothing: attach or
+resume runs a fresh shell on a pane's contents when someone asks for it. Exports publish current
+native names and directories atomically. -/
 
 namespace Linger.Import.Shell
 
@@ -274,8 +275,7 @@ private def capturedPane (archive : Option Archive) (pane : Pane) : IO (Option S
     throw (IO.userError s!"duplicate pane capture: {pane.name}")
 
 /-- Publish an imported checkpoint only while owning both session locks. Existing
-sockets and checkpoints win, including a concurrently created session. Release
-the locks before launching the daemon, which must acquire those same locks. -/
+sockets and checkpoints win, including a concurrently created session. -/
 private def seedPane (pane : Pane) (contents : Option String) : IO Bool :=
   Paths.withSessionLock pane.name do
     let path ← Paths.ckptPath pane.name
@@ -295,8 +295,9 @@ private def seedPane (pane : Pane) (contents : Option String) : IO Bool :=
     return true
 
 /-- Both bulk import and individual selection preflight before effects, then
-skip existing identities. Each pane's seeded checkpoint is resumed with the fixed
-`resume` command, which runs a fresh shell on the pane's contents in its directory. -/
+skip existing identities. Each new pane becomes a saved session: its checkpoint holds the pane's
+contents and directory, and no program starts until an attach or a resume names it, which runs
+a fresh shell there. -/
 private def createPanes (executable : String) (origin : System.FilePath) (panes : List Pane)
     (archive : IO (Option Archive)) : IO Unit := do
   preflight origin panes
@@ -311,15 +312,7 @@ private def createPanes (executable : String) (origin : System.FilePath) (panes 
       archive
   for pane in plan existing panes do
     let contents ← capturedPane archive pane
-    unless ← seedPane pane contents do
-      continue
-    let created ←
-      IO.Process.output
-          { cmd := executable, args := #["resume", pane.name],
-            cwd := some (System.FilePath.mk pane.dir) }
-    unless created.exitCode == 0 do
-      throw
-          (IO.userError s!"could not create session: {pane.name}: {created.stdout}{created.stderr}")
+    discard <| seedPane pane contents
 
 private def importSave (executable : String) (file : Option String) : IO Unit :=
   inContext fun origin home => do
@@ -447,7 +440,7 @@ private def writeSave (path : String) (capture : IO (List (String × String)) :=
 private def usage : String :=
   "ls [--porcelain] [SAVE]  List panes from a saved snapshot
 select [SAVE]            Choose a saved pane; start a fresh shell if needed
-import [SAVE]            Import saved pane contents and metadata into fresh shells
+import [SAVE]            Save each pane as a session; attach runs a fresh shell on it
 export SAVE              Save session names and directories to a new file"
 
 /-- The caller supplies its absolute executable path for every listing and run. -/

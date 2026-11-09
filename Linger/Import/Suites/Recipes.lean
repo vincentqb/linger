@@ -2,13 +2,15 @@ module
 
 public import Verify.Harness
 import Linger.Import.Shell
+import Linger.Session.Checkpoint
+import Linger.Target.Name
 
 public section
 
 /-! # Linger.Import.Suites.Recipes — native launch settings, fish prompt and foreign-save import
 
-`linger tmux import` projects pane records into independent linger sessions. This
-suite drives the actual CLI against real daemons and synthetic saves. Recorder
+`linger tmux import` projects pane records into independent saved linger sessions, starting
+none. This suite drives the actual CLI against real daemons and synthetic saves. Recorder
 checks call the same executor through this test binary's `--import-probe` mode.
 Native configuration assertions inspect their effective settings; they do not
 claim to launch or exercise any terminal GUI. The prompt checks execute the
@@ -19,12 +21,28 @@ namespace Linger.Import.Suites.Recipes
 
 open Verify.Harness
 
-/-- The physical path a session records as its start directory: `getcwd` resolves symlinks, so
-on macOS `/tmp/x` is recorded as `/private/tmp/x`. -/
-private def physical (dir : System.FilePath) : IO String := return (← IO.FS.realPath dir).toString
-
 private def call (args : List String) : String :=
   "CALL\x00" ++ String.intercalate "\x00" args ++ "\x00\n"
+
+/-- The directory the checkpoint of session `name` in state directory `dir` resumes in, as it
+records it: `none` without a readable checkpoint. -/
+def savedCwd (dir name : String) : IO (Option String) := do
+  match ← (IO.FS.readBinFile s!"{dir}/{name}.ckpt").toBaseIO with
+  | .ok bytes =>
+    return (Linger.Session.Checkpoint.loadBytes bytes).map (·.cwd)
+  | .error _ =>
+    return none
+
+/-- Session `name` in state directory `dir` is saved, with no daemon, to resume in `expected`:
+the import that wrote it started nothing. Paths compare physically. -/
+def savedIn (dir name : String) (expected : System.FilePath) : IO Bool := do
+  let some cwd ← savedCwd dir name | return false
+  if ← System.FilePath.pathExists s!"{dir}/{name}.sock" then
+    return false
+  try
+    return (← IO.FS.realPath cwd) == (← IO.FS.realPath expected)
+  catch _ =>
+    return false
 
 /-- Test-only protocol: `--import-probe ABSOLUTE_EXECUTABLE [SAVE]`. The executor
 is production code; only the supplied child executable records instead of
@@ -244,8 +262,7 @@ private def absoluteExecutableChecks (e : Env) (home data : String) : IO Unit :=
         runImport e home data #[save.toString]
             #[("PATH", some path.toString), ("IMPORT_IMPOSTOR_MARKER", some marker.toString)]
       expect
-          (rc == 0 && (← e.info s!"{name}-w1-p0" "start_dir") == some (← physical pane) &&
-            (← IO.FS.readFile marker).isEmpty)
+          (rc == 0 && (← savedIn e.dir s!"{name}-w1-p0" pane) && (← IO.FS.readFile marker).isEmpty)
           s!"linger tmux import reuses its absolute executable (PATH impostor: {impostor})"
     finally
       e.killAll #[s!"{name}-w1-p0"]
@@ -276,7 +293,7 @@ private def relativePathChecks (e : Env) : IO Unit := do
         IO.Process.output
             { cmd := e.bin, args := #["tmux", "import", save.toString], cwd := some origin.toString,
               env := e.procEnv ++ isolated ++ #[("PATH", some path), ("LINGER_DIR", some state)] }
-      expect (out.exitCode == 0 && (← e.info name "start_dir") == some (← physical pane))
+      expect (out.exitCode == 0 && (← savedIn e.dir name pane))
           s!"linger tmux import uses its absolute executable with invocation-relative {label} settings"
     finally
       e.killAll #[name]
@@ -309,9 +326,8 @@ private def relativePathChecks (e : Env) : IO Unit := do
                   #[("PATH", some s!"{binDir}:/usr/bin:/bin"),
                     ("LINGER_DIR", some s!"../../{stateName}")] }
       expect
-          (present == preexisting && out.exitCode == 0 &&
-            (← owned.info name "start_dir") == some physicalPane.toString)
-          s!"linger tmux import resolves a long relative state path before spawning (already exists: {preexisting})"
+          (present == preexisting && out.exitCode == 0 && (← savedIn owned.dir name physicalPane))
+          s!"linger tmux import resolves a long relative state path physically (already exists: {preexisting})"
     finally
       owned.killAll #[name]
 
@@ -352,8 +368,9 @@ exit 0
       let path := System.FilePath.mk e.dir / s!"{name}.ckpt"
       if ← path.pathExists then
         IO.FS.removeFile path
-  let invoke := fun (text failure listRc : String) (args : Array String) => do
+  let invokeWith := fun (seed : IO Unit) (text failure listRc : String) (args : Array String) => do
     reset
+    seed
     IO.FS.writeFile save text
     IO.FS.writeFile callsFile ""
     let (rc, _, err) ←
@@ -362,15 +379,16 @@ exit 0
             ("IMPORT_PROBE_LISTING", some listing), ("IMPORT_PROBE_LIST_RC", some listRc),
             ("IMPORT_PROBE_FAIL", some failure)]
     return (rc, err, ← IO.FS.readFile callsFile)
+  let invoke := invokeWith (pure ())
   let args := #[save.toString]
   let listCall := call ["linger", "ls", "--porcelain"]
-  let createCall := call ["linger", "resume", "first-w2-p0"]
-  let secondCall := call ["linger", "resume", "second-w2-p1"]
+  let saved := fun (names : List String) => names.allM fun name => savedIn e.dir name home
   let (rc, _, calls) ← invoke panes "" "0" args
   expect
-      (rc == 0 &&
-        calls == listCall ++ createCall ++ secondCall ++ call ["linger", "resume", "third-w2-p2"])
-      "linger tmux import skips every existing identity and creates shells without saved commands"
+      (rc == 0 && calls == listCall && (← saved ["first-w2-p0", "second-w2-p1", "third-w2-p2"]) &&
+        !(← System.FilePath.pathExists s!"{e.dir}/live-w1-p0.ckpt") &&
+        !(← System.FilePath.pathExists s!"{e.dir}/resume-w1-p0.ckpt"))
+      "linger tmux import skips every existing identity and saves every new pane, starting none"
   let (rc, _, calls) ←
     invoke (paneLine "live" "1" "0" home command ++ paneLine "resume" "1" "0" home "") "" "0" args
   expect (rc == 0 && calls == listCall)
@@ -380,35 +398,13 @@ exit 0
       (rc == 1 && err.startsWith "linger tmux import: " && has err "could not list" &&
         calls == listCall)
       "linger tmux import rejects a failed listing even when it contains existing names"
-  for (failed, expected) in
-    [("first-w2-p0", listCall ++ createCall),
-      ("second-w2-p1", listCall ++ createCall ++ secondCall)] do
-    let (rc, err, calls) ← invoke panes failed "0" args
-    expect
-        (rc == 1 && err.startsWith "linger tmux import: " &&
-          has err s!"could not create session: {failed}" &&
-          calls == expected)
-        s!"linger tmux import preserves order and stops at the failed creation ({failed})"
-  let controls := "\x07\x1b[2J\r\x7f\u0080\u0085\u009b\u009d\u009f"
-  reset
-  IO.FS.writeFile save panes
-  IO.FS.writeFile callsFile ""
-  let (rc, out, err) ←
-    runImportProbe e home data executable.toString args
-        #[("PATH", some root.toString), ("IMPORT_PROBE_CALLS", some callsFile.toString),
-          ("IMPORT_PROBE_LISTING", some listing), ("IMPORT_PROBE_LIST_RC", some "0"),
-          ("IMPORT_PROBE_FAIL", some "second-w2-p1"),
-          ("IMPORT_PROBE_STDOUT", some ("child stdout" ++ controls ++ "\n")),
-          ("IMPORT_PROBE_STDERR", some ("permission denied: é path" ++ controls ++ "\n"))]
+  let raced := System.FilePath.mk e.dir / "second-w2-p1.ckpt"
+  let (rc, _, calls) ← invokeWith (IO.FS.writeFile raced "raced") panes "" "0" args
   expect
-      (rc == 1 && out.isEmpty && err.startsWith "linger tmux import: " &&
-        has err "could not create session: second-w2-p1" &&
-        has err "child stdout" &&
-        has err "permission denied: é path" &&
-        err.endsWith "\n" &&
-        (err.dropEnd 1).toString.toList.all (fun c => Linger.Terminal.Render.textChar c == c) &&
-        (← IO.FS.readFile callsFile) == listCall ++ createCall ++ secondCall)
-      "linger tmux import sanitizes both child streams and preserves a failed creation's cause"
+      (rc == 0 && calls == listCall && (← IO.FS.readFile raced) == "raced" &&
+        (← saved ["first-w2-p0", "third-w2-p2"]))
+      "linger tmux import keeps a checkpoint that appeared under a new name, and saves the rest"
+  let controls := "\x07\x1b[2J\r\x7f\u0080\u0085\u009b\u009d\u009f"
   let (rc, err, calls) ← invoke panes "" "0" #["--restore-processes", save.toString]
   expect (rc == 2 && err == "usage: linger tmux import [SAVE]\n" && calls.isEmpty)
       "linger tmux import rejects the retired replay option before invoking linger"
@@ -518,25 +514,26 @@ fi
                 probeArgs,
             cwd := some origin, env }
     expect
-        (present == impostor && out.exitCode == 0 &&
-          (← IO.FS.readFile callsFile) ==
-            listCalls ++ call ["linger", "resume", "lookup-w1-p0"] ++
-              call ["cwd", paneDir.toString])
+        (present == impostor && out.exitCode == 0 && (← IO.FS.readFile callsFile) == listCalls &&
+          (← savedIn e.dir "lookup-w1-p0" paneDir))
         s!"linger tmux import uses the supplied executable past an exported Bash function (PATH/cwd impostor: {impostor})"
   IO.FS.removeFile (origin / "linger")
   IO.FS.removeFile (bin / "linger")
-  -- The same effective home and state paths reach ls in the invocation cwd and
-  -- run in the saved cwd. Missing suffixes, empty overrides and absent variables
-  -- must retain their meanings across both children.
+  -- The same effective home and state paths reach ls in the invocation cwd and the checkpoint
+  -- the import writes. Missing suffixes, empty overrides and absent variables must retain their
+  -- meanings for both.
   let states :=
     #[("LINGER_DIR", some "saved-link/../state"), ("XDG_RUNTIME_DIR", some "saved-link/../runtime"),
       ("XDG_STATE_HOME", some "saved-link/../persistent")]
-  for (label, extra, expected) in
+  let host := Linger.Target.Name.sanitize (← Linger.Os.Shell.gethostname)
+  for (label, extra, expected, state) in
     [("relative", states,
         [(paneDir / "state").toString, (paneDir / "runtime").toString,
-          (paneDir / "persistent").toString]),
-      ("empty", states.map fun (key, _) => (key, some ""), [origin.toString, "", ""]),
-      ("unset", states.map fun (key, _) => (key, none), ["<unset>", "<unset>", "<unset>"])] do
+          (paneDir / "persistent").toString],
+        paneDir / "state"),
+      ("empty", states.map fun (key, _) => (key, some ""), [origin.toString, "", ""], origin),
+      ("unset", states.map fun (key, _) => (key, none), ["<unset>", "<unset>", "<unset>"],
+        paneDir / ".local" / "state" / "linger" / host)] do
     let session := s!"environment-{label}-{← Linger.Os.Shell.getpid}"
     IO.FS.writeFile save (paneLine session "1" "0" "~" "")
     IO.FS.writeFile callsFile ""
@@ -548,12 +545,9 @@ fi
                 extra }
     let envCall := call (["env", paneDir.toString] ++ expected)
     expect
-        (out.exitCode == 0 &&
-          (← IO.FS.readFile callsFile) ==
-            listCalls ++ envCall ++ call ["linger", "resume", s!"{session}-w1-p0"] ++
-              call ["cwd", paneDir.toString] ++
-              envCall)
-        s!"linger tmux import freezes physical home and child state environment ({label})"
+        (out.exitCode == 0 && (← IO.FS.readFile callsFile) == listCalls ++ envCall &&
+          (← savedIn state.toString s!"{session}-w1-p0" paneDir))
+        s!"linger tmux import freezes physical home and state paths for its listing and its checkpoints ({label})"
   -- Fish supplies the account-home baseline without reading any save. Explicit
   -- SAVE and the recorder keep these checks from touching the user's files.
   let fallback ←
@@ -583,8 +577,8 @@ fi
         | _ => none
     let homeOk ←
       match homes with
-      | [listed, created] =>
-        if listed.isEmpty || listed != created || !(System.FilePath.mk listed).isAbsolute then
+      | [listed] =>
+        if listed.isEmpty || !(System.FilePath.mk listed).isAbsolute then
           pure false
         else
           try
@@ -598,11 +592,9 @@ fi
         ((lines.filter fun line => !line.isEmpty && !line.startsWith "CALL\x00home\x00").map
           (· ++ "\n"))
     expect
-        (out.exitCode == 0 && homeOk &&
-          calls ==
-            listCalls ++ call ["linger", "resume", s!"{session}-w1-p0"] ++
-              call ["cwd", accountHome.toString])
-        s!"linger tmux import uses account home for saved tilde and every child (HOME {label})"
+        (out.exitCode == 0 && homeOk && calls == listCalls &&
+          (← savedIn e.dir s!"{session}-w1-p0" accountHome))
+        s!"linger tmux import uses account home for saved tilde, its listing and its checkpoint (HOME {label})"
 
 /-- The recipes suite: native launch settings, the fish prompt and `linger tmux import`. -/
 def run : IO UInt32 :=
@@ -632,9 +624,7 @@ def run : IO UInt32 :=
             s!"tail -n 1 {defaultSource} >> {defaultSink}" ++
           "window\tdesk\t1\t:ignored\nstate\tdesk\t\n")
     let (drc, dout, derr) ← runImport e home.toString data.toString #[]
-    expect
-        (drc == 0 && dout.isEmpty && derr.isEmpty &&
-          (← e.info "desk-w1-p0" "start_dir") == some (← physical defaultDir))
+    expect (drc == 0 && dout.isEmpty && derr.isEmpty && (← savedIn e.dir "desk-w1-p0" defaultDir))
         "linger tmux import reads the default XDG save and restores an escaped cwd"
     IO.sleep 700 -- negative assertion: give a wrongly-started command time to run
     expect (!(← System.FilePath.pathExists defaultSink))
@@ -647,7 +637,7 @@ def run : IO UInt32 :=
     IO.FS.writeFile (fallbackResurrectDir / "last")
         (paneLine "emptyxdg" "3" "0" emptyXdgDir.toString "")
     let (xrc, _, _) ← runImport e home.toString "" #[]
-    expect (xrc == 0 && (← e.info "emptyxdg-w3-p0" "start_dir") == some (← physical emptyXdgDir))
+    expect (xrc == 0 && (← savedIn e.dir "emptyxdg-w3-p0" emptyXdgDir))
         "linger tmux import treats an empty XDG data home as unset"
     -- Once the legacy last save exists, it takes precedence over the XDG path.
     let legacyDir := root / "legacy"
@@ -656,7 +646,7 @@ def run : IO UInt32 :=
     IO.FS.createDirAll legacyResurrectDir
     IO.FS.writeFile (legacyResurrectDir / "last") (paneLine "legacy" "2" "0" legacyDir.toString "")
     let (lrc, _, _) ← runImport e home.toString data.toString #[]
-    expect (lrc == 0 && (← e.info "legacy-w2-p0" "start_dir") == some (← physical legacyDir))
+    expect (lrc == 0 && (← savedIn e.dir "legacy-w2-p0" legacyDir))
         "linger tmux import prefers the legacy last save when it exists"
     -- Empty commands, pipelines and other shell syntax all leave ordinary shells.
     let processDir := root / "processes"
@@ -673,22 +663,23 @@ def run : IO UInt32 :=
           paneLine "dev" "1" "2" processDir.toString s!"printf BLOCKED > {blockedSink}")
     let (prc, _, _) ← runImport e home.toString data.toString #[processSave.toString]
     expect
-        (prc == 0 && (← e.info "dev-w1-p0" "start_dir") == some (← physical processDir) &&
-          (← e.info "dev-w1-p1" "start_dir") == some (← physical processDir) &&
-          (← e.info "dev-w1-p2" "start_dir") == some (← physical processDir))
-        "linger tmux import projects every pane into a named linger session"
+        (prc == 0 && (← savedIn e.dir "dev-w1-p0" processDir) &&
+          (← savedIn e.dir "dev-w1-p1" processDir) &&
+          (← savedIn e.dir "dev-w1-p2" processDir))
+        "linger tmux import projects every pane into a named saved linger session"
     IO.sleep 700 -- negative assertion after the import process itself has exited
     expect (!(← System.FilePath.pathExists processSink))
         "linger tmux import ignores a saved pipeline"
     expect (!(← System.FilePath.pathExists blockedSink))
         "linger tmux import ignores arbitrary saved shell syntax"
     let names := #["dev-w1-p0", "dev-w1-p1", "dev-w1-p2"]
-    let before ← names.mapM (fun name => e.info name "outseq")
+    let checkpoint := fun (name : String) => do
+      return (← (IO.FS.readBinFile s!"{e.dir}/{name}.ckpt").toBaseIO).toOption.map (·.toList)
+    let before ← names.mapM checkpoint
     let (rrc, _, _) ← runImport e home.toString data.toString #[processSave.toString]
-    IO.sleep 700
-    let after ← names.mapM (fun name => e.info name "outseq")
+    let after ← names.mapM checkpoint
     expect (rrc == 0 && before.all (·.isSome) && after == before)
-        "linger tmux import leaves existing shells untouched on a sequential rerun"
+        "linger tmux import leaves existing sessions untouched on a sequential rerun"
     -- A checkpoint-only identity is also existing state: importing must neither
     -- revive it nor send the saved process command.
     let resumableSource := root / "resumable-source"
@@ -733,7 +724,7 @@ def run : IO UInt32 :=
     let (irc, _, ierr) ← runImport e home.toString data.toString #[invalidSave.toString]
     expect
         (irc == 1 && has ierr "working directory not found" &&
-          (← e.cli #["info", "prevalid-w1-p0"]).1 == 127)
+          !(← System.FilePath.pathExists s!"{e.dir}/prevalid-w1-p0.ckpt"))
         "linger tmux import validates every cwd before creating any session"
     let invalidNameSave := root / "invalid-name-save"
     let longNameSave := root / "long-name-save"
@@ -745,7 +736,7 @@ def run : IO UInt32 :=
     expect
         (urc == 1 && longRc == 1 && has uerr "not a valid linger name" &&
           has longErr "not a valid linger name" &&
-          (← e.cli #["info", "bad_name-w1-p0"]).1 == 127)
+          !(← System.FilePath.pathExists s!"{e.dir}/bad_name-w1-p0.ckpt"))
         "linger tmux import rejects names that linger would rewrite or truncate"
     let inaccessibleDir := root / "inaccessible"
     let inaccessibleSave := root / "inaccessible-save"
@@ -761,7 +752,7 @@ def run : IO UInt32 :=
         Linger.Os.Shell.chmod inaccessibleDir.toString 0o700
     expect
         (accessRc == 1 && has accessErr "working directory not accessible" &&
-          (← e.cli #["info", "accessvalid-w1-p0"]).1 == 127)
+          !(← System.FilePath.pathExists s!"{e.dir}/accessvalid-w1-p0.ckpt"))
         "linger tmux import validates directory access before creating any session"
     let malformedSave := root / "malformed-save"
     IO.FS.writeFile malformedSave "pane\tshort\n"

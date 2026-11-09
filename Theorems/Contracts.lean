@@ -754,6 +754,10 @@ example (existing : List String) (panes : List Resurrect.Pane) :
       [] := by
   with_reducible exact Resurrect.plan_sequential_idempotent existing panes
 
+example (existing : List String) (panes : List Resurrect.Pane) (pane : Resurrect.Pane) :
+    pane ∈ Resurrect.plan existing panes ↔ pane ∈ panes ∧ pane.name ∉ existing := by
+  with_reducible exact Resurrect.mem_plan existing panes pane
+
 example (home : String) (fields : List (String × String)) (content : String)
     (h : Resurrect.renderSave fields = Except.ok content) :
     ∃ panes,

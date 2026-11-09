@@ -10,6 +10,7 @@ import Linger.Target.Spec
 import Linger.Terminal.Title
 import Linger.Session.Shell.Paths
 import Linger.Import.Resurrect
+import Linger.Session.Checkpoint
 import Linger.Import.Suites.Recipes
 import Std.Sync.Mutex
 
@@ -176,11 +177,11 @@ private def recordCommand (root : System.FilePath) (args : List String) : IO UIn
       writeListing root (← readText (root / "after-attach-listing"))
           (← numberFile (root / "after-attach-listing-rc"))
     writeAll stdoutFd s!"\r\nMANAGER-ATTACH-{count + 1}\r\n".toUTF8
+    IO.FS.writeFile (root / "attach-cwd") (← IO.currentDir).toString
     let previousPid ← numberFile (root / "vanish-before-attach")
     if previousPid > 0 then
       -- Planning has already listed the existing session. Remove it here,
       -- then delegate native upsert with the exact cwd the manager supplied.
-      IO.FS.writeFile (root / "attach-cwd") (← IO.currentDir).toString
       let executable ← readText (root / "real-executable")
       let child ←
         withLaunchLock <| IO.Process.spawn { cmd := executable, args := #["kill", target] }
@@ -202,9 +203,7 @@ private def recordCommand (root : System.FilePath) (args : List String) : IO UIn
     return UInt32.ofNat (← numberFile (root / "attach-rc") 7)
   | _ =>
     let executable ← readText (root / "real-executable")
-    if !executable.isEmpty && (args == ["ls", "--porcelain"] || args.head? == some "resume") then
-      if args.head? == some "resume" then
-        IO.FS.writeFile (root / "run-cwd") (← IO.currentDir).toString
+    if !executable.isEmpty && args == ["ls", "--porcelain"] then
       let child ← withLaunchLock <| IO.Process.spawn { cmd := executable, args := args.toArray }
       return ← waitChild child 5000
     return 98
@@ -2165,8 +2164,7 @@ private def savedChecks (e : Env) : IO Unit := do
               discard <| f.archive [("saved-chosen", "different saved screen with more bytes\n")]
             s.text "\r"
             let refused ← failureRestored s 1 "pane capture archive changed"
-            return refused && !has (← f.calls) (call ["resume", "saved-chosen"]) &&
-                (← f.nativeNames).isEmpty &&
+            return refused && (← f.nativeNames).isEmpty &&
                 !(← (System.FilePath.mk owned.dir / "saved-chosen.ckpt").pathExists)
   for (slug, content, error) in
     [("missing", none, "save not found"),
@@ -2227,21 +2225,17 @@ private def savedChecks (e : Env) : IO Unit := do
           let calls ← f.calls
           let exact :=
             has calls (call ["tmux", "ls", "--porcelain", save.toString]) &&
-              has calls (call ["resume", "saved-chosen"]) &&
+              !has calls (call ["resume", "saved-chosen"]) &&
               has calls (call ["attach", "saved-chosen"])
-          let pid := (← withLaunchLock (owned.info "saved-chosen" "pid")).bind String.toNat?
-          let cwd ←
-            match pid with
-            | some pid =>
-              getcwdOf (UInt32.ofNat pid)
-            | none =>
-              pure ""
+          -- the import only saved the pane, in the displayed cwd; the attach resumes it there
+          let checkpoint ←
+            (IO.FS.readBinFile (System.FilePath.mk owned.dir / "saved-chosen.ckpt")).toBaseIO
+          let saved := checkpoint.toOption.bind Linger.Session.Checkpoint.loadBytes
           return replaced && returned && clean && exact && (← attachNormal f) &&
               (← beforeAttach s) &&
-              (← readText (f.root / "run-cwd")) == original.toString &&
-              cwd == original.toString &&
-              (← withLaunchLock (owned.info "saved-chosen" "label.tmux.saved-command")) ==
-                some originalCommand &&
+              (← readText (f.root / "attach-cwd")) == original.toString &&
+              saved.map (·.cwd) == some original.toString &&
+              saved.bind (·.labels.lookup "tmux.saved-command") == some originalCommand &&
               (← f.nativeNames) == ["saved-chosen"]
   checkSaved e "recreated-cwd"
       "tmux select final attach recreates a vanished session in the displayed cwd" fun f owned => do

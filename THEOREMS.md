@@ -50,7 +50,7 @@ the program, and
 | Views | A view of many sessions loses no row, lists every row whose status asks for someone before any other and keeps the listing's order within a status; its header counts every row and those that ask for someone. Typing never raises the count beside the query. The rows a window leaves out are summed up by groups whose counts are exact and add up; a group's name starts each member's name, so typing it keeps the group to choose from, and names are cut at the depth that splits the rows most evenly into groups few enough to name. A picker frame never has more lines than the terminal. | [View](Linger/Display/Proofs/View.lean): `sort_perm`, `sort_attention_first`, `sort_stable`, `headerParts_summary`, `groups_count`, `groups_sum`, `stem_prefix`, `chooseDepth_best`, `hidden_adds_up`; [Picker](Linger/Selector/Proofs/Picker.lean): `matchCount_push`, `stem_items`, `frameLines_length` |
 | Interactive fuzzy matching | Successful matches maximize the configured score; ties choose the earliest alignment. | [Fuzzy](Linger/Selector/Proofs/Fuzzy.lean): `alignWith_score_max`, `alignWith_earliest` |
 | Input | Bracketed paste emits text only, without control keys. | [Input](Linger/Selector/Proofs/Input.lean): `feed_paste_only_text`, `feed_paste_no_controls` |
-| Saved sessions | Parsing yields valid panes; sequential import is idempotent; generated saves round-trip names and directories. Listing and selection share a catalog showing the saved foreground command. | [Resurrect](Linger/Import/Proofs/Resurrect.lean): `parseSave_valid`, `plan_sequential_idempotent`, `renderSave_roundtrip`, `catalogRows_common`, `catalogRows_command`, `selectedPane_exact` |
+| Saved sessions | Parsing yields valid panes; an import plans one checkpoint for exactly the panes no session holds; sequential import is idempotent; generated saves round-trip names and directories. Listing and selection share a catalog showing the saved foreground command. | [Resurrect](Linger/Import/Proofs/Resurrect.lean): `parseSave_valid`, `mem_plan`, `plan_sequential_idempotent`, `renderSave_roundtrip`, `catalogRows_common`, `catalogRows_command`, `selectedPane_exact` |
 | Saved pane contents | Capture replay processes at most twice the eight MiB byte limit. A printable saved-command notice adds at most 43 framing bytes and four bytes per command character. Imported checkpoints are live terminal states and round-trip exactly, preserving cwd and command metadata; empty and missing captures remain distinguishable. | [Resurrect](Linger/Import/Proofs/Resurrect.lean): `captureLimit_eq`, `captureBytes_bounded`, `commandNotice_eq`, `commandNotice_bounded`, `checkpoint_notice`, `checkpoint_live`, `checkpoint_roundtrip`, `checkpoint_metadata` |
 
 ## Scope
@@ -77,8 +77,9 @@ mode to be off. Incoming title content and the saved cursor slot are covered by
 fixtures. Cleanup clears the title rather than restoring a prior title. Recovery
 preserves screen state, not running processes or images.
 tmux imports read captured screen and scrollback when the latest save has a
-capture archive. Each pane shows its saved foreground command above a fresh shell
-prompt; the command is retained as metadata and is never executed.
+capture archive. An import starts no program: each pane is listed as saved until an attach or a
+resume runs a fresh shell on it, below the pane's saved foreground command, which is retained as
+metadata and is never executed.
 
 ## Checks
 

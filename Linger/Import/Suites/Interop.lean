@@ -77,6 +77,22 @@ private def Fixture.cwdIs (f : Fixture) (name : String) (dir : System.FilePath) 
     | some pid =>
       return (← Linger.Os.Shell.getcwdOf pid) == dir.toString
 
+/-- Session `name` is saved, with no daemon, to resume in `dir`: what an import leaves. -/
+private def Fixture.savedIn (f : Fixture) (name : String) (dir : System.FilePath) : IO Bool :=
+  Linger.Import.Suites.Recipes.savedIn f.env.dir name dir
+
+/-- The label `key` that session `name`'s checkpoint holds. -/
+private def Fixture.savedLabel (f : Fixture) (name key : String) : IO (Option String) := do
+  match ← (IO.FS.readBinFile (System.FilePath.mk f.env.dir / s!"{name}.ckpt")).toBaseIO with
+  | .ok bytes =>
+    return (Linger.Session.Checkpoint.loadBytes bytes).bind (·.labels.lookup key)
+  | .error _ =>
+    return none
+
+/-- Run a saved session's shell again, as an attach would: whether `resume` succeeded. -/
+private def Fixture.resume (f : Fixture) (name : String) : IO Bool := do
+  return (← f.cli #["resume", name]).1 == 0
+
 private def Fixture.start (f : Fixture) (name : String) (dir : System.FilePath) : IO Unit := do
   f.own name
   let (code, _, err) ← f.cli #["start", name, "/bin/sh"] (cwd := some dir)
@@ -472,8 +488,10 @@ private def setupRaw (f : Fixture) : IO Unit := do
   link (dir / "child") (f.root / "alias")
   let text := rawText f
   let (code, _, err) ← f.importText text
-  unless code == 0 && (← f.cwdIs "foreign-w7-p2" dir) do
-    throw (IO.userError s!"foreign import did not start its physical cwd: {err}")
+  unless code == 0 && (← f.savedIn "foreign-w7-p2" dir) do
+    throw (IO.userError s!"foreign import did not save its physical cwd: {err}")
+  unless (← f.resume "foreign-w7-p2") && (← f.cwdIs "foreign-w7-p2" dir) do
+    throw (IO.userError "foreign pane did not resume in its physical cwd")
 
 private def sourceIndependent (f : Fixture) : IO Bool := do
   setupRaw f
@@ -552,7 +570,7 @@ private def nativeRoundtrip (f : Fixture) : IO Bool := do
   let (code, _, _) ← second.cli #["tmux", "import", (f.root / "out" / "native").toString]
   let mut ready := code == 0
   for name in names do
-    let there ← second.cwdIs name dir
+    let there ← second.savedIn name dir
     let here ← f.cwdIs name dir
     ready := ready && there && here
   return ready && (← second.exportFields "second" fields)
@@ -703,7 +721,7 @@ private def relativeEnvironment (f : Fixture) : IO Bool := do
   let (importCode, _, _) ← f.cli #["tmux", "import", "save"] extra (some origin)
   let (exportCode, _, _) ← f.cli #["tmux", "export", "../out/relative"] extra (some origin)
   let exported ← IO.FS.readFile (f.root / "out" / "relative")
-  return importCode == 0 && exportCode == 0 && (← f.cwdIs "relative-w0-p0" (f.root / "home")) &&
+  return importCode == 0 && exportCode == 0 && (← f.savedIn "relative-w0-p0" (f.root / "home")) &&
       commonFields "" exported == some [("relative-w0-p0", (f.root / "home").toString)]
 
 private def fallbackHome (f : Fixture) (home : Option String) : IO Bool := do
@@ -716,7 +734,7 @@ private def fallbackHome (f : Fixture) (home : Option String) : IO Bool := do
   let some accountHome := (← Std.Async.System.getCurrentUser).homeDir | return false
   let cwd ← IO.FS.realPath accountHome
   let exported ← IO.FS.readFile target
-  return importCode == 0 && exportCode == 0 && (← f.cwdIs "fallback-w0-p0" cwd) &&
+  return importCode == 0 && exportCode == 0 && (← f.savedIn "fallback-w0-p0" cwd) &&
       commonFields "" exported == some [("fallback-w0-p0", cwd.toString)]
 
 private def withVariables {α : Type} (values : Array (String × Option String)) (action : IO α) :
@@ -781,6 +799,10 @@ private def captureImport (f : Fixture) : IO Bool := do
             !((field row "archive-revision").isEmpty) &&
             field row "cols" == "240" &&
             field row "rows" == "4") &&
+      (← f.savedIn "captured-w3-p0" first) &&
+      (← f.savedIn "captured-w3-p1" second) &&
+      (← f.resume "captured-w3-p0") &&
+      (← f.resume "captured-w3-p1") &&
       (← f.cwdIs "captured-w3-p0" first) &&
       (← f.cwdIs "captured-w3-p1" second) do
     return false
@@ -873,9 +895,9 @@ private def historicalCapture (f : Fixture) : IO Bool := do
   -- Even an unreadable latest archive must not be consulted for this old save.
   IO.FS.writeFile (f.root / "pane_contents.tar.gz") "not an archive"
   let (rc, _, err) ← f.cli #["tmux", "import", historical.toString]
-  return rc == 0 && err.isEmpty && (← f.cwdIs "historical-w0-p0" (f.root / "home")) &&
-      (← f.info "historical-w0-p0" "label.tmux.saved-command") == some "make old" &&
-      (← f.info "historical-w0-p0" "label.tmux.capture") == some "none"
+  return rc == 0 && err.isEmpty && (← f.savedIn "historical-w0-p0" (f.root / "home")) &&
+      (← f.savedLabel "historical-w0-p0" "tmux.saved-command") == some "make old" &&
+      (← f.savedLabel "historical-w0-p0" "tmux.capture") == some "none"
 
 private def emptyCapture (f : Fixture) : IO Bool := do
   let save := f.root / "source"
@@ -885,8 +907,8 @@ private def emptyCapture (f : Fixture) : IO Bool := do
   link save (f.root / "last")
   discard <| f.archive [("pane-empty:0.0", ByteArray.empty)]
   let (rc, _, err) ← f.cli #["tmux", "import", save.toString]
-  return rc == 0 && err.isEmpty && (← f.info "empty-w0-p0" "label.tmux.capture") == some "saved" &&
-      (← f.info "missing-w0-p0" "label.tmux.capture") == some "none"
+  return rc == 0 && err.isEmpty && (← f.savedLabel "empty-w0-p0" "tmux.capture") == some "saved" &&
+      (← f.savedLabel "missing-w0-p0" "tmux.capture") == some "none"
 
 private def badCapture (f : Fixture) (kind : String) : IO Bool := do
   let save := f.root / "source"
