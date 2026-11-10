@@ -68,11 +68,12 @@ code_count() { code_grep "$@" | awk 'END { print NR + 0 }'; }   # -> a number
 
 # Which modules are pure code and which are proofs, read from the tree with the rule
 # `Theorems/Coverage.lean` (`pureModule`, `proofModule`) applies to module names: pure code is
-# a component's top module (`Linger/Session.lean`) and each component's top-level modules other
-# than its boundary and shell; proofs are each component's `Proofs/` plus the legacy
+# a component's top module (`Linger/Session.lean`), each component's top-level modules other
+# than its boundary and shell, and the modules under its `Spec/`; proofs are each component's
+# `Proofs/` plus the legacy
 # `Theorems/`. Deliberate word splitting below: no tracked path in this tree has a space.
 pure_paths="$(git ls-files -- 'Linger/*.lean' | awk -F/ '
-  NF == 2 || NF == 3 && $3 != "Boundary.lean" && $3 != "Shell.lean"')"
+  NF == 2 || NF == 3 && $3 != "Boundary.lean" && $3 != "Shell.lean" || NF == 4 && $3 == "Spec"')"
 proof_paths="$(git ls-files -- 'Theorems/*.lean' 'Linger/*/Proofs/*.lean')"
 [ -n "$pure_paths" ] && [ -n "$proof_paths" ] || fail "no pure or proof modules found"
 
@@ -372,14 +373,16 @@ module_imports Linger/Terminal/Proofs/Vt.lean 'Linger/Terminal/Proofs/Vt/*' Ling
 # stays in Core, Runtime or the OS boundary.
 import_closure Linger/Import/Spec.lean ''
 import_closure Linger/Import/Resurrect.lean 'public import Linger.Import.Spec;import Linger.Target.Name;import Linger.Display.Status;public import Linger.Terminal.Vt;public import Linger.Session.Spec;'
-import_closure Linger/Selector/Key.lean 'public import Linger.Selector.Spec;public import Linger.Selector.Input;'
+import_closure Linger/Selector/Key.lean 'public import Linger.Selector.Spec;public import Linger.Selector.Spec.Input;'
 import_closure Linger/Selector/Spec.lean ''
-import_closure Linger/Selector/Fuzzy.lean ''
+import_closure Linger/Selector/Fuzzy.lean 'public import Linger.Selector.Spec.Fuzzy;'
+import_closure Linger/Selector/Spec/Fuzzy.lean ''
 import_closure Linger/Selector/Picker.lean 'import Linger.Selector.Input;public import Linger.Selector.Spec;import Linger.Selector.Fuzzy;import Linger.Target.Name;import Linger.Display.Listing;public import Linger.Display.Spec;import Linger.Display.Status;import Linger.Target.Remote;import Linger.Terminal.Vt;import Linger.Display.View;'
 import_closure Linger/Display/View.lean 'public import Linger.Display.Spec;import Linger.Display.Status;'
 import_closure Linger/Display/Spec.lean ''
 import_closure Linger/Display/Status.lean 'public import Linger.Display.Spec;'
-import_closure Linger/Selector/Input.lean ''
+import_closure Linger/Selector/Input.lean 'public import Linger.Selector.Spec.Input;'
+import_closure Linger/Selector/Spec/Input.lean ''
 import_closure Linger/Selector/Proofs/Input.lean 'public import Linger.Selector.Input;import all Linger.Selector.Input;'
 import_closure Linger/App/Entry.lean 'public import Linger.App.Spec;'
 import_closure Linger/App/Spec.lean ''
@@ -402,7 +405,7 @@ shell_all="$(module_imports '*.lean' | awk -F: "$IMPORT_AWK"'
 import_closure Linger/Os/Shell/Command.lean 'import Linger.Os.Shell;'
 import_closure Linger/Import/Shell.lean 'import Linger.Import.Resurrect;import Linger.Session.Checkpoint;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Session.Shell.Paths;import Linger.Session.Shell.Resume;import Linger.Session.Shell.Inventory;import Linger.Os.Shell.Command;import Linger.Target.Remote;import Linger.Selector.Shell;import Std.Async.System;'
 import_closure Linger/Selector/Shell.lean \
-  'public import Linger.Selector.Picker;import Linger.Os.Shell;import Linger.Target.Remote;import Linger.Terminal.Title;import Linger.Os.Shell.Command;import Linger.Display.View;import Std.Data.HashMap.Basic;import Linger.Display.Status;import Linger.Selector.Key;'
+  'public import Linger.Selector.Picker;import Linger.Os.Shell;import Linger.Target.Remote;import Linger.Terminal.Title;import Linger.Os.Shell.Command;import Linger.Display.View;import Std.Data.HashMap.Basic;import Linger.Display.Status;import Linger.Selector.Key;import Linger.Selector.Input;'
 import_closure Main.lean \
   'import Linger.App.Shell;import Linger.App.Entry;import Linger.Selector.Shell;import Linger.Import.Shell;'
 # `lean_lib Linger` builds the umbrella's closure, so this list is what `./lake build`
@@ -512,12 +515,12 @@ awk '(/^theorem / || /^@[[]expose[]]$/) && prev !~ /-[/]$/ { print FILENAME ":" 
   || fail "every Challenge.lean hole and theorem needs a docstring"
 challenge_imports_bad="$(module_imports Challenge.lean | awk -F: "$IMPORT_AWK"'
   { if ($3 !~ /^public[[:space:]]+import[[:space:]]+Linger[.]/ || $3 ~ /import[[:space:]]+all[[:space:]]/ \
-        || import_mod($3) !~ /^Linger[.][A-Z][A-Za-z]*[.]Spec$/) print "  " $0 }')"
+        || import_mod($3) !~ /^Linger[.][A-Z][A-Za-z]*[.]Spec([.][A-Z][A-Za-z]*)?$/) print "  " $0 }')"
 [ -z "$challenge_imports_bad" ] || {
   printf '%s\n' "$challenge_imports_bad" >&2
   fail "Challenge.lean imports only Spec modules, publicly"; }
-spec_imports_bad="$(module_imports 'Linger/*/Spec.lean' | awk -F: "$IMPORT_AWK"'
-  { if ($3 ~ /import[[:space:]]+all[[:space:]]/ || (import_mod($3) !~ /^Linger[.][A-Z][A-Za-z]*[.]Spec$/ \
+spec_imports_bad="$(module_imports 'Linger/*/Spec.lean' 'Linger/*/Spec/*.lean' | awk -F: "$IMPORT_AWK"'
+  { if ($3 ~ /import[[:space:]]+all[[:space:]]/ || (import_mod($3) !~ /^Linger[.][A-Z][A-Za-z]*[.]Spec([.][A-Z][A-Za-z]*)?$/ \
         && import_mod($3) != "SoftwareChallenge.Commands"))
       print "  " $0 }')"
 [ -z "$spec_imports_bad" ] || {

@@ -6,6 +6,8 @@ public import Linger.Display.Listing
 public import Linger.Display.Status
 public import Linger.Display.View
 public import Linger.Import.Resurrect
+public import Linger.Selector.Fuzzy
+public import Linger.Selector.Input
 public import Linger.Selector.Picker
 public import Linger.Display.Title
 public import Linger.Os.Env
@@ -26,6 +28,8 @@ import all Linger.Display.Proofs.Listing
 import all Linger.Display.Proofs.Status
 import all Linger.Display.Proofs.View
 import all Linger.Import.Proofs.Resurrect
+import all Linger.Selector.Proofs.Fuzzy
+import all Linger.Selector.Proofs.Input
 import all Linger.Selector.Proofs.Picker
 import all Linger.Display.Proofs.Title
 import all Linger.Os.Proofs.Env
@@ -876,6 +880,48 @@ theorem reachableOut_bound_rejects_uncut :
   rw [appended, empty] at owed
   exact absurd owed (by decide)
 
+theorem live_shape (v : Vt.Vt)
+    (hv :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) v) :
+    1 ≤ v.colCount ∧
+      v.colCount ≤ 1000 ∧
+      1 ≤ v.rowCount ∧
+      v.rowCount ≤ 1000 ∧
+      (∀ y < v.rowCount, (v.getRow y).size = v.colCount) ∧
+      v.cursorPos.1 < v.colCount ∧ v.cursorPos.2 < v.rowCount ∧ v.scrollback.length ≤ Vt.sbCap := by
+  have live := Checkpoint.live_of_decoded hv
+  have good := Vt.good_of_liveReachable live
+  have shaped := Vt.renderable_of_liveReachable live
+  refine
+    ⟨good.colsPos, good.colsLe, good.rowsPos, good.rowsLe, fun y hy => ?_, good.curX, good.curY, ?_⟩
+  · have row := (shaped.main.2 y).size
+    have inside : y < v.grid.size := by
+      rw [shaped.main.1]; exact hy
+    simp only [Vt.Vt.getRow, Vt.Vt.colCount, Array.getD, inside, dite_true] at row ⊢
+    exact row
+  · simp only [Vt.Vt.scrollback, Vt.Ring.toList, List.length_append, List.length_drop,
+      List.length_take, Array.length_toList]
+    have := good.sbLe
+    simp only [Vt.Ring.size] at this
+    omega
+
+theorem live_shape_rejects_empty :
+    ¬∀ (v : Vt.Vt),
+        Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+            (Checkpoint.Decoded Checkpoint.loadBytes) v →
+          1 ≤ v.colCount ∧
+            v.colCount ≤ 1000 ∧
+            1 ≤ v.rowCount ∧
+            v.rowCount ≤ 1000 ∧
+            (∀ y < v.rowCount,
+              ((fun (_ : Vt.Vt) (_ : Nat) => (#[] : Vt.Row)) v y).size = v.colCount) ∧
+            v.cursorPos.1 < v.colCount ∧
+            v.cursorPos.2 < v.rowCount ∧ v.scrollback.length ≤ Vt.sbCap := by
+  intro h
+  have empty := (h (Vt.Vt.init 1 1) (.init 1 1)).2.2.2.2.1 0 (by decide +kernel)
+  exact absurd empty (by decide +kernel)
+
 theorem repeatAtMost_eq_repeat (v : Vt.Vt) (cap count : Nat) (f : Vt.Vt → Vt.Vt) :
     v.repeatAtMost cap count f = Nat.repeat f (min count cap) v :=
   Vt.repeatAtMost_eq_repeat v cap count f
@@ -1338,5 +1384,50 @@ theorem matchCount_push_rejects_length :
             (fun (s : Selector.Picker.State) => s.query.length) s := by
   intro h
   exact absurd (h { candidates := [] } _ 'a' rfl) (by simp)
+
+theorem paste_only_text (state : Selector.Input.State) (byte : UInt8)
+    (pasting : state.paste = true) :
+    ∀ key ∈ (Selector.Input.feed state byte).2, ∃ c, key = .text c := fun key member =>
+  Selector.Input.feed_paste_only_text state byte key pasting member
+
+theorem paste_only_text_rejects_enter :
+    ¬∀ (state : Selector.Input.State) (byte : UInt8),
+        state.paste = true →
+          ∀
+            key ∈
+              ((fun (state : Selector.Input.State) (_ : UInt8) =>
+                    (state, [Selector.Input.Key.enter]))
+                  state byte).2,
+            ∃ c, key = .text c := by
+  intro h
+  obtain ⟨c, same⟩ := h { paste := true } 0 rfl .enter (by simp)
+  cases same
+
+theorem align_exact (query target : String) :
+    ((Selector.Fuzzy.align query target).isSome = true ↔
+        (query.toList.map Char.toLower).Sublist (target.toList.map Char.toLower)) ∧
+      ∀ a,
+        Selector.Fuzzy.align query target = some a →
+          a.marks.length = target.length ∧
+            ((target.toList.zip a.marks).filterMap fun (c, marked) =>
+                if marked then some c.toLower else none) =
+              query.toList.map Char.toLower :=
+  ⟨Selector.Fuzzy.align_isSome_iff_sublist query target, fun a found =>
+    ⟨Selector.Fuzzy.align_marks_length query target a found,
+      Selector.Fuzzy.align_spells query target a found⟩⟩
+
+theorem align_exact_rejects_none :
+    ¬∀ (query target : String),
+        (((fun (_ _ : String) => (none : Option Selector.Fuzzy.Alignment)) query target).isSome =
+              true ↔
+            (query.toList.map Char.toLower).Sublist (target.toList.map Char.toLower)) ∧
+          ∀ a,
+            (fun (_ _ : String) => (none : Option Selector.Fuzzy.Alignment)) query target = some a →
+              a.marks.length = target.length ∧
+                ((target.toList.zip a.marks).filterMap fun (c, marked) =>
+                    if marked then some c.toLower else none) =
+                  query.toList.map Char.toLower := by
+  intro h
+  exact absurd ((h "" "").1.mpr (by simp)) (by simp)
 
 end Linger

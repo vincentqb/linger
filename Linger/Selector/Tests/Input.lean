@@ -1,6 +1,8 @@
 module
 
+import Linger.Selector.Input
 import Linger.Selector.Key
+meta import Linger.Selector.Input
 meta import Linger.Selector.Key
 
 /-! Byte-level fixtures exercise incremental state, including paste boundaries.

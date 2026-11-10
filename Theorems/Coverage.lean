@@ -55,12 +55,13 @@ namespace Theorems.Coverage
 
 open Lean Elab Command
 
-/-- A module of pure code: a component's top module (`Linger.Session`) and each component's
-top-level modules other than its boundary and shell. -/
+/-- A module of pure code: a component's top module (`Linger.Session`), each component's
+top-level modules other than its boundary and shell, and the modules under its `Spec`. -/
 public meta def pureModule (mod : Lean.Name) : Bool :=
   match mod.components.map toString with
   | ["Linger", _] => true
   | ["Linger", _, leaf] => !["Boundary", "Shell"].contains leaf
+  | ["Linger", _, "Spec", _] => true
   | _ => false
 
 /-- A module of proofs: the legacy `Theorems` tree and each component's `Proofs/`. -/

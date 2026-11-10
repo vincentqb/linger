@@ -4,6 +4,8 @@ public import Linger.App.Spec
 public import Linger.Display.Spec
 public import Linger.Import.Spec
 public import Linger.Selector.Spec
+public import Linger.Selector.Spec.Fuzzy
+public import Linger.Selector.Spec.Input
 public import Linger.Session.Spec
 public import Linger.Target.Spec
 public import Linger.Terminal.Spec
@@ -190,6 +192,10 @@ def Linger.Terminal.Vt.Vt.windowTitle : Vt.Vt → String := sorry
 /-- Whether the parser is between control sequences and between characters. -/
 @[expose]
 def Linger.Terminal.Vt.Vt.atBoundary : Vt.Vt → Bool := sorry
+
+/-- The most rows of history a terminal keeps. -/
+@[expose]
+def Linger.Terminal.Vt.sbCap : Nat := sorry
 
 /-- Apply a step as many times as a control sequence's count asks, but at most `cap` times. -/
 @[expose]
@@ -410,6 +416,15 @@ def Linger.Session.Buf.bufAdvance : Buf.Buf → Nat → Buf.Buf := sorry
 def Linger.Session.Buf.owedLen : Buf.Buf → Nat := sorry
 
 /-! ### Selector and import -/
+
+/-- Decode one input byte for the selector: its next state, and the keys the byte completes. -/
+@[expose]
+def Linger.Selector.Input.feed :
+    Selector.Input.State → UInt8 → Selector.Input.State × List Selector.Input.Key := sorry
+
+/-- The selector's fuzzy match of a query against a target, if there is one. -/
+@[expose]
+def Linger.Selector.Fuzzy.align : String → String → Option Selector.Fuzzy.Alignment := sorry
 
 /-- How many listed rows the selector's query matches. -/
 @[expose]
@@ -1193,6 +1208,35 @@ theorem reachableOut_bound_rejects_uncut :
           Buf.owedLen b ≤ cap := by
   sorry
 
+/-- Whatever a session's program writes, its terminal keeps its shape: 1 to 1000 columns and rows,
+every row as wide as the screen, the cursor on the screen, and at most `Vt.sbCap` rows of history. -/
+theorem live_shape (v : Vt.Vt)
+    (hv :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) v) :
+    1 ≤ v.colCount ∧
+      v.colCount ≤ 1000 ∧
+      1 ≤ v.rowCount ∧
+      v.rowCount ≤ 1000 ∧
+      (∀ y < v.rowCount, (v.getRow y).size = v.colCount) ∧
+      v.cursorPos.1 < v.colCount ∧ v.cursorPos.2 < v.rowCount ∧ v.scrollback.length ≤ Vt.sbCap := by
+  sorry
+
+/-- `live_shape` rejects a terminal whose rows are empty. -/
+theorem live_shape_rejects_empty :
+    ¬∀ (v : Vt.Vt),
+        Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+            (Checkpoint.Decoded Checkpoint.loadBytes) v →
+          1 ≤ v.colCount ∧
+            v.colCount ≤ 1000 ∧
+            1 ≤ v.rowCount ∧
+            v.rowCount ≤ 1000 ∧
+            (∀ y < v.rowCount,
+              ((fun (_ : Vt.Vt) (_ : Nat) => (#[] : Vt.Row)) v y).size = v.colCount) ∧
+            v.cursorPos.1 < v.colCount ∧
+            v.cursorPos.2 < v.rowCount ∧ v.scrollback.length ≤ Vt.sbCap := by
+  sorry
+
 /-- A control sequence's count, which can reach 65535, repeats its action at most `cap` times,
 and the terminal caps it by its screen: a larger count costs no more. -/
 theorem repeatAtMost_eq_repeat (v : Vt.Vt) (cap count : Nat) (f : Vt.Vt → Vt.Vt) :
@@ -1645,6 +1689,52 @@ theorem matchCount_push_rejects_length :
         typed = { s with query := s.query.push c } →
           (fun (s : Selector.Picker.State) => s.query.length) typed ≤
             (fun (s : Selector.Picker.State) => s.query.length) s := by
+  sorry
+
+/-- While a paste is in progress, the selector receives only text: no pasted byte acts as Enter,
+Escape, a cursor key or Backspace. -/
+theorem paste_only_text (state : Selector.Input.State) (byte : UInt8)
+    (pasting : state.paste = true) :
+    ∀ key ∈ (Selector.Input.feed state byte).2, ∃ c, key = .text c := by sorry
+
+/-- `paste_only_text` rejects an input decoder that turns any byte into Enter. -/
+theorem paste_only_text_rejects_enter :
+    ¬∀ (state : Selector.Input.State) (byte : UInt8),
+        state.paste = true →
+          ∀
+            key ∈
+              ((fun (state : Selector.Input.State) (_ : UInt8) =>
+                    (state, [Selector.Input.Key.enter]))
+                  state byte).2,
+            ∃ c, key = .text c := by
+  sorry
+
+/-- A target matches the selector's query exactly when the query's characters, case folded, appear
+in it in order, and the characters the selector highlights spell the query, one mark per target
+character. -/
+theorem align_exact (query target : String) :
+    ((Selector.Fuzzy.align query target).isSome = true ↔
+        (query.toList.map Char.toLower).Sublist (target.toList.map Char.toLower)) ∧
+      ∀ a,
+        Selector.Fuzzy.align query target = some a →
+          a.marks.length = target.length ∧
+            ((target.toList.zip a.marks).filterMap fun (c, marked) =>
+                if marked then some c.toLower else none) =
+              query.toList.map Char.toLower := by
+  sorry
+
+/-- `align_exact` rejects a matcher that matches nothing. -/
+theorem align_exact_rejects_none :
+    ¬∀ (query target : String),
+        (((fun (_ _ : String) => (none : Option Selector.Fuzzy.Alignment)) query target).isSome =
+              true ↔
+            (query.toList.map Char.toLower).Sublist (target.toList.map Char.toLower)) ∧
+          ∀ a,
+            (fun (_ _ : String) => (none : Option Selector.Fuzzy.Alignment)) query target = some a →
+              a.marks.length = target.length ∧
+                ((target.toList.zip a.marks).filterMap fun (c, marked) =>
+                    if marked then some c.toLower else none) =
+                  query.toList.map Char.toLower := by
   sorry
 
 end Linger

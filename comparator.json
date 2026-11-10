@@ -80,6 +80,8 @@
     "Linger.reachableIn_bound_rejects_append",
     "Linger.reachableOut_bound",
     "Linger.reachableOut_bound_rejects_uncut",
+    "Linger.live_shape",
+    "Linger.live_shape_rejects_empty",
     "Linger.repeatAtMost_eq_repeat",
     "Linger.repeatAtMost_eq_repeat_rejects_uncapped",
     "Linger.next_bounded",
@@ -124,7 +126,11 @@
     "Linger.hidden_adds_up",
     "Linger.hidden_adds_up_rejects_short",
     "Linger.matchCount_push",
-    "Linger.matchCount_push_rejects_length"
+    "Linger.matchCount_push_rejects_length",
+    "Linger.paste_only_text",
+    "Linger.paste_only_text_rejects_enter",
+    "Linger.align_exact",
+    "Linger.align_exact_rejects_none"
   ],
   "definition_names": [
     "Linger.App.Entry.route",
@@ -157,6 +163,7 @@
     "Linger.Terminal.Vt.stick",
     "Linger.Terminal.Vt.Vt.windowTitle",
     "Linger.Terminal.Vt.Vt.atBoundary",
+    "Linger.Terminal.Vt.sbCap",
     "Linger.Terminal.Vt.Vt.repeatAtMost",
     "Linger.Terminal.Render.sbRows",
     "Linger.Terminal.Render.screenText",
@@ -205,6 +212,8 @@
     "Linger.Session.Buf.bufEnqueue",
     "Linger.Session.Buf.bufAdvance",
     "Linger.Session.Buf.owedLen",
+    "Linger.Selector.Input.feed",
+    "Linger.Selector.Fuzzy.align",
     "Linger.Selector.Picker.matchCount",
     "Linger.Selector.Picker.step",
     "Linger.Import.Resurrect.plan",
