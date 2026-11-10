@@ -329,6 +329,23 @@ theorem run_exited {m : Type → Type} [Monad m]
     run execute r events = pure r := by
   cases events <;> simp [run, h]
 
+/-- **Disconnects and failed saves never stop the daemon**: handling a batch of them keeps it
+running, whatever the interpreter reports about their own effects. -/
+theorem run_feedback_alive (execute : Interpreter World) (r : Result State World)
+    (events : List Event) (running : r.exiting = false)
+    (failures : ∀ ev ∈ events, ev = .checkpointFailed ∨ ∃ id, ev = .closed id) :
+    (run (m := Id) execute r events).exiting = false := by
+  induction events generalizing r with
+  | nil => exact running
+  | cons ev rest ih =>
+    have hdepth : eventDepth ev < 2 := by
+      rcases failures ev (by simp) with rfl | ⟨id, rfl⟩ <;> simp [eventDepth]
+    have hnext := handle_feedback_keeps_alive execute r ev running hdepth
+    have hrest :=
+      ih (handle (m := Id) execute r ev) hnext (fun e he => failures e (List.mem_cons_of_mem ev he))
+    simp only [run, running, Bool.false_eq_true, ↓reduceIte]
+    exact hrest
+
 /-! ## Succeeding effects
 
 When every effect succeeds, nothing is fed back, so the driver runs exactly the session's

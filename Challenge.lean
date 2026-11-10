@@ -16,7 +16,8 @@ The guarantees linger must keep, in ten parts. Each part's section states its he
 each with a kill, and says what it does not claim yet:
 
 1. Transparency: a client that attaches shows the session's terminal, losing only history beyond
-   the replay budget, and the program reads exactly what its writers sent.
+   the replay budget, and the program reads exactly what its writers sent and hears focus as a
+   terminal reports it.
 2. Authority and attribution: a connection changes only what its role allows, a name has one
    owner, and every value linger reports has one source, which alone can change it.
 3. Exactness: a request takes effect exactly as given, or is refused with a reason and changes
@@ -665,6 +666,72 @@ theorem decode_encode_chunked_rejects_silence :
               Wire.feedAll Wire.Decoder.feed {} chunks = ({ buf := [], errored := false }, ms) := by
   sorry
 
+/-- A program that enabled focus reporting hears focus as a terminal reports it. A read that
+completes exactly one attach writes to the program only `CSI I`, and exactly when focus reporting
+is on, the connection was not attached yet, the attach gives a size, and nobody else could
+type. -/
+theorem step_attach_focus (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
+    {dec : Wire.Decoder} {cols rows : UInt32} (hc : s.client? id = some c)
+    (read : c.decoder.feed chunk = (dec, [.attach cols rows])) (healthy : dec.errored = false)
+    (bytes : List UInt8) :
+    Effect.writePty bytes ∈ (Session.step s (.bytes id chunk)).2 ↔
+      bytes = [0x1B, 0x5B, 0x49] ∧
+        s.terminal.getModes.focusEvents = true ∧
+        c.attached = false ∧
+        cols ≠ 0 ∧
+        rows ≠ 0 ∧ ∀ other ∈ s.roster, other.id ≠ id → (other.attached && other.sizer) = false := by
+  sorry
+
+/-- `step_attach_focus` rejects a session that reports focus whenever a client attaches. -/
+theorem step_attach_focus_rejects_eager :
+    ¬∀ (s : State) (id : Nat) (chunk : List UInt8) {c : Client} {dec : Wire.Decoder}
+        {cols rows : UInt32},
+        s.client? id = some c →
+          c.decoder.feed chunk = (dec, [.attach cols rows]) →
+          dec.errored = false →
+          ∀ (bytes : List UInt8),
+            Effect.writePty bytes ∈
+                ((fun (s : State) (_ : Event) =>
+                      (s, ([.writePty [0x1B, 0x5B, 0x49]] : List (Effect Replay.Plan))))
+                    s (.bytes id chunk)).2 ↔
+              bytes = [0x1B, 0x5B, 0x49] ∧
+                s.terminal.getModes.focusEvents = true ∧
+                c.attached = false ∧
+                cols ≠ 0 ∧
+                rows ≠ 0 ∧
+                ∀ other ∈ s.roster, other.id ≠ id → (other.attached && other.sizer) = false := by
+  sorry
+
+/-- Closing a connection writes to the program only `CSI O`, and exactly when focus reporting is
+on, the connection had a size, and someone could type before it closed and nobody can after. -/
+theorem step_closed_focus (s : State) (id : Nat) (bytes : List UInt8) :
+    Effect.writePty bytes ∈ (Session.step s (.closed id)).2 ↔
+      bytes = [0x1B, 0x5B, 0x4F] ∧
+        s.terminal.getModes.focusEvents = true ∧
+        (s.client? id).any (·.sizer) = true ∧
+        s.roster.any (fun c => c.attached && c.sizer) = true ∧
+        (Session.step s (.closed id)).1.roster.any (fun c => c.attached && c.sizer) = false := by
+  sorry
+
+/-- `step_closed_focus` rejects a session that reports a loss of focus whenever a connection
+closes. -/
+theorem step_closed_focus_rejects_eager :
+    ¬∀ (s : State) (id : Nat) (bytes : List UInt8),
+        Effect.writePty bytes ∈
+            ((fun (s : State) (_ : Event) =>
+                  (s, ([.writePty [0x1B, 0x5B, 0x4F]] : List (Effect Replay.Plan))))
+                s (.closed id)).2 ↔
+          bytes = [0x1B, 0x5B, 0x4F] ∧
+            s.terminal.getModes.focusEvents = true ∧
+            (s.client? id).any (·.sizer) = true ∧
+            s.roster.any (fun c => c.attached && c.sizer) = true ∧
+            ((fun (s : State) (_ : Event) =>
+                      (s, ([.writePty [0x1B, 0x5B, 0x4F]] : List (Effect Replay.Plan))))
+                    s (.closed id)).1.roster.any
+                (fun c => c.attached && c.sizer) =
+              false := by
+  sorry
+
 /-! ## 2. Authority and attribution
 
 A watcher is a client attached without a size. Not claimed yet: that a name has one owner
@@ -1039,8 +1106,7 @@ theorem shellOf_choice_rejects_fixed :
 /-! ## 5. Accountability
 
 Not claimed yet: that whoever asks after a session ends hears its outcome. The name's end record
-keeps it, and suites test the files and locks around it. The session refuses a message it does
-not know (`onMsg_unknown`), which handles one message and stays private to the session. -/
+keeps it, and suites test the files and locks around it. -/
 
 /-- When the session's program ends, every client attached to the session or waiting for its end
 is told how the program ended and then the status a shell would report for that ending, and the
@@ -1130,6 +1196,35 @@ theorem infoFields_protocol_rejects_empty :
           (fun (_ : State) => ([] : List (String × String))) s := by
   sorry
 
+/-- A request the session does not know is refused with a reason: a read that completes exactly
+one such message gets `unknown message`, and the session's terminal and labels stay as they
+were. -/
+theorem step_unknown_refused (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
+    {dec : Wire.Decoder} {tag : UInt8} {payload : List UInt8} (hc : s.client? id = some c)
+    (read : c.decoder.feed chunk = (dec, [.unknown tag payload])) (healthy : dec.errored = false) :
+    (Session.step s (.bytes id chunk)).2 = [.send id (.err "unknown message".toUTF8.toList)] ∧
+      (Session.step s (.bytes id chunk)).1.terminal = s.terminal ∧
+      (Session.step s (.bytes id chunk)).1.labelList = s.labelList := by
+  sorry
+
+/-- `step_unknown_refused` rejects a session that ignores a request it does not know. -/
+theorem step_unknown_refused_rejects_silence :
+    ¬∀ (s : State) (id : Nat) (chunk : List UInt8) {c : Client} {dec : Wire.Decoder} {tag : UInt8}
+        {payload : List UInt8},
+        s.client? id = some c →
+          c.decoder.feed chunk = (dec, [.unknown tag payload]) →
+          dec.errored = false →
+          ((fun (s : State) (_ : Event) => (s, ([] : List (Effect Replay.Plan)))) s
+                  (.bytes id chunk)).2 =
+              [.send id (.err "unknown message".toUTF8.toList)] ∧
+            ((fun (s : State) (_ : Event) => (s, ([] : List (Effect Replay.Plan)))) s
+                  (.bytes id chunk)).1.terminal =
+              s.terminal ∧
+            ((fun (s : State) (_ : Event) => (s, ([] : List (Effect Replay.Plan)))) s
+                  (.bytes id chunk)).1.labelList =
+              s.labelList := by
+  sorry
+
 /-- When each external operation returns a typed result, every finite batch of events
 completes without an uncaught exception, keeping the session within its bounds and its
 terminal one a live session can hold. Disconnects and checkpoint failures are permitted
@@ -1171,6 +1266,39 @@ theorem run_total_safe_rejects_jump :
                     State.scanner out.st ∧
                   Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
                     (Checkpoint.Decoded Checkpoint.loadBytes) out.st.terminal := by
+  sorry
+
+/-- A disconnect or a failed save never stops the daemon: handling a batch of them keeps it
+running, whatever the interpreter reports about their own effects. -/
+theorem run_feedback_alive {World : Type}
+    (execute : State → World → (eff : Effect Replay.Plan) → Id (World × Driver.Reply eff))
+    (r : Driver.Result State World) (events : List Event) (running : r.exiting = false)
+    (failures : ∀ ev ∈ events, ev = .checkpointFailed ∨ ∃ id, ev = .closed id) :
+    (Driver.run execute r events).exiting = false := by sorry
+
+/-- `run_feedback_alive` rejects a driver that stops the daemon whatever its events. -/
+theorem run_feedback_alive_rejects_halt :
+    ¬∀ {World : Type}
+        (execute : State → World → (eff : Effect Replay.Plan) → Id (World × Driver.Reply eff))
+        (r : Driver.Result State World) (events : List Event),
+        r.exiting = false →
+          (∀ ev ∈ events, ev = .checkpointFailed ∨ ∃ id, ev = .closed id) →
+          (Driver.halt execute r events).exiting = false := by
+  sorry
+
+/-- Once an event asks the daemon to exit, it handles no later event and runs no later effect. -/
+theorem run_exited {m : Type → Type} [Monad m] {World : Type}
+    (execute : State → World → (eff : Effect Replay.Plan) → m (World × Driver.Reply eff))
+    (r : Driver.Result State World) (events : List Event) (exited : r.exiting = true) :
+    Driver.run execute r events = pure r := by sorry
+
+/-- `run_exited` rejects a driver that moves the session on after it exits. -/
+theorem run_exited_rejects_jump :
+    ¬∀ {m : Type → Type} [Monad m] {World : Type}
+        (execute : State → World → (eff : Effect Replay.Plan) → m (World × Driver.Reply eff))
+        (r : Driver.Result State World) (events : List Event),
+        r.exiting = true →
+          Driver.jump (State.boot (Vt.Vt.init 1 1) [] []) execute r events = pure r := by
   sorry
 
 /-! ## 6. Bounded and clean
@@ -1248,6 +1376,43 @@ theorem repeatAtMost_eq_repeat_rejects_uncapped :
         (fun (v : Vt.Vt) (_ count : Nat) (f : Vt.Vt → Vt.Vt) => Nat.repeat f count v) v cap count
             f =
           Nat.repeat f (min count cap) v := by
+  sorry
+
+/-- One read is answered at most once: however many requests it holds, the frames it renders are
+one reply, a run closed by `done`, and while its connection stays unattached it resizes the pty
+at most once. -/
+theorem step_bytes_one_reply (s : State) (id : Nat) (chunk : List UInt8) :
+    ((Session.step s (.bytes id chunk)).2.all (!·.rendered) ∨
+        ∃ pre frames post,
+          (Session.step s (.bytes id chunk)).2 = pre ++ frames ++ Effect.send id .done :: post ∧
+            frames.all (·.rendered) ∧ (pre ++ post).all (!·.rendered)) ∧
+      (((Session.step s (.bytes id chunk)).1.client? id).all (!·.attached) →
+        ((Session.step s (.bytes id chunk)).2.filter (·.resizes)).length ≤ 1) := by
+  sorry
+
+/-- `step_bytes_one_reply` rejects a session that resizes the pty twice for one read. -/
+theorem step_bytes_one_reply_rejects_twice :
+    ¬∀ (s : State) (id : Nat) (chunk : List UInt8),
+        (((fun (s : State) (_ : Event) =>
+                    (s, ([.resizePty 1 1, .resizePty 1 1] : List (Effect Replay.Plan))))
+                  s (.bytes id chunk)).2.all
+              (!·.rendered) ∨
+            ∃ pre frames post,
+              ((fun (s : State) (_ : Event) =>
+                        (s, ([.resizePty 1 1, .resizePty 1 1] : List (Effect Replay.Plan))))
+                      s (.bytes id chunk)).2 =
+                  pre ++ frames ++ Effect.send id .done :: post ∧
+                frames.all (·.rendered) ∧ (pre ++ post).all (!·.rendered)) ∧
+          ((((fun (s : State) (_ : Event) =>
+                        (s, ([.resizePty 1 1, .resizePty 1 1] : List (Effect Replay.Plan))))
+                      s (.bytes id chunk)).1.client?
+                  id).all
+              (!·.attached) →
+            (((fun (s : State) (_ : Event) =>
+                        (s, ([.resizePty 1 1, .resizePty 1 1] : List (Effect Replay.Plan))))
+                      s (.bytes id chunk)).2.filter
+                  (·.resizes)).length ≤
+              1) := by
   sorry
 
 /-- A replay step never sends more bytes than its budget. -/

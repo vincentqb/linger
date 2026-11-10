@@ -13,7 +13,7 @@ import all Linger.Session.Proofs.Wire
 -- `Linger.Session.Proofs.Checkpoint` is here for one claim: `Checkpoint.load_live`, which makes
 -- `LiveVt` provable for a *resumed* daemon (§Resume at the daemon, below).
 import all Linger.Session.Proofs.Checkpoint
-import Linger.Session.Spec
+public import Linger.Session.Spec
 
 /-! # §Detach / §Bound(session) — the daemon state machine theorems
 
@@ -1528,17 +1528,6 @@ def costly (c : Client) : Msg → Bool
   | .resize _ _ => !c.attached
   | _ => false
 
-/-- A rendered reply frame: within one read, the `output` of a history or screen capture,
-or an `infoReply`. -/
-def rendered : Effect Plan → Bool
-  | .send _ (.output _) | .send _ (.infoReply _) => true
-  | _ => false
-
-/-- A pty resize. -/
-def resizes : Effect Plan → Bool
-  | .resizePty _ _ => true
-  | _ => false
-
 theorem find?_map_set_self (c : Client) :
     ∀ (l : List Client),
       (l.find? (·.id == c.id)).isSome →
@@ -1713,18 +1702,18 @@ theorem onMsg_sender (s : State) (c : Client) (m : Msg) (hc : s.client? c.id = s
 
 /-- Outside the read's costly answer, a message sends no rendered frame. -/
 theorem onMsg_unrendered (s : State) (c : Client) (m : Msg)
-    (h : c.answered = true ∨ costly c m = false) : (onMsg s c m).2.all (!rendered ·) := by
+    (h : c.answered = true ∨ costly c m = false) : (onMsg s c m).2.all (!·.rendered) := by
   cases m <;> simp only [costly, or_true] at h
   all_goals
     unfold onMsg resizeOwned resize controlResize focusEffects
     dsimp only
     repeat' split
-  all_goals simp_all [rendered]
+  all_goals simp_all [Effect.rendered]
 
 /-- …and, from a connection that is neither attached nor attaching, no pty resize. -/
 theorem onMsg_unresized (s : State) (c : Client) (m : Msg)
     (h : c.answered = true ∨ costly c m = false) (ha : c.attached = false)
-    (hm : ∀ cols rows, m ≠ .attach cols rows) : (onMsg s c m).2.all (!resizes ·) := by
+    (hm : ∀ cols rows, m ≠ .attach cols rows) : (onMsg s c m).2.all (!·.resizes) := by
   cases m
   case attach cols rows => exact absurd rfl (hm cols rows)
   all_goals
@@ -1732,12 +1721,12 @@ theorem onMsg_unresized (s : State) (c : Client) (m : Msg)
     unfold onMsg resizeOwned resize controlResize focusEffects
     dsimp only
     repeat' split
-  all_goals simp_all [resizes]
+  all_goals simp_all [Effect.resizes]
 
 /-- Effects a read has emitted before answering a costly request: no rendered frame, and
 no pty resize while the sender is unattached. -/
 def Unanswered (c : Client) (effs : List (Effect Plan)) : Prop :=
-  effs.all (!rendered ·) = true ∧ (c.attached = false → effs.all (!resizes ·) = true)
+  effs.all (!·.rendered) = true ∧ (c.attached = false → effs.all (!·.resizes) = true)
 
 /-- Effects around the read's one costly answer: the whole answer to one of the batch's
 messages `msgs`, given to the sender's record `c'` in a state `t`. -/
@@ -1746,7 +1735,7 @@ def AnsweredOnce (id : Nat) (msgs : List Msg) (c : Client) (effs : List (Effect 
     m ∈ msgs ∧
       t.client? id = some c' ∧
       effs = pre ++ (onMsg t c' m).2 ++ post ∧
-      (pre ++ post).all (!rendered ·) ∧ (c.attached = false → (pre ++ post).all (!resizes ·))
+      (pre ++ post).all (!·.rendered) ∧ (c.attached = false → (pre ++ post).all (!·.resizes))
 
 /-- A batch keeps the sender's record and its effects in one of the two shapes above. -/
 theorem feedMsgs_one_reply (id : Nat) (msgs : List Msg) (acc : State × List (Effect Plan))
@@ -1812,16 +1801,16 @@ theorem step_bytes_one_reply (s : State) (id : Nat) (chunk : List UInt8) :
           ∃ c t c' m,
             s.client? id = some c ∧
               m ∈ (c.decoder.feed chunk).2 ∧ t.client? id = some c' ∧ ans = (onMsg t c' m).2) ∧
-        (pre ++ post).all (!rendered ·) ∧
+        (pre ++ post).all (!·.rendered) ∧
         (((step s (.bytes id chunk)).1.client? id).all (!·.attached) →
-          (pre ++ post).all (!resizes ·)) := by
+          (pre ++ post).all (!·.resizes)) := by
   -- with nothing costly, the effects surround an empty answer
   have quiet (R : List (Effect Plan) → Prop) (P : Prop) (effs : List (Effect Plan))
-    (hf : effs.all (!rendered ·)) (hr : P → effs.all (!resizes ·)) :
+    (hf : effs.all (!·.rendered)) (hr : P → effs.all (!·.resizes)) :
     ∃ pre ans post,
       effs = pre ++ ans ++ post ∧
         (ans = [] ∨ R ans) ∧
-        (pre ++ post).all (!rendered ·) ∧ (P → (pre ++ post).all (!resizes ·)) :=
+        (pre ++ post).all (!·.rendered) ∧ (P → (pre ++ post).all (!·.resizes)) :=
     ⟨effs, [], [], by simp, Or.inl rfl, by simpa using hf, by simpa using hr⟩
   -- a batch that starts unanswered, with nothing emitted yet
   have fresh (msgs : List Msg) (t : State) (c : Client) (hc : t.client? id = some c)
@@ -1829,9 +1818,9 @@ theorem step_bytes_one_reply (s : State) (id : Nat) (chunk : List UInt8) :
     ∃ pre ans post,
       (feedMsgs id msgs (t, [])).2 = pre ++ ans ++ post ∧
         (ans = [] ∨ ∃ t' c' m, m ∈ msgs ∧ t'.client? id = some c' ∧ ans = (onMsg t' c' m).2) ∧
-        (pre ++ post).all (!rendered ·) ∧
+        (pre ++ post).all (!·.rendered) ∧
         (((feedMsgs id msgs (t, [])).1.client? id).all (!·.attached) →
-          (pre ++ post).all (!resizes ·)) := by
+          (pre ++ post).all (!·.resizes)) := by
     obtain ⟨cf, hcf, hnone, hone⟩ :=
       feedMsgs_one_reply id msgs (t, [])
         ⟨c, hc, fun _ => ⟨rfl, fun _ => rfl⟩, fun h => absurd (h.symm.trans ha) (by simp)⟩
@@ -2421,5 +2410,349 @@ theorem run_readonly (s : State) (id : Nat) (chunks : List (List UInt8)) {c : Cl
   | close to => exact .inr (.inl (by simp_all [watcherEffect]))
   | checkpoint => exact .inr (.inr rfl)
   | _ => simp [watcherEffect] at own
+
+/-! ## One read and one close, as the headlines state them
+
+The headline theorems name `step`, not the handlers it calls. A read that completes exactly one
+message is that message's answer (`step_bytes_single`), so the focus reports, the refusal of an
+unknown request and the one reply per read restate as `step` events. -/
+
+/-- A read that completes exactly one message, with a healthy decoder, is that message's answer
+from the sender's record with its decoder advanced and its read not yet answered. -/
+theorem step_bytes_single {s : State} {id : Nat} {chunk : List UInt8} {c : Client}
+    {dec : Wire.Decoder} {m : Msg} (hc : s.client? id = some c)
+    (read : c.decoder.feed chunk = (dec, [m])) (healthy : dec.errored = false) :
+    step s (.bytes id chunk) =
+      onMsg
+        (s.setClient
+          { c with
+            decoder := dec, answered := false })
+        { c with
+          decoder := dec, answered := false }
+        m := by
+  have he :
+    ({ c with
+            decoder := dec, answered := false } :
+          Client).id =
+      id :=
+    (client?_id hc : c.id = id)
+  have h1 :
+    (s.setClient
+            { c with
+              decoder := dec, answered := false }).client?
+        id =
+      some
+        { c with
+          decoder := dec, answered := false } := by
+    rw [← he]; exact client?_setClient (he ▸ hc)
+  simp only [step, hc, read, healthy, Bool.false_eq_true, ↓reduceIte, feedMsgs, List.foldl_cons,
+    List.foldl_nil, List.contains_nil, Bool.or_self, h1, List.nil_append]
+
+/-- A resize by the size owner asks the runtime for nothing but a pty resize. -/
+theorem resizeOwned_effects (s : State) (c : Client) :
+    ∀ e ∈ (resizeOwned s c).2, e.resizes = true := by
+  unfold resizeOwned resize
+  repeat' split
+  all_goals simp [Effect.resizes]
+
+/-- Recording a connection that is not attached leaves someone able to type exactly when someone
+under another identifier could. -/
+theorem focused_setClient_unattached (s : State) (c : Client) (ha : c.attached = false) :
+    (s.setClient c).focused = s.clients.any (fun x => x.id != c.id && (x.attached && x.sizer)) := by
+  unfold State.focused State.setClient
+  dsimp only
+  generalize s.clients = l
+  induction l with
+  | nil => rfl
+  | cons x xs ih =>
+    simp only [List.map_cons, List.any_cons, ih]
+    by_cases hx : x.id = c.id
+    · simp [hx, ha]
+    · have hne : (x.id != c.id) = true := bne_iff_ne.mpr hx
+      have hbeq : (x.id == c.id) = false := by simpa using hx
+      simp only [hbeq, Bool.false_eq_true, ↓reduceIte, hne, Bool.true_and]
+
+/-- An attach writes to the program only the focus report it owes. -/
+theorem onMsg_attach_writePty (t : State) (c : Client) (cols rows : UInt32) (bytes : List UInt8) :
+    Effect.writePty bytes ∈ (onMsg t c (.attach cols rows)).2 ↔
+      c.attached = false ∧
+        Effect.writePty bytes ∈
+          focusEffects (cols != 0 && rows != 0) t.focused
+            (resizeOwned
+                {
+                  t.setClient
+                    { c with
+                      attached := true, sizer := cols != 0 && rows != 0, seq := t.attachSeq, cols,
+                      rows } with
+                  attachSeq := t.attachSeq + 1, lookSeq := t.outSeq }
+                { c with
+                  attached := true, sizer := cols != 0 && rows != 0, seq := t.attachSeq, cols,
+                  rows }).1 := by
+  let c' : Client :=
+    { c with
+      attached := true, sizer := cols != 0 && rows != 0, seq := t.attachSeq, cols, rows }
+  let t1 : State :=
+    { t.setClient c' with
+      attachSeq := t.attachSeq + 1, lookSeq := t.outSeq }
+  have hro := resizeOwned_effects t1 c'
+  unfold onMsg
+  dsimp only
+  cases ha : c.attached
+  · simp only [Bool.false_eq_true, ↓reduceIte, true_and]
+    show
+      Effect.writePty bytes ∈
+          (resizeOwned t1 c').2 ++
+            focusEffects (cols != 0 && rows != 0) t.focused (resizeOwned t1 c').1 ++
+            _ ++
+            _ ↔
+        _
+    simp only [List.mem_append, List.mem_singleton, reduceCtorEq, or_false]
+    constructor
+    · rintro ((hm | hm) | hm)
+      · exact absurd (hro _ hm) (by simp [Effect.resizes])
+      · exact hm
+      · split at hm <;> simp at hm
+    · intro hm
+      exact Or.inl (Or.inr hm)
+  · simp
+
+/-- **Focus follows typing, on attach**: a read that completes exactly one attach writes to the
+program only `CSI I`, and exactly when the program enabled focus reporting, the attach comes from
+a connection not yet attached and has a terminal of its own, and nobody else could type. -/
+theorem step_attach_focus (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
+    {dec : Wire.Decoder} {cols rows : UInt32} (hc : s.client? id = some c)
+    (read : c.decoder.feed chunk = (dec, [.attach cols rows])) (healthy : dec.errored = false)
+    (bytes : List UInt8) :
+    Effect.writePty bytes ∈ (step s (.bytes id chunk)).2 ↔
+      bytes = [0x1B, 0x5B, 0x49] ∧
+        s.terminal.getModes.focusEvents = true ∧
+        c.attached = false ∧
+        cols ≠ 0 ∧
+        rows ≠ 0 ∧ ∀ other ∈ s.roster, other.id ≠ id → (other.attached && other.sizer) = false := by
+  have hid : c.id = id := client?_id hc
+  have hc' : s.client? c.id = some c := by
+    rw [hid]; exact hc
+  rw [step_bytes_single hc read healthy, onMsg_attach_writePty]
+  let c1 : Client :=
+    { c with
+      decoder := dec, answered := false }
+  let t := s.setClient c1
+  let c' : Client :=
+    { c1 with
+      attached := true, sizer := cols != 0 && rows != 0, seq := t.attachSeq, cols, rows }
+  let t1 : State :=
+    { t.setClient c' with
+      attachSeq := t.attachSeq + 1, lookSeq := t.outSeq }
+  show
+    (c1.attached = false ∧
+        Effect.writePty bytes ∈
+          focusEffects (cols != 0 && rows != 0) t.focused (resizeOwned t1 c').1) ↔
+      _
+  have h1 : t.client? c'.id = some c1 := client?_setClient (c := c1) hc'
+  have hmodes : (resizeOwned t1 c').1.vt.getModes = s.vt.getModes := (resizeOwned_frame t1 c').2
+  have hafter (hs : (cols != 0 && rows != 0) = true) : (resizeOwned t1 c').1.focused = true := by
+    have hf : (t.setClient c').focused = true := focused_setClient (c := c') h1 rfl hs
+    simp only [State.focused, (resizeOwned_frame t1 c').1]
+    exact hf
+  cases ha : c.attached
+  · have hbefore : t.focused = s.clients.any (fun x => x.id != id && (x.attached && x.sizer)) := by
+      rw [focused_setClient_unattached s c1 ha]
+      simp only [c1, hid]
+    unfold focusEffects
+    rw [hbefore]
+    cases hs : (cols != 0 && rows != 0)
+    · have hz : ¬(cols ≠ 0 ∧ rows ≠ 0) := by simpa using hs
+      simp only [Bool.false_and, Bool.false_eq_true, ↓reduceIte, List.not_mem_nil, and_false,
+        false_iff]
+      exact fun ⟨_, _, _, h, h', _⟩ => hz ⟨h, h'⟩
+    · rw [hafter hs, hmodes]
+      have hnz : cols ≠ 0 ∧ rows ≠ 0 := by simpa using hs
+      simp only [Bool.true_and, focusReport, ↓reduceIte, State.terminal, State.roster]
+      constructor
+      · intro ⟨_, hm⟩
+        split at hm
+        · rename_i hcond
+          simp only [List.mem_singleton, Effect.writePty.injEq] at hm
+          simp only [Bool.and_eq_true, bne_iff_ne, ne_eq, Bool.not_eq_true] at hcond
+          refine ⟨hm, hcond.2, by simp, hnz.1, hnz.2, fun other hother hne => ?_⟩
+          have := hcond.1
+          simp only [List.any_eq_false] at this
+          have := this other hother
+          cases h : other.attached && other.sizer
+          · rfl
+          · simp_all
+        · simp at hm
+      · rintro ⟨rfl, hmode, -, -, -, hnobody⟩
+        refine ⟨by simp, ?_⟩
+        have hnone : s.clients.any (fun x => x.id != id && (x.attached && x.sizer)) = false := by
+          simp only [List.any_eq_false]
+          intro x hx
+          by_cases hxid : x.id = id
+          · simp [hxid]
+          · have := hnobody x hx hxid
+            simp_all
+        simp [hnone]
+        exact hmode
+  · simp
+
+/-- **…and on close**: closing a connection writes to the program only `CSI O`, and exactly when
+the program enabled focus reporting and the connection, which had a terminal of its own, was the
+last through which someone could type. -/
+theorem step_closed_focus (s : State) (id : Nat) (bytes : List UInt8) :
+    Effect.writePty bytes ∈ (step s (.closed id)).2 ↔
+      bytes = [0x1B, 0x5B, 0x4F] ∧
+        s.terminal.getModes.focusEvents = true ∧
+        (s.client? id).any (·.sizer) = true ∧
+        s.roster.any (fun c => c.attached && c.sizer) = true ∧
+        (step s (.closed id)).1.roster.any (fun c => c.attached && c.sizer) = false := by
+  have hroster : (step s (.closed id)).1.roster = s.clients.filter (·.id != id) :=
+    closeClient_clients s id
+  rw [hroster]
+  have hsub :
+    (s.clients.filter (·.id != id)).any (fun c => c.attached && c.sizer) = true →
+      s.clients.any (fun c => c.attached && c.sizer) = true := by
+    simp only [List.any_eq_true, List.mem_filter]
+    rintro ⟨x, ⟨hx, -⟩, h⟩
+    exact ⟨x, hx, h⟩
+  have hfx :
+    Effect.writePty bytes ∈ (step s (.closed id)).2 ↔
+      Effect.writePty bytes ∈
+        focusEffects ((s.client? id).any (·.sizer)) s.focused (s.dropClient id) := by
+    show Effect.writePty bytes ∈ (closeClient s id).2 ↔ _
+    unfold closeClient
+    dsimp only
+    split <;> simp
+  rw [hfx]
+  have hsub' : (s.dropClient id).focused = true → s.focused = true := hsub
+  unfold focusEffects
+  split
+  · rename_i hcond
+    simp only [Bool.and_eq_true, bne_iff_ne, ne_eq] at hcond
+    obtain ⟨⟨htyp, hne⟩, hmode⟩ := hcond
+    have hafter : (s.dropClient id).focused = false := by
+      cases h : (s.dropClient id).focused
+      · rfl
+      · exact absurd (by rw [h, hsub' h]) hne
+    have hbefore : s.focused = true := by
+      cases h : s.focused
+      · exact absurd (by rw [h, hafter]) hne
+      · rfl
+    rw [List.mem_singleton, Effect.writePty.injEq, hafter]
+    exact ⟨fun hb => ⟨hb, hmode, htyp, hbefore, hafter⟩, fun h => h.1⟩
+  · rename_i hcond
+    simp only [List.not_mem_nil, false_iff]
+    rintro ⟨-, hmode, htyp, hbefore, hafter⟩
+    apply hcond
+    have hb : s.focused = true := hbefore
+    have ha : (s.dropClient id).focused = false := hafter
+    have hm : (s.dropClient id).vt.getModes.focusEvents = true := hmode
+    rw [htyp, hb, ha, hm]
+    rfl
+
+/-- **An unknown request is refused**: a read that completes exactly one message this version does
+not know gets the reason, and the session's terminal and labels stay as they were. -/
+theorem step_unknown_refused (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
+    {dec : Wire.Decoder} {tag : UInt8} {payload : List UInt8} (hc : s.client? id = some c)
+    (read : c.decoder.feed chunk = (dec, [.unknown tag payload])) (healthy : dec.errored = false) :
+    (step s (.bytes id chunk)).2 = [.send id (.err "unknown message".toUTF8.toList)] ∧
+      (step s (.bytes id chunk)).1.terminal = s.terminal ∧
+      (step s (.bytes id chunk)).1.labelList = s.labelList := by
+  have hid : c.id = id := client?_id hc
+  rw [step_bytes_single hc read healthy, onMsg_unknown]
+  exact ⟨by simp [hid], rfl, rfl⟩
+
+/-- Each message's answer renders frames only as one reply: a run of frames, then `done`. -/
+theorem onMsg_rendered_run (s : State) (c : Client) (m : Msg) :
+    (onMsg s c m).2.all (!·.rendered) ∨
+      ∃ frames, (onMsg s c m).2 = frames ++ [.send c.id .done] ∧ frames.all (·.rendered) := by
+  cases m
+  case info =>
+    unfold onMsg infoMsgs
+    dsimp only
+    split
+    · exact Or.inl (by simp [Effect.rendered])
+    · split
+      · exact Or.inl (by simp [Effect.rendered])
+      · exact Or.inr ⟨_, rfl, by simp [Effect.rendered]⟩
+  case history =>
+    unfold onMsg outputMsgs
+    dsimp only
+    split
+    · exact Or.inl (by simp [Effect.rendered])
+    · exact Or.inr ⟨_, rfl, by simp [Effect.rendered]⟩
+  case screen =>
+    unfold onMsg outputMsgs
+    dsimp only
+    split
+    · exact Or.inl (by simp [Effect.rendered])
+    · exact Or.inr ⟨_, rfl, by simp [Effect.rendered]⟩
+  all_goals
+    left
+    unfold onMsg controlResize resizeOwned resize focusEffects
+    dsimp only
+    repeat' split
+  all_goals simp_all [Effect.rendered]
+
+/-- Filtering by a test that holds nowhere keeps nothing. -/
+theorem filter_false_nil {α : Type} (l : List α) : l.filter (fun _ => false) = [] :=
+  List.filter_eq_nil_iff.mpr (by simp)
+
+/-- Each message's answer resizes the pty at most once. -/
+theorem onMsg_resizes_le (s : State) (c : Client) (m : Msg) :
+    ((onMsg s c m).2.filter (·.resizes)).length ≤ 1 := by
+  cases m
+  all_goals
+    unfold onMsg controlResize resizeOwned resize focusEffects infoMsgs outputMsgs
+    dsimp only
+    repeat' split
+  all_goals
+    simp_all [Effect.resizes, List.filter_append, List.filter_map, Function.comp_def,
+      filter_false_nil]
+
+/-- **One reply per read, as the headline states it**: the frames one read renders are one run
+closed by `done`, and while its connection stays unattached it resizes the pty at most once. -/
+theorem step_bytes_one_reply_observed (s : State) (id : Nat) (chunk : List UInt8) :
+    ((step s (.bytes id chunk)).2.all (!·.rendered) ∨
+        ∃ pre frames post,
+          (step s (.bytes id chunk)).2 = pre ++ frames ++ Effect.send id .done :: post ∧
+            frames.all (·.rendered) ∧ (pre ++ post).all (!·.rendered)) ∧
+      (((step s (.bytes id chunk)).1.client? id).all (!·.attached) →
+        ((step s (.bytes id chunk)).2.filter (·.resizes)).length ≤ 1) := by
+  obtain ⟨pre, ans, post, he, hans, hf, hr⟩ := step_bytes_one_reply s id chunk
+  rw [he]
+  have hnone (l : List (Effect Plan)) (h : l.all (!·.resizes) = true) :
+    (l.filter (·.resizes)).length = 0 := by
+    rw [List.length_eq_zero_iff, List.filter_eq_nil_iff]
+    intro e he
+    simpa using (List.all_eq_true.mp h) e he
+  rcases hans with rfl | ⟨c, t, c', m, -, -, ht, rfl⟩
+  · refine ⟨Or.inl (by simpa using hf), fun hu => ?_⟩
+    have h0 := hnone _ (hr hu)
+    simp only [List.append_nil]
+    omega
+  · have hid := client?_id ht
+    refine ⟨?_, fun hu => ?_⟩
+    · rcases onMsg_rendered_run t c' m with h | ⟨frames, hfr, hall⟩
+      · left
+        simp only [List.all_append, Bool.and_eq_true] at hf ⊢
+        exact ⟨⟨hf.1, h⟩, hf.2⟩
+      · right
+        exact
+          ⟨pre, frames, post, by
+            rw [hfr, hid]; simp, hall, hf⟩
+    · have h1 := onMsg_resizes_le t c' m
+      have h2 := hr hu
+      simp only [List.all_append, Bool.and_eq_true] at h2
+      have hp := hnone pre h2.1
+      have hq := hnone post h2.2
+      simp only [List.filter_append, List.length_append]
+      omega
+
+/-- A fresh connection's decoder reads a message the encoder may send back from its bytes in one
+chunk: the read the per-read headlines' kills are shown with. -/
+theorem feed_encode_fresh (m : Msg) (hm : m.Fits) :
+    ({ id := 1 } : Client).decoder.feed (Wire.encode m) = ({}, [m]) := by
+  have := Wire.decode_encode_stream [m] (by simpa using Wire.fits_wf m hm)
+  simpa [Wire.decode] using this
 
 end Linger.Session

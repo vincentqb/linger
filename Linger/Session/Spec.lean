@@ -324,6 +324,19 @@ inductive Effect (Plan : Type) where
   | exit
   deriving Repr, DecidableEq
 
+/-- Whether an effect sends a frame of a rendered reply: an `output` frame of a history or
+screen capture, or a frame of an `info` reply. -/
+@[expose]
+def Effect.rendered {Plan : Type} : Effect Plan → Bool
+  | .send _ (.output _) | .send _ (.infoReply _) => true
+  | _ => false
+
+/-- Whether an effect resizes the pty. -/
+@[expose]
+def Effect.resizes {Plan : Type} : Effect Plan → Bool
+  | .resizePty _ _ => true
+  | _ => false
+
 /-- The session after a trace of events, given its transition: each event starts from the state
 the previous one left, and the effects come out in the order the events asked for them. -/
 @[expose]
@@ -380,6 +393,13 @@ headline about the event driver is shown to reject it. -/
 def jump {S Plan : Type} (target : S) {m : Type → Type} [Monad m] {World : Type}
     (_ : S → World → (eff : Effect Plan) → m (World × Reply eff)) (r : Result S World)
     (_ : List Event) : m (Result S World) := pure { r with st := target }
+
+/-- A wrong driver: it stops the daemon whatever its events. The headline about disconnects and
+failed saves is shown to reject it. -/
+@[expose]
+def halt {S Plan : Type} {m : Type → Type} [Monad m] {World : Type}
+    (_ : S → World → (eff : Effect Plan) → m (World × Reply eff)) (r : Result S World)
+    (_ : List Event) : m (Result S World) := pure { r with exiting := true }
 
 /-- The external contract excludes unreported exceptions; it permits every
 disconnect/checkpoint-failure result. This is a premise about primitive

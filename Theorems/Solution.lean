@@ -346,6 +346,74 @@ theorem decode_encode_chunked_rejects_silence :
   have read := h [.done] (by simp [Wire.Msg.Fits]) [] (by simp)
   exact absurd (congrArg Prod.snd read) (by simp [Wire.feedAll])
 
+theorem step_attach_focus (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
+    {dec : Wire.Decoder} {cols rows : UInt32} (hc : s.client? id = some c)
+    (read : c.decoder.feed chunk = (dec, [.attach cols rows])) (healthy : dec.errored = false)
+    (bytes : List UInt8) :
+    Effect.writePty bytes ∈ (Session.step s (.bytes id chunk)).2 ↔
+      bytes = [0x1B, 0x5B, 0x49] ∧
+        s.terminal.getModes.focusEvents = true ∧
+        c.attached = false ∧
+        cols ≠ 0 ∧
+        rows ≠ 0 ∧ ∀ other ∈ s.roster, other.id ≠ id → (other.attached && other.sizer) = false :=
+  Session.step_attach_focus s id chunk hc read healthy bytes
+
+theorem step_attach_focus_rejects_eager :
+    ¬∀ (s : State) (id : Nat) (chunk : List UInt8) {c : Client} {dec : Wire.Decoder}
+        {cols rows : UInt32},
+        s.client? id = some c →
+          c.decoder.feed chunk = (dec, [.attach cols rows]) →
+          dec.errored = false →
+          ∀ (bytes : List UInt8),
+            Effect.writePty bytes ∈
+                ((fun (s : State) (_ : Event) =>
+                      (s, ([.writePty [0x1B, 0x5B, 0x49]] : List (Effect Replay.Plan))))
+                    s (.bytes id chunk)).2 ↔
+              bytes = [0x1B, 0x5B, 0x49] ∧
+                s.terminal.getModes.focusEvents = true ∧
+                c.attached = false ∧
+                cols ≠ 0 ∧
+                rows ≠ 0 ∧
+                ∀ other ∈ s.roster, other.id ≠ id → (other.attached && other.sizer) = false := by
+  intro h
+  obtain ⟨joined, -⟩ := Session.connected_client_witness
+  have heard :=
+    (@h (Session.trace Session.step (State.boot (Vt.Vt.init 1 1) [] []) [.connected 1]).1 1
+          (Wire.encode (.attach 0 0)) { id := 1 } {} 0 0 joined
+          (Session.feed_encode_fresh (.attach 0 0) trivial) rfl [0x1B, 0x5B, 0x49]).mp
+      (by simp)
+  exact heard.2.2.2.1 rfl
+
+theorem step_closed_focus (s : State) (id : Nat) (bytes : List UInt8) :
+    Effect.writePty bytes ∈ (Session.step s (.closed id)).2 ↔
+      bytes = [0x1B, 0x5B, 0x4F] ∧
+        s.terminal.getModes.focusEvents = true ∧
+        (s.client? id).any (·.sizer) = true ∧
+        s.roster.any (fun c => c.attached && c.sizer) = true ∧
+        (Session.step s (.closed id)).1.roster.any (fun c => c.attached && c.sizer) = false :=
+  Session.step_closed_focus s id bytes
+
+theorem step_closed_focus_rejects_eager :
+    ¬∀ (s : State) (id : Nat) (bytes : List UInt8),
+        Effect.writePty bytes ∈
+            ((fun (s : State) (_ : Event) =>
+                  (s, ([.writePty [0x1B, 0x5B, 0x4F]] : List (Effect Replay.Plan))))
+                s (.closed id)).2 ↔
+          bytes = [0x1B, 0x5B, 0x4F] ∧
+            s.terminal.getModes.focusEvents = true ∧
+            (s.client? id).any (·.sizer) = true ∧
+            s.roster.any (fun c => c.attached && c.sizer) = true ∧
+            ((fun (s : State) (_ : Event) =>
+                      (s, ([.writePty [0x1B, 0x5B, 0x4F]] : List (Effect Replay.Plan))))
+                    s (.closed id)).1.roster.any
+                (fun c => c.attached && c.sizer) =
+              false := by
+  intro h
+  obtain ⟨-, none⟩ := Session.connected_client_witness
+  have heard := (h (State.boot (Vt.Vt.init 1 1) [] []) 1 [0x1B, 0x5B, 0x4F]).mp (by simp)
+  rw [none] at heard
+  exact absurd heard.2.2.1 (by decide)
+
 theorem start_plan (live saved : Bool) :
     Start.plan live saved = if live then .running else if saved then .saved else .take :=
   Start.plan_eq live saved
@@ -784,6 +852,37 @@ theorem infoFields_protocol_rejects_empty :
   intro h
   exact absurd (h (State.boot (Vt.Vt.init 1 1) [] [])) (by simp)
 
+theorem step_unknown_refused (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
+    {dec : Wire.Decoder} {tag : UInt8} {payload : List UInt8} (hc : s.client? id = some c)
+    (read : c.decoder.feed chunk = (dec, [.unknown tag payload])) (healthy : dec.errored = false) :
+    (Session.step s (.bytes id chunk)).2 = [.send id (.err "unknown message".toUTF8.toList)] ∧
+      (Session.step s (.bytes id chunk)).1.terminal = s.terminal ∧
+      (Session.step s (.bytes id chunk)).1.labelList = s.labelList :=
+  Session.step_unknown_refused s id chunk hc read healthy
+
+theorem step_unknown_refused_rejects_silence :
+    ¬∀ (s : State) (id : Nat) (chunk : List UInt8) {c : Client} {dec : Wire.Decoder} {tag : UInt8}
+        {payload : List UInt8},
+        s.client? id = some c →
+          c.decoder.feed chunk = (dec, [.unknown tag payload]) →
+          dec.errored = false →
+          ((fun (s : State) (_ : Event) => (s, ([] : List (Effect Replay.Plan)))) s
+                  (.bytes id chunk)).2 =
+              [.send id (.err "unknown message".toUTF8.toList)] ∧
+            ((fun (s : State) (_ : Event) => (s, ([] : List (Effect Replay.Plan)))) s
+                  (.bytes id chunk)).1.terminal =
+              s.terminal ∧
+            ((fun (s : State) (_ : Event) => (s, ([] : List (Effect Replay.Plan)))) s
+                  (.bytes id chunk)).1.labelList =
+              s.labelList := by
+  intro h
+  obtain ⟨joined, -⟩ := Session.connected_client_witness
+  have refused :=
+    (@h (Session.trace Session.step (State.boot (Vt.Vt.init 1 1) [] []) [.connected 1]).1 1
+        (Wire.encode (.unknown 200 [])) { id := 1 } {} 200 [] joined
+        (Session.feed_encode_fresh (.unknown 200 []) ⟨by simp, by decide⟩) rfl).1
+  simp at refused
+
 theorem run_total_safe {World ε : Type}
     (execute : State → World → (eff : Effect Replay.Plan) → Except ε (World × Driver.Reply eff))
     (hw : Driver.Responds execute) (r : Driver.Result State World) (events : List Event)
@@ -847,6 +946,50 @@ theorem run_total_safe_rejects_jump :
   have overflow := bounds.labelsLe
   rw [narrow] at overflow
   exact absurd overflow (by decide +kernel)
+
+theorem run_feedback_alive {World : Type}
+    (execute : State → World → (eff : Effect Replay.Plan) → Id (World × Driver.Reply eff))
+    (r : Driver.Result State World) (events : List Event) (running : r.exiting = false)
+    (failures : ∀ ev ∈ events, ev = .checkpointFailed ∨ ∃ id, ev = .closed id) :
+    (Driver.run execute r events).exiting = false :=
+  Driver.run_feedback_alive execute r events running failures
+
+theorem run_feedback_alive_rejects_halt :
+    ¬∀ {World : Type}
+        (execute : State → World → (eff : Effect Replay.Plan) → Id (World × Driver.Reply eff))
+        (r : Driver.Result State World) (events : List Event),
+        r.exiting = false →
+          (∀ ev ∈ events, ev = .checkpointFailed ∨ ∃ id, ev = .closed id) →
+          (Driver.halt execute r events).exiting = false := by
+  intro h
+  have stopped :=
+    @h Unit (fun _ world eff => (world, Driver.success eff))
+      { st := State.boot (Vt.Vt.init 1 1) [] [], world := () } [] rfl (by simp)
+  exact absurd stopped (by decide)
+
+theorem run_exited {m : Type → Type} [Monad m] {World : Type}
+    (execute : State → World → (eff : Effect Replay.Plan) → m (World × Driver.Reply eff))
+    (r : Driver.Result State World) (events : List Event) (exited : r.exiting = true) :
+    Driver.run execute r events = pure r := Driver.run_exited execute r events exited
+
+theorem run_exited_rejects_jump :
+    ¬∀ {m : Type → Type} [Monad m] {World : Type}
+        (execute : State → World → (eff : Effect Replay.Plan) → m (World × Driver.Reply eff))
+        (r : Driver.Result State World) (events : List Event),
+        r.exiting = true →
+          Driver.jump (State.boot (Vt.Vt.init 1 1) [] []) execute r events = pure r := by
+  intro h
+  have moved :=
+    @h Id _ Unit (fun _ world eff => (world, Driver.success eff))
+      { st := State.boot (Vt.Vt.init 1 1) [("a", "b")] [], world := (), exiting := true } [] rfl
+  have labels := congrArg (fun (out : Driver.Result State Unit) => out.st.labelList) moved
+  change
+    (State.boot (Vt.Vt.init 1 1) [] []).labelList =
+      (State.boot (Vt.Vt.init 1 1) [("a", "b")] []).labelList at labels
+  obtain ⟨-, -, -, -, empty, -⟩ := Session.boot_observed (Vt.Vt.init 1 1) [] []
+  obtain ⟨-, -, -, -, labelled, -⟩ := Session.boot_observed (Vt.Vt.init 1 1) [("a", "b")] []
+  rw [empty, labelled] at labels
+  simp [maxLabels] at labels
 
 theorem reachableIn_bound {cap : Nat} {b : Buf.Buf}
     (h : Buf.InputReach Buf.Buf.empty Buf.bufOffer Buf.bufAdvance cap b) : Buf.owedLen b ≤ cap :=
@@ -934,6 +1077,42 @@ theorem repeatAtMost_eq_repeat_rejects_uncapped :
   intro h
   have same := congrArg Vt.Vt.colCount (h (Vt.Vt.init 1 1) 0 1 (fun _ => Vt.Vt.init 2 1))
   exact absurd same (by decide +kernel)
+
+theorem step_bytes_one_reply (s : State) (id : Nat) (chunk : List UInt8) :
+    ((Session.step s (.bytes id chunk)).2.all (!·.rendered) ∨
+        ∃ pre frames post,
+          (Session.step s (.bytes id chunk)).2 = pre ++ frames ++ Effect.send id .done :: post ∧
+            frames.all (·.rendered) ∧ (pre ++ post).all (!·.rendered)) ∧
+      (((Session.step s (.bytes id chunk)).1.client? id).all (!·.attached) →
+        ((Session.step s (.bytes id chunk)).2.filter (·.resizes)).length ≤ 1) :=
+  Session.step_bytes_one_reply_observed s id chunk
+
+theorem step_bytes_one_reply_rejects_twice :
+    ¬∀ (s : State) (id : Nat) (chunk : List UInt8),
+        (((fun (s : State) (_ : Event) =>
+                    (s, ([.resizePty 1 1, .resizePty 1 1] : List (Effect Replay.Plan))))
+                  s (.bytes id chunk)).2.all
+              (!·.rendered) ∨
+            ∃ pre frames post,
+              ((fun (s : State) (_ : Event) =>
+                        (s, ([.resizePty 1 1, .resizePty 1 1] : List (Effect Replay.Plan))))
+                      s (.bytes id chunk)).2 =
+                  pre ++ frames ++ Effect.send id .done :: post ∧
+                frames.all (·.rendered) ∧ (pre ++ post).all (!·.rendered)) ∧
+          ((((fun (s : State) (_ : Event) =>
+                        (s, ([.resizePty 1 1, .resizePty 1 1] : List (Effect Replay.Plan))))
+                      s (.bytes id chunk)).1.client?
+                  id).all
+              (!·.attached) →
+            (((fun (s : State) (_ : Event) =>
+                        (s, ([.resizePty 1 1, .resizePty 1 1] : List (Effect Replay.Plan))))
+                      s (.bytes id chunk)).2.filter
+                  (·.resizes)).length ≤
+              1) := by
+  intro h
+  obtain ⟨-, none⟩ := Session.connected_client_witness
+  have twice := (h (State.boot (Vt.Vt.init 1 1) [] []) 1 []).2 (by simp [none])
+  exact absurd twice (by decide)
 
 theorem next_bounded {budget : Nat} {p q : Replay.Plan} {bytes : Render.Bytes}
     (h : Replay.next budget p = some (bytes, q)) : bytes.length ≤ budget := Replay.next_bounded h

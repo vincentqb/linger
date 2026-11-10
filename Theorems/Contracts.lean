@@ -279,9 +279,9 @@ example (s : Session.State) (id : Nat) (chunk : List UInt8) :
             s.client? id = some c ∧
               m ∈ (c.decoder.feed chunk).2 ∧
               t.client? id = some c' ∧ ans = (Session.onMsg t c' m).2) ∧
-        (pre ++ post).all (!Session.rendered ·) ∧
+        (pre ++ post).all (!·.rendered) ∧
         (((Session.step s (.bytes id chunk)).1.client? id).all (!·.attached) →
-          (pre ++ post).all (!Session.resizes ·)) := by
+          (pre ++ post).all (!·.resizes)) := by
   with_reducible exact Session.step_bytes_one_reply s id chunk
 
 example (s : Session.State) (c : Session.Client) (t : UInt8) (p : List UInt8) :
