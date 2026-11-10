@@ -36,6 +36,11 @@ theorem decode_encode (r : Report) : Report.decode r.encode = some r := by
   | failed status why => rfl
   | _ => rfl
 
+/-- A session runs exactly the program and words it was given, and without a command its shell,
+alone. -/
+theorem programOf_exact (shell : String) (argv : List String) :
+    programOf shell argv = (argv.headD shell, (argv.drop 1).toArray) := by cases argv <;> rfl
+
 /-- The daemon runs a program only when it took the request's ticket. -/
 theorem proceeds_iff (took : Bool) : proceeds took = true ↔ took = true := Iff.rfl
 

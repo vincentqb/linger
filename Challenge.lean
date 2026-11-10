@@ -318,6 +318,11 @@ def Linger.Session.Checkpoint.loadBytes : ByteArray → Option (Checkpoint.Ckpt 
 @[expose]
 def Linger.Session.Start.plan : (live saved : Bool) → Start.Plan := sorry
 
+/-- The program a daemon starts and its arguments, given the session's shell and the command's
+words. -/
+@[expose]
+def Linger.Session.Start.programOf : String → List String → String × Array String := sorry
+
 /-- Whether a daemon started for `start` or `resume` goes on to run the program at its commit
 point, given whether it took the request's ticket. -/
 @[expose]
@@ -466,6 +471,71 @@ theorem replay_cursor_rejects_silence :
               ∃ bytes,
                 Replay.Emits (fun _ _ => none) budget (Replay.start v) bytes ∧
                   (w.feed bytes).cursorPos = v.cursorPos := by
+  sorry
+
+/-- Streaming the repaint of any terminal ends, and any receiver that parses it then draws with
+the session's pen: its colours and attributes. -/
+theorem replay_pen (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt) :
+    ∃ bytes,
+      Replay.Emits Replay.next budget (Replay.start v) bytes ∧
+        (w.feed bytes).getPen = v.getPen := by
+  sorry
+
+/-- `replay_pen` rejects a stream that sends nothing: a receiver keeps drawing with its own pen. -/
+theorem replay_pen_rejects_silence :
+    ¬∀ (budget : Nat),
+        0 < budget →
+          ∀ (v w : Vt.Vt),
+            ∃ bytes,
+              Replay.Emits (fun _ _ => none) budget (Replay.start v) bytes ∧
+                (w.feed bytes).getPen = v.getPen := by
+  sorry
+
+/-- Streaming the repaint of a terminal ends, and any receiver that parses it then has the
+session's modes, given a mouse mode the terminal itself can set. -/
+theorem replay_modes (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
+    (mouse :
+      v.getModes.mouse = 0 ∨
+        v.getModes.mouse = 1000 ∨ v.getModes.mouse = 1002 ∨ v.getModes.mouse = 1003) :
+    ∃ bytes,
+      Replay.Emits Replay.next budget (Replay.start v) bytes ∧
+        (w.feed bytes).getModes = v.getModes := by
+  sorry
+
+/-- `replay_modes` rejects a stream that sends nothing: a receiver keeps its own modes. -/
+theorem replay_modes_rejects_silence :
+    ¬∀ (budget : Nat),
+        0 < budget →
+          ∀ (v w : Vt.Vt),
+            (v.getModes.mouse = 0 ∨
+                v.getModes.mouse = 1000 ∨ v.getModes.mouse = 1002 ∨ v.getModes.mouse = 1003) →
+              ∃ bytes,
+                Replay.Emits (fun _ _ => none) budget (Replay.start v) bytes ∧
+                  (w.feed bytes).getModes = v.getModes := by
+  sorry
+
+/-- Streaming the repaint of a terminal ends, and a receiver of the same height that parses it
+then has the session's scroll region, character sets, shift state and screen selection. -/
+theorem replay_sticky (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
+    (height : (Vt.stick w).rows = (Vt.stick v).rows) (region : (Vt.stick v).top < (Vt.stick v).bot)
+    (inside : (Vt.stick v).bot < (Vt.stick v).rows) (fits : (Vt.stick v).rows < 65535) :
+    ∃ bytes,
+      Replay.Emits Replay.next budget (Replay.start v) bytes ∧
+        Vt.stick (w.feed bytes) = Vt.stick v := by
+  sorry
+
+/-- `replay_sticky` rejects a stream that sends nothing: a receiver keeps its own scroll region. -/
+theorem replay_sticky_rejects_silence :
+    ¬∀ (budget : Nat),
+        0 < budget →
+          ∀ (v w : Vt.Vt),
+            (Vt.stick w).rows = (Vt.stick v).rows →
+              (Vt.stick v).top < (Vt.stick v).bot →
+              (Vt.stick v).bot < (Vt.stick v).rows →
+              (Vt.stick v).rows < 65535 →
+              ∃ bytes,
+                Replay.Emits (fun _ _ => none) budget (Replay.start v) bytes ∧
+                  Vt.stick (w.feed bytes) = Vt.stick v := by
   sorry
 
 /-- DEL bytes, and C0 controls the terminal does not act on, sent between control sequences and
@@ -700,8 +770,21 @@ theorem resumeDir_where_rejects_gone :
 
 /-! ## 4. Program identity
 
-Not claimed yet, though suites test it: that `start` runs exactly the program and words it is
-given, without a shell, and that `resume` runs `$SHELL` again on a saved session's last screen. -/
+Not claimed yet, though suites test it: that the operating system runs the program and words a
+daemon passes it, and that `resume` runs `$SHELL` again on a saved session's last screen. -/
+
+/-- A session runs exactly the program and words its creation named, as one program with no shell
+between, and a session created without a command runs its shell, alone. -/
+theorem programOf_exact (shell : String) (argv : List String) :
+    Start.programOf shell argv = (argv.headD shell, (argv.drop 1).toArray) := by sorry
+
+/-- `programOf_exact` rejects a session that runs its command through the shell. -/
+theorem programOf_exact_rejects_shell :
+    ¬∀ (shell : String) (argv : List String),
+        (fun (shell : String) (argv : List String) => (shell, #["-c", String.intercalate " " argv]))
+            shell argv =
+          (argv.headD shell, (argv.drop 1).toArray) := by
+  sorry
 
 /-- A session started without a command runs `$SHELL`, or `sh` when `SHELL` is unset or empty,
 since an empty word names no program. -/

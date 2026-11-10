@@ -362,6 +362,10 @@ example (r : Session.Start.Request)
       (r.answer = some .notStarted → r.runs = false) := by
   with_reducible exact Session.Start.answer_true h
 
+example (shell : String) (argv : List String) :
+    Session.Start.programOf shell argv = (argv.headD shell, (argv.drop 1).toArray) := by
+  with_reducible exact Session.Start.programOf_exact shell argv
+
 -- Transport
 example (ms : List Wire.Msg) (hms : ∀ (m : Wire.Msg), m ∈ ms → m.WF) (chunks : List (List UInt8))
     (hc : chunks.flatten = List.flatMap Wire.encode ms) :

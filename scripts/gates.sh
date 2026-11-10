@@ -1082,10 +1082,11 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let received ← try read c
   || fail "client read errors must close only that peer through the proved transition"
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def Rt[.]closeConn [(]rt : Rt[)] [(]fd : UInt32[)] : IO Rt := do close fd return [{] rt with conns := rt[.]conns[.]filter [(]·[.]fd != fd[)] [}]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "Rt.closeConn must close the fd before it forgets only that connection"
-# A session without a command runs Env.shellOf's program, which an unset or empty
-# SHELL makes sh (shellOf_absent). Linger.Session.Suites.Agent creates sessions with both.
-printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let shell := Linger[.]Os[.]Env[.]shellOf [(]← IO[.]getEnv "SHELL"[)] let [(]prog, args[)] := match argv with [|] [[][]] => [(][(]shell, #[[][]][)] : String × Array String[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
-  || fail "a session without a command bypasses Env.shellOf"
+# A session runs exactly the program and words it was given (`Start.programOf`, the
+# `programOf_exact` headline), and without a command Env.shellOf's program, which an unset or
+# empty SHELL makes sh (shellOf_absent). Linger.Session.Suites.Agent creates sessions with both.
+printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let [(]prog, args[)] := Start[.]programOf [(]Linger[.]Os[.]Env[.]shellOf [(]← IO[.]getEnv "SHELL"[)][)] argv([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "a session's program bypasses Start.programOf or Env.shellOf"
 # A resume runs in its saved directory, else in a nonempty HOME, else nowhere
 # (resumeDir_absent): the daemon reads HOME for it into Env.resumeDir, and the resume suite
 # runs it with HOME unset and empty.

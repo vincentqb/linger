@@ -62,6 +62,12 @@ def Report.decode : List UInt8 → Option Report
   | 3 :: status :: why => some (.failed status why)
   | _ => none
 
+/-- The program a daemon starts, and its arguments: a command's first word and the rest of its
+words, verbatim and with no shell between, or without a command the session's shell, alone. -/
+def programOf (shell : String) : List String → String × Array String
+  | [] => (shell, #[])
+  | program :: words => (program, words.toArray)
+
 /-- The daemon's decision at its commit point: it goes on to run the program exactly when it took
 the request's ticket, and starts nothing when the command that asked took it first. -/
 def proceeds (took : Bool) : Bool := took

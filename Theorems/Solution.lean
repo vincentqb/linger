@@ -191,6 +191,85 @@ theorem replay_cursor_rejects_silence :
   | step next => cases next
   | done => exact absurd (congrArg Prod.fst cursor) (by decide +kernel)
 
+theorem replay_pen (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt) :
+    ∃ bytes,
+      Replay.Emits Replay.next budget (Replay.start v) bytes ∧
+        (w.feed bytes).getPen = v.getPen := by
+  refine ⟨Render.restore v, ?_, Render.restore_pen_any v w⟩
+  rw [← Replay.start_faithful v]
+  exact Replay.emits_remaining budget positive (Replay.start v)
+
+theorem replay_pen_rejects_silence :
+    ¬∀ (budget : Nat),
+        0 < budget →
+          ∀ (v w : Vt.Vt),
+            ∃ bytes,
+              Replay.Emits (fun _ _ => none) budget (Replay.start v) bytes ∧
+                (w.feed bytes).getPen = v.getPen := by
+  intro h
+  obtain ⟨bytes, emits, pen⟩ :=
+    h 1 Nat.one_pos ((Vt.Vt.init 1 1).feed [0x1B, 0x5B, 0x31, 0x6D]) (Vt.Vt.init 1 1)
+  cases emits with
+  | step next => cases next
+  | done => exact absurd (congrArg Vt.Pen.bold pen) (by decide +kernel)
+
+theorem replay_modes (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
+    (mouse :
+      v.getModes.mouse = 0 ∨
+        v.getModes.mouse = 1000 ∨ v.getModes.mouse = 1002 ∨ v.getModes.mouse = 1003) :
+    ∃ bytes,
+      Replay.Emits Replay.next budget (Replay.start v) bytes ∧
+        (w.feed bytes).getModes = v.getModes := by
+  refine ⟨Render.restore v, ?_, Render.restore_modes_any v w mouse⟩
+  rw [← Replay.start_faithful v]
+  exact Replay.emits_remaining budget positive (Replay.start v)
+
+theorem replay_modes_rejects_silence :
+    ¬∀ (budget : Nat),
+        0 < budget →
+          ∀ (v w : Vt.Vt),
+            (v.getModes.mouse = 0 ∨
+                v.getModes.mouse = 1000 ∨ v.getModes.mouse = 1002 ∨ v.getModes.mouse = 1003) →
+              ∃ bytes,
+                Replay.Emits (fun _ _ => none) budget (Replay.start v) bytes ∧
+                  (w.feed bytes).getModes = v.getModes := by
+  intro h
+  obtain ⟨bytes, emits, modes⟩ :=
+    h 1 Nat.one_pos ((Vt.Vt.init 1 1).feed [0x1B, 0x5B, 0x3F, 0x32, 0x30, 0x30, 0x34, 0x68])
+      (Vt.Vt.init 1 1) (.inl (by decide +kernel))
+  cases emits with
+  | step next => cases next
+  | done => exact absurd (congrArg Vt.Modes.bracketedPaste modes) (by decide +kernel)
+
+theorem replay_sticky (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
+    (height : (Vt.stick w).rows = (Vt.stick v).rows) (region : (Vt.stick v).top < (Vt.stick v).bot)
+    (inside : (Vt.stick v).bot < (Vt.stick v).rows) (fits : (Vt.stick v).rows < 65535) :
+    ∃ bytes,
+      Replay.Emits Replay.next budget (Replay.start v) bytes ∧
+        Vt.stick (w.feed bytes) = Vt.stick v := by
+  refine ⟨Render.restore v, ?_, Render.restore_sticky_any v w height region inside fits⟩
+  rw [← Replay.start_faithful v]
+  exact Replay.emits_remaining budget positive (Replay.start v)
+
+theorem replay_sticky_rejects_silence :
+    ¬∀ (budget : Nat),
+        0 < budget →
+          ∀ (v w : Vt.Vt),
+            (Vt.stick w).rows = (Vt.stick v).rows →
+              (Vt.stick v).top < (Vt.stick v).bot →
+              (Vt.stick v).bot < (Vt.stick v).rows →
+              (Vt.stick v).rows < 65535 →
+              ∃ bytes,
+                Replay.Emits (fun _ _ => none) budget (Replay.start v) bytes ∧
+                  Vt.stick (w.feed bytes) = Vt.stick v := by
+  intro h
+  obtain ⟨bytes, emits, sticky⟩ :=
+    h 1 Nat.one_pos ((Vt.Vt.init 1 3).feed [0x1B, 0x5B, 0x32, 0x3B, 0x33, 0x72]) (Vt.Vt.init 1 3)
+      (by decide +kernel) (by decide +kernel) (by decide +kernel) (by decide +kernel)
+  cases emits with
+  | step next => cases next
+  | done => exact absurd (congrArg Vt.Sticky.top sticky) (by decide +kernel)
+
 theorem feed_inert (v : Vt.Vt) (bytes : List UInt8) (between : v.atBoundary = true)
     (inert : ∀ b ∈ bytes, b = 0x7F ∨ b < 0x07 ∨ 0x0F < b ∧ b < 0x20 ∧ b ≠ 0x1B) :
     v.feed bytes = v := by
@@ -439,6 +518,18 @@ theorem resumeDir_where_rejects_gone :
               none := by
   intro h
   exact absurd (h none "a" "b" (by decide)).2.1 (by decide)
+
+theorem programOf_exact (shell : String) (argv : List String) :
+    Start.programOf shell argv = (argv.headD shell, (argv.drop 1).toArray) :=
+  Start.programOf_exact shell argv
+
+theorem programOf_exact_rejects_shell :
+    ¬∀ (shell : String) (argv : List String),
+        (fun (shell : String) (argv : List String) => (shell, #["-c", String.intercalate " " argv]))
+            shell argv =
+          (argv.headD shell, (argv.drop 1).toArray) := by
+  intro h
+  exact absurd (congrArg Prod.fst (h "sh" ["ls"])) (by decide)
 
 theorem shellOf_choice (shell : String) (set : shell ≠ "") :
     Os.Env.shellOf (some shell) = shell ∧

@@ -916,11 +916,7 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
       let listenFd ← unixListen sockPath
       try
         setNonblock listenFd
-        let shell := Linger.Os.Env.shellOf (← IO.getEnv "SHELL")
-        let (prog, args) :=
-          match argv with
-          | [] => ((shell, #[]) : String × Array String)
-          | p :: rest => (p, rest.toArray)
+        let (prog, args) := Start.programOf (Linger.Os.Env.shellOf (← IO.getEnv "SHELL")) argv
         -- Preserve the checkpoint's terminal state and dimensions. Clamp only at
         -- the syscall boundary; resizing the restored VT would reset its margins.
         let vt0 := Linger.Session.bootVt (restore.map (·.1))
