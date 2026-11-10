@@ -2,6 +2,8 @@ module
 
 public import Linger.App.Spec
 public import Linger.Display.Spec
+public import Linger.Import.Spec
+public import Linger.Selector.Spec
 public import Linger.Session.Spec
 public import Linger.Target.Spec
 public import Linger.Terminal.Spec
@@ -394,6 +396,31 @@ def Linger.Session.Buf.bufAdvance : Buf.Buf → Nat → Buf.Buf := sorry
 @[expose]
 def Linger.Session.Buf.owedLen : Buf.Buf → Nat := sorry
 
+/-! ### Selector and import -/
+
+/-- What the selector does with one action. -/
+@[expose]
+def Linger.Selector.Picker.step : Selector.Picker.State → Selector.Key → Selector.Picker.Outcome :=
+  sorry
+
+/-- The saved panes an import creates sessions for, given the names sessions already hold. -/
+@[expose]
+def Linger.Import.Resurrect.plan :
+    List String → List Import.Resurrect.Pane → List Import.Resurrect.Pane := sorry
+
+/-- The most bytes of a pane's saved contents an import reads. -/
+@[expose]
+def Linger.Import.Resurrect.captureLimit : Nat := sorry
+
+/-- A pane's saved contents, as terminal input for its checkpoint. -/
+@[expose]
+def Linger.Import.Resurrect.captureBytes : String → List UInt8 := sorry
+
+/-- The checkpoint an import writes for a saved pane and its saved contents, if any. -/
+@[expose]
+def Linger.Import.Resurrect.checkpoint :
+    Import.Resurrect.Pane → Option String → Checkpoint.Ckpt Vt.Vt := sorry
+
 namespace Linger
 
 /-! ## 1. Transparency
@@ -695,6 +722,34 @@ theorem rowFields_name_rejects_reply :
           some socketName := by
   sorry
 
+/-- The selector attaches only to a session it lists. -/
+theorem picker_attach_listed (s : Selector.Picker.State) (key : Selector.Key) (target : String)
+    (h : Selector.Picker.step s key = .attach target) : target ∈ s.candidates := by sorry
+
+/-- `picker_attach_listed` rejects a selector that attaches to a fixed session. -/
+theorem picker_attach_listed_rejects_fixed :
+    ¬∀ (s : Selector.Picker.State) (key : Selector.Key) (target : String),
+        (fun (_ : Selector.Picker.State) (_ : Selector.Key) => Selector.Picker.Outcome.attach "s") s
+              key =
+            .attach target →
+          target ∈ s.candidates := by
+  sorry
+
+/-- The selector creates only a session no listed one holds, with a nonempty target whose name is
+valid. -/
+theorem picker_create_new (s : Selector.Picker.State) (key : Selector.Key) (target : String)
+    (h : Selector.Picker.step s key = .create target) :
+    target ∉ s.candidates ∧ target ≠ "" ∧ Name.Valid ((target.splitOn "@").headD "") := by sorry
+
+/-- `picker_create_new` rejects a selector that creates an empty target. -/
+theorem picker_create_new_rejects_empty :
+    ¬∀ (s : Selector.Picker.State) (key : Selector.Key) (target : String),
+        (fun (_ : Selector.Picker.State) (_ : Selector.Key) => Selector.Picker.Outcome.create "") s
+              key =
+            .create target →
+          target ∉ s.candidates ∧ target ≠ "" ∧ Name.Valid ((target.splitOn "@").headD "") := by
+  sorry
+
 /-! ## 3. Exactness
 
 Not claimed yet, though suites test it: that `start` runs its program in the caller's directory
@@ -772,6 +827,34 @@ theorem usageLine_exact_rejects_bare :
         (fun (_ : App.Commands.Command) => "usage: linger") command =
           if command.args.isEmpty then s!"usage: linger {command.word}"
           else s!"usage: linger {command.word} {command.args}" := by
+  sorry
+
+/-- An import creates sessions for exactly the saved panes whose names no session holds. -/
+theorem plan_exact (existing : List String) (panes : List Import.Resurrect.Pane)
+    (pane : Import.Resurrect.Pane) :
+    pane ∈ Import.Resurrect.plan existing panes ↔ pane ∈ panes ∧ pane.name ∉ existing := by sorry
+
+/-- `plan_exact` rejects an import that recreates sessions that exist. -/
+theorem plan_exact_rejects_all :
+    ¬∀ (existing : List String) (panes : List Import.Resurrect.Pane) (pane : Import.Resurrect.Pane),
+        pane ∈
+            (fun (_ : List String) (panes : List Import.Resurrect.Pane) => panes) existing panes ↔
+          pane ∈ panes ∧ pane.name ∉ existing := by
+  sorry
+
+/-- Importing the same save again, right after an import made sessions, creates nothing. -/
+theorem plan_again_empty (existing : List String) (panes made : List Import.Resurrect.Pane)
+    (first : made = Import.Resurrect.plan existing panes) :
+    Import.Resurrect.plan (existing ++ made.map (·.name)) panes = [] := by sorry
+
+/-- `plan_again_empty` rejects an import that creates every saved pane each time. -/
+theorem plan_again_empty_rejects_all :
+    ¬∀ (existing : List String) (panes made : List Import.Resurrect.Pane),
+        made =
+            (fun (_ : List String) (panes : List Import.Resurrect.Pane) => panes) existing panes →
+          (fun (_ : List String) (panes : List Import.Resurrect.Pane) => panes)
+              (existing ++ made.map (·.name)) panes =
+            [] := by
   sorry
 
 /-- Validation accepts exactly the valid names, and returns each unchanged. -/
@@ -1118,6 +1201,19 @@ theorem next_bounded_rejects_overrun :
           bytes.length ≤ budget := by
   sorry
 
+/-- An import turns a pane's saved contents into at most twice its read limit of terminal
+input, however large the save. -/
+theorem captureBytes_bounded (contents : String) :
+    (Import.Resurrect.captureBytes contents).length ≤ 2 * Import.Resurrect.captureLimit := by sorry
+
+/-- `captureBytes_bounded` rejects an import that passes on more than its limit allows. -/
+theorem captureBytes_bounded_rejects_unbounded :
+    ¬∀ (contents : String),
+        ((fun (_ : String) => List.replicate (2 * Import.Resurrect.captureLimit + 1) (0 : UInt8))
+              contents).length ≤
+          2 * Import.Resurrect.captureLimit := by
+  sorry
+
 /-! ## 7. Recovery
 
 Every claim in section 1 covers the terminals the checkpoint decoder returns, so any bytes on
@@ -1179,6 +1275,42 @@ theorem loadBytes_resave_rejects_fixed :
               ((fun (_ : Checkpoint.Ckpt Vt.Vt) => Checkpoint.saveBytes ⟨Vt.Vt.init 1 1, "x", []⟩)
                 c) =
             some c := by
+  sorry
+
+/-- An imported session resumes in its pane's directory, and its labels keep the pane's saved
+commands and whether its contents were saved. -/
+theorem checkpoint_metadata (pane : Import.Resurrect.Pane) (contents : Option String) :
+    (Import.Resurrect.checkpoint pane contents).cwd = pane.dir ∧
+      (Import.Resurrect.checkpoint pane contents).labels.lookup "tmux.command" =
+        some pane.details.command ∧
+      (Import.Resurrect.checkpoint pane contents).labels.lookup "tmux.saved-command" =
+        some pane.details.savedCommand ∧
+      (Import.Resurrect.checkpoint pane contents).labels.lookup "tmux.capture" =
+        some (if contents.isSome then "saved" else "none") := by
+  sorry
+
+/-- `checkpoint_metadata` rejects an import that writes a blank checkpoint for every pane. -/
+theorem checkpoint_metadata_rejects_blank :
+    ¬∀ (pane : Import.Resurrect.Pane) (contents : Option String),
+        ((fun (_ : Import.Resurrect.Pane) (_ : Option String) =>
+                  (⟨Vt.Vt.init 1 1, "", []⟩ : Checkpoint.Ckpt Vt.Vt))
+                pane contents).cwd =
+            pane.dir ∧
+          ((fun (_ : Import.Resurrect.Pane) (_ : Option String) =>
+                    (⟨Vt.Vt.init 1 1, "", []⟩ : Checkpoint.Ckpt Vt.Vt))
+                  pane contents).labels.lookup
+              "tmux.command" =
+            some pane.details.command ∧
+          ((fun (_ : Import.Resurrect.Pane) (_ : Option String) =>
+                    (⟨Vt.Vt.init 1 1, "", []⟩ : Checkpoint.Ckpt Vt.Vt))
+                  pane contents).labels.lookup
+              "tmux.saved-command" =
+            some pane.details.savedCommand ∧
+          ((fun (_ : Import.Resurrect.Pane) (_ : Option String) =>
+                    (⟨Vt.Vt.init 1 1, "", []⟩ : Checkpoint.Ckpt Vt.Vt))
+                  pane contents).labels.lookup
+              "tmux.capture" =
+            some (if contents.isSome then "saved" else "none") := by
   sorry
 
 /-! ## 8. Clean terminal

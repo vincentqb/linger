@@ -4,6 +4,8 @@ public import Linger.App.Commands
 public import Linger.App.Entry
 public import Linger.Display.Listing
 public import Linger.Display.Status
+public import Linger.Import.Resurrect
+public import Linger.Selector.Picker
 public import Linger.Display.Title
 public import Linger.Os.Env
 public import Linger.Session
@@ -21,6 +23,8 @@ import all Linger.App.Proofs.Commands
 import all Linger.App.Proofs.Entry
 import all Linger.Display.Proofs.Listing
 import all Linger.Display.Proofs.Status
+import all Linger.Import.Proofs.Resurrect
+import all Linger.Selector.Proofs.Picker
 import all Linger.Display.Proofs.Title
 import all Linger.Os.Proofs.Env
 import Linger.Target.Proofs.Name
@@ -431,6 +435,34 @@ theorem rowFields_name_rejects_reply :
   intro h
   exact absurd (h "s" []) (by simp)
 
+theorem picker_attach_listed (s : Selector.Picker.State) (key : Selector.Key) (target : String)
+    (h : Selector.Picker.step s key = .attach target) : target ∈ s.candidates :=
+  (Selector.Picker.step_attach_mem s key target h).1
+
+theorem picker_attach_listed_rejects_fixed :
+    ¬∀ (s : Selector.Picker.State) (key : Selector.Key) (target : String),
+        (fun (_ : Selector.Picker.State) (_ : Selector.Key) => Selector.Picker.Outcome.attach "s") s
+              key =
+            .attach target →
+          target ∈ s.candidates := by
+  intro h
+  exact absurd (h { candidates := [] } .accept "s" rfl) (by simp)
+
+theorem picker_create_new (s : Selector.Picker.State) (key : Selector.Key) (target : String)
+    (h : Selector.Picker.step s key = .create target) :
+    target ∉ s.candidates ∧ target ≠ "" ∧ Name.Valid ((target.splitOn "@").headD "") := by
+  obtain ⟨-, absent, nonempty, -, valid, -⟩ := Selector.Picker.step_create_valid s key target h
+  exact ⟨absent, nonempty, valid⟩
+
+theorem picker_create_new_rejects_empty :
+    ¬∀ (s : Selector.Picker.State) (key : Selector.Key) (target : String),
+        (fun (_ : Selector.Picker.State) (_ : Selector.Key) => Selector.Picker.Outcome.create "") s
+              key =
+            .create target →
+          target ∉ s.candidates ∧ target ≠ "" ∧ Name.Valid ((target.splitOn "@").headD "") := by
+  intro h
+  exact absurd (h { candidates := [] } .accept "" rfl).2.1 (by simp)
+
 theorem route_exact (args : List String) :
     App.Entry.route args =
       if args = [] then .session ["help"]
@@ -497,6 +529,38 @@ theorem usageLine_exact_rejects_bare :
           else s!"usage: linger {command.word} {command.args}" := by
   intro h
   exact absurd (h { word := "help", args := "", summary := "" }) (by decide)
+
+theorem plan_exact (existing : List String) (panes : List Import.Resurrect.Pane)
+    (pane : Import.Resurrect.Pane) :
+    pane ∈ Import.Resurrect.plan existing panes ↔ pane ∈ panes ∧ pane.name ∉ existing :=
+  Import.Resurrect.mem_plan existing panes pane
+
+theorem plan_exact_rejects_all :
+    ¬∀ (existing : List String) (panes : List Import.Resurrect.Pane) (pane : Import.Resurrect.Pane),
+        pane ∈
+            (fun (_ : List String) (panes : List Import.Resurrect.Pane) => panes) existing panes ↔
+          pane ∈ panes ∧ pane.name ∉ existing := by
+  intro h
+  have kept :=
+    (h ["a"] [{ name := "a", dir := "", line := 0 }] { name := "a", dir := "", line := 0 }).mp
+      (by simp)
+  exact absurd kept.2 (by simp)
+
+theorem plan_again_empty (existing : List String) (panes made : List Import.Resurrect.Pane)
+    (first : made = Import.Resurrect.plan existing panes) :
+    Import.Resurrect.plan (existing ++ made.map (·.name)) panes = [] := by
+  rw [first]
+  exact Import.Resurrect.plan_sequential_idempotent existing panes
+
+theorem plan_again_empty_rejects_all :
+    ¬∀ (existing : List String) (panes made : List Import.Resurrect.Pane),
+        made =
+            (fun (_ : List String) (panes : List Import.Resurrect.Pane) => panes) existing panes →
+          (fun (_ : List String) (panes : List Import.Resurrect.Pane) => panes)
+              (existing ++ made.map (·.name)) panes =
+            [] := by
+  intro h
+  exact absurd (h [] [{ name := "a", dir := "", line := 0 }] _ rfl) (by simp)
 
 theorem check_eq_some_iff (s result : String) :
     Name.check s = some result ↔ result = s ∧ Name.Valid s := Name.check_eq_some_iff s result
@@ -836,6 +900,18 @@ theorem next_bounded_rejects_overrun :
     absurd (@h 0 (Replay.start (Vt.Vt.init 1 1)) (Replay.start (Vt.Vt.init 1 1)) [0] rfl)
       (by decide)
 
+theorem captureBytes_bounded (contents : String) :
+    (Import.Resurrect.captureBytes contents).length ≤ 2 * Import.Resurrect.captureLimit :=
+  Import.Resurrect.captureBytes_bounded contents
+
+theorem captureBytes_bounded_rejects_unbounded :
+    ¬∀ (contents : String),
+        ((fun (_ : String) => List.replicate (2 * Import.Resurrect.captureLimit + 1) (0 : UInt8))
+              contents).length ≤
+          2 * Import.Resurrect.captureLimit := by
+  intro h
+  exact absurd (h "") (by simp)
+
 theorem loadBytes_saveBytes_live (c : Checkpoint.Ckpt Vt.Vt)
     (h :
       Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
@@ -903,6 +979,40 @@ theorem loadBytes_resave_rejects_fixed :
   have other := loadBytes_saveBytes_live ⟨Vt.Vt.init 1 1, "x", []⟩ (.init 1 1)
   have same := (h empty).symm.trans other
   exact absurd (congrArg (Option.map Checkpoint.Ckpt.cwd) same) (by decide)
+
+theorem checkpoint_metadata (pane : Import.Resurrect.Pane) (contents : Option String) :
+    (Import.Resurrect.checkpoint pane contents).cwd = pane.dir ∧
+      (Import.Resurrect.checkpoint pane contents).labels.lookup "tmux.command" =
+        some pane.details.command ∧
+      (Import.Resurrect.checkpoint pane contents).labels.lookup "tmux.saved-command" =
+        some pane.details.savedCommand ∧
+      (Import.Resurrect.checkpoint pane contents).labels.lookup "tmux.capture" =
+        some (if contents.isSome then "saved" else "none") :=
+  Import.Resurrect.checkpoint_metadata pane contents
+
+theorem checkpoint_metadata_rejects_blank :
+    ¬∀ (pane : Import.Resurrect.Pane) (contents : Option String),
+        ((fun (_ : Import.Resurrect.Pane) (_ : Option String) =>
+                  (⟨Vt.Vt.init 1 1, "", []⟩ : Checkpoint.Ckpt Vt.Vt))
+                pane contents).cwd =
+            pane.dir ∧
+          ((fun (_ : Import.Resurrect.Pane) (_ : Option String) =>
+                    (⟨Vt.Vt.init 1 1, "", []⟩ : Checkpoint.Ckpt Vt.Vt))
+                  pane contents).labels.lookup
+              "tmux.command" =
+            some pane.details.command ∧
+          ((fun (_ : Import.Resurrect.Pane) (_ : Option String) =>
+                    (⟨Vt.Vt.init 1 1, "", []⟩ : Checkpoint.Ckpt Vt.Vt))
+                  pane contents).labels.lookup
+              "tmux.saved-command" =
+            some pane.details.savedCommand ∧
+          ((fun (_ : Import.Resurrect.Pane) (_ : Option String) =>
+                    (⟨Vt.Vt.init 1 1, "", []⟩ : Checkpoint.Ckpt Vt.Vt))
+                  pane contents).labels.lookup
+              "tmux.capture" =
+            some (if contents.isSome then "saved" else "none") := by
+  intro h
+  exact absurd (h { name := "a", dir := "x", line := 0 } none).1 (by decide)
 
 theorem screenText_text (v : Vt.Vt) :
     ∃ cs : List Char,

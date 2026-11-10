@@ -8,6 +8,7 @@ import Linger.Os.Shell.Command
 import Linger.Display.View
 import Std.Data.HashMap.Basic
 import Linger.Display.Status
+import Linger.Selector.Key
 
 public section
 

@@ -1,6 +1,7 @@
 module
 
-public import Linger.Selector.Key
+import Linger.Selector.Input
+public import Linger.Selector.Spec
 import Linger.Selector.Fuzzy
 import Linger.Target.Name
 import Linger.Display.Listing
@@ -174,19 +175,6 @@ def items (candidates : List String) (query : String) (allowCreate : Bool := tru
       [.create target]
     else []
 
-/-- One selection visit over the displayed snapshot's targets. -/
-structure State where
-  /-- Targets of the displayed snapshot. -/
-  candidates : List String
-  /-- The typed text that filters rows and, when nonempty, names the creation target. -/
-  query : String := ""
-  /-- Index of the selected row in `items`; zero when there are none. -/
-  cursor : Nat := 0
-  /-- Whether `items` may offer a creation row; false for read-only visits and saved
-  catalogs. -/
-  allowCreate : Bool := true
-  deriving BEq, Repr
-
 /-- Typing stops extending the query at this many Unicode scalars. -/
 def maxQueryLength : Nat := 256
 
@@ -211,18 +199,6 @@ def refresh (s : State) (candidates : List String) : State :=
       (min s.cursor (choices.length - 1))
   { s with
     candidates, cursor }
-
-/-- The result of one action: a next state, or a decision for the executor. -/
-inductive Outcome where
-  /-- Keep selecting from this state. -/
-  | stay (state : State)
-  /-- Attach to this listed target. -/
-  | attach (target : String)
-  /-- Create a session with exactly this target. -/
-  | create (target : String)
-  /-- Leave without a choice. -/
-  | cancel
-  deriving BEq, Repr
 
 /-- Editing resets the cursor. Navigation clamps; acceptance acts on the selected
 row. No selectable row stays editable. Effects remain the caller's job. -/

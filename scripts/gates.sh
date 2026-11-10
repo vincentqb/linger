@@ -370,10 +370,12 @@ module_imports Linger/Terminal/Proofs/Vt.lean 'Linger/Terminal/Proofs/Vt/*' Ling
 # composes their executors with the session backend. The session library never
 # imports them, even through an intermediate module: every library import
 # stays in Core, Runtime or the OS boundary.
-import_closure Linger/Import/Resurrect.lean 'import Linger.Target.Name;import Linger.Display.Status;public import Linger.Terminal.Vt;public import Linger.Session.Spec;'
-import_closure Linger/Selector/Key.lean 'public import Linger.Selector.Input;'
+import_closure Linger/Import/Spec.lean ''
+import_closure Linger/Import/Resurrect.lean 'public import Linger.Import.Spec;import Linger.Target.Name;import Linger.Display.Status;public import Linger.Terminal.Vt;public import Linger.Session.Spec;'
+import_closure Linger/Selector/Key.lean 'public import Linger.Selector.Spec;public import Linger.Selector.Input;'
+import_closure Linger/Selector/Spec.lean ''
 import_closure Linger/Selector/Fuzzy.lean ''
-import_closure Linger/Selector/Picker.lean 'public import Linger.Selector.Key;import Linger.Selector.Fuzzy;import Linger.Target.Name;import Linger.Display.Listing;public import Linger.Display.Spec;import Linger.Display.Status;import Linger.Target.Remote;import Linger.Terminal.Vt;import Linger.Display.View;'
+import_closure Linger/Selector/Picker.lean 'import Linger.Selector.Input;public import Linger.Selector.Spec;import Linger.Selector.Fuzzy;import Linger.Target.Name;import Linger.Display.Listing;public import Linger.Display.Spec;import Linger.Display.Status;import Linger.Target.Remote;import Linger.Terminal.Vt;import Linger.Display.View;'
 import_closure Linger/Display/View.lean 'public import Linger.Display.Spec;import Linger.Display.Status;'
 import_closure Linger/Display/Spec.lean ''
 import_closure Linger/Display/Status.lean 'public import Linger.Display.Spec;'
@@ -400,7 +402,7 @@ shell_all="$(module_imports '*.lean' | awk -F: "$IMPORT_AWK"'
 import_closure Linger/Os/Shell/Command.lean 'import Linger.Os.Shell;'
 import_closure Linger/Import/Shell.lean 'import Linger.Import.Resurrect;import Linger.Session.Checkpoint;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Session.Shell.Paths;import Linger.Session.Shell.Resume;import Linger.Session.Shell.Inventory;import Linger.Os.Shell.Command;import Linger.Target.Remote;import Linger.Selector.Shell;import Std.Async.System;'
 import_closure Linger/Selector/Shell.lean \
-  'public import Linger.Selector.Picker;import Linger.Os.Shell;import Linger.Target.Remote;import Linger.Terminal.Title;import Linger.Os.Shell.Command;import Linger.Display.View;import Std.Data.HashMap.Basic;import Linger.Display.Status;'
+  'public import Linger.Selector.Picker;import Linger.Os.Shell;import Linger.Target.Remote;import Linger.Terminal.Title;import Linger.Os.Shell.Command;import Linger.Display.View;import Std.Data.HashMap.Basic;import Linger.Display.Status;import Linger.Selector.Key;'
 import_closure Main.lean \
   'import Linger.App.Shell;import Linger.App.Entry;import Linger.Selector.Shell;import Linger.Import.Shell;'
 # `lean_lib Linger` builds the umbrella's closure, so this list is what `./lake build`
