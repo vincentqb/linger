@@ -6,7 +6,8 @@ import Linger.Session.Buf
 import Linger.Session.Shell.Client
 import Linger.Session.Shell.Paths
 import Linger.Session.Shell.Record
-public import Linger.Display.Listing
+import Linger.Display.Listing
+public import Linger.Display.Spec
 import Linger.Display.Status
 
 public section

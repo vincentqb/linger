@@ -8,6 +8,26 @@ namespace Linger.App.Entry
 
 theorem route_bare_help : Linger.App.Entry.route [] = .session ["help"] := by rfl
 
+/-- Where every command line goes, in one statement. -/
+theorem route_eq (args : List String) :
+    Linger.App.Entry.route args =
+      if args = [] then .session ["help"]
+      else
+        if args = ["attach"] ∨ args = ["a"] then .selector false
+        else
+          if args = ["attach", "--read-only"] ∨ args = ["a", "--read-only"] then .selector true
+          else if args.head? = some "tmux" then .tmux args.tail else .session args := by
+  unfold Linger.App.Entry.route
+  split <;> simp_all
+  rename_i tmux
+  intro h
+  cases args with
+  | nil => simp at h
+  | cons a rest =>
+    simp only [List.head?_cons, Option.some.injEq] at h
+    subst h
+    exact tmux rest rfl
+
 theorem route_selector_iff (args : List String) (readOnly : Bool) :
     Linger.App.Entry.route args = .selector readOnly ↔
       args = "attach" :: (if readOnly then ["--read-only"] else []) ∨

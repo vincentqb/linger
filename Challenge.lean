@@ -1,5 +1,6 @@
 module
 
+public import Linger.App.Spec
 public import Linger.Display.Spec
 public import Linger.Session.Spec
 public import Linger.Target.Spec
@@ -53,11 +54,33 @@ test instead. -/
 
 public section
 
-open Linger.Display Linger.Session Linger.Target Linger.Terminal
+open Linger.App Linger.Display Linger.Session Linger.Target Linger.Terminal
 
 /-! ## The program's parts
 
-### Session targets -/
+### Command line -/
+
+/-- The executor a command line reaches. -/
+@[expose]
+def Linger.App.Entry.route : List String → App.Entry.Route := sorry
+
+/-- The command table, in the order `linger help` lists it. -/
+@[expose]
+def Linger.App.Commands.table : List App.Commands.Command := sorry
+
+/-- The command a word names, if any. -/
+@[expose]
+def Linger.App.Commands.lookup : String → Option App.Commands.Command := sorry
+
+/-- The words of removed commands, each with what to use instead. -/
+@[expose]
+def Linger.App.Commands.retired : List (String × String) := sorry
+
+/-- The usage error a command given the wrong arguments prints. -/
+@[expose]
+def Linger.App.Commands.usageLine : App.Commands.Command → String := sorry
+
+/-! ### Session targets -/
 
 /-- The session-name validator every command applies to the names it is given. -/
 @[expose]
@@ -213,6 +236,19 @@ def Linger.Display.Status.icon : Status.Status → Char := sorry
 /-- The attention summary titles and `ls --summary` show for the statuses of some sessions. -/
 @[expose]
 def Linger.Display.Status.summary : List Status.Status → String := sorry
+
+/-- A status's name in `ls --porcelain`, as a peer reads it back. -/
+@[expose]
+def Linger.Display.Status.name : Status.Status → String := sorry
+
+/-- A listing row's fields, from the socket's name and the daemon's reply. -/
+@[expose]
+def Linger.Display.Listing.rowFields : String → List (String × String) → List (String × String) :=
+  sorry
+
+/-- The status a listing row shows. -/
+@[expose]
+def Linger.Display.Listing.rowStatus : Listing.Row → Status.Status := sorry
 
 /-- A window title from the session's name, the application's title and the attention summary,
 within a capacity in characters. -/
@@ -648,12 +684,95 @@ theorem remotesFile_home_rejects_shared :
         (fun (_ : Option String) => some "remotes") home = none ↔ home = none ∨ home = some "" := by
   sorry
 
+/-- A listing row is named by its socket, whatever name the daemon's reply gives. -/
+theorem rowFields_name (socketName : String) (info : List (String × String)) :
+    (Listing.rowFields socketName info).lookup "name" = some socketName := by sorry
+
+/-- `rowFields_name` rejects a row that takes its fields from the reply alone. -/
+theorem rowFields_name_rejects_reply :
+    ¬∀ (socketName : String) (info : List (String × String)),
+        ((fun (_ : String) (info : List (String × String)) => info) socketName info).lookup "name" =
+          some socketName := by
+  sorry
+
 /-! ## 3. Exactness
 
 Not claimed yet, though suites test it: that `start` runs its program in the caller's directory
 or not at all (125, as `env -C`), with the caller's environment, which only `TERM`,
 `TERM_PROGRAM`, `TERM_PROGRAM_VERSION` and `LINGER_SESSION` change, and that a resume says so
 when it runs in `$HOME`. -/
+
+/-- A command line reaches the executor it names, with its exact arguments: `attach` or `a`
+alone opens the selector, read-only on request; `tmux` hands the rest to save interchange; any
+other line goes to the session commands as given, and an empty one asks for help. -/
+theorem route_exact (args : List String) :
+    App.Entry.route args =
+      if args = [] then .session ["help"]
+      else
+        if args = ["attach"] ∨ args = ["a"] then .selector false
+        else
+          if args = ["attach", "--read-only"] ∨ args = ["a", "--read-only"] then .selector true
+          else if args.head? = some "tmux" then .tmux args.tail else .session args := by
+  sorry
+
+/-- `route_exact` rejects a command line that never opens the selector. -/
+theorem route_exact_rejects_selector :
+    ¬∀ (args : List String),
+        (fun (args : List String) => App.Entry.Route.session args) args =
+          if args = [] then .session ["help"]
+          else
+            if args = ["attach"] ∨ args = ["a"] then .selector false
+            else
+              if args = ["attach", "--read-only"] ∨ args = ["a", "--read-only"] then .selector true
+              else if args.head? = some "tmux" then .tmux args.tail else .session args := by
+  sorry
+
+/-- Each word of the command table names one command: every command answers to its word and to
+each of its other spellings, and no two commands share a word. -/
+theorem lookup_table :
+    (App.Commands.table.flatMap fun command => command.word :: command.aliases).Nodup ∧
+      ∀ command ∈ App.Commands.table,
+        App.Commands.lookup command.word = some command ∧
+          ∀ word ∈ command.aliases, App.Commands.lookup word = some command := by
+  sorry
+
+/-- `lookup_table` rejects a lookup that finds no command. -/
+theorem lookup_table_rejects_none :
+    ¬((App.Commands.table.flatMap fun command => command.word :: command.aliases).Nodup ∧
+        ∀ command ∈ App.Commands.table,
+          (fun (_ : String) => (none : Option App.Commands.Command)) command.word = some command ∧
+            ∀ word ∈ command.aliases,
+              (fun (_ : String) => (none : Option App.Commands.Command)) word = some command) := by
+  sorry
+
+/-- A removed command's words name no command, so they never come back meaning something else. -/
+theorem retired_free : ∀ entry ∈ App.Commands.retired, App.Commands.lookup entry.1 = none := by
+  sorry
+
+/-- `retired_free` rejects a lookup that answers every word. -/
+theorem retired_free_rejects_any :
+    ¬∀ entry ∈ App.Commands.retired,
+        (fun (_ : String) =>
+              some ({ word := "run", args := "", summary := "" } : App.Commands.Command))
+            entry.1 =
+          none := by
+  sorry
+
+/-- A command given the wrong arguments says how to call it: its word, then the arguments its
+table row lists, when it takes any. -/
+theorem usageLine_exact (command : App.Commands.Command) :
+    App.Commands.usageLine command =
+      if command.args.isEmpty then s!"usage: linger {command.word}"
+      else s!"usage: linger {command.word} {command.args}" := by
+  sorry
+
+/-- `usageLine_exact` rejects a usage error that names no command. -/
+theorem usageLine_exact_rejects_bare :
+    ¬∀ (command : App.Commands.Command),
+        (fun (_ : App.Commands.Command) => "usage: linger") command =
+          if command.args.isEmpty then s!"usage: linger {command.word}"
+          else s!"usage: linger {command.word} {command.args}" := by
+  sorry
 
 /-- Validation accepts exactly the valid names, and returns each unchanged. -/
 theorem check_eq_some_iff (s result : String) :
@@ -1272,6 +1391,23 @@ theorem summary_exact_rejects_count :
               else [(toString (statuses.count .exitedBad)).push (Status.icon .exitedBad)]) ++
               (if statuses.count .unknown = 0 then []
               else [(toString (statuses.count .unknown)).push (Status.icon .unknown)])) := by
+  sorry
+
+/-- A listing shows a session whose program ended as `✓` for status 0 and `!` for any other,
+and a peer's saved session as resumable unless the peer says its program ended. -/
+theorem rowStatus_saved (status : Nat) (st : Status.Status) :
+    Listing.rowStatus (.ended status) = (if status = 0 then .exitedOk else .exitedBad) ∧
+      Listing.rowStatus (.remote false (Status.name st)) =
+        if st = .exitedOk ∨ st = .exitedBad then st else .resumable := by
+  sorry
+
+/-- `rowStatus_saved` rejects a listing that shows every row as unknown. -/
+theorem rowStatus_saved_rejects_unknown :
+    ¬∀ (status : Nat) (st : Status.Status),
+        (fun (_ : Listing.Row) => Status.Status.unknown) (.ended status) =
+            (if status = 0 then .exitedOk else .exitedBad) ∧
+          (fun (_ : Listing.Row) => Status.Status.unknown) (.remote false (Status.name st)) =
+            if st = .exitedOk ∨ st = .exitedBad then st else .resumable := by
   sorry
 
 /-- A window title keeps the attention summary last and whole: whatever the capacity, the title

@@ -1,5 +1,6 @@
 module
 
+import all Linger.App.Spec
 import all Linger.App.Commands
 
 /-! # The command table
@@ -12,6 +13,22 @@ namespace Linger.App.Commands
 /-- **One word, one command**: no two commands, and no command and another's spelling, share a
 word. -/
 theorem words_nodup : words.Nodup := by decide
+
+/-- The command table is not empty. -/
+theorem table_ne_nil : table ≠ [] := by decide
+
+/-- The removed words are not none. -/
+theorem retired_ne_nil : retired ≠ [] := by decide
+
+/-- No two commands share a word, spelled over the table. -/
+theorem table_words_nodup : (table.flatMap fun command => command.word :: command.aliases).Nodup :=
+  words_nodup
+
+/-- A command's usage error: its word, then its arguments when it takes any. -/
+theorem usageLine_eq (command : Command) :
+    usageLine command =
+      if command.args.isEmpty then s!"usage: linger {command.word}"
+      else s!"usage: linger {command.word} {command.args}" := rfl
 
 /-- A removed command's words name no command. -/
 theorem retired_free : ∀ entry ∈ retired, lookup entry.1 = none := by decide

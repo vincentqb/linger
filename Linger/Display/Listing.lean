@@ -52,37 +52,6 @@ always carries, so their absence is the signal. -/
 private def answered (info : List (String × String)) : Bool :=
   info.any (fun kv => (kv.1 == "pid" || kv.1 == "cmd") && kv.2 != "")
 
-/-- Where a listing row came from. **A sum type rather than a handful of
-`Bool`s on purpose.** The previous signature took `socketPresent`,
-`answered` and `ckptLoadable` separately, and a caller passed a literal
-`true` for `answered` — so "the daemon did not answer" became unreachable and
-a busy session listed as a healthy idle one, even though the theorem about it
-was correct. Booleans a caller has to get right are the hazard; each
-constructor here carries exactly the facts its case has, so there is no
-argument left to pass wrongly. -/
-inductive Row where
-  /-- A socket accepted the connection; `info` is whatever it replied (possibly
-  nothing, if it was too busy). -/
-  | live (info : List (String × String))
-  /-- No socket, but a checkpoint file is there, and its end record does not say how its
-  program ended: the session was interrupted, as by a reboot. -/
-  | stale
-  /-- No socket, a checkpoint, and an end record saying its program ended with this status, as
-  a shell reports it: the session's result, until `kill` discards it. -/
-  | ended (status : Nat)
-  /-- No socket, and the saved session cannot be read: its end record, which says whether its
-  program ended, cannot be read. A checkpoint that will not load would be one too, but the
-  listing does not load checkpoints. -/
-  | broken
-  /-- From a peer's porcelain over ssh: whether the peer lists the session live,
-  and the peer's own `status` name, read by `Status.ofName`. -/
-  | remote (live : Bool) (peerStatus : String)
-  /-- A socket whose daemon holds the name, read from the name's end record instead of asking:
-  whether the daemon last saw fresh output, and output since the session was last looked at
-  (`Session.Record.published`). -/
-  | published (fresh unseen : Bool)
-  deriving Repr
-
 /-- The status a row displays. Only a live row consults the daemon's reply, and a remote row
 shows its peer's status while the peer reports it live, or once the peer says its program
 ended. -/

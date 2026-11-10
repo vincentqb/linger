@@ -1,5 +1,7 @@
 module
 
+public import Linger.App.Spec
+
 public section
 
 /-! # Linger.App.Commands — the command table
@@ -11,18 +13,6 @@ word (`words_nodup`), so each word means one command. A removed command's words 
 what to use instead (`retired`). -/
 
 namespace Linger.App.Commands
-
-/-- One row of the command table. -/
-structure Command where
-  /-- The word that names the command. -/
-  word : String
-  /-- Its other spellings, each a word no other command uses. -/
-  aliases : List String := []
-  /-- The arguments it takes, as help and its usage error show them. -/
-  args : String
-  /-- What it does, in a few words. -/
-  summary : String
-  deriving Repr, DecidableEq
 
 /-- The command table, in the order `linger help` lists it. -/
 def table : List Command :=

@@ -1,19 +1,10 @@
 module
 
+public import Linger.App.Spec
+
 public section
 
 namespace Linger.App.Entry
-
-/-- The executor that receives a command line: the interactive selector, tmux save
-interchange or the session CLI. -/
-inductive Route where
-  /-- `attach` or `a` without a target: open the selector, read-only on request. -/
-  | selector (readOnly : Bool)
-  /-- Save interchange, given the arguments after `tmux`. -/
-  | tmux (args : List String)
-  /-- Every other command line, with its exact arguments; an empty one becomes `help`. -/
-  | session (args : List String)
-  deriving BEq, Repr
 
 /-- Bare invocation explains the CLI; named commands choose their executor. -/
 def route (args : List String) : Route :=

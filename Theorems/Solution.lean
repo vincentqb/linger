@@ -1,5 +1,8 @@
 module
 
+public import Linger.App.Commands
+public import Linger.App.Entry
+public import Linger.Display.Listing
 public import Linger.Display.Status
 public import Linger.Display.Title
 public import Linger.Os.Env
@@ -14,6 +17,9 @@ public import Linger.Target.Spec
 public import Linger.Terminal.Render
 public import Linger.Terminal.Replay
 public import Linger.Terminal.Spec
+import all Linger.App.Proofs.Commands
+import all Linger.App.Proofs.Entry
+import all Linger.Display.Proofs.Listing
 import all Linger.Display.Proofs.Status
 import all Linger.Display.Proofs.Title
 import all Linger.Os.Proofs.Env
@@ -413,6 +419,84 @@ theorem remotesFile_home_rejects_shared :
         (fun (_ : Option String) => some "remotes") home = none ↔ home = none ∨ home = some "" := by
   intro h
   exact absurd ((h none).mpr (.inl rfl)) (by simp)
+
+theorem rowFields_name (socketName : String) (info : List (String × String)) :
+    (Listing.rowFields socketName info).lookup "name" = some socketName :=
+  Listing.rowFields_name socketName info
+
+theorem rowFields_name_rejects_reply :
+    ¬∀ (socketName : String) (info : List (String × String)),
+        ((fun (_ : String) (info : List (String × String)) => info) socketName info).lookup "name" =
+          some socketName := by
+  intro h
+  exact absurd (h "s" []) (by simp)
+
+theorem route_exact (args : List String) :
+    App.Entry.route args =
+      if args = [] then .session ["help"]
+      else
+        if args = ["attach"] ∨ args = ["a"] then .selector false
+        else
+          if args = ["attach", "--read-only"] ∨ args = ["a", "--read-only"] then .selector true
+          else
+            if args.head? = some "tmux" then .tmux args.tail
+            else .session args := App.Entry.route_eq args
+
+theorem route_exact_rejects_selector :
+    ¬∀ (args : List String),
+        (fun (args : List String) => App.Entry.Route.session args) args =
+          if args = [] then .session ["help"]
+          else
+            if args = ["attach"] ∨ args = ["a"] then .selector false
+            else
+              if args = ["attach", "--read-only"] ∨ args = ["a", "--read-only"] then .selector true
+              else if args.head? = some "tmux" then .tmux args.tail else .session args := by
+  intro h
+  exact absurd (h ["attach"]) (by simp)
+
+theorem lookup_table :
+    (App.Commands.table.flatMap fun command => command.word :: command.aliases).Nodup ∧
+      ∀ command ∈ App.Commands.table,
+        App.Commands.lookup command.word = some command ∧
+          ∀ word ∈ command.aliases, App.Commands.lookup word = some command :=
+  ⟨App.Commands.table_words_nodup, fun command member =>
+    ⟨App.Commands.lookup_word command member, App.Commands.lookup_alias command member⟩⟩
+
+theorem lookup_table_rejects_none :
+    ¬((App.Commands.table.flatMap fun command => command.word :: command.aliases).Nodup ∧
+        ∀ command ∈ App.Commands.table,
+          (fun (_ : String) => (none : Option App.Commands.Command)) command.word = some command ∧
+            ∀ word ∈ command.aliases,
+              (fun (_ : String) => (none : Option App.Commands.Command)) word = some command) := by
+  intro h
+  obtain ⟨command, member⟩ := List.exists_mem_of_ne_nil _ App.Commands.table_ne_nil
+  exact absurd (h.2 command member).1 (by simp)
+
+theorem retired_free : ∀ entry ∈ App.Commands.retired, App.Commands.lookup entry.1 = none :=
+  App.Commands.retired_free
+
+theorem retired_free_rejects_any :
+    ¬∀ entry ∈ App.Commands.retired,
+        (fun (_ : String) =>
+              some ({ word := "run", args := "", summary := "" } : App.Commands.Command))
+            entry.1 =
+          none := by
+  intro h
+  obtain ⟨entry, member⟩ := List.exists_mem_of_ne_nil _ App.Commands.retired_ne_nil
+  exact absurd (h entry member) (by simp)
+
+theorem usageLine_exact (command : App.Commands.Command) :
+    App.Commands.usageLine command =
+      if command.args.isEmpty then s!"usage: linger {command.word}"
+      else s!"usage: linger {command.word} {command.args}" := App.Commands.usageLine_eq command
+
+theorem usageLine_exact_rejects_bare :
+    ¬∀ (command : App.Commands.Command),
+        (fun (_ : App.Commands.Command) => "usage: linger") command =
+          if command.args.isEmpty then s!"usage: linger {command.word}"
+          else s!"usage: linger {command.word} {command.args}" := by
+  intro h
+  exact absurd (h { word := "help", args := "", summary := "" }) (by decide)
 
 theorem check_eq_some_iff (s result : String) :
     Name.check s = some result ↔ result = s ∧ Name.Valid s := Name.check_eq_some_iff s result
@@ -1038,6 +1122,21 @@ theorem summary_exact_rejects_count :
               else [(toString (statuses.count .unknown)).push (Status.icon .unknown)])) := by
   intro h
   exact absurd (h []) (by simp)
+
+theorem rowStatus_saved (status : Nat) (st : Status.Status) :
+    Listing.rowStatus (.ended status) = (if status = 0 then .exitedOk else .exitedBad) ∧
+      Listing.rowStatus (.remote false (Status.name st)) =
+        if st = .exitedOk ∨ st = .exitedBad then st else .resumable :=
+  ⟨Listing.rowStatus_ended status, Listing.rowStatus_remote_saved st⟩
+
+theorem rowStatus_saved_rejects_unknown :
+    ¬∀ (status : Nat) (st : Status.Status),
+        (fun (_ : Listing.Row) => Status.Status.unknown) (.ended status) =
+            (if status = 0 then .exitedOk else .exitedBad) ∧
+          (fun (_ : Listing.Row) => Status.Status.unknown) (.remote false (Status.name st)) =
+            if st = .exitedOk ∨ st = .exitedBad then st else .resumable := by
+  intro h
+  exact absurd (h 0 .unknown).1 (by decide)
 
 theorem compose_attention_last (session application summary : String) (capacity : Nat) :
     Title.compose session application summary capacity =
