@@ -49,6 +49,81 @@ inductive Plan where
   | saved
   deriving Repr, DecidableEq
 
+/-! ### A request's answer
+
+A command that asks a daemon for a program, as `start` and `resume` do, waits a bounded time for
+the daemon's report. When that wait runs out, the two race for the request's ticket: the daemon
+takes it at its commit point, before the session is visible, and the command takes it when it
+stops waiting. Whoever takes it decides whether the program runs, so the command's answer cannot
+contradict what happens. -/
+
+/-- Who took a request's ticket. -/
+inductive Taker where
+  /-- The daemon, at its commit point: it runs the program, or reports why it could not. -/
+  | daemon
+  /-- The command, when its wait ran out: the daemon runs nothing. -/
+  | command
+  deriving Repr, DecidableEq
+
+/-- What a command answers about the program it asked for. -/
+inductive Answer where
+  /-- The program runs. -/
+  | started
+  /-- The program does not run. -/
+  | notStarted
+  deriving Repr, DecidableEq
+
+/-- A request for a program, as the command and its daemon move it on. -/
+structure Request where
+  /-- Who took the ticket, once someone has. -/
+  taker : Option Taker := none
+  /-- Whether the daemon has decided: run the program, or not. -/
+  settled : Bool := false
+  /-- Whether the program runs. -/
+  runs : Bool := false
+  /-- What the command answered, once it has. -/
+  answer : Option Answer := none
+  deriving Repr, DecidableEq
+
+/-- How a request moves on, given the daemon's decision whether to run the program from whether
+it took the ticket (`proceeds`), and the command's answer from whether it took the ticket and
+whether the program runs (`answer`). Taking the ticket is one atomic step for either side, as
+unlinking one file name is: of two unlinks of a name, one succeeds. -/
+inductive Step (proceeds : Bool → Bool) (answer : Bool → Bool → Answer) :
+    Request → Request → Prop where
+  /-- The daemon reaches its commit point first and takes the ticket. -/
+  |
+  daemonTakes (r : Request) (free : r.taker = none) :
+    Step proceeds answer r { r with taker := some .daemon }
+  /-- Once someone took the ticket, the daemon decides, once: it runs the program when it took
+  the ticket, decides to, and the program could start (`ok`). -/
+  |
+  daemonDecides (r : Request) (taken : r.taker.isSome = true) (fresh : r.settled = false)
+    (ok : Bool) :
+    Step proceeds answer r
+      { r with
+        settled := true, runs := proceeds (r.taker == some .daemon) && ok }
+  /-- The command's wait runs out first: it takes the ticket and answers. -/
+  |
+  commandTakes (r : Request) (free : r.taker = none) (unanswered : r.answer = none) :
+    Step proceeds answer r
+      { r with
+        taker := some .command, answer := some (answer true r.runs) }
+  /-- The daemon took the ticket: the command answers once the daemon has decided. -/
+  |
+  commandAnswers (r : Request) (lost : r.taker = some .daemon) (decided : r.settled = true)
+    (unanswered : r.answer = none) :
+    Step proceeds answer r { r with answer := some (answer false r.runs) }
+
+/-- The states a request reaches from its start, by either side's steps in any order. -/
+inductive Reachable (proceeds : Bool → Bool) (answer : Bool → Bool → Answer) : Request → Prop where
+  /-- Nobody has taken the ticket. -/
+  | init : Reachable proceeds answer {}
+  /-- One step further. -/
+  |
+  step {r s : Request} :
+    Reachable proceeds answer r → Step proceeds answer r s → Reachable proceeds answer s
+
 end Linger.Session.Start
 
 namespace Linger.Session.Wire

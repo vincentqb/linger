@@ -1235,13 +1235,40 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])IO Unit := do let deadline 
 # A start takes a name only by Start.plan, decided holding the name, and never loads a checkpoint;
 # a resume runs only a saved session's program, by Start.resumePlan, or nothing.
 for tie in \
-  'if let some tell := start then let saved ← System[.]FilePath[.]pathExists [(]← Paths[.]ckptPath name[)] if resume then match Start[.]resumePlan live saved with' \
+  'if let some req := start then let saved ← System[.]FilePath[.]pathExists [(]← Paths[.]ckptPath name[)] if resume then match Start[.]resumePlan live saved with' \
   'else match Start[.]plan live saved with' \
   'let saved ← if start[.]isSome && !resume then pure none else loadCkpt' \
-  'if resume && saved[.]isNone then if let some tell := start then tell [(][.]failed 1 "its saved session cannot be read"[.]toUTF8[.]toList[)] return'; do
+  'if resume && saved[.]isNone then if let some req := start then req[.]tell [(][.]failed 1 "its saved session cannot be read"[.]toUTF8[.]toList[)] return'; do
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "a start took a name outside Start.plan, or a resume started anything but a saved session: $tie"
 done
+# A request's answer is true (`start_answer_true`). The command makes the request's ticket before
+# it begins the daemon. The daemon takes it once, before its first report and at the commit point
+# just before its socket listens, and starts nothing when the command took it (`Start.proceeds`);
+# it reports only holding it. The command takes it once its bounded wait has run out, and then
+# answers that nothing starts; otherwise it waits for the daemon's report, and says the program
+# runs only by `Start.answer`. Linger.Session.Suites.Resume checks both sides.
+for tie in \
+  'if let some req := start then unless Start[.]proceeds [(]← req[.]take[)] do return let listenFd ← unixListen sockPath'; do
+  printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "a daemon reached its commit point without taking its request's ticket: $tie"
+done
+[ "$(code_count 'req[.]take|Start[.]proceeds|unixListen' Linger/Session/Shell/Daemon.lean)" -eq 2 ] \
+  || fail "a daemon takes its request's ticket and listens only at its one commit point"
+for tie in \
+  'private def takeTicket [(]report : String[)] : IO Bool := do try IO[.]FS[.]removeFile [(]ticketPath report[)] return true catch _ => return false' \
+  'let take : IO Bool := do if let some held← took[.]get then return held let held ← takeTicket report took[.]set [(]some held[)] return held let tell [(]r : Linger[.]Session[.]Start[.]Report[)] : IO Unit := do if ← take then writeReport report r return [{] take, tell [}]' \
+  'IO[.]FS[.]withFile [(]ticketPath report[)] [.]writeNew fun _ => pure [(][)] try spawnDetached [(]← IO[.]appPath[)][.]toString ⟨args⟩ log catch err => discard <[|] takeTicket report throw err' \
+  'if bounded && [(]← monotonicMs[)] ≥ deadline then if ← takeTicket report then return [.]took true bounded := false IO[.]sleep 10' \
+  'match Linger[.]Session[.]Start[.]answer [(]waited matches [.]took _[)] [(]waited matches [.]told [(]some [.]started[)][)], waited with [|] [.]started, _ => return 0 [|] [.]notStarted,' \
+  'let runs := waited matches [.]told [(]some [.]started[)] [|][|] waited matches [.]told [(]some [.]running[)] match Linger[.]Session[.]Start[.]answer [(]waited matches [.]took _[)] runs, waited with [|] [.]started, [.]told [(]some [.]started[)] => do sayMoved name return 0 [|] [.]started, _ => return 0 [|] [.]notStarted,' \
+  'let pid ← beginRequest report log [(][[]"__start", report, name, cwd[]] [+][+] argv[)] startStatus name log [(]← awaitReport pid report[)]' \
+  'let pid ← beginRequest report log [[]"__resume", report, name, cwd[]] resumeStatus name log [(]← awaitReport pid report[)]'; do
+  printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "start or resume answered without its request's ticket: $tie"
+done
+[ "$(code_count 'takeTicket report' Linger/App/Shell.lean)" -eq 4 ] \
+  || fail "only the daemon's take-once, a failed begin and the command's wait take a request's ticket"
 # An offline reader holds both locks briefly, so the daemon's startup claim retries a
 # held lock for a bounded, positive time, and stops at once when a live daemon answers
 # on the socket. A retry is asked only after a failed attempt. Every other acquisition

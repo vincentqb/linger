@@ -523,6 +523,33 @@ theorem ticks_settle_rejects_poll :
   intro h
   exact absurd (h (State.boot (Vt.Vt.init 1 1) [] []) 0 0 0 rfl rfl) (by simp)
 
+theorem start_answer_true (r : Start.Request) (h : Start.Reachable Start.proceeds Start.answer r) :
+    (r.answer = some .started → r.runs = true) ∧ (r.answer = some .notStarted → r.runs = false) :=
+  Start.answer_true h
+
+theorem start_answer_true_rejects_started :
+    ¬∀ (r : Start.Request),
+        Start.Reachable Start.proceeds (fun _ _ => Start.Answer.started) r →
+          (r.answer = some .started → r.runs = true) ∧
+            (r.answer = some .notStarted → r.runs = false) := by
+  intro h
+  have taken :=
+    Start.Reachable.step (proceeds := Start.proceeds) (answer := fun _ _ => Start.Answer.started)
+      .init (.commandTakes {} rfl rfl)
+  exact absurd ((h _ taken).1 rfl) (by decide)
+
+theorem start_answer_true_rejects_proceed :
+    ¬∀ (r : Start.Request),
+        Start.Reachable (fun _ => true) Start.answer r →
+          (r.answer = some .started → r.runs = true) ∧
+            (r.answer = some .notStarted → r.runs = false) := by
+  intro h
+  have taken :=
+    Start.Reachable.step (proceeds := fun _ => true) (answer := Start.answer) .init
+      (.commandTakes {} rfl rfl)
+  have ran := Start.Reachable.step taken (.daemonDecides _ rfl rfl true)
+  exact absurd ((h _ ran).2 (by simp [Start.answer_command])) (by decide)
+
 theorem classify_iff (o : Status.Obs) (s : Status.Status) : Status.classify o = s ↔ Status.Is s o :=
   Status.classify_iff o s
 

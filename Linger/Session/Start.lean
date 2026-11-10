@@ -62,4 +62,13 @@ def Report.decode : List UInt8 → Option Report
   | 3 :: status :: why => some (.failed status why)
   | _ => none
 
+/-- The daemon's decision at its commit point: it goes on to run the program exactly when it took
+the request's ticket, and starts nothing when the command that asked took it first. -/
+def proceeds (took : Bool) : Bool := took
+
+/-- What a command answers once its request is decided, from whether the command took the ticket
+and whether the program runs: that it runs only when the daemon took the ticket and ran it, and
+otherwise that it does not. -/
+def answer (took runs : Bool) : Answer := if !took && runs then .started else .notStarted
+
 end Linger.Session.Start

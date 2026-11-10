@@ -356,6 +356,12 @@ example (live saved : Bool) :
     Session.Start.resumePlan live saved = .missing ↔ live = false ∧ saved = false := by
   with_reducible exact Session.Start.resumePlan_missing_iff live saved
 
+example (r : Session.Start.Request)
+    (h : Session.Start.Reachable Session.Start.proceeds Session.Start.answer r) :
+    (r.answer = some .started → r.runs = true) ∧
+      (r.answer = some .notStarted → r.runs = false) := by
+  with_reducible exact Session.Start.answer_true h
+
 -- Transport
 example (ms : List Wire.Msg) (hms : ∀ (m : Wire.Msg), m ∈ ms → m.WF) (chunks : List (List UInt8))
     (hc : chunks.flatten = List.flatMap Wire.encode ms) :

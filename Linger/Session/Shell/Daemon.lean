@@ -804,6 +804,17 @@ structure RecordFile where
   /-- Put back the bytes `load` gave, or remove the record when it gave none. -/
   restore : Option (List UInt8) → IO Unit
 
+/-- The request of the command that began this daemon, as `start` and `resume` do: the command
+waits a bounded time for the answer, and when that wait runs out it races this daemon for the
+request's ticket. -/
+structure Request where
+  /-- Take the ticket, once: `true` when this daemon holds it, `false` when the command took it
+  first and so answered that nothing starts. -/
+  take : IO Bool
+  /-- Tell the command what this daemon did, holding the ticket: it takes the ticket first if
+  nobody has, and tells nothing when the command took it. -/
+  tell : Start.Report → IO Unit
+
 /-- Why a program could not start, for a person. -/
 private def failureText (failure : SpawnFailure) (prog cwd : String) : String :=
   match failure with
@@ -821,12 +832,13 @@ cannot start leaves the record as it was.
 With `start`, the daemon takes the name only when no live or saved session holds it, never
 resumes one (`Start.plan`), runs the program in `cwd` or not at all, and tells `start` what it
 did. With `resume` as well, it runs only a saved session's program again, an ended one included,
-and starts nothing for a live session or a name no session holds (`Start.resumePlan`). -/
+and starts nothing for a live session or a name no session holds (`Start.resumePlan`). Either way
+it takes the request's ticket before the session is visible, and starts nothing when the command
+took it first (`Start.proceeds`). -/
 def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State → IO Unit)
     (dropCkpt : IO Unit)
     (loadCkpt : IO (Option (Linger.Terminal.Vt.Vt × String × List (String × String))))
-    (record : RecordFile) (start : Option (Start.Report → IO Unit) := none)
-    (resume : Bool := false) : IO Unit := do
+    (record : RecordFile) (start : Option Request := none) (resume : Bool := false) : IO Unit := do
   let deadline := (← monotonicMs) + claimWaitMs
   let reported ← IO.mkRef false
   let retry := claimRetry name (← Paths.socketPath name) deadline reported
@@ -837,25 +849,25 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
       let live := r ≥ 0
       if live then
         close r.toUInt64.toUInt32
-      if let some tell := start then
+      if let some req := start then
         let saved ← System.FilePath.pathExists (← Paths.ckptPath name)
         if resume then
           match Start.resumePlan live saved with
           | .running =>
-            tell .running
+            req.tell .running
             return
           | .missing =>
-            tell (.failed 127 s!"no session '{name}'".toUTF8.toList)
+            req.tell (.failed 127 s!"no session '{name}'".toUTF8.toList)
             return
           | .resume =>
             pure ()
         else
           match Start.plan live saved with
           | .running =>
-            tell .running
+            req.tell .running
             return
           | .saved =>
-            tell .saved
+            req.tell .saved
             return
           | .take =>
             pure ()
@@ -869,8 +881,8 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
       -- a resume runs a saved session's program again or none: a checkpoint it cannot read
       -- starts nothing
       if resume && saved.isNone then
-        if let some tell := start then
-          tell (.failed 1 "its saved session cannot be read".toUTF8.toList)
+        if let some req := start then
+          req.tell (.failed 1 "its saved session cannot be read".toUTF8.toList)
         return
       -- A new session runs in `cwd` or not at all. A resume runs in its saved directory, or in
       -- $HOME when that is gone (`Env.resumeDir`), and then says so in the info field saved_dir
@@ -895,6 +907,12 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
         IO.FS.removeFile sockPath
       catch _ =>
         pure ()
+      -- The commit point, before the session is visible: the daemon takes the request's ticket,
+      -- and when the command that asked took it first, having stopped waiting, this daemon starts
+      -- nothing and tells nothing, as that command answered.
+      if let some req := start then
+        unless Start.proceeds (← req.take) do
+          return
       let listenFd ← unixListen sockPath
       try
         setNonblock listenFd
@@ -935,14 +953,14 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
           record.restore previous
           let why := failureText failure prog cwd
           match start with
-          | some tell =>
-            tell (.failed failure.status why.toUTF8.toList)
+          | some req =>
+            req.tell (.failed failure.status why.toUTF8.toList)
           | none =>
             throw (IO.userError s!"linger: session '{name}' did not start: {why}")
           return
         let .ok (pid, ptyFd) := spawned | return
-        if let some tell := start then
-          tell .started
+        if let some req := start then
+          req.tell .started
         let st :=
           State.boot vt0 ((restore.map (·.2)).getD [])
             ([("name", name), ("pid", toString pid), ("created", toString created),

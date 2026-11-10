@@ -236,6 +236,16 @@ def Linger.Session.Checkpoint.loadBytes : ByteArray → Option (Checkpoint.Ckpt 
 @[expose]
 def Linger.Session.Start.plan : (live saved : Bool) → Start.Plan := sorry
 
+/-- Whether a daemon started for `start` or `resume` goes on to run the program at its commit
+point, given whether it took the request's ticket. -/
+@[expose]
+def Linger.Session.Start.proceeds : Bool → Bool := sorry
+
+/-- What `start` or `resume` answers about the program once its request is decided, given whether
+the command took the request's ticket and whether the program runs. -/
+@[expose]
+def Linger.Session.Start.answer : Bool → Bool → Start.Answer := sorry
+
 /-- A byte queue the daemon keeps: its pty's input, or a client's output. -/
 @[expose]
 def Linger.Session.Buf.Buf : Type := sorry
@@ -716,9 +726,35 @@ theorem ticks_settle_rejects_poll :
 
 /-! ## 10. Graceful under load
 
-Not claimed yet: that work a request needs never waits on optional work or on another session,
-that every wait is bounded and says what it missed, and that optional work is skipped or
-coalesced. The robust suite tests it. -/
+A command waits for its daemon's answer a bounded time, and what it answers when that time runs
+out is still true. Not claimed yet: that work a request needs never waits on optional work or on
+another session, that every other wait is bounded and says what it missed, and that optional work
+is skipped or coalesced. The robust and resume suites test it. -/
+
+/-- A request's answer is true, even when its wait runs out: `start` and `resume` race the daemon
+they started for the request's ticket, whoever takes it decides, and so the command answers that
+the program runs only when it does, and that it does not only when it never will. -/
+theorem start_answer_true (r : Start.Request) (h : Start.Reachable Start.proceeds Start.answer r) :
+    (r.answer = some .started → r.runs = true) ∧
+      (r.answer = some .notStarted → r.runs = false) := by
+  sorry
+
+/-- `start_answer_true` rejects a command that answers that the program runs whatever happened. -/
+theorem start_answer_true_rejects_started :
+    ¬∀ (r : Start.Request),
+        Start.Reachable Start.proceeds (fun _ _ => Start.Answer.started) r →
+          (r.answer = some .started → r.runs = true) ∧
+            (r.answer = some .notStarted → r.runs = false) := by
+  sorry
+
+/-- `start_answer_true` rejects a daemon that runs the program even after the command withdrew
+the request. -/
+theorem start_answer_true_rejects_proceed :
+    ¬∀ (r : Start.Request),
+        Start.Reachable (fun _ => true) Start.answer r →
+          (r.answer = some .started → r.runs = true) ∧
+            (r.answer = some .notStarted → r.runs = false) := by
+  sorry
 
 /-! ## The status rule -/
 

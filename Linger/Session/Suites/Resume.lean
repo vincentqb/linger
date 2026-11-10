@@ -153,10 +153,73 @@ private def directoryChecks (e : Env) : IO Unit := do
   expect refused "a resume whose directory is gone refuses when HOME is unset or empty"
   e.killAll #["rk", "rm"]
 
+/-- Whether no process holds the lock at `path`: `flock` takes it, and lets it go at once. -/
+private def lockFree (path : String) : IO Bool := do
+  let fd ← Linger.Os.Shell.flock path
+  if fd < 0 then
+    return false
+  Linger.Os.Shell.close fd.toUInt64.toUInt32
+  return true
+
+/-- A request's answer is true (`start_answer_true`). A daemon whose request's ticket is gone, as
+when the command that asked took it, starts nothing and reports nothing. A resume whose daemon
+cannot load its checkpoint within the command's 30 s wait answers 124, that nothing starts, and
+the daemon starts nothing once it has loaded it: a FIFO holds the load until the command has
+answered. -/
+private def answerChecks (e : Env) : IO Unit := do
+  let report := s!"{e.dir}/logs/taken.start-check"
+  IO.FS.createDirAll s!"{e.dir}/logs"
+  let ran ← e.cliTimeout #["__start", report, "taken", e.dir, "/bin/sh", "-c", "exit 0"] 10000
+  expect
+      (ran.any (·.1 == 0) && !(← System.FilePath.pathExists report) &&
+        !(← e.dirNames ".sock").contains "taken.sock" &&
+        !(← e.dirNames ".end").contains "taken.end" &&
+        !(← e.dirNames ".ckpt").contains "taken.ckpt")
+      s!"a daemon whose request's ticket is gone starts nothing and reports nothing \
+        ({ran.map (·.1)})"
+  e.killAll #["taken"]
+  let a : Env := { e with dir := s!"{e.dir}/answer" }
+  IO.FS.createDirAll a.dir
+  let fifo := s!"{a.dir}/late.ckpt"
+  let source := s!"{a.dir}/late.src"
+  IO.FS.writeBinFile source
+      (Linger.Session.Checkpoint.saveBytes ⟨Linger.Terminal.Vt.Vt.init 40 5, a.dir, []⟩)
+  let made ← IO.Process.output { cmd := "mkfifo", args := #[fifo] }
+  let begun ← Linger.Os.Shell.monotonicMs
+  let fed ← IO.mkRef (none : Option UInt32)
+  let resumed ←
+    try
+      a.cliTimeout #["resume", "late"] 60000
+    finally
+      let feed ←
+        IO.Process.spawn
+            { cmd := "sh", args := #["-c", s!"cat '{source}' > '{fifo}'"], stdin := .null,
+              stdout := .null, stderr := .null }
+      fed.set (← waitOrKill feed 10000)
+  let waitedMs := (← Linger.Os.Shell.monotonicMs) - begun
+  let settled ← waitFor 10000 (lockFree s!"{a.dir}/late.lock")
+  IO.FS.removeFile fifo
+  let sockets ← a.dirNames ".sock"
+  let left :=
+    (← System.FilePath.readDir s!"{a.dir}/logs").toList.filter (·.fileName.startsWith "late.start-")
+  a.endSessions
+  expect
+      (made.exitCode == 0 &&
+        resumed.any (fun (rc, _, err) => rc == 124 && has err "starts nothing") &&
+        waitedMs ≥ 30000 &&
+        (← fed.get) == some 0 &&
+        settled &&
+        !sockets.contains "late.sock" &&
+        left.isEmpty)
+      s!"a resume whose daemon does not answer within 30 s answers 124, that nothing starts, \
+        and its daemon starts nothing once it could ({resumed.map (·.1)}, {waitedMs} ms, \
+        settled={settled}, left {left.map (·.fileName)})"
+
 /-- The resume suite: checkpoint, crash and restore, and where a resume runs. -/
 def run : IO UInt32 :=
   Env.suite "resume" fun e => do
     directoryChecks e
+    answerChecks e
     checkpointRetry
     scaleChecks e
     -- one source for the pty geometry and for the off-the-screen window below
