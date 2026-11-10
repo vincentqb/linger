@@ -359,4 +359,9 @@ theorem hidden_adds_up (targets : List String) :
   | some depth =>
     right; simp [groups_sum]
 
+/-- The statuses that ask for someone, by name: `⣿`, `!` and `?`. -/
+theorem mem_attention (st : Status) :
+    st ∈ Status.attention ↔ st = .wantsYou ∨ st = .exitedBad ∨ st = .unknown := by
+  simp [Status.attention]
+
 end Linger.Display.View

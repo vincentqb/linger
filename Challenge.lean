@@ -42,7 +42,8 @@ each with a kill, and says what it does not claim yet:
 The status rule: a session's status is one glyph for one observation, `⣷` output right now, `⣿`
 new output, then it stopped, `⣀` nothing new since you looked, `✓` ended with status 0, `!` ended
 any other way, `~` saved with no daemon and `?` no answer, and titles and `ls --summary` count
-`⣿`, `!` and `?`. Its section follows the ten parts.
+`⣿`, `!` and `?`. Its section follows the ten parts, with the titles, listings and selector
+views that show statuses.
 
 Each theorem below is stated over definitions in the components' `Spec` modules and over the
 program parts declared below as holes: each hole is `sorry` here, the program supplies it, and
@@ -252,6 +253,18 @@ def Linger.Display.Listing.rowFields : String → List (String × String) → Li
 @[expose]
 def Linger.Display.Listing.rowStatus : Listing.Row → Status.Status := sorry
 
+/-- A listing's rows, those that ask for someone first. -/
+@[expose]
+def Linger.Display.View.sort {α : Type} : (α → Status.Status) → List α → List α := sorry
+
+/-- How many targets share each group name. -/
+@[expose]
+def Linger.Display.View.groups : List String → List (String × Nat) := sorry
+
+/-- The rows a window leaves out: how many, and how many in each group the summary names. -/
+@[expose]
+def Linger.Display.View.hidden : List String → Nat × List (String × Nat) := sorry
+
 /-- A window title from the session's name, the application's title and the attention summary,
 within a capacity in characters. -/
 @[expose]
@@ -397,6 +410,10 @@ def Linger.Session.Buf.bufAdvance : Buf.Buf → Nat → Buf.Buf := sorry
 def Linger.Session.Buf.owedLen : Buf.Buf → Nat := sorry
 
 /-! ### Selector and import -/
+
+/-- How many listed rows the selector's query matches. -/
+@[expose]
+def Linger.Selector.Picker.matchCount : Selector.Picker.State → Nat := sorry
 
 /-- What the selector does with one action. -/
 @[expose]
@@ -1465,7 +1482,9 @@ theorem start_answer_true_rejects_proceed :
             (r.answer = some .notStarted → r.runs = false) := by
   sorry
 
-/-! ## The status rule -/
+/-! ## The status rule
+
+And the titles, listings and selector views that show statuses. -/
 
 /-- Every observation gets exactly the status its legend line describes: `?` no answer, `✓` ended
 with status 0, `!` ended any other way, `~` saved with no daemon, `⣷` output right now, `⣿` new
@@ -1562,6 +1581,70 @@ theorem compose_attention_last_rejects_first :
               session application ""
               (capacity - (if summary.isEmpty then "" else " · " ++ summary).length) ++
             (if summary.isEmpty then "" else " · " ++ summary) := by
+  sorry
+
+/-- A listing keeps every session and lists those that ask for someone, `⣿`, `!` and `?`, before
+all others. -/
+theorem sort_attention_first {α : Type} (status : α → Status.Status) (rows : List α) :
+    (View.sort status rows).Perm rows ∧
+      ∃ first rest,
+        View.sort status rows = first ++ rest ∧
+          (∀ x ∈ first, status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) ∧
+          ∀ x ∈ rest, ¬(status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) := by
+  sorry
+
+/-- `sort_attention_first` rejects a listing kept in arrival order. -/
+theorem sort_attention_first_rejects_arrival :
+    ¬∀ {α : Type} (status : α → Status.Status) (rows : List α),
+        ((fun (_ : α → Status.Status) (rows : List α) => rows) status rows).Perm rows ∧
+          ∃ first rest,
+            (fun (_ : α → Status.Status) (rows : List α) => rows) status rows = first ++ rest ∧
+              (∀ x ∈ first, status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) ∧
+              ∀ x ∈ rest,
+                ¬(status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) := by
+  sorry
+
+/-- A summary's group counts are exact: each says how many targets the group holds, and together
+they count every target once. -/
+theorem groups_exact (keys : List String) :
+    ((View.groups keys).map (·.2)).sum = keys.length ∧
+      ∀ (k : String) (n : Nat), (k, n) ∈ View.groups keys → n = keys.count k := by
+  sorry
+
+/-- `groups_exact` rejects a summary with a fixed group. -/
+theorem groups_exact_rejects_fixed :
+    ¬∀ (keys : List String),
+        (((fun (_ : List String) => [("", 1)]) keys).map (·.2)).sum = keys.length ∧
+          ∀ (k : String) (n : Nat),
+            (k, n) ∈ (fun (_ : List String) => [("", 1)]) keys → n = keys.count k := by
+  sorry
+
+/-- The line that sums up the rows a window leaves out adds up: when it names groups, their
+counts sum to the rows left out. -/
+theorem hidden_adds_up (targets : List String) :
+    (View.hidden targets).2 = [] ∨
+      ((View.hidden targets).2.map (·.2)).sum = (View.hidden targets).1 := by
+  sorry
+
+/-- `hidden_adds_up` rejects a summary whose groups miss the rows it says are left out. -/
+theorem hidden_adds_up_rejects_short :
+    ¬∀ (targets : List String),
+        ((fun (_ : List String) => (1, [("a", 0)])) targets).2 = [] ∨
+          (((fun (_ : List String) => (1, [("a", 0)])) targets).2.map (·.2)).sum =
+            ((fun (_ : List String) => (1, [("a", 0)])) targets).1 := by
+  sorry
+
+/-- Typing another character into the selector's query never adds a match. -/
+theorem matchCount_push (s typed : Selector.Picker.State) (c : Char)
+    (push : typed = { s with query := s.query.push c }) :
+    Selector.Picker.matchCount typed ≤ Selector.Picker.matchCount s := by sorry
+
+/-- `matchCount_push` rejects a count that grows with the query. -/
+theorem matchCount_push_rejects_length :
+    ¬∀ (s typed : Selector.Picker.State) (c : Char),
+        typed = { s with query := s.query.push c } →
+          (fun (s : Selector.Picker.State) => s.query.length) typed ≤
+            (fun (s : Selector.Picker.State) => s.query.length) s := by
   sorry
 
 end Linger

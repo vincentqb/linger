@@ -4,6 +4,7 @@ public import Linger.App.Commands
 public import Linger.App.Entry
 public import Linger.Display.Listing
 public import Linger.Display.Status
+public import Linger.Display.View
 public import Linger.Import.Resurrect
 public import Linger.Selector.Picker
 public import Linger.Display.Title
@@ -23,6 +24,7 @@ import all Linger.App.Proofs.Commands
 import all Linger.App.Proofs.Entry
 import all Linger.Display.Proofs.Listing
 import all Linger.Display.Proofs.Status
+import all Linger.Display.Proofs.View
 import all Linger.Import.Proofs.Resurrect
 import all Linger.Selector.Proofs.Picker
 import all Linger.Display.Proofs.Title
@@ -1266,5 +1268,75 @@ theorem compose_attention_last_rejects_first :
             (if summary.isEmpty then "" else " · " ++ summary) := by
   intro h
   exact absurd (h "" "" "x" 0) (by decide)
+
+theorem sort_attention_first {α : Type} (status : α → Status.Status) (rows : List α) :
+    (View.sort status rows).Perm rows ∧
+      ∃ first rest,
+        View.sort status rows = first ++ rest ∧
+          (∀ x ∈ first, status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) ∧
+          ∀ x ∈ rest, ¬(status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) := by
+  obtain ⟨first, rest, split, front, back⟩ := View.sort_attention_first status rows
+  exact
+    ⟨View.sort_perm status rows, first, rest, split, fun x hx =>
+      (View.mem_attention _).mp (front x hx), fun x hx => fun h =>
+      back x hx ((View.mem_attention _).mpr h)⟩
+
+theorem sort_attention_first_rejects_arrival :
+    ¬∀ {α : Type} (status : α → Status.Status) (rows : List α),
+        ((fun (_ : α → Status.Status) (rows : List α) => rows) status rows).Perm rows ∧
+          ∃ first rest,
+            (fun (_ : α → Status.Status) (rows : List α) => rows) status rows = first ++ rest ∧
+              (∀ x ∈ first, status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) ∧
+              ∀ x ∈ rest,
+                ¬(status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) := by
+  intro h
+  obtain ⟨-, first, rest, split, front, back⟩ := h id [Status.Status.idle, .wantsYou]
+  match first, split with
+  | [], split =>
+    have whole : rest = [.idle, .wantsYou] := by simpa using split.symm
+    exact back .wantsYou (by simp [whole]) (by simp)
+  | a :: _, split =>
+    have head : a = .idle := (List.cons.inj split).1.symm
+    exact absurd (front a (by simp)) (by simp [head])
+
+theorem groups_exact (keys : List String) :
+    ((View.groups keys).map (·.2)).sum = keys.length ∧
+      ∀ (k : String) (n : Nat), (k, n) ∈ View.groups keys → n = keys.count k :=
+  ⟨View.groups_sum keys, View.groups_count keys⟩
+
+theorem groups_exact_rejects_fixed :
+    ¬∀ (keys : List String),
+        (((fun (_ : List String) => [("", 1)]) keys).map (·.2)).sum = keys.length ∧
+          ∀ (k : String) (n : Nat),
+            (k, n) ∈ (fun (_ : List String) => [("", 1)]) keys → n = keys.count k := by
+  intro h
+  exact absurd (h []).1 (by simp)
+
+theorem hidden_adds_up (targets : List String) :
+    (View.hidden targets).2 = [] ∨
+      ((View.hidden targets).2.map (·.2)).sum = (View.hidden targets).1 :=
+  View.hidden_adds_up targets
+
+theorem hidden_adds_up_rejects_short :
+    ¬∀ (targets : List String),
+        ((fun (_ : List String) => (1, [("a", 0)])) targets).2 = [] ∨
+          (((fun (_ : List String) => (1, [("a", 0)])) targets).2.map (·.2)).sum =
+            ((fun (_ : List String) => (1, [("a", 0)])) targets).1 := by
+  intro h
+  exact absurd (h []) (by simp)
+
+theorem matchCount_push (s typed : Selector.Picker.State) (c : Char)
+    (push : typed = { s with query := s.query.push c }) :
+    Selector.Picker.matchCount typed ≤ Selector.Picker.matchCount s := by
+  rw [push]
+  exact Selector.Picker.matchCount_push s c
+
+theorem matchCount_push_rejects_length :
+    ¬∀ (s typed : Selector.Picker.State) (c : Char),
+        typed = { s with query := s.query.push c } →
+          (fun (s : Selector.Picker.State) => s.query.length) typed ≤
+            (fun (s : Selector.Picker.State) => s.query.length) s := by
+  intro h
+  exact absurd (h { candidates := [] } _ 'a' rfl) (by simp)
 
 end Linger
