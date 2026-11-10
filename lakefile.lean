@@ -8,7 +8,7 @@ package linger where leanOptions :=
     ⟨`linter.extra.unnecessarySeqFocus, true⟩]
 
 require software_challenge from git
-  "https://github.com/vincentqb/lean-software-challenge"@"bf9fcf91ab57cc1c8f11ffdd4c4d3403e86bf214"
+  "https://github.com/vincentqb/lean-software-challenge"@"a6725aa1ed50884d52788171a5ebdf0b53bda9c9"
 
 /-- Options for every library but `Verify`: Lake builds a module with the options of one library
 that contains it, and these libraries overlap, so they share a single set. With the package's
