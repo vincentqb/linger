@@ -25,10 +25,7 @@ theorem decode_encode (r : Record) : decode (encode r) = some r := by
 theorem seenByte_injective (a b : Seen) (h : seenByte a = seenByte b) : a = b := by
   obtain ⟨f₁, u₁⟩ := a
   obtain ⟨f₂, u₂⟩ := b
-  cases f₁ <;> cases u₁ <;> cases f₂ <;> cases u₂
-  all_goals
-    revert h
-    decide
+  cases f₁ <;> cases u₁ <;> cases f₂ <;> cases u₂ <;> simp_all [seenByte]
 
 /-- A reader reads back what a daemon published that it saw: a summary that reads records shows
 what the daemon would have answered. -/

@@ -263,6 +263,34 @@ def Linger.Session.State.nextTick : State → Option Nat := sorry
 @[expose]
 def Linger.Session.infoText : State → List UInt8 := sorry
 
+/-- The fields of the session's `info` reply, its labels included. -/
+@[expose]
+def Linger.Session.infoFields : State → List (String × String) := sorry
+
+/-- The `info` fields that say how the session's program ended. -/
+@[expose]
+def Linger.Session.outcomeFields : Outcome → List (String × String) := sorry
+
+/-- One message's frame on the wire. -/
+@[expose]
+def Linger.Session.Wire.encode : Wire.Msg → List UInt8 := sorry
+
+/-- Feed one chunk of a stream to a decoder: its next state, and every message the chunk
+completes. -/
+@[expose]
+def Linger.Session.Wire.Decoder.feed : Wire.Decoder → List UInt8 → Wire.Decoder × List Wire.Msg :=
+  sorry
+
+/-- The bytes of a name's end record. -/
+@[expose]
+def Linger.Session.Record.encode : Record → List UInt8 := sorry
+
+/-- What a reader holding the name learns from the end record file, or from its absence: how the
+last session's program ended, `unknown` when that is not known, or `none` when no session has
+taken the name. -/
+@[expose]
+def Linger.Session.Record.answer : Option (List UInt8) → Option Outcome := sorry
+
 /-- The terminal a daemon boots with, given the one its checkpoint restored, if any. -/
 @[expose]
 def Linger.Session.bootVt : Option Vt.Vt → Vt.Vt := sorry
@@ -455,6 +483,21 @@ theorem feed_inert_rejects_print :
                 v.feed (bytes.map fun b => if b = 0x7F then 0x3F else b))
               v bytes =
             v := by
+  sorry
+
+/-- However a stream of messages the encoder may send is cut into chunks, a fresh decoder reads
+back exactly those messages, in order, with nothing left over and no error. -/
+theorem decode_encode_chunked (ms : List Wire.Msg) (fits : ∀ m ∈ ms, m.Fits)
+    (chunks : List (List UInt8)) (cut : chunks.flatten = ms.flatMap Wire.encode) :
+    Wire.feedAll Wire.Decoder.feed {} chunks = ({ buf := [], errored := false }, ms) := by sorry
+
+/-- `decode_encode_chunked` rejects an encoder that sends nothing. -/
+theorem decode_encode_chunked_rejects_silence :
+    ¬∀ (ms : List Wire.Msg),
+        (∀ m ∈ ms, m.Fits) →
+          ∀ (chunks : List (List UInt8)),
+            chunks.flatten = ms.flatMap (fun (_ : Wire.Msg) => ([] : List UInt8)) →
+              Wire.feedAll Wire.Decoder.feed {} chunks = ({ buf := [], errored := false }, ms) := by
   sorry
 
 /-! ## 2. Authority and attribution
@@ -679,9 +722,8 @@ theorem shellOf_choice_rejects_fixed :
 /-! ## 5. Accountability
 
 Not claimed yet: that whoever asks after a session ends hears its outcome. The name's end record
-keeps it, a record always gives a reader an answer (`Record.answer_isSome`), and suites test the
-files and locks around it. The session refuses a message it does not know (`onMsg_unknown`), and
-`info` reports each ending with its own fields (`outcomeFields_injective`). -/
+keeps it, and suites test the files and locks around it. The session refuses a message it does
+not know (`onMsg_unknown`), which handles one message and stays private to the session. -/
 
 /-- When the session's program ends, every client attached to the session or waiting for its end
 is told how the program ended and then the status a shell would report for that ending, and the
@@ -705,6 +747,70 @@ theorem step_ended_reports_rejects_status :
             ((fun s _ => (s, ([.send 0 (.exited 1), .exit] : List (Effect Replay.Plan)))) s
                   (Event.childExited o)).2.getLast? =
               some .exit := by
+  sorry
+
+/-- When the program ends, the session keeps its last screen: its last two effects save a
+checkpoint and exit, none before them discards the checkpoint, and the terminal is unchanged. -/
+theorem step_childExited_keeps (s : State) (o : Outcome) :
+    (∃ front,
+        (Session.step s (.childExited o)).2 = front ++ [.checkpoint, .exit] ∧
+          Effect.dropCheckpoint ∉ front) ∧
+      (Session.step s (.childExited o)).1.terminal = s.terminal := by
+  sorry
+
+/-- `step_childExited_keeps` rejects a session that discards its checkpoint when its program
+ends. -/
+theorem step_childExited_keeps_rejects_drop :
+    ¬∀ (s : State) (o : Outcome),
+        (∃ front,
+            ((fun (s : State) (_ : Event) =>
+                      (s, ([.dropCheckpoint, .checkpoint, .exit] : List (Effect Replay.Plan))))
+                    s (.childExited o)).2 =
+                front ++ [.checkpoint, .exit] ∧
+              Effect.dropCheckpoint ∉ front) ∧
+          ((fun (s : State) (_ : Event) =>
+                  (s, ([.dropCheckpoint, .checkpoint, .exit] : List (Effect Replay.Plan))))
+                s (.childExited o)).1.terminal =
+            s.terminal := by
+  sorry
+
+/-- A name's end record tells a reader how the last session's program ended, and a reader always
+gets an answer exactly when a record exists. -/
+theorem record_answer (o : Outcome) (file : Option (List UInt8)) :
+    Record.answer (some (Record.encode (.ended o))) = some o ∧
+      (Record.answer file).isSome = file.isSome := by
+  sorry
+
+/-- `record_answer` rejects a record whose every reader hears that the ending is unknown. -/
+theorem record_answer_rejects_unknown :
+    ¬∀ (o : Outcome) (file : Option (List UInt8)),
+        (fun (_ : Option (List UInt8)) => some Outcome.unknown) (some (Record.encode (.ended o))) =
+            some o ∧
+          ((fun (_ : Option (List UInt8)) => some Outcome.unknown) file).isSome = file.isSome := by
+  sorry
+
+/-- `info` reports each ending with its own fields: two different endings never read the same. -/
+theorem outcomeFields_injective (o₁ o₂ : Outcome)
+    (h : Session.outcomeFields o₁ = Session.outcomeFields o₂) : o₁ = o₂ := by sorry
+
+/-- `outcomeFields_injective` rejects an `info` that reports no ending. -/
+theorem outcomeFields_injective_rejects_silence :
+    ¬∀ (o₁ o₂ : Outcome),
+        (fun (_ : Outcome) => ([] : List (String × String))) o₁ =
+            (fun (_ : Outcome) => ([] : List (String × String))) o₂ →
+          o₁ = o₂ := by
+  sorry
+
+/-- Every `info` reply reports the protocol level the daemon speaks, so a client can refuse a
+request an older daemon cannot serve before sending it. -/
+theorem infoFields_protocol (s : State) :
+    ("protocol", toString Wire.protocol) ∈ Session.infoFields s := by sorry
+
+/-- `infoFields_protocol` rejects an `info` reply without fields. -/
+theorem infoFields_protocol_rejects_empty :
+    ¬∀ (s : State),
+        ("protocol", toString Wire.protocol) ∈
+          (fun (_ : State) => ([] : List (String × String))) s := by
   sorry
 
 /-- When each external operation returns a typed result, every finite batch of events

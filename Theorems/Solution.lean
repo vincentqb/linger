@@ -22,8 +22,12 @@ import Linger.Target.Proofs.Remote
 import all Linger.Session.Proofs.Buf
 import all Linger.Session.Proofs.Checkpoint
 import all Linger.Session.Proofs.Driver
+import all Linger.Session.Proofs.Record
 import all Linger.Session.Proofs.Session
 import all Linger.Session.Proofs.Start
+import all Linger.Session.Proofs.Wire
+public import Linger.Session.Record
+public import Linger.Session.Wire
 public import Linger.Session.Start
 import all Linger.Terminal.Vt
 import all Linger.Terminal.Proofs.Vt
@@ -230,6 +234,22 @@ theorem feed_inert_rejects_print :
   intro h
   have same := congrArg Vt.Vt.cursorPos (h (Vt.Vt.init 2 2) [0x7F] (by decide +kernel) (by simp))
   exact absurd same (by decide +kernel)
+
+theorem decode_encode_chunked (ms : List Wire.Msg) (fits : ∀ m ∈ ms, m.Fits)
+    (chunks : List (List UInt8)) (cut : chunks.flatten = ms.flatMap Wire.encode) :
+    Wire.feedAll Wire.Decoder.feed {} chunks = ({ buf := [], errored := false }, ms) := by
+  rw [Wire.feedAll_feed]
+  exact Wire.decode_encode_chunked ms (fun m hm => Wire.fits_wf m (fits m hm)) chunks cut
+
+theorem decode_encode_chunked_rejects_silence :
+    ¬∀ (ms : List Wire.Msg),
+        (∀ m ∈ ms, m.Fits) →
+          ∀ (chunks : List (List UInt8)),
+            chunks.flatten = ms.flatMap (fun (_ : Wire.Msg) => ([] : List UInt8)) →
+              Wire.feedAll Wire.Decoder.feed {} chunks = ({ buf := [], errored := false }, ms) := by
+  intro h
+  have read := h [.done] (by simp [Wire.Msg.Fits]) [] (by simp)
+  exact absurd (congrArg Prod.snd read) (by simp [Wire.feedAll])
 
 theorem start_plan (live saved : Bool) :
     Start.plan live saved = if live then .running else if saved then .saved else .take :=
@@ -457,6 +477,67 @@ theorem step_ended_reports_rejects_status :
       (.inl rfl)
   have same := heard.eq_of_length rfl
   simp at same
+
+theorem step_childExited_keeps (s : State) (o : Outcome) :
+    (∃ front,
+        (Session.step s (.childExited o)).2 = front ++ [.checkpoint, .exit] ∧
+          Effect.dropCheckpoint ∉ front) ∧
+      (Session.step s (.childExited o)).1.terminal = s.terminal :=
+  Session.step_childExited_keeps s o
+
+theorem step_childExited_keeps_rejects_drop :
+    ¬∀ (s : State) (o : Outcome),
+        (∃ front,
+            ((fun (s : State) (_ : Event) =>
+                      (s, ([.dropCheckpoint, .checkpoint, .exit] : List (Effect Replay.Plan))))
+                    s (.childExited o)).2 =
+                front ++ [.checkpoint, .exit] ∧
+              Effect.dropCheckpoint ∉ front) ∧
+          ((fun (s : State) (_ : Event) =>
+                  (s, ([.dropCheckpoint, .checkpoint, .exit] : List (Effect Replay.Plan))))
+                s (.childExited o)).1.terminal =
+            s.terminal := by
+  intro h
+  obtain ⟨⟨front, effects, kept⟩, -⟩ := h (State.boot (Vt.Vt.init 1 1) [] []) .unknown
+  have dropped : [Effect.dropCheckpoint] ++ [.checkpoint, .exit] = front ++ [.checkpoint, .exit] :=
+    effects
+  rw [← List.append_cancel_right dropped] at kept
+  exact kept (List.mem_singleton_self _)
+
+theorem record_answer (o : Outcome) (file : Option (List UInt8)) :
+    Record.answer (some (Record.encode (.ended o))) = some o ∧
+      (Record.answer file).isSome = file.isSome :=
+  ⟨Record.answer_ended o, Record.answer_isSome file⟩
+
+theorem record_answer_rejects_unknown :
+    ¬∀ (o : Outcome) (file : Option (List UInt8)),
+        (fun (_ : Option (List UInt8)) => some Outcome.unknown) (some (Record.encode (.ended o))) =
+            some o ∧
+          ((fun (_ : Option (List UInt8)) => some Outcome.unknown) file).isSome = file.isSome := by
+  intro h
+  exact absurd (h (.exited 0) none).1 (by simp)
+
+theorem outcomeFields_injective (o₁ o₂ : Outcome)
+    (h : Session.outcomeFields o₁ = Session.outcomeFields o₂) : o₁ = o₂ :=
+  Session.outcomeFields_injective h
+
+theorem outcomeFields_injective_rejects_silence :
+    ¬∀ (o₁ o₂ : Outcome),
+        (fun (_ : Outcome) => ([] : List (String × String))) o₁ =
+            (fun (_ : Outcome) => ([] : List (String × String))) o₂ →
+          o₁ = o₂ := by
+  intro h
+  exact absurd (h (.exited 0) .unknown rfl) (by simp)
+
+theorem infoFields_protocol (s : State) :
+    ("protocol", toString Wire.protocol) ∈ Session.infoFields s := (Session.infoFields_protocol s).1
+
+theorem infoFields_protocol_rejects_empty :
+    ¬∀ (s : State),
+        ("protocol", toString Wire.protocol) ∈
+          (fun (_ : State) => ([] : List (String × String))) s := by
+  intro h
+  exact absurd (h (State.boot (Vt.Vt.init 1 1) [] [])) (by simp)
 
 theorem run_total_safe {World ε : Type}
     (execute : State → World → (eff : Effect Replay.Plan) → Except ε (World × Driver.Reply eff))

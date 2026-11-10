@@ -1,7 +1,8 @@
 module
 
-public import Linger.Session.Record
+import Linger.Session.Record
 public import Linger.Session.Shell.Paths
+public import Linger.Session.Spec
 
 public section
 

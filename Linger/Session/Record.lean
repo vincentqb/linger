@@ -21,25 +21,6 @@ output, 2 for unseen output), for a running program whose daemon says so. -/
 
 namespace Linger.Session
 
-/-- What a daemon last saw of its program's output: whether output is fresh (`⣷`), and whether
-some arrived since the session was last looked at (`⣿`), as `info` reports `fresh` and
-`unseen`. -/
-structure Seen where
-  /-- Output within the freshness window. -/
-  fresh : Bool
-  /-- Output since the session was last looked at. -/
-  unseen : Bool
-  deriving Repr, DecidableEq
-
-/-- What a name's end record says. -/
-inductive Record where
-  /-- A session took the name, and its program had not ended when this was written; with
-  `seen`, what its daemon then saw of the output. -/
-  | running (seen : Option Seen)
-  /-- The program of the session that last held the name ended this way. -/
-  | ended (outcome : Outcome)
-  deriving Repr, DecidableEq
-
 namespace Record
 
 /-- The byte of what a daemon saw: 1 for fresh output, plus 2 for unseen output. -/

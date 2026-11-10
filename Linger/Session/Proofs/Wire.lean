@@ -316,4 +316,32 @@ theorem knownTag_tag_of_assigned (m : Msg) (h : ∀ t p, m ≠ .unknown t p) :
   | unknown t p => exact absurd rfl (h t p)
   | _ => rfl
 
+/-- A message that fits by the spec's reading (`Msg.Fits`) is one the encoder may send. -/
+theorem fits_wf (m : Msg) (h : m.Fits) : m.WF := by
+  cases m with
+  | unknown t p =>
+    obtain ⟨short, unassigned⟩ := h
+    refine ⟨short, ?_⟩
+    simp only [knownTag, decide_eq_false_iff_not, UInt8.le_iff_toNat_le]
+    simp only [UInt8.reduceToNat]
+    omega
+  | input
+  | output
+  | infoReply
+  | labelSet
+  | labelUnset
+  | err => exact ⟨h, trivial⟩
+  | resize
+  | attach
+  | exited => exact ⟨by simp [Msg.payload, writeU32, maxPayload], trivial⟩
+  | ended o => exact ⟨by cases o <;> simp [Msg.payload, outcomeBytes, maxPayload], trivial⟩
+  | _ => exact ⟨by simp [Msg.payload, maxPayload], trivial⟩
+
+/-- The spec's fold over chunks (`Wire.feedAll`) is the decoder's own. -/
+theorem feedAll_feed (d : Decoder) (chunks : List (List UInt8)) :
+    feedAll Decoder.feed d chunks = d.feedAll chunks := by
+  induction chunks generalizing d with
+  | nil => rfl
+  | cons c cs ih => simp [feedAll, Decoder.feedAll, ih]
+
 end Linger.Session.Wire

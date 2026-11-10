@@ -8,11 +8,12 @@ public section
 /-! # What session headlines are stated in
 
 The values a session exchanges with its clients and its runtime (messages, client records,
-events and effects), the caps its state keeps, the contract on the effect interpreter, and
-predicates over the session's operations, which they take as parameters: the bounds a state
-keeps, the reachable states of the daemon's byte queues, and a model of how daemons and
-offline readers claim a session's resources. Bodies are exposed: each definition here is its
-own specification. -/
+events and effects, and the end record a name keeps), the caps its state keeps, the contract on
+the effect interpreter, and predicates over the session's operations, which they take as
+parameters: which messages fit a frame and what a decoder reads from a chunked stream, the
+bounds a state keeps, the reachable states of the daemon's byte queues, and a model of how
+daemons and offline readers claim a session's resources. Bodies are exposed: each definition
+here is its own specification. -/
 
 namespace Linger.Session
 
@@ -34,6 +35,25 @@ def Outcome.status : Outcome → UInt32
   | .exited code => code.toUInt32
   | .signaled signal => 128 + signal.toUInt32
   | .unknown => 125
+
+/-- What a daemon last saw of its program's output: whether output is fresh (`⣷`), and whether
+some arrived since the session was last looked at (`⣿`), as `info` reports `fresh` and
+`unseen`. -/
+structure Seen where
+  /-- Output within the freshness window. -/
+  fresh : Bool
+  /-- Output since the session was last looked at. -/
+  unseen : Bool
+  deriving Repr, DecidableEq
+
+/-- What a name's end record says. -/
+inductive Record where
+  /-- A session took the name, and its program had not ended when this was written; with
+  `seen`, what its daemon then saw of the output. -/
+  | running (seen : Option Seen)
+  /-- The program of the session that last held the name ended this way. -/
+  | ended (outcome : Outcome)
+  deriving Repr, DecidableEq
 
 end Linger.Session
 
@@ -197,6 +217,27 @@ structure Decoder where
   /-- An oversize frame arrived. The flag never clears, and no later chunk is decoded. -/
   errored : Bool := false
   deriving Repr, DecidableEq, Inhabited
+
+/-- A message the encoder may send: its bytes fit one frame's payload, and an `unknown` message
+carries a tag this version leaves unassigned, so that it cannot read back as a known one. -/
+@[expose]
+def Msg.Fits : Msg → Prop
+  | .input bytes | .output bytes | .infoReply bytes | .labelSet bytes | .labelUnset bytes |
+    .err bytes => bytes.length ≤ maxPayload
+  | .unknown tag payload => payload.length ≤ maxPayload ∧ 17 < tag.toNat
+  | _ => True
+
+/-- What a decoder reads from chunks fed one after another, starting in state `d`, as the
+runtime's read loop feeds one chunk each poll round: the state after the last chunk, and every
+message read, in order. -/
+@[expose]
+def feedAll (feed : Decoder → List UInt8 → Decoder × List Msg) (d : Decoder) :
+    List (List UInt8) → Decoder × List Msg
+  | [] => (d, [])
+  | c :: cs =>
+    let r := feed d c
+    let rest := feedAll feed r.1 cs
+    (rest.1, r.2 ++ rest.2)
 
 end Linger.Session.Wire
 
