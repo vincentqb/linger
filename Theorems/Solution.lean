@@ -1,6 +1,8 @@
 module
 
 public import Linger.Display.Status
+public import Linger.Display.Title
+public import Linger.Os.Env
 public import Linger.Session
 public import Linger.Session.Buf
 public import Linger.Session.Checkpoint
@@ -13,6 +15,8 @@ public import Linger.Terminal.Render
 public import Linger.Terminal.Replay
 public import Linger.Terminal.Spec
 import all Linger.Display.Proofs.Status
+import all Linger.Display.Proofs.Title
+import all Linger.Os.Proofs.Env
 import Linger.Target.Proofs.Name
 import Linger.Target.Proofs.Remote
 import all Linger.Session.Proofs.Buf
@@ -183,6 +187,50 @@ theorem replay_cursor_rejects_silence :
   | step next => cases next
   | done => exact absurd (congrArg Prod.fst cursor) (by decide +kernel)
 
+theorem feed_inert (v : Vt.Vt) (bytes : List UInt8) (between : v.atBoundary = true)
+    (inert : ∀ b ∈ bytes, b = 0x7F ∨ b < 0x07 ∨ 0x0F < b ∧ b < 0x20 ∧ b ≠ 0x1B) :
+    v.feed bytes = v := by
+  have ground : v.pstate = .ground ∧ v.u8need = 0 := by simpa [Vt.Vt.atBoundary] using between
+  have hosc : ∀ acc e, v.pstate ≠ .osc acc e := by
+    intro acc e
+    rw [ground.1]
+    simp
+  have hstr : v.pstate ≠ .str true := by
+    rw [ground.1]
+    simp
+  have step (b : UInt8) (hb : b = 0x7F ∨ b < 0x07 ∨ 0x0F < b ∧ b < 0x20 ∧ b ≠ 0x1B) :
+    v.step b = v := by
+    rcases hb with del | low | ⟨above, below, notEsc⟩
+    · subst del
+      exact Vt.step_del_inert ground.2 hosc hstr
+    · have below : b < 0x20 := by
+        simp only [UInt8.lt_iff_toNat_lt] at low ⊢
+        simp only [UInt8.reduceToNat] at low ⊢
+        omega
+      have notEsc : b ≠ 0x1B := by
+        rintro rfl
+        exact absurd low (by decide)
+      exact Vt.step_c0_inert below (.inl low) notEsc ground.2 hosc hstr
+    · exact Vt.step_c0_inert below (.inr above) notEsc ground.2 hosc hstr
+  show bytes.foldl Vt.Vt.step v = v
+  induction bytes with
+  | nil => rfl
+  | cons b rest ih =>
+    rw [List.foldl_cons, step b (inert b (by simp))]
+    exact ih (fun b hb => inert b (by simp [hb]))
+
+theorem feed_inert_rejects_print :
+    ¬∀ (v : Vt.Vt) (bytes : List UInt8),
+        v.atBoundary = true →
+          (∀ b ∈ bytes, b = 0x7F ∨ b < 0x07 ∨ 0x0F < b ∧ b < 0x20 ∧ b ≠ 0x1B) →
+          (fun (v : Vt.Vt) (bytes : List UInt8) =>
+                v.feed (bytes.map fun b => if b = 0x7F then 0x3F else b))
+              v bytes =
+            v := by
+  intro h
+  have same := congrArg Vt.Vt.cursorPos (h (Vt.Vt.init 2 2) [0x7F] (by decide +kernel) (by simp))
+  exact absurd same (by decide +kernel)
+
 theorem start_plan (live saved : Bool) :
     Start.plan live saved = if live then .running else if saved then .saved else .take :=
   Start.plan_eq live saved
@@ -257,6 +305,16 @@ theorem run_readonly_rejects_kill :
   · cases closed
   · cases saved
 
+theorem remotesFile_home (home : Option String) :
+    Os.Env.remotesFile home = none ↔ home = none ∨ home = some "" :=
+  Os.Env.remotesFile_eq_none_iff home
+
+theorem remotesFile_home_rejects_shared :
+    ¬∀ (home : Option String),
+        (fun (_ : Option String) => some "remotes") home = none ↔ home = none ∨ home = some "" := by
+  intro h
+  exact absurd ((h none).mpr (.inl rfl)) (by simp)
+
 theorem check_eq_some_iff (s result : String) :
     Name.check s = some result ↔ result = s ∧ Name.Valid s := Name.check_eq_some_iff s result
 
@@ -277,6 +335,104 @@ theorem command_argv_rejects_empty :
   have words := h "" []
   cases words
   simp_all [Remote.Shell.word]
+
+theorem check_no_alias (a b name : String) (ha : Name.check a = some name)
+    (hb : Name.check b = some name) : a = b := Name.check_no_alias ha hb
+
+theorem check_no_alias_rejects_fold :
+    ¬∀ (a b name : String),
+        (fun (_ : String) => some "s") a = some name →
+          (fun (_ : String) => some "s") b = some name → a = b := by
+  intro h
+  exact absurd (h "a" "b" "s" rfl rfl) (by decide)
+
+theorem targetArgs_targetOperands (name : String) (rest : List String) :
+    Remote.targetArgs (Remote.targetOperands name ++ rest) = some (name, rest) :=
+  Remote.targetArgs_targetOperands name rest
+
+theorem targetArgs_targetOperands_rejects_none :
+    ¬∀ (name : String) (rest : List String),
+        Remote.targetArgs ((fun (_ : String) => ([] : List String)) name ++ rest) =
+          some (name, rest) := by
+  intro h
+  have read := h "s" []
+  simp [Remote.targetArgs_nil] at read
+
+theorem shellQuote_roundtrip (s : String) (tail : List Char)
+    (boundary : tail = [] ∨ ∃ rest, tail = ' ' :: rest) :
+    Remote.Shell.word ((Remote.shellQuote s).toList ++ tail) = some (s.toList, tail) :=
+  Remote.shellQuote_roundtrip s tail boundary
+
+theorem shellQuote_roundtrip_rejects_bare :
+    ¬∀ (s : String) (tail : List Char),
+        (tail = [] ∨ ∃ rest, tail = ' ' :: rest) →
+          Remote.Shell.word (((fun (s : String) => s) s).toList ++ tail) =
+            some (s.toList, tail) := by
+  intro h
+  have read := h "" [] (.inl rfl)
+  simp [Remote.Shell.word] at read
+
+theorem checkHosts_ok_iff (hosts result : List String) :
+    Remote.checkHosts hosts = .ok result ↔
+      result = hosts ∧ hosts.Nodup ∧ ∀ x ∈ hosts, Remote.hostClean x = true :=
+  Remote.checkHosts_ok_iff hosts result
+
+theorem checkHosts_ok_iff_rejects_any :
+    ¬∀ (hosts result : List String),
+        (fun (hosts : List String) => (.ok hosts : Except String (List String))) hosts =
+            .ok result ↔
+          result = hosts ∧ hosts.Nodup ∧ ∀ x ∈ hosts, Remote.hostClean x = true := by
+  intro h
+  have twice := ((h ["a", "a"] ["a", "a"]).mp rfl).2.1
+  simp at twice
+
+theorem detach_key (flag : Option String) :
+    Os.Env.detachEnabled true flag = true ∧ Os.Env.detachEnabled false flag = flag.isNone :=
+  ⟨Os.Env.detachEnabled_readOnly flag, Os.Env.detachEnabled_writable flag⟩
+
+theorem detach_key_rejects_never :
+    ¬∀ (flag : Option String),
+        (fun (_ : Bool) (_ : Option String) => false) true flag = true ∧
+          (fun (_ : Bool) (_ : Option String) => false) false flag = flag.isNone := by
+  intro h
+  exact absurd (h none).1 (by decide)
+
+theorem resumeDir_where (home : Option String) (saved dir : String) (set : dir ≠ "") :
+    Os.Env.resumeDir home saved true = some saved ∧
+      Os.Env.resumeDir (some dir) saved false = some dir ∧
+      Os.Env.resumeDir none saved false = none ∧ Os.Env.resumeDir (some "") saved false = none :=
+  ⟨Os.Env.resumeDir_saved home saved, Os.Env.resumeDir_home set saved,
+    (Os.Env.resumeDir_absent saved).1, (Os.Env.resumeDir_absent saved).2⟩
+
+theorem resumeDir_where_rejects_gone :
+    ¬∀ (home : Option String) (saved dir : String),
+        dir ≠ "" →
+          (fun (_ : Option String) (saved : String) (_ : Bool) => some saved) home saved true =
+              some saved ∧
+            (fun (_ : Option String) (saved : String) (_ : Bool) => some saved) (some dir) saved
+                false =
+              some dir ∧
+            (fun (_ : Option String) (saved : String) (_ : Bool) => some saved) none saved false =
+              none ∧
+            (fun (_ : Option String) (saved : String) (_ : Bool) => some saved) (some "") saved
+                false =
+              none := by
+  intro h
+  exact absurd (h none "a" "b" (by decide)).2.1 (by decide)
+
+theorem shellOf_choice (shell : String) (set : shell ≠ "") :
+    Os.Env.shellOf (some shell) = shell ∧
+      Os.Env.shellOf none = "sh" ∧ Os.Env.shellOf (some "") = "sh" :=
+  ⟨Os.Env.shellOf_set set, Os.Env.shellOf_absent.1, Os.Env.shellOf_absent.2⟩
+
+theorem shellOf_choice_rejects_fixed :
+    ¬∀ (shell : String),
+        shell ≠ "" →
+          (fun (_ : Option String) => "sh") (some shell) = shell ∧
+            (fun (_ : Option String) => "sh") none = "sh" ∧
+            (fun (_ : Option String) => "sh") (some "") = "sh" := by
+  intro h
+  exact absurd (h "fish" (by decide)).1 (by decide)
 
 theorem step_ended_reports (s : State) (o : Outcome) {c : Client} (hc : c ∈ s.roster)
     (listening : c.attached = true ∨ c.waiting = true) :
@@ -398,6 +554,32 @@ theorem reachableOut_bound_rejects_uncut :
   rw [appended, empty] at owed
   exact absurd owed (by decide)
 
+theorem repeatAtMost_eq_repeat (v : Vt.Vt) (cap count : Nat) (f : Vt.Vt → Vt.Vt) :
+    v.repeatAtMost cap count f = Nat.repeat f (min count cap) v :=
+  Vt.repeatAtMost_eq_repeat v cap count f
+
+theorem repeatAtMost_eq_repeat_rejects_uncapped :
+    ¬∀ (v : Vt.Vt) (cap count : Nat) (f : Vt.Vt → Vt.Vt),
+        (fun (v : Vt.Vt) (_ count : Nat) (f : Vt.Vt → Vt.Vt) => Nat.repeat f count v) v cap count
+            f =
+          Nat.repeat f (min count cap) v := by
+  intro h
+  have same := congrArg Vt.Vt.colCount (h (Vt.Vt.init 1 1) 0 1 (fun _ => Vt.Vt.init 2 1))
+  exact absurd same (by decide +kernel)
+
+theorem next_bounded {budget : Nat} {p q : Replay.Plan} {bytes : Render.Bytes}
+    (h : Replay.next budget p = some (bytes, q)) : bytes.length ≤ budget := Replay.next_bounded h
+
+theorem next_bounded_rejects_overrun :
+    ¬∀ {budget : Nat} {p q : Replay.Plan} {bytes : Render.Bytes},
+        (fun (_ : Nat) (p : Replay.Plan) => some (([0] : Render.Bytes), p)) budget p =
+            some (bytes, q) →
+          bytes.length ≤ budget := by
+  intro h
+  exact
+    absurd (@h 0 (Replay.start (Vt.Vt.init 1 1)) (Replay.start (Vt.Vt.init 1 1)) [0] rfl)
+      (by decide)
+
 theorem loadBytes_saveBytes_live (c : Checkpoint.Ckpt Vt.Vt)
     (h :
       Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
@@ -449,6 +631,23 @@ theorem resume_restores_rejects_fresh :
   rw [terminal] at fresh
   exact absurd (congrArg Vt.Vt.colCount fresh) (by decide +kernel)
 
+theorem loadBytes_resave {b : ByteArray} {c : Checkpoint.Ckpt Vt.Vt}
+    (h : Checkpoint.loadBytes b = some c) :
+    Checkpoint.loadBytes (Checkpoint.saveBytes c) = some c := Checkpoint.loadBytes_resave h
+
+theorem loadBytes_resave_rejects_fixed :
+    ¬∀ {b : ByteArray} {c : Checkpoint.Ckpt Vt.Vt},
+        Checkpoint.loadBytes b = some c →
+          Checkpoint.loadBytes
+              ((fun (_ : Checkpoint.Ckpt Vt.Vt) => Checkpoint.saveBytes ⟨Vt.Vt.init 1 1, "x", []⟩)
+                c) =
+            some c := by
+  intro h
+  have empty := loadBytes_saveBytes_live ⟨Vt.Vt.init 1 1, "", []⟩ (.init 1 1)
+  have other := loadBytes_saveBytes_live ⟨Vt.Vt.init 1 1, "x", []⟩ (.init 1 1)
+  have same := (h empty).symm.trans other
+  exact absurd (congrArg (Option.map Checkpoint.Ckpt.cwd) same) (by decide)
+
 theorem screenText_text (v : Vt.Vt) :
     ∃ cs : List Char,
       Render.screenText v = cs.flatMap String.utf8EncodeChar ∧
@@ -473,6 +672,71 @@ theorem screenText_text_rejects_escape :
     exact List.mem_singleton_self _
   obtain ⟨c, member, byte⟩ := List.mem_flatMap.mp escape
   rcases safe c member with newline | ⟨printable, notDel, -⟩
+  · subst newline
+    revert byte
+    decide
+  · rw [← Render.utf8_eq_utf8EncodeChar] at byte
+    exact absurd (Render.utf8_no_ctl c printable notDel _ byte).1 (by decide)
+
+theorem history_text (v : Vt.Vt) :
+    ∃ cs : List Char,
+      Render.history v = cs.flatMap String.utf8EncodeChar ∧
+        ∀ c ∈ cs,
+          c = '\n' ∨ (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := by
+  obtain ⟨cs, text, safe⟩ := Render.history_text v
+  refine ⟨cs, ?_, safe⟩
+  rw [text]
+  exact congrArg (cs.flatMap ·) (funext Render.utf8_eq_utf8EncodeChar)
+
+theorem history_text_rejects_escape :
+    ¬∀ (v : Vt.Vt),
+        ∃ cs : List Char,
+          (fun (_ : Vt.Vt) => ([0x1B] : Render.Bytes)) v = cs.flatMap String.utf8EncodeChar ∧
+            ∀ c ∈ cs,
+              c = '\n' ∨
+                (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := by
+  intro h
+  obtain ⟨cs, text, safe⟩ := h (Vt.Vt.init 1 1)
+  have escape : (0x1B : UInt8) ∈ cs.flatMap String.utf8EncodeChar := by
+    rw [← text]
+    exact List.mem_singleton_self _
+  obtain ⟨c, member, byte⟩ := List.mem_flatMap.mp escape
+  rcases safe c member with newline | ⟨printable, notDel, -⟩
+  · subst newline
+    revert byte
+    decide
+  · rw [← Render.utf8_eq_utf8EncodeChar] at byte
+    exact absurd (Render.utf8_no_ctl c printable notDel _ byte).1 (by decide)
+
+theorem infoText_text (s : State) :
+    ∃ cs : List Char,
+      Session.infoText s = cs.flatMap String.utf8EncodeChar ∧
+        ∀ c ∈ cs,
+          c = '\t' ∨
+            c = '\n' ∨ (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := by
+  obtain ⟨cs, text, safe⟩ := Session.infoText_text s
+  refine ⟨cs, ?_, safe⟩
+  rw [text]
+  exact congrArg (cs.flatMap ·) (funext Render.utf8_eq_utf8EncodeChar)
+
+theorem infoText_text_rejects_escape :
+    ¬∀ (s : State),
+        ∃ cs : List Char,
+          (fun (_ : State) => ([0x1B] : List UInt8)) s = cs.flatMap String.utf8EncodeChar ∧
+            ∀ c ∈ cs,
+              c = '\t' ∨
+                c = '\n' ∨
+                (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := by
+  intro h
+  obtain ⟨cs, text, safe⟩ := h (State.boot (Vt.Vt.init 1 1) [] [])
+  have escape : (0x1B : UInt8) ∈ cs.flatMap String.utf8EncodeChar := by
+    rw [← text]
+    exact List.mem_singleton_self _
+  obtain ⟨c, member, byte⟩ := List.mem_flatMap.mp escape
+  rcases safe c member with tab | newline | ⟨printable, notDel, -⟩
+  · subst tab
+    revert byte
+    decide
   · subst newline
     revert byte
     decide
@@ -602,5 +866,24 @@ theorem summary_exact_rejects_count :
               else [(toString (statuses.count .unknown)).push (Status.icon .unknown)])) := by
   intro h
   exact absurd (h []) (by simp)
+
+theorem compose_attention_last (session application summary : String) (capacity : Nat) :
+    Title.compose session application summary capacity =
+      Title.compose session application ""
+          (capacity - (if summary.isEmpty then "" else " · " ++ summary).length) ++
+        (if summary.isEmpty then "" else " · " ++ summary) :=
+  Title.compose_attention_last session application summary capacity
+
+theorem compose_attention_last_rejects_first :
+    ¬∀ (session application summary : String) (capacity : Nat),
+        (fun (session application summary : String) (_ : Nat) => summary ++ session ++ application)
+            session application summary capacity =
+          (fun (session application summary : String) (_ : Nat) =>
+                summary ++ session ++ application)
+              session application ""
+              (capacity - (if summary.isEmpty then "" else " · " ++ summary).length) ++
+            (if summary.isEmpty then "" else " · " ++ summary) := by
+  intro h
+  exact absurd (h "" "" "x" 0) (by decide)
 
 end Linger

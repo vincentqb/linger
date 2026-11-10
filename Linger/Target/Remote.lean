@@ -1,6 +1,7 @@
 module
 
 import Linger.Target.Name
+import Linger.Target.Spec
 
 public section
 
@@ -80,13 +81,6 @@ def parse (out : String) : List RemoteRow :=
 def firstDupHost : List String → Option String
   | [] => none
   | h :: t => if t.contains h then some h else firstDupHost t
-
-/-- A host string fit to hand to `ssh` argv: no C0/C1 controls or DEL. **Not**
-`Name.sanitize`, which would be wrong twice over — `@` is not an `okChar`, so it
-would destroy a legitimate `user@host` target, and silently rewriting a host means
-connecting somewhere the user did not ask for. -/
-def hostClean (h : String) : Bool :=
-  h.toList.all (fun c => c.toNat ≥ 32 && (c.toNat < 127 || c.toNat ≥ 160))
 
 /-- Validate the `-r` host list. Two rejections, both **loud**, because each is a
 configuration mistake with no valid meaning: a repeated host would double-query and

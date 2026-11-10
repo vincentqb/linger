@@ -283,7 +283,7 @@ Step 0 ledger item 2, §Row/§Status integrity). That shape was also what made t
 output unprovable — a `String` literal does not reduce in the kernel, so no theorem
 could see its bytes, which is exactly the argument in `Linger/Terminal/Render.lean`'s
 header. Building `List UInt8` directly fixes both at once. -/
-private def infoText (s : State) : List UInt8 :=
+def infoText (s : State) : List UInt8 :=
   (infoFields s).flatMap
     (fun (k, v) =>
       Render.utf8s (k.toList.map Render.textChar) ++ [0x09] ++

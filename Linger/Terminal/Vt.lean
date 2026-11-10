@@ -724,7 +724,7 @@ private def Vt.scrollDown (v : Vt) : Vt := v.scrollDownIn v.top v.bot
 count is input and reaches 65535, so every caller passes as `cap` the screen
 measurement past which further repeats leave the screen as it is, and the screen's
 dimensions are clamped to [1, 1000]. -/
-private def Vt.repeatAtMost (v : Vt) (cap count : Nat) (f : Vt → Vt) : Vt :=
+def Vt.repeatAtMost (v : Vt) (cap count : Nat) (f : Vt → Vt) : Vt :=
   (List.range (min count cap)).foldl (fun w _ => f w) v
 
 /-! ## Cursor motion -/

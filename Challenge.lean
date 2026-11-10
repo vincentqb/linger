@@ -67,6 +67,42 @@ def Linger.Target.Name.check : String → Option String := sorry
 @[expose]
 def Linger.Target.Remote.command : String → List String → String := sorry
 
+/-- The target and the command's words that `attach` and `capture` read from their arguments. -/
+@[expose]
+def Linger.Target.Remote.targetArgs : List String → Option (String × List String) := sorry
+
+/-- The operands that place a target in an argv linger builds for itself. -/
+@[expose]
+def Linger.Target.Remote.targetOperands : String → List String := sorry
+
+/-- One word quoted for a remote POSIX shell. -/
+@[expose]
+def Linger.Target.Remote.shellQuote : String → String := sorry
+
+/-- The remote host list, checked: the hosts back, or why the list is refused. -/
+@[expose]
+def Linger.Target.Remote.checkHosts : List String → Except String (List String) := sorry
+
+/-! ### Environment -/
+
+/-- The program a session starts without a command, from `SHELL`. -/
+@[expose]
+def Linger.Os.Env.shellOf : Option String → String := sorry
+
+/-- The remote hosts file, from `HOME`. -/
+@[expose]
+def Linger.Os.Env.remotesFile : Option String → Option String := sorry
+
+/-- Whether the detach key detaches, for a read-only attach or a writable one, from
+`LINGER_NO_DETACH_KEY`. -/
+@[expose]
+def Linger.Os.Env.detachEnabled : Bool → Option String → Bool := sorry
+
+/-- Where a resumed session runs, from `HOME`, its saved directory and whether that is still a
+directory. -/
+@[expose]
+def Linger.Os.Env.resumeDir : Option String → String → Bool → Option String := sorry
+
 /-! ### Terminal -/
 
 /-- A terminal: the emulator state a session keeps of its pty's screen. -/
@@ -129,6 +165,11 @@ def Linger.Terminal.Vt.Vt.windowTitle : Vt.Vt → String := sorry
 @[expose]
 def Linger.Terminal.Vt.Vt.atBoundary : Vt.Vt → Bool := sorry
 
+/-- Apply a step as many times as a control sequence's count asks, but at most `cap` times. -/
+@[expose]
+def Linger.Terminal.Vt.Vt.repeatAtMost : Vt.Vt → (cap count : Nat) → (Vt.Vt → Vt.Vt) → Vt.Vt :=
+  sorry
+
 /-- The history rows the repaint carries. -/
 @[expose]
 def Linger.Terminal.Render.sbRows : Vt.Vt → Array Vt.Row := sorry
@@ -136,6 +177,10 @@ def Linger.Terminal.Render.sbRows : Vt.Vt → Array Vt.Row := sorry
 /-- The screen as text, as `linger capture` prints it. -/
 @[expose]
 def Linger.Terminal.Render.screenText : Vt.Vt → Render.Bytes := sorry
+
+/-- The history and then the screen as text, as `linger capture --history` prints them. -/
+@[expose]
+def Linger.Terminal.Render.history : Vt.Vt → Render.Bytes := sorry
 
 /-- The sequence linger sends a terminal it hands back. -/
 @[expose]
@@ -168,6 +213,11 @@ def Linger.Display.Status.icon : Status.Status → Char := sorry
 /-- The attention summary titles and `ls --summary` show for the statuses of some sessions. -/
 @[expose]
 def Linger.Display.Status.summary : List Status.Status → String := sorry
+
+/-- A window title from the session's name, the application's title and the attention summary,
+within a capacity in characters. -/
+@[expose]
+def Linger.Display.Title.compose : String → String → String → Nat → String := sorry
 
 /-! ### Sessions -/
 
@@ -208,6 +258,10 @@ def Linger.Session.State.scanner : State → Mediation.Scan := sorry
 /-- When the session next needs a tick, if ever: `none` when it waits only for events. -/
 @[expose]
 def Linger.Session.State.nextTick : State → Option Nat := sorry
+
+/-- The text of the session's `info` reply: one field per line, its key, a tab and its value. -/
+@[expose]
+def Linger.Session.infoText : State → List UInt8 := sorry
 
 /-- The terminal a daemon boots with, given the one its checkpoint restored, if any. -/
 @[expose]
@@ -386,6 +440,23 @@ theorem replay_cursor_rejects_silence :
                   (w.feed bytes).cursorPos = v.cursorPos := by
   sorry
 
+/-- DEL bytes, and C0 controls the terminal does not act on, sent between control sequences and
+characters change nothing: the terminal neither prints them nor reacts to them. -/
+theorem feed_inert (v : Vt.Vt) (bytes : List UInt8) (between : v.atBoundary = true)
+    (inert : ∀ b ∈ bytes, b = 0x7F ∨ b < 0x07 ∨ 0x0F < b ∧ b < 0x20 ∧ b ≠ 0x1B) :
+    v.feed bytes = v := by sorry
+
+/-- `feed_inert` rejects a terminal that prints DEL as a question mark. -/
+theorem feed_inert_rejects_print :
+    ¬∀ (v : Vt.Vt) (bytes : List UInt8),
+        v.atBoundary = true →
+          (∀ b ∈ bytes, b = 0x7F ∨ b < 0x07 ∨ 0x0F < b ∧ b < 0x20 ∧ b ≠ 0x1B) →
+          (fun (v : Vt.Vt) (bytes : List UInt8) =>
+                v.feed (bytes.map fun b => if b = 0x7F then 0x3F else b))
+              v bytes =
+            v := by
+  sorry
+
 /-! ## 2. Authority and attribution
 
 A watcher is a client attached without a size. Not claimed yet: that a name has one owner
@@ -453,12 +524,23 @@ theorem run_readonly_rejects_kill :
               (∃ m, eff = .send id m) ∨ eff = .close id ∨ eff = .checkpoint := by
   sorry
 
+/-- No other account chooses the hosts linger asks: the remote hosts file is under a nonempty
+`HOME`, and with `HOME` unset or empty there is none, never a shared fallback. -/
+theorem remotesFile_home (home : Option String) :
+    Os.Env.remotesFile home = none ↔ home = none ∨ home = some "" := by sorry
+
+/-- `remotesFile_home` rejects a remotes file that falls back to a shared directory. -/
+theorem remotesFile_home_rejects_shared :
+    ¬∀ (home : Option String),
+        (fun (_ : Option String) => some "remotes") home = none ↔ home = none ∨ home = some "" := by
+  sorry
+
 /-! ## 3. Exactness
 
 Not claimed yet, though suites test it: that `start` runs its program in the caller's directory
 or not at all (125, as `env -C`), with the caller's environment, which only `TERM`,
-`TERM_PROGRAM`, `TERM_PROGRAM_VERSION` and `LINGER_SESSION` change. A resume runs in its saved
-directory, or in `$HOME` when that is gone, and then says so (`Env.resumeDir`). -/
+`TERM_PROGRAM`, `TERM_PROGRAM_VERSION` and `LINGER_SESSION` change, and that a resume says so
+when it runs in `$HOME`. -/
 
 /-- Validation accepts exactly the valid names, and returns each unchanged. -/
 theorem check_eq_some_iff (s result : String) :
@@ -483,10 +565,116 @@ theorem command_argv_rejects_empty :
           (("linger" :: verb :: words).map String.toList) := by
   sorry
 
+/-- No two spellings name one session: validation never maps two different strings to the
+same name. -/
+theorem check_no_alias (a b name : String) (ha : Name.check a = some name)
+    (hb : Name.check b = some name) : a = b := by sorry
+
+/-- `check_no_alias` rejects a validator that folds every spelling into one name. -/
+theorem check_no_alias_rejects_fold :
+    ¬∀ (a b name : String),
+        (fun (_ : String) => some "s") a = some name →
+          (fun (_ : String) => some "s") b = some name → a = b := by
+  sorry
+
+/-- A target linger places in an argv it builds for itself reads back as exactly that name,
+with every word after it left to the command, a name that starts with `-` included. -/
+theorem targetArgs_targetOperands (name : String) (rest : List String) :
+    Remote.targetArgs (Remote.targetOperands name ++ rest) = some (name, rest) := by sorry
+
+/-- `targetArgs_targetOperands` rejects operands that leave the target out. -/
+theorem targetArgs_targetOperands_rejects_none :
+    ¬∀ (name : String) (rest : List String),
+        Remote.targetArgs ((fun (_ : String) => ([] : List String)) name ++ rest) =
+          some (name, rest) := by
+  sorry
+
+/-- A word linger quotes for the remote shell reads back as exactly that word, and leaves what
+follows it, a space or the end, to be read next. -/
+theorem shellQuote_roundtrip (s : String) (tail : List Char)
+    (boundary : tail = [] ∨ ∃ rest, tail = ' ' :: rest) :
+    Remote.Shell.word ((Remote.shellQuote s).toList ++ tail) = some (s.toList, tail) := by sorry
+
+/-- `shellQuote_roundtrip` rejects a word passed to the remote shell unquoted. -/
+theorem shellQuote_roundtrip_rejects_bare :
+    ¬∀ (s : String) (tail : List Char),
+        (tail = [] ∨ ∃ rest, tail = ' ' :: rest) →
+          Remote.Shell.word (((fun (s : String) => s) s).toList ++ tail) =
+            some (s.toList, tail) := by
+  sorry
+
+/-- The remote host list is accepted exactly when no host repeats and none holds a control
+character or DEL, and then as given: a bad list is refused, never cleaned up. -/
+theorem checkHosts_ok_iff (hosts result : List String) :
+    Remote.checkHosts hosts = .ok result ↔
+      result = hosts ∧ hosts.Nodup ∧ ∀ x ∈ hosts, Remote.hostClean x = true := by
+  sorry
+
+/-- `checkHosts_ok_iff` rejects a check that accepts a host listed twice. -/
+theorem checkHosts_ok_iff_rejects_any :
+    ¬∀ (hosts result : List String),
+        (fun (hosts : List String) => (.ok hosts : Except String (List String))) hosts =
+            .ok result ↔
+          result = hosts ∧ hosts.Nodup ∧ ∀ x ∈ hosts, Remote.hostClean x = true := by
+  sorry
+
+/-- The detach key always detaches a read-only attach, whose only exit it is, and detaches a
+writable one exactly when `LINGER_NO_DETACH_KEY` is unset. -/
+theorem detach_key (flag : Option String) :
+    Os.Env.detachEnabled true flag = true ∧ Os.Env.detachEnabled false flag = flag.isNone := by
+  sorry
+
+/-- `detach_key` rejects a detach key that never detaches. -/
+theorem detach_key_rejects_never :
+    ¬∀ (flag : Option String),
+        (fun (_ : Bool) (_ : Option String) => false) true flag = true ∧
+          (fun (_ : Bool) (_ : Option String) => false) false flag = flag.isNone := by
+  sorry
+
+/-- A resumed session runs in its saved directory while that is a directory; once it is gone,
+in a nonempty `HOME`; and with `HOME` unset or empty, nowhere, so the resume refuses. -/
+theorem resumeDir_where (home : Option String) (saved dir : String) (set : dir ≠ "") :
+    Os.Env.resumeDir home saved true = some saved ∧
+      Os.Env.resumeDir (some dir) saved false = some dir ∧
+      Os.Env.resumeDir none saved false = none ∧ Os.Env.resumeDir (some "") saved false = none := by
+  sorry
+
+/-- `resumeDir_where` rejects a resume that runs in its saved directory once it is gone. -/
+theorem resumeDir_where_rejects_gone :
+    ¬∀ (home : Option String) (saved dir : String),
+        dir ≠ "" →
+          (fun (_ : Option String) (saved : String) (_ : Bool) => some saved) home saved true =
+              some saved ∧
+            (fun (_ : Option String) (saved : String) (_ : Bool) => some saved) (some dir) saved
+                false =
+              some dir ∧
+            (fun (_ : Option String) (saved : String) (_ : Bool) => some saved) none saved false =
+              none ∧
+            (fun (_ : Option String) (saved : String) (_ : Bool) => some saved) (some "") saved
+                false =
+              none := by
+  sorry
+
 /-! ## 4. Program identity
 
 Not claimed yet, though suites test it: that `start` runs exactly the program and words it is
 given, without a shell, and that `resume` runs `$SHELL` again on a saved session's last screen. -/
+
+/-- A session started without a command runs `$SHELL`, or `sh` when `SHELL` is unset or empty,
+since an empty word names no program. -/
+theorem shellOf_choice (shell : String) (set : shell ≠ "") :
+    Os.Env.shellOf (some shell) = shell ∧
+      Os.Env.shellOf none = "sh" ∧ Os.Env.shellOf (some "") = "sh" := by
+  sorry
+
+/-- `shellOf_choice` rejects a session that ignores `SHELL`. -/
+theorem shellOf_choice_rejects_fixed :
+    ¬∀ (shell : String),
+        shell ≠ "" →
+          (fun (_ : Option String) => "sh") (some shell) = shell ∧
+            (fun (_ : Option String) => "sh") none = "sh" ∧
+            (fun (_ : Option String) => "sh") (some "") = "sh" := by
+  sorry
 
 /-! ## 5. Accountability
 
@@ -597,6 +785,31 @@ theorem reachableOut_bound_rejects_uncut :
           Buf.owedLen b ≤ cap := by
   sorry
 
+/-- A control sequence's count, which can reach 65535, repeats its action at most `cap` times,
+and the terminal caps it by its screen: a larger count costs no more. -/
+theorem repeatAtMost_eq_repeat (v : Vt.Vt) (cap count : Nat) (f : Vt.Vt → Vt.Vt) :
+    v.repeatAtMost cap count f = Nat.repeat f (min count cap) v := by sorry
+
+/-- `repeatAtMost_eq_repeat` rejects a repeat that runs as many times as the count asks. -/
+theorem repeatAtMost_eq_repeat_rejects_uncapped :
+    ¬∀ (v : Vt.Vt) (cap count : Nat) (f : Vt.Vt → Vt.Vt),
+        (fun (v : Vt.Vt) (_ count : Nat) (f : Vt.Vt → Vt.Vt) => Nat.repeat f count v) v cap count
+            f =
+          Nat.repeat f (min count cap) v := by
+  sorry
+
+/-- A replay step never sends more bytes than its budget. -/
+theorem next_bounded {budget : Nat} {p q : Replay.Plan} {bytes : Render.Bytes}
+    (h : Replay.next budget p = some (bytes, q)) : bytes.length ≤ budget := by sorry
+
+/-- `next_bounded` rejects a replay that sends a byte whatever its budget. -/
+theorem next_bounded_rejects_overrun :
+    ¬∀ {budget : Nat} {p q : Replay.Plan} {bytes : Render.Bytes},
+        (fun (_ : Nat) (p : Replay.Plan) => some (([0] : Render.Bytes), p)) budget p =
+            some (bytes, q) →
+          bytes.length ≤ budget := by
+  sorry
+
 /-! ## 7. Recovery
 
 Every claim in section 1 covers the terminals the checkpoint decoder returns, so any bytes on
@@ -644,6 +857,22 @@ theorem resume_restores_rejects_fresh :
             booted.terminal = c.vt.quiesce ∧ booted.labelList = c.labels.take maxLabels := by
   sorry
 
+/-- A checkpoint that loads saves again as one that loads back the same: recovery never drifts
+across save and load. -/
+theorem loadBytes_resave {b : ByteArray} {c : Checkpoint.Ckpt Vt.Vt}
+    (h : Checkpoint.loadBytes b = some c) :
+    Checkpoint.loadBytes (Checkpoint.saveBytes c) = some c := by sorry
+
+/-- `loadBytes_resave` rejects a save that writes one fixed checkpoint whatever it is given. -/
+theorem loadBytes_resave_rejects_fixed :
+    ¬∀ {b : ByteArray} {c : Checkpoint.Ckpt Vt.Vt},
+        Checkpoint.loadBytes b = some c →
+          Checkpoint.loadBytes
+              ((fun (_ : Checkpoint.Ckpt Vt.Vt) => Checkpoint.saveBytes ⟨Vt.Vt.init 1 1, "x", []⟩)
+                c) =
+            some c := by
+  sorry
+
 /-! ## 8. Clean terminal
 
 Not claimed yet: one statement covering every sequence linger writes on its own account; each
@@ -665,6 +894,46 @@ theorem screenText_text_rejects_escape :
           (fun (_ : Vt.Vt) => ([0x1B] : Render.Bytes)) v = cs.flatMap String.utf8EncodeChar ∧
             ∀ c ∈ cs,
               c = '\n' ∨
+                (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := by
+  sorry
+
+/-- `linger capture --history` prints UTF-8 text with no C0 control, DEL or C1 control character
+other than its line terminators. -/
+theorem history_text (v : Vt.Vt) :
+    ∃ cs : List Char,
+      Render.history v = cs.flatMap String.utf8EncodeChar ∧
+        ∀ c ∈ cs,
+          c = '\n' ∨ (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := by
+  sorry
+
+/-- `history_text` rejects a history that prints an escape byte. -/
+theorem history_text_rejects_escape :
+    ¬∀ (v : Vt.Vt),
+        ∃ cs : List Char,
+          (fun (_ : Vt.Vt) => ([0x1B] : Render.Bytes)) v = cs.flatMap String.utf8EncodeChar ∧
+            ∀ c ∈ cs,
+              c = '\n' ∨
+                (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := by
+  sorry
+
+/-- An `info` reply is UTF-8 text with no C0 control, DEL or C1 control character other than its
+field and line separators, whatever its labels hold. -/
+theorem infoText_text (s : State) :
+    ∃ cs : List Char,
+      Session.infoText s = cs.flatMap String.utf8EncodeChar ∧
+        ∀ c ∈ cs,
+          c = '\t' ∨
+            c = '\n' ∨ (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := by
+  sorry
+
+/-- `infoText_text` rejects a reply that prints an escape byte. -/
+theorem infoText_text_rejects_escape :
+    ¬∀ (s : State),
+        ∃ cs : List Char,
+          (fun (_ : State) => ([0x1B] : List UInt8)) s = cs.flatMap String.utf8EncodeChar ∧
+            ∀ c ∈ cs,
+              c = '\t' ∨
+                c = '\n' ∨
                 (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := by
   sorry
 
@@ -814,6 +1083,28 @@ theorem summary_exact_rejects_count :
               else [(toString (statuses.count .exitedBad)).push (Status.icon .exitedBad)]) ++
               (if statuses.count .unknown = 0 then []
               else [(toString (statuses.count .unknown)).push (Status.icon .unknown)])) := by
+  sorry
+
+/-- A window title keeps the attention summary last and whole: whatever the capacity, the title
+is the session's name and the application's title within what the summary leaves, then the
+summary. -/
+theorem compose_attention_last (session application summary : String) (capacity : Nat) :
+    Title.compose session application summary capacity =
+      Title.compose session application ""
+          (capacity - (if summary.isEmpty then "" else " · " ++ summary).length) ++
+        (if summary.isEmpty then "" else " · " ++ summary) := by
+  sorry
+
+/-- `compose_attention_last` rejects a title that puts the summary first. -/
+theorem compose_attention_last_rejects_first :
+    ¬∀ (session application summary : String) (capacity : Nat),
+        (fun (session application summary : String) (_ : Nat) => summary ++ session ++ application)
+            session application summary capacity =
+          (fun (session application summary : String) (_ : Nat) =>
+                summary ++ session ++ application)
+              session application ""
+              (capacity - (if summary.isEmpty then "" else " · " ++ summary).length) ++
+            (if summary.isEmpty then "" else " · " ++ summary) := by
   sorry
 
 end Linger

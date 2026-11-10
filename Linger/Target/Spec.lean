@@ -31,6 +31,17 @@ remote-target delimiter, so a name never collides with that syntax. -/
 
 end Linger.Target.Name
 
+namespace Linger.Target.Remote
+
+/-- A host fit to hand to `ssh` argv: no C0 or C1 control character and no DEL. Not
+`Name.sanitize`, which would be wrong twice over: `@` is not an `okChar`, so it would destroy a
+legitimate `user@host` target, and silently rewriting a host means connecting somewhere the user
+did not ask for. -/
+@[expose] def hostClean (h : String) : Bool :=
+  h.toList.all (fun c => c.toNat ≥ 32 && (c.toNat < 127 || c.toNat ≥ 160))
+
+end Linger.Target.Remote
+
 namespace Linger.Target.Remote.Shell
 
 /-- Read a single-quoted region through its closing quote. -/

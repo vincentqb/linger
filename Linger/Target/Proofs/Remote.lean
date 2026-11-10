@@ -196,6 +196,9 @@ theorem targetArgs_targetOperands (name : String) (rest : List String) :
       exact option (by simp)
     simp [option, targetArgs, separator]
 
+/-- No arguments name no target. -/
+theorem targetArgs_nil : targetArgs [] = none := by simp [targetArgs]
+
 /-- **A bare option-like name is no operand.** Without `--`, a name starting with `-`
 is refused, so the round trip needs the separator; `--` itself reads the next word. -/
 theorem targetArgs_option (name : String) (rest : List String) (option : name.startsWith "-" = true)
