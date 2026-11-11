@@ -3,7 +3,6 @@ module
 public import Linger.App.Spec
 public import Linger.Display.Spec
 public import Linger.Import.Spec
-public import Linger.Os.Spec
 public import Linger.Selector.Spec
 public import Linger.Selector.Spec.Fuzzy
 public import Linger.Selector.Spec.Input
@@ -424,7 +423,7 @@ def Linger.Session.Start.environment : String → List (String × String) := sor
 
 /-- The status `start` returns for a program that could not start. -/
 @[expose]
-def Linger.Session.Start.failureStatus : Os.Spawn.Failure → UInt8 := sorry
+def Linger.Session.Start.failureStatus : Spawn.Failure → UInt8 := sorry
 
 /-- What a session's `info` reports of its start, given its name, its program's pid, when it
 started, its command, the directory its program runs in and, for a resume, its saved directory. -/
@@ -1328,9 +1327,9 @@ theorem failureStatus_exact (why : String) :
 /-- `failureStatus_exact` rejects a `start` that reports every failure alike. -/
 theorem failureStatus_exact_rejects_alike :
     ¬∀ (why : String),
-        (fun (_ : Os.Spawn.Failure) => (1 : UInt8)) (.directory why) = 125 ∧
-          (fun (_ : Os.Spawn.Failure) => (1 : UInt8)) (.notFound why) = 127 ∧
-          (fun (_ : Os.Spawn.Failure) => (1 : UInt8)) (.notRunnable why) = 126 := by
+        (fun (_ : Spawn.Failure) => (1 : UInt8)) (.directory why) = 125 ∧
+          (fun (_ : Spawn.Failure) => (1 : UInt8)) (.notFound why) = 127 ∧
+          (fun (_ : Spawn.Failure) => (1 : UInt8)) (.notRunnable why) = 126 := by
   sorry
 
 /-- A session's `info` names the directory its program runs in, "start_dir", and a resume that
@@ -1399,9 +1398,9 @@ directory linger asked for, reads `LINGER_SESSION` as the session's name, `TERM`
 `xterm-256color`, `TERM_PROGRAM` as `linger` and `TERM_PROGRAM_VERSION` as linger's version, and
 reads every other variable as that command had it. -/
 theorem start_runs (inherited : String → Option String)
-    (start : String → String → Array String → List (String × String) → Option Os.Spawn.Started)
-    (runs : Os.Spawn.Runs inherited start) (name dir shell : String) (argv : List String)
-    {started : Os.Spawn.Started}
+    (start : String → String → Array String → List (String × String) → Option Spawn.Started)
+    (runs : Spawn.Runs inherited start) (name dir shell : String) (argv : List String)
+    {started : Spawn.Started}
     (ok :
       start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
           (Start.environment name) =
@@ -1420,9 +1419,9 @@ theorem start_runs (inherited : String → Option String)
 /-- `start_runs` rejects a session whose program is not told the session's name. -/
 theorem start_runs_rejects_unnamed :
     ¬∀ (inherited : String → Option String)
-        (start : String → String → Array String → List (String × String) → Option Os.Spawn.Started),
-        Os.Spawn.Runs inherited start →
-          ∀ (name dir shell : String) (argv : List String) {started : Os.Spawn.Started},
+        (start : String → String → Array String → List (String × String) → Option Spawn.Started),
+        Spawn.Runs inherited start →
+          ∀ (name dir shell : String) (argv : List String) {started : Spawn.Started},
             start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
                   ((fun (_ : String) => ([] : List (String × String))) name) =
                 some started →
@@ -1798,7 +1797,7 @@ theorem captureBytes_bounded_rejects_unbounded :
 the program's terminal session hear SIGHUP first, as from a terminal that hung up, and when
 SIGKILL ends within a second every process it reaches, none of them still runs once the daemon's
 ending is over. -/
-theorem ending_clean (after : UInt32 → Nat → List Nat → List Nat) (ends : Os.Signal.Ends after)
+theorem ending_clean (after : UInt32 → Nat → List Nat → List Nat) (ends : Signal.Ends after)
     (alive : List Nat) :
     (Session.ending.head?.map (·.1)) = some 1 ∧
       Session.ending.foldl (fun still (signal : UInt32 × Nat) => after signal.1 signal.2 still)
@@ -1809,7 +1808,7 @@ theorem ending_clean (after : UInt32 → Nat → List Nat → List Nat) (ends : 
 /-- `ending_clean` rejects an ending that only hangs up. -/
 theorem ending_clean_rejects_hangup :
     ¬∀ (after : UInt32 → Nat → List Nat → List Nat),
-        Os.Signal.Ends after →
+        Signal.Ends after →
           ∀ (alive : List Nat),
             (([(1, 1000)] : List (UInt32 × Nat)).head?.map (·.1)) = some 1 ∧
               ([(1, 1000)] : List (UInt32 × Nat)).foldl
@@ -2041,14 +2040,14 @@ theorem ticks_settle_rejects_poll :
 /-- A daemon sleeps until the earliest deadline it holds, at once for one already past, or until
 an event when it holds none: when poll(2) sleeps as asked, a daemon's poll whose descriptors stay
 quiet returns at the earliest of its deadlines, and never when it holds none. -/
-theorem poll_wakes (returns : Int32 → Option Nat) (sleeps : Os.Poll.Sleeps returns) (now : Nat)
+theorem poll_wakes (returns : Int32 → Option Nat) (sleeps : Poll.Sleeps returns) (now : Nat)
     (deadlines : List Nat) (fit : ∀ d ∈ deadlines, d - now ≤ 2147483647) :
     returns (Session.pollTimeout now deadlines) = deadlines.min?.map (· - now) := by sorry
 
 /-- `poll_wakes` rejects a daemon that wakes every tenth of a second. -/
 theorem poll_wakes_rejects_polling :
     ¬∀ (returns : Int32 → Option Nat),
-        Os.Poll.Sleeps returns →
+        Poll.Sleeps returns →
           ∀ (now : Nat) (deadlines : List Nat),
             (∀ d ∈ deadlines, d - now ≤ 2147483647) →
               returns ((fun (_ : Nat) (_ : List Nat) => (100 : Int32)) now deadlines) =

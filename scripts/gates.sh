@@ -1106,6 +1106,8 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let [(]prog, args[)] := Sta
 for tie in \
   'trySpawnPty [(]UInt32[.]ofNat [(]Linger[.]Terminal[.]Vt[.]clampDim vt0[.]colCount[)][)] [(]UInt32[.]ofNat [(]Linger[.]Terminal[.]Vt[.]clampDim vt0[.]rowCount[)][)] cwd prog args [(][(]Start[.]environment name[)][.]toArray[.]map fun [(]key, value[)] => s!"[{]key[}]=[{]value[}]"[)]' \
   'req[.]tell [(][.]failed [(]Start[.]failureStatus failure[)] why[.]toUTF8[.]toList[)]' \
+  'private def failureOf : SpawnFailure → Linger[.]Session[.]Spawn[.]Failure [|] [.]directory why => [.]directory why [|] [.]notFound why => [.]notFound why [|] [.]notRunnable why => [.]notRunnable why' \
+  'if let [.]error reported := spawned then record[.]restore previous let failure := failureOf reported' \
   'State[.]boot vt0 [(][(]restore[.]map [(]·[.]2[)][)][.]getD [[][]][)] [(]Start[.]metadata name [(]toString pid[)] [(]toString created[)] [(]String[.]intercalate " " [(]prog :: args[.]toList[)][)] cwd [(]saved[.]map fun [(]_, dir, _[)] => dir[)][)]'; do
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "a session starts outside Start.environment, Start.failureStatus or Start.metadata: $tie"

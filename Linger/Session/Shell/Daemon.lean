@@ -802,8 +802,14 @@ structure Request where
   nobody has, and tells nothing when the command took it. -/
   tell : Start.Report → IO Unit
 
+/-- The spec's name for the operating system's report of a program that could not start. -/
+private def failureOf : SpawnFailure → Linger.Session.Spawn.Failure
+  | .directory why => .directory why
+  | .notFound why => .notFound why
+  | .notRunnable why => .notRunnable why
+
 /-- Why a program could not start, for a person. -/
-private def failureText (failure : Linger.Os.Spawn.Failure) (prog cwd : String) : String :=
+private def failureText (failure : Linger.Session.Spawn.Failure) (prog cwd : String) : String :=
   match failure with
   | .directory why => s!"cannot enter the directory {cwd}: {why}"
   | .notFound _ => s!"{prog}: not found"
@@ -929,8 +935,9 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
           catch err =>
             record.restore previous
             throw err
-        if let .error failure := spawned then
+        if let .error reported := spawned then
           record.restore previous
+          let failure := failureOf reported
           let why := failureText failure prog cwd
           match start with
           | some req =>

@@ -1,7 +1,6 @@
 module
 
 import all Linger.Os.Boundary
-public import Linger.Os.Spec
 import Std.Async.System
 
 public section
@@ -90,9 +89,19 @@ daemon polls its listener, its pty and at most `maxClients` clients, well under 
 def poll (fds events : Array UInt32) (timeoutMs : Int32) : IO (Array UInt32) :=
   Boundary.poll fds events timeoutMs
 
+/-- Why a program could not start in a new terminal, with the operating system's words. -/
+inductive SpawnFailure where
+  /-- Its directory could not be entered. -/
+  | directory (why : String)
+  /-- No program of its name was found. -/
+  | notFound (why : String)
+  /-- Its program was found and could not be run. -/
+  | notRunnable (why : String)
+  deriving Repr, DecidableEq
+
 /-- What failed, in the operating system's words: entering the directory, or running the
 program. -/
-private def failureWords : Spawn.Failure → String
+private def failureWords : SpawnFailure → String
   | .directory why => s!"spawn_pty: chdir: {why}"
   | .notFound why | .notRunnable why => s!"spawn_pty: execve: {why}"
 
@@ -104,11 +113,11 @@ enter fails the start, whatever `$HOME` is: a resume chooses its directory befor
 (`Linger.Os.Env.resumeDir`). Dimensions must fit 16 bits.
 
 Returns `(pid, master)`: the child, with SIGPIPE and SIGHUP at their defaults, and the
-pty master, close-on-exec and blocking. A program that cannot start is a `Spawn.Failure`;
+pty master, close-on-exec and blocking. A program that cannot start is a `SpawnFailure`;
 the other setup failures in the child throw. The C side reports both over a close-on-exec
 pipe, so no pid is returned for a program that never ran. -/
 def trySpawnPty (cols rows : UInt32) (cwd prog : String) (args : Array String)
-    (extraEnv : Array String) : IO (Except Spawn.Failure (UInt32 × UInt32)) := do
+    (extraEnv : Array String) : IO (Except SpawnFailure (UInt32 × UInt32)) := do
   checkWinsize cols rows
   checkCString "spawnPty cwd" cwd
   checkCommand "spawnPty" prog args

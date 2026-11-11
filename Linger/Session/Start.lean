@@ -1,7 +1,6 @@
 module
 
 public import Linger.Session.Spec
-public import Linger.Os.Spec
 import Linger.Terminal.Mediation
 
 public section
@@ -79,7 +78,7 @@ def environment (name : String) : List (String × String) :=
 /-- The status `start` returns for a program that could not start, as a shell or `env -C`
 reports it: 125 when its directory cannot be entered, 127 when no program of its name is found,
 and 126 when the program cannot be run. -/
-def failureStatus : Os.Spawn.Failure → UInt8
+def failureStatus : Spawn.Failure → UInt8
   | .directory _ => 125
   | .notFound _ => 127
   | .notRunnable _ => 126

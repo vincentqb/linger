@@ -1007,9 +1007,9 @@ theorem failureStatus_exact (why : String) :
 
 theorem failureStatus_exact_rejects_alike :
     ¬∀ (why : String),
-        (fun (_ : Os.Spawn.Failure) => (1 : UInt8)) (.directory why) = 125 ∧
-          (fun (_ : Os.Spawn.Failure) => (1 : UInt8)) (.notFound why) = 127 ∧
-          (fun (_ : Os.Spawn.Failure) => (1 : UInt8)) (.notRunnable why) = 126 := by
+        (fun (_ : Spawn.Failure) => (1 : UInt8)) (.directory why) = 125 ∧
+          (fun (_ : Spawn.Failure) => (1 : UInt8)) (.notFound why) = 127 ∧
+          (fun (_ : Spawn.Failure) => (1 : UInt8)) (.notRunnable why) = 126 := by
   intro h
   exact absurd (h "").1 (by decide)
 
@@ -1060,9 +1060,9 @@ theorem shellOf_choice_rejects_fixed :
   exact absurd (h "fish" (by decide)).1 (by decide)
 
 theorem start_runs (inherited : String → Option String)
-    (start : String → String → Array String → List (String × String) → Option Os.Spawn.Started)
-    (runs : Os.Spawn.Runs inherited start) (name dir shell : String) (argv : List String)
-    {started : Os.Spawn.Started}
+    (start : String → String → Array String → List (String × String) → Option Spawn.Started)
+    (runs : Spawn.Runs inherited start) (name dir shell : String) (argv : List String)
+    {started : Spawn.Started}
     (ok :
       start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
           (Start.environment name) =
@@ -1089,9 +1089,9 @@ theorem start_runs (inherited : String → Option String)
 
 theorem start_runs_rejects_unnamed :
     ¬∀ (inherited : String → Option String)
-        (start : String → String → Array String → List (String × String) → Option Os.Spawn.Started),
-        Os.Spawn.Runs inherited start →
-          ∀ (name dir shell : String) (argv : List String) {started : Os.Spawn.Started},
+        (start : String → String → Array String → List (String × String) → Option Spawn.Started),
+        Spawn.Runs inherited start →
+          ∀ (name dir shell : String) (argv : List String) {started : Spawn.Started},
             start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
                   ((fun (_ : String) => ([] : List (String × String))) name) =
                 some started →
@@ -1106,7 +1106,7 @@ theorem start_runs_rejects_unnamed :
                     started.env key = inherited key := by
   intro h
   have runs :
-    Os.Spawn.Runs (fun _ => none) fun dir prog args extra =>
+    Spawn.Runs (fun _ => none) fun dir prog args extra =>
       some
         { argv := prog :: args.toList, dir,
           env := fun key => (extra.reverse.lookup key).orElse fun _ => none } := by
@@ -1506,7 +1506,7 @@ theorem captureBytes_bounded_rejects_unbounded :
   intro h
   exact absurd (h "") (by simp)
 
-theorem ending_clean (after : UInt32 → Nat → List Nat → List Nat) (ends : Os.Signal.Ends after)
+theorem ending_clean (after : UInt32 → Nat → List Nat → List Nat) (ends : Signal.Ends after)
     (alive : List Nat) :
     (Session.ending.head?.map (·.1)) = some 1 ∧
       Session.ending.foldl (fun still (signal : UInt32 × Nat) => after signal.1 signal.2 still)
@@ -1517,14 +1517,14 @@ theorem ending_clean (after : UInt32 → Nat → List Nat → List Nat) (ends : 
 
 theorem ending_clean_rejects_hangup :
     ¬∀ (after : UInt32 → Nat → List Nat → List Nat),
-        Os.Signal.Ends after →
+        Signal.Ends after →
           ∀ (alive : List Nat),
             (([(1, 1000)] : List (UInt32 × Nat)).head?.map (·.1)) = some 1 ∧
               ([(1, 1000)] : List (UInt32 × Nat)).foldl
                   (fun still (signal : UInt32 × Nat) => after signal.1 signal.2 still) alive =
                 [] := by
   intro h
-  have ends : Os.Signal.Ends fun sig _ alive => if sig = 9 then [] else alive := by
+  have ends : Signal.Ends fun sig _ alive => if sig = 9 then [] else alive := by
     refine ⟨fun sig ms alive p hp => ?_, fun ms alive _ => by simp⟩
     by_cases h9 : sig = 9 <;> simp_all
   have survives := (h _ ends [1]).2
@@ -1771,7 +1771,7 @@ theorem ticks_settle_rejects_poll :
   intro h
   exact absurd (h (State.boot (Vt.Vt.init 1 1) [] []) 0 0 0 rfl rfl) (by simp)
 
-theorem poll_wakes (returns : Int32 → Option Nat) (sleeps : Os.Poll.Sleeps returns) (now : Nat)
+theorem poll_wakes (returns : Int32 → Option Nat) (sleeps : Poll.Sleeps returns) (now : Nat)
     (deadlines : List Nat) (fit : ∀ d ∈ deadlines, d - now ≤ 2147483647) :
     returns (Session.pollTimeout now deadlines) = deadlines.min?.map (· - now) := by
   rw [Session.pollTimeout_eq]
@@ -1784,14 +1784,14 @@ theorem poll_wakes (returns : Int32 → Option Nat) (sleeps : Os.Poll.Sleeps ret
 
 theorem poll_wakes_rejects_polling :
     ¬∀ (returns : Int32 → Option Nat),
-        Os.Poll.Sleeps returns →
+        Poll.Sleeps returns →
           ∀ (now : Nat) (deadlines : List Nat),
             (∀ d ∈ deadlines, d - now ≤ 2147483647) →
               returns ((fun (_ : Nat) (_ : List Nat) => (100 : Int32)) now deadlines) =
                 deadlines.min?.map (· - now) := by
   intro h
   have sleeps :
-    Os.Poll.Sleeps fun (t : Int32) => if t.toInt < 0 then none else some t.toNatClampNeg := by
+    Poll.Sleeps fun (t : Int32) => if t.toInt < 0 then none else some t.toNatClampNeg := by
     refine ⟨by decide, fun ms near => ?_⟩
     have small : ms < 2 ^ 31 := by omega
     simp [Int32.toInt_ofNat_of_lt small, Int32.toNatClampNeg_ofNat_of_lt small]
