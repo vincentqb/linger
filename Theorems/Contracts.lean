@@ -393,6 +393,31 @@ example (shell : String) (argv : List String) :
     Session.Start.programOf shell argv = (argv.headD shell, (argv.drop 1).toArray) := by
   with_reducible exact Session.Start.programOf_exact shell argv
 
+example (name key : String) (inherited : String → Option String) :
+    ((Session.Start.environment name).reverse.lookup key).orElse (fun _ => inherited key) =
+      if key = "LINGER_SESSION" then some name
+      else
+        if key = "TERM" then some "xterm-256color"
+        else
+          if key = "TERM_PROGRAM" then some "linger"
+          else
+            if key = "TERM_PROGRAM_VERSION" then some Terminal.Mediation.versionNumber
+            else inherited key := by
+  with_reducible exact Session.Start.environment_lookup name key inherited
+
+example (why : String) :
+    Session.Start.failureStatus (.directory why) = 125 ∧
+      Session.Start.failureStatus (.notFound why) = 127 ∧
+      Session.Start.failureStatus (.notRunnable why) = 126 := by
+  with_reducible exact Session.Start.failureStatus_exact why
+
+example (name pid created cmd dir : String) (saved : Option String) :
+    ("start_dir", dir) ∈ Session.Start.metadata name pid created cmd dir saved ∧
+      ∀ d,
+        ("saved_dir", d) ∈ Session.Start.metadata name pid created cmd dir saved ↔
+          saved = some d ∧ d ≠ dir := by
+  with_reducible exact Session.Start.metadata_dirs name pid created cmd dir saved
+
 -- Transport
 example (ms : List Wire.Msg) (hms : ∀ (m : Wire.Msg), m ∈ ms → m.WF) (chunks : List (List UInt8))
     (hc : chunks.flatten = List.flatMap Wire.encode ms) :

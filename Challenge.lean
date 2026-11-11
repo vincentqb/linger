@@ -3,6 +3,7 @@ module
 public import Linger.App.Spec
 public import Linger.Display.Spec
 public import Linger.Import.Spec
+public import Linger.Os.Spec
 public import Linger.Selector.Spec
 public import Linger.Selector.Spec.Fuzzy
 public import Linger.Selector.Spec.Input
@@ -55,8 +56,8 @@ program's parts, and `./lake comparator` checks that it proves exactly these, th
 the declared type, and that no axiom beyond `propext`, `Quot.sound` and `Classical.choice` is
 used. Changing a statement or a hole here changes what linger claims.
 
-Not claimed: anything about the IO executors, the C shim or the operating system, which suites
-test instead. -/
+Not claimed: that the IO executors, the C shim and the operating system behave as the world
+claims say, which the suites named with each claim exercise instead. -/
 
 public section
 
@@ -218,6 +219,11 @@ def Linger.Terminal.Render.history : Vt.Vt → Render.Bytes := sorry
 /-- The sequence linger sends a terminal it hands back. -/
 @[expose]
 def Linger.Terminal.Render.leaveAnsi : Render.Bytes := sorry
+
+/-- The version linger reports: `linger version`, `info`, XTVERSION and a session's
+`TERM_PROGRAM_VERSION`. -/
+@[expose]
+def Linger.Terminal.Mediation.versionNumber : String := sorry
 
 /-- A repaint streamed to a client in bounded chunks. -/
 @[expose]
@@ -395,6 +401,21 @@ def Linger.Session.Start.proceeds : Bool → Bool := sorry
 the command took the request's ticket and whether the program runs. -/
 @[expose]
 def Linger.Session.Start.answer : Bool → Bool → Start.Answer := sorry
+
+/-- The variables a session's program reads unlike the command that asked for the session, given
+the session's name. -/
+@[expose]
+def Linger.Session.Start.environment : String → List (String × String) := sorry
+
+/-- The status `start` returns for a program that could not start. -/
+@[expose]
+def Linger.Session.Start.failureStatus : Os.Spawn.Failure → UInt8 := sorry
+
+/-- What a session's `info` reports of its start, given its name, its program's pid, when it
+started, its command, the directory its program runs in and, for a resume, its saved directory. -/
+@[expose]
+def Linger.Session.Start.metadata :
+    (name pid created cmd dir : String) → Option String → List (String × String) := sorry
 
 /-- A byte queue the daemon keeps: its pty's input, or a client's output. -/
 @[expose]
@@ -1062,10 +1083,11 @@ theorem picker_create_new_rejects_empty :
 
 /-! ## 3. Exactness
 
-Not claimed yet, though suites test it: that `start` runs its program in the caller's directory
-or not at all (125, as `env -C`), with the caller's environment, which only `TERM`,
-`TERM_PROGRAM`, `TERM_PROGRAM_VERSION` and `LINGER_SESSION` change, and that a resume says so
-when it runs in `$HOME`. -/
+`start` runs its program in the caller's directory and with the caller's environment, which only
+`LINGER_SESSION`, `TERM`, `TERM_PROGRAM` and `TERM_PROGRAM_VERSION` change, when the operating
+system runs what linger asks (`start_runs`, in part 4). A program that cannot start there makes
+`start` return what `env -C` would, and a resume that runs elsewhere than its saved directory
+says so. -/
 
 /-- A command line reaches the executor it names, with its exact arguments: `attach` or `a`
 alone opens the selector, read-only on request; `tmux` hands the rest to save interchange; any
@@ -1280,10 +1302,51 @@ theorem resumeDir_where_rejects_gone :
               none := by
   sorry
 
+/-- A program that cannot start makes `start` return what a shell or `env -C` reports: 125 when
+its directory cannot be entered, 127 when no program of its name is found, and 126 when it cannot
+be run. -/
+theorem failureStatus_exact (why : String) :
+    Start.failureStatus (.directory why) = 125 ∧
+      Start.failureStatus (.notFound why) = 127 ∧ Start.failureStatus (.notRunnable why) = 126 := by
+  sorry
+
+/-- `failureStatus_exact` rejects a `start` that reports every failure alike. -/
+theorem failureStatus_exact_rejects_alike :
+    ¬∀ (why : String),
+        (fun (_ : Os.Spawn.Failure) => (1 : UInt8)) (.directory why) = 125 ∧
+          (fun (_ : Os.Spawn.Failure) => (1 : UInt8)) (.notFound why) = 127 ∧
+          (fun (_ : Os.Spawn.Failure) => (1 : UInt8)) (.notRunnable why) = 126 := by
+  sorry
+
+/-- A session's `info` names the directory its program runs in, "start_dir", and a resume that
+runs it elsewhere than its saved directory, which is gone, says so: "saved_dir" names the saved
+directory exactly then. `info` reports both for the session's life (`infoFields_boot`). -/
+theorem metadata_dirs (name pid created cmd dir : String) (saved : Option String) :
+    ("start_dir", dir) ∈ Start.metadata name pid created cmd dir saved ∧
+      ∀ d,
+        ("saved_dir", d) ∈ Start.metadata name pid created cmd dir saved ↔
+          saved = some d ∧ d ≠ dir := by
+  sorry
+
+/-- `metadata_dirs` rejects a resume that never says it moved. -/
+theorem metadata_dirs_rejects_silent :
+    ¬∀ (name pid created cmd dir : String) (saved : Option String),
+        ("start_dir", dir) ∈
+            (fun (_ _ _ _ dir : String) (_ : Option String) => [("start_dir", dir)]) name pid
+              created cmd dir saved ∧
+          ∀ d,
+            ("saved_dir", d) ∈
+                (fun (_ _ _ _ dir : String) (_ : Option String) => [("start_dir", dir)]) name pid
+                  created cmd dir saved ↔
+              saved = some d ∧ d ≠ dir := by
+  sorry
+
 /-! ## 4. Program identity
 
-Not claimed yet, though suites test it: that the operating system runs the program and words a
-daemon passes it, and that `resume` runs `$SHELL` again on a saved session's last screen. -/
+A session runs the program its creation named, with its words, or without a command the
+session's shell alone, which is what a resume runs again on the saved session's last screen
+(`resume_restores`, in part 7). The operating system runs it as asked: the world claim
+`Spawn.Runs`, which the agent and resume suites exercise. -/
 
 /-- A session runs exactly the program and words its creation named, as one program with no shell
 between, and a session created without a command runs its shell, alone. -/
@@ -1312,6 +1375,51 @@ theorem shellOf_choice_rejects_fixed :
           (fun (_ : Option String) => "sh") (some shell) = shell ∧
             (fun (_ : Option String) => "sh") none = "sh" ∧
             (fun (_ : Option String) => "sh") (some "") = "sh" := by
+  sorry
+
+/-- A session's program sees exactly what its creation named, where linger asked, with the
+environment of the command that asked for it: when the operating system runs what linger asks, a
+program that starts sees its command's words, or without a command the shell alone, runs in the
+directory linger asked for, reads `LINGER_SESSION` as the session's name, `TERM` as
+`xterm-256color`, `TERM_PROGRAM` as `linger` and `TERM_PROGRAM_VERSION` as linger's version, and
+reads every other variable as that command had it. -/
+theorem start_runs (inherited : String → Option String)
+    (start : String → String → Array String → List (String × String) → Option Os.Spawn.Started)
+    (runs : Os.Spawn.Runs inherited start) (name dir shell : String) (argv : List String)
+    {started : Os.Spawn.Started}
+    (ok :
+      start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
+          (Start.environment name) =
+        some started) :
+    started.argv = argv.headD shell :: argv.drop 1 ∧
+      started.dir = dir ∧
+      started.env "LINGER_SESSION" = some name ∧
+      started.env "TERM" = some "xterm-256color" ∧
+      started.env "TERM_PROGRAM" = some "linger" ∧
+      started.env "TERM_PROGRAM_VERSION" = some Mediation.versionNumber ∧
+      ∀ key,
+        key ∉ ["LINGER_SESSION", "TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"] →
+          started.env key = inherited key := by
+  sorry
+
+/-- `start_runs` rejects a session whose program is not told the session's name. -/
+theorem start_runs_rejects_unnamed :
+    ¬∀ (inherited : String → Option String)
+        (start : String → String → Array String → List (String × String) → Option Os.Spawn.Started),
+        Os.Spawn.Runs inherited start →
+          ∀ (name dir shell : String) (argv : List String) {started : Os.Spawn.Started},
+            start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
+                  ((fun (_ : String) => ([] : List (String × String))) name) =
+                some started →
+              started.argv = argv.headD shell :: argv.drop 1 ∧
+                started.dir = dir ∧
+                started.env "LINGER_SESSION" = some name ∧
+                started.env "TERM" = some "xterm-256color" ∧
+                started.env "TERM_PROGRAM" = some "linger" ∧
+                started.env "TERM_PROGRAM_VERSION" = some Mediation.versionNumber ∧
+                ∀ key,
+                  key ∉ ["LINGER_SESSION", "TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"] →
+                    started.env key = inherited key := by
   sorry
 
 /-! ## 5. Accountability

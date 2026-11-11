@@ -6,6 +6,7 @@ import Linger.Session.Shell.Client
 import Linger.Session.Checkpoint
 import Linger.Terminal.Mediation
 public import Linger.Session.Spec
+public import Linger.Os.Spec
 import SoftwareChallenge.Commands
 
 public section
@@ -366,8 +367,9 @@ private def endedChecks (e : Env) : IO Unit := do
       "kill discards every ended session it names"
 
 /-- The agent suite: the one-shot verbs that see and drive a session. `send -` checks that the
-program reads the bytes it is sent, byte for byte. -/
-@[exercises Linger.Session.Pty.Delivers]
+program reads the bytes it is sent, byte for byte, and `start` that it runs with its words, in the
+caller's directory and with the caller's environment. -/
+@[exercises Linger.Session.Pty.Delivers, exercises Linger.Os.Spawn.Runs]
 def run : IO UInt32 :=
   Env.suite "agent" fun e => do
     startChecks e

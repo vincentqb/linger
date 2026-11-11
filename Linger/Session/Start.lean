@@ -1,6 +1,8 @@
 module
 
 public import Linger.Session.Spec
+public import Linger.Os.Spec
+import Linger.Terminal.Mediation
 
 public section
 
@@ -67,6 +69,29 @@ words, verbatim and with no shell between, or without a command the session's sh
 def programOf (shell : String) : List String → String × Array String
   | [] => (shell, #[])
   | program :: words => (program, words.toArray)
+
+/-- The variables a session's program reads unlike the command that asked for the session: the
+session's name, and the terminal linger is, with linger's version. -/
+def environment (name : String) : List (String × String) :=
+  [("LINGER_SESSION", name), ("TERM", "xterm-256color"), ("TERM_PROGRAM", "linger"),
+    ("TERM_PROGRAM_VERSION", Terminal.Mediation.versionNumber)]
+
+/-- The status `start` returns for a program that could not start, as a shell or `env -C`
+reports it: 125 when its directory cannot be entered, 127 when no program of its name is found,
+and 126 when the program cannot be run. -/
+def failureStatus : Os.Spawn.Failure → UInt8
+  | .directory _ => 125
+  | .notFound _ => 127
+  | .notRunnable _ => 126
+
+/-- What a session's `info` reports of its start for its whole life: its name, its program's
+pid, when it started, its command, the directory its program runs in, and, for a resume that runs
+it elsewhere than its saved directory, that directory. -/
+def metadata (name pid created cmd dir : String) (saved : Option String) : List (String × String) :=
+  [("name", name), ("pid", pid), ("created", created), ("cmd", cmd), ("start_dir", dir)] ++
+    match saved with
+    | some savedDir => if savedDir = dir then [] else [("saved_dir", savedDir)]
+    | none => []
 
 /-- The daemon's decision at its commit point: it goes on to run the program exactly when it took
 the request's ticket, and starts nothing when the command that asked took it first. -/

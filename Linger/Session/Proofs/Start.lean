@@ -41,6 +41,51 @@ alone. -/
 theorem programOf_exact (shell : String) (argv : List String) :
     programOf shell argv = (argv.headD shell, (argv.drop 1).toArray) := by cases argv <;> rfl
 
+/-- A session's program reads each variable `environment` sets as it sets it, and every other as
+the command that asked for the session had it. -/
+theorem environment_lookup (name key : String) (inherited : String → Option String) :
+    ((environment name).reverse.lookup key).orElse (fun _ => inherited key) =
+      if key = "LINGER_SESSION" then some name
+      else
+        if key = "TERM" then some "xterm-256color"
+        else
+          if key = "TERM_PROGRAM" then some "linger"
+          else
+            if key = "TERM_PROGRAM_VERSION" then some Terminal.Mediation.versionNumber
+            else inherited key := by
+  by_cases h1 : key = "LINGER_SESSION"
+  · subst h1; rfl
+  by_cases h2 : key = "TERM"
+  · subst h2; rfl
+  by_cases h3 : key = "TERM_PROGRAM"
+  · subst h3; rfl
+  by_cases h4 : key = "TERM_PROGRAM_VERSION"
+  · subst h4; rfl
+  simp [environment, List.lookup, beq_eq_false_iff_ne.2 h1, beq_eq_false_iff_ne.2 h2,
+    beq_eq_false_iff_ne.2 h3, beq_eq_false_iff_ne.2 h4, h1, h2, h3, h4]
+
+/-- A program that could not start makes `start` return what a shell or `env -C` reports. -/
+theorem failureStatus_exact (why : String) :
+    failureStatus (.directory why) = 125 ∧
+      failureStatus (.notFound why) = 127 ∧
+      failureStatus (.notRunnable why) = 126 := ⟨rfl, rfl, rfl⟩
+
+/-- `info` names the directory a session's program runs in, and the saved directory exactly
+when a resume runs it elsewhere. -/
+theorem metadata_dirs (name pid created cmd dir : String) (saved : Option String) :
+    ("start_dir", dir) ∈ metadata name pid created cmd dir saved ∧
+      ∀ d,
+        ("saved_dir", d) ∈ metadata name pid created cmd dir saved ↔ saved = some d ∧ d ≠ dir := by
+  refine ⟨by simp [metadata], fun d => ?_⟩
+  cases saved with
+  | none => simp [metadata]
+  | some s =>
+    by_cases h : s = dir
+    · subst h; simp [metadata]; intro e; exact e.symm
+    · simp [metadata, h]; constructor
+      · intro e; subst e; exact ⟨rfl, h⟩
+      · rintro ⟨rfl, _⟩; rfl
+
 /-- The daemon runs a program only when it took the request's ticket. -/
 theorem proceeds_iff (took : Bool) : proceeds took = true ↔ took = true := Iff.rfl
 

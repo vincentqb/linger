@@ -21,6 +21,7 @@ public import Linger.Target.Name
 public import Linger.Target.Remote
 public import Linger.Target.Spec
 public import Linger.Terminal.Render
+public import Linger.Terminal.Mediation
 public import Linger.Terminal.Replay
 public import Linger.Terminal.Spec
 import all Linger.App.Proofs.Commands
@@ -999,6 +1000,39 @@ theorem resumeDir_where_rejects_gone :
   intro h
   exact absurd (h none "a" "b" (by decide)).2.1 (by decide)
 
+theorem failureStatus_exact (why : String) :
+    Start.failureStatus (.directory why) = 125 ∧
+      Start.failureStatus (.notFound why) = 127 ∧
+      Start.failureStatus (.notRunnable why) = 126 := Start.failureStatus_exact why
+
+theorem failureStatus_exact_rejects_alike :
+    ¬∀ (why : String),
+        (fun (_ : Os.Spawn.Failure) => (1 : UInt8)) (.directory why) = 125 ∧
+          (fun (_ : Os.Spawn.Failure) => (1 : UInt8)) (.notFound why) = 127 ∧
+          (fun (_ : Os.Spawn.Failure) => (1 : UInt8)) (.notRunnable why) = 126 := by
+  intro h
+  exact absurd (h "").1 (by decide)
+
+theorem metadata_dirs (name pid created cmd dir : String) (saved : Option String) :
+    ("start_dir", dir) ∈ Start.metadata name pid created cmd dir saved ∧
+      ∀ d,
+        ("saved_dir", d) ∈ Start.metadata name pid created cmd dir saved ↔
+          saved = some d ∧ d ≠ dir := Start.metadata_dirs name pid created cmd dir saved
+
+theorem metadata_dirs_rejects_silent :
+    ¬∀ (name pid created cmd dir : String) (saved : Option String),
+        ("start_dir", dir) ∈
+            (fun (_ _ _ _ dir : String) (_ : Option String) => [("start_dir", dir)]) name pid
+              created cmd dir saved ∧
+          ∀ d,
+            ("saved_dir", d) ∈
+                (fun (_ _ _ _ dir : String) (_ : Option String) => [("start_dir", dir)]) name pid
+                  created cmd dir saved ↔
+              saved = some d ∧ d ≠ dir := by
+  intro h
+  have moved := ((h "" "" "" "" "b" (some "a")).2 "a").2 ⟨rfl, by decide⟩
+  simp at moved
+
 theorem programOf_exact (shell : String) (argv : List String) :
     Start.programOf shell argv = (argv.headD shell, (argv.drop 1).toArray) :=
   Start.programOf_exact shell argv
@@ -1024,6 +1058,62 @@ theorem shellOf_choice_rejects_fixed :
             (fun (_ : Option String) => "sh") (some "") = "sh" := by
   intro h
   exact absurd (h "fish" (by decide)).1 (by decide)
+
+theorem start_runs (inherited : String → Option String)
+    (start : String → String → Array String → List (String × String) → Option Os.Spawn.Started)
+    (runs : Os.Spawn.Runs inherited start) (name dir shell : String) (argv : List String)
+    {started : Os.Spawn.Started}
+    (ok :
+      start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
+          (Start.environment name) =
+        some started) :
+    started.argv = argv.headD shell :: argv.drop 1 ∧
+      started.dir = dir ∧
+      started.env "LINGER_SESSION" = some name ∧
+      started.env "TERM" = some "xterm-256color" ∧
+      started.env "TERM_PROGRAM" = some "linger" ∧
+      started.env "TERM_PROGRAM_VERSION" = some Mediation.versionNumber ∧
+      ∀ key,
+        key ∉ ["LINGER_SESSION", "TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"] →
+          started.env key = inherited key := by
+  obtain ⟨hargv, hdir, henv⟩ := runs _ _ _ _ _ ok
+  rw [Start.programOf_exact] at hargv
+  refine ⟨by simpa using hargv, hdir, ?_, ?_, ?_, ?_, fun key hkey => ?_⟩
+  all_goals rw [henv, Start.environment_lookup]
+  · simp
+  · simp
+  · simp
+  · simp
+  · simp only [List.mem_cons, List.not_mem_nil, or_false, not_or] at hkey
+    simp [hkey.1, hkey.2.1, hkey.2.2.1, hkey.2.2.2]
+
+theorem start_runs_rejects_unnamed :
+    ¬∀ (inherited : String → Option String)
+        (start : String → String → Array String → List (String × String) → Option Os.Spawn.Started),
+        Os.Spawn.Runs inherited start →
+          ∀ (name dir shell : String) (argv : List String) {started : Os.Spawn.Started},
+            start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
+                  ((fun (_ : String) => ([] : List (String × String))) name) =
+                some started →
+              started.argv = argv.headD shell :: argv.drop 1 ∧
+                started.dir = dir ∧
+                started.env "LINGER_SESSION" = some name ∧
+                started.env "TERM" = some "xterm-256color" ∧
+                started.env "TERM_PROGRAM" = some "linger" ∧
+                started.env "TERM_PROGRAM_VERSION" = some Mediation.versionNumber ∧
+                ∀ key,
+                  key ∉ ["LINGER_SESSION", "TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"] →
+                    started.env key = inherited key := by
+  intro h
+  have runs :
+    Os.Spawn.Runs (fun _ => none) fun dir prog args extra =>
+      some
+        { argv := prog :: args.toList, dir,
+          env := fun key => (extra.reverse.lookup key).orElse fun _ => none } := by
+    intro dir prog args extra started hs
+    cases hs
+    exact ⟨rfl, rfl, fun _ => rfl⟩
+  exact absurd (h _ _ runs "x" "" "sh" [] rfl).2.2.1 (by simp)
 
 theorem step_ended_reports (s : State) (o : Outcome) {c : Client} (hc : c ∈ s.roster)
     (listening : c.attached = true ∨ c.waiting = true) :

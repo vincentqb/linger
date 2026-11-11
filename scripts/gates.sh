@@ -1093,6 +1093,17 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def Rt[.]closeConn [(]rt : 
 # empty SHELL makes sh (shellOf_absent). Linger.Session.Suites.Agent creates sessions with both.
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let [(]prog, args[)] := Start[.]programOf [(]Linger[.]Os[.]Env[.]shellOf [(]← IO[.]getEnv "SHELL"[)][)] argv([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "a session's program bypasses Start.programOf or Env.shellOf"
+# The program reads the session's variables as `Start.environment` sets them (`start_runs`, over
+# the world claim `Spawn.Runs`, which the agent and resume suites exercise); a program that cannot
+# start reports `Start.failureStatus` (`failureStatus_exact`); and `info` reports the start as
+# `Start.metadata` says (`metadata_dirs`). The daemon asks the operating system with exactly these.
+for tie in \
+  'trySpawnPty [(]UInt32[.]ofNat [(]Linger[.]Terminal[.]Vt[.]clampDim vt0[.]colCount[)][)] [(]UInt32[.]ofNat [(]Linger[.]Terminal[.]Vt[.]clampDim vt0[.]rowCount[)][)] cwd prog args [(][(]Start[.]environment name[)][.]toArray[.]map fun [(]key, value[)] => s!"[{]key[}]=[{]value[}]"[)]' \
+  'req[.]tell [(][.]failed [(]Start[.]failureStatus failure[)] why[.]toUTF8[.]toList[)]' \
+  'State[.]boot vt0 [(][(]restore[.]map [(]·[.]2[)][)][.]getD [[][]][)] [(]Start[.]metadata name [(]toString pid[)] [(]toString created[)] [(]String[.]intercalate " " [(]prog :: args[.]toList[)][)] cwd [(]saved[.]map fun [(]_, dir, _[)] => dir[)][)]'; do
+  printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "a session starts outside Start.environment, Start.failureStatus or Start.metadata: $tie"
+done
 # A resume runs in its saved directory, else in a nonempty HOME, else nowhere
 # (resumeDir_absent): the daemon reads HOME for it into Env.resumeDir, and the resume suite
 # runs it with HOME unset and empty.

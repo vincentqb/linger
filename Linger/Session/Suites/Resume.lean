@@ -3,6 +3,8 @@ module
 import Verify.Harness
 import Linger.Session.Checkpoint
 import Linger.Session.Shell.Daemon
+public import Linger.Os.Spec
+import SoftwareChallenge.Commands
 
 public section
 
@@ -216,6 +218,7 @@ private def answerChecks (e : Env) : IO Unit := do
         settled={settled}, left {left.map (·.fileName)})"
 
 /-- The resume suite: checkpoint, crash and restore, and where a resume runs. -/
+@[exercises Linger.Os.Spawn.Runs]
 def run : IO UInt32 :=
   Env.suite "resume" fun e => do
     directoryChecks e

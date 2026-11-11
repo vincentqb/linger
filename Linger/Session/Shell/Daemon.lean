@@ -6,7 +6,6 @@ import Linger.Session.Driver
 public import Linger.Session
 public import Linger.Session.Record
 public import Linger.Session.Start
-import Linger.Terminal.Mediation
 import Linger.Os.Env
 import Linger.Session.Shell.Paths
 
@@ -816,7 +815,7 @@ structure Request where
   tell : Start.Report → IO Unit
 
 /-- Why a program could not start, for a person. -/
-private def failureText (failure : SpawnFailure) (prog cwd : String) : String :=
+private def failureText (failure : Linger.Os.Spawn.Failure) (prog cwd : String) : String :=
   match failure with
   | .directory why => s!"cannot enter the directory {cwd}: {why}"
   | .notFound _ => s!"{prog}: not found"
@@ -885,16 +884,14 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
           req.tell (.failed 1 "its saved session cannot be read".toUTF8.toList)
         return
       -- A new session runs in `cwd` or not at all. A resume runs in its saved directory, or in
-      -- $HOME when that is gone (`Env.resumeDir`), and then says so in the info field saved_dir
-      -- and in the log.
+      -- $HOME when that is gone (`Env.resumeDir`), and then says so in the log and, through
+      -- `Start.metadata`, in the info field saved_dir.
       let mut cwd := cwd
-      let mut moved : Option String := none
       if let some (_, dir, _) := saved then
         match Linger.Os.Env.resumeDir (← IO.getEnv "HOME") dir (← System.FilePath.isDir dir) with
         | some run =>
           cwd := run
           if run != dir then
-            moved := some dir
             report s!"linger: session '{name}' resumes in {run}: its directory {dir} is gone"
         | none =>
           throw
@@ -940,8 +937,7 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
           try
             trySpawnPty (UInt32.ofNat (Linger.Terminal.Vt.clampDim vt0.colCount))
                 (UInt32.ofNat (Linger.Terminal.Vt.clampDim vt0.rowCount)) cwd prog args
-                #[s!"LINGER_SESSION={name}", "TERM=xterm-256color", "TERM_PROGRAM=linger",
-                  s!"TERM_PROGRAM_VERSION={Linger.Terminal.Mediation.versionNumber}"]
+                ((Start.environment name).toArray.map fun (key, value) => s!"{key}={value}")
           catch err =>
             record.restore previous
             throw err
@@ -950,7 +946,7 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
           let why := failureText failure prog cwd
           match start with
           | some req =>
-            req.tell (.failed failure.status why.toUTF8.toList)
+            req.tell (.failed (Start.failureStatus failure) why.toUTF8.toList)
           | none =>
             throw (IO.userError s!"linger: session '{name}' did not start: {why}")
           return
@@ -959,9 +955,8 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
           req.tell .started
         let st :=
           State.boot vt0 ((restore.map (·.2)).getD [])
-            ([("name", name), ("pid", toString pid), ("created", toString created),
-                ("cmd", String.intercalate " " (prog :: args.toList)), ("start_dir", cwd)] ++
-              (moved.map (fun dir => [("saved_dir", dir)])).getD [])
+            (Start.metadata name (toString pid) (toString created)
+              (String.intercalate " " (prog :: args.toList)) cwd (saved.map fun (_, dir, _) => dir))
         -- The cleanup reads the runtime as each round left it, the program's ending included,
         -- whatever fails after that round.
         let latest ←
