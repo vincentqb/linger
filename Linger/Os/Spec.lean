@@ -4,10 +4,11 @@ import SoftwareChallenge.Commands
 
 public section
 
-/-! # Linger.Os.Spec — what the operating system does when linger starts a program
+/-! # Linger.Os.Spec — what the operating system does when linger starts and ends a program
 
 How the operating system answers a request to start a program in a new terminal, and the world
-claim the headline theorems rest on about the program it starts. -/
+claims the headline theorems rest on about the program it starts and about the signals that end
+a session's processes. -/
 
 namespace Linger.Os.Spawn
 
@@ -46,3 +47,19 @@ WorldClaim Runs (inherited : String → Option String)
         ∀ key, started.env key = (extra.reverse.lookup key).orElse fun _ => inherited key
 
 end Linger.Os.Spawn
+
+namespace Linger.Os.Signal
+
+/-- SIGKILL ends every process it reaches within a second. `after sig ms alive` is what still
+runs of the processes `alive` once linger sent them signal `sig` and waited `ms` milliseconds:
+the processes of the program's terminal session that run as linger's user, which are all a
+signal reaches. A signal ends some of them, all or none, and brings none back; SIGKILL ends them
+all once linger waited a second. A process that outlives that wait, as one stuck in the kernel
+does, falsifies it. A process that left the session with `setsid`, or runs as another user, is
+not one of `alive`; on macOS, and on Linux before 5.3, a pid freed and reused between reading
+its session and signalling it could receive the signal. -/
+WorldClaim Ends (after : UInt32 → Nat → List Nat → List Nat) :=
+  (∀ sig ms alive, ∀ p ∈ after sig ms alive, p ∈ alive) ∧
+    ∀ ms alive, 1000 ≤ ms → after 9 ms alive = []
+
+end Linger.Os.Signal

@@ -4,6 +4,8 @@ public import Verify.Harness
 import Linger.Session.Shell.Daemon
 import Linger.Session.Checkpoint
 import Linger.Target.Name
+public import Linger.Os.Spec
+import SoftwareChallenge.Commands
 
 public section
 
@@ -196,7 +198,8 @@ def focusChecks (e : Env) : IO Unit := do
   e.killAll #["focus", "nofocus"]
 
 /-- The attach suite: attach, detach, reattach, mirroring, waiting, hand-back and
-scrollback. -/
+scrollback, and that nothing of an ended session's terminal session outlives it. -/
+@[exercises Linger.Os.Signal.Ends]
 def run : IO UInt32 :=
   Env.suite "attach" fun e => do
     closeFeedback e

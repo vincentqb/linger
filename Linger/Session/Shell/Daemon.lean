@@ -717,12 +717,6 @@ def drainConns (rt : Rt) : IO Rt := do
     close c.fd
   return { rt with conns := [] }
 
-/-- How long the processes of an ending session have after SIGHUP before SIGKILL. -/
-private def hangupGraceMs : Nat := 1000
-
-/-- How long the kernel has to end the processes SIGKILL reached. -/
-private def killWaitMs : Nat := 1000
-
 /-- Whether `done` holds within `ms` milliseconds, asked every `step`. -/
 private def within (ms step : Nat) (done : IO Bool) : IO Bool := do
   for _ in List.range (ms / step) do
@@ -731,9 +725,10 @@ private def within (ms step : Nat) (done : IO Bool) : IO Bool := do
     IO.sleep step.toUInt32
   done
 
-/-- How the program ended, ending it first if it still runs: SIGHUP to it and to the rest of its
-terminal session, then SIGKILL to them all if it outlives `hangupGraceMs`, and `unknown` if it
-has not ended `killWaitMs` after that. The program stays unreaped (`programEnd`). -/
+/-- How the program ended, ending it first if it still runs: each signal of `Session.ending`, to
+it and to the rest of its terminal session, until it ends, SIGHUP first and then SIGKILL, and
+`unknown` if it has not ended once the last wait is over. The program stays unreaped
+(`programEnd`). -/
 private def stopProgram (rt : Rt) : IO Outcome := do
   if let some outcome := rt.ending then
     return outcome
@@ -744,7 +739,7 @@ private def stopProgram (rt : Rt) : IO Outcome := do
       ending.set (← programEnd pid)
     return (← ending.get).isSome
   try
-    for (sig, ms) in [(1, hangupGraceMs), (9, killWaitMs)] do
+    for (sig, ms) in Linger.Session.ending do
       if ← ended then
         break
       kill pid sig
@@ -755,13 +750,14 @@ private def stopProgram (rt : Rt) : IO Outcome := do
     report s!"linger: stopping the program failed: {err}"
   return (← ending.get).getD .unknown
 
-/-- End every other process of the program's terminal session: SIGHUP, then SIGKILL to whatever
-outlives `hangupGraceMs`. Run while the program is unreaped, so its pid is still the session's
-id and no other session's. A process that left the session with `setsid` is not reached. Each
-look at the session lists every process on the host, so it looks every 50 ms. -/
+/-- End every other process of the program's terminal session with the signals of
+`Session.ending`: SIGHUP, then SIGKILL to whatever outlives a second of it. Run while the program
+is unreaped, so its pid is still the session's id and no other session's. A process that left
+the session with `setsid` is not reached. Each look at the session lists every process on the
+host, so it looks every 50 ms. -/
 private def endSession (pid : UInt32) : IO Unit := do
   let gone : IO Bool := return (← signalSession pid 0) == 0
-  for (sig, ms) in [(1, hangupGraceMs), (9, killWaitMs)] do
+  for (sig, ms) in Linger.Session.ending do
     if ← gone then
       return
     discard <| signalSession pid sig

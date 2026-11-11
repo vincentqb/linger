@@ -1506,6 +1506,30 @@ theorem captureBytes_bounded_rejects_unbounded :
   intro h
   exact absurd (h "") (by simp)
 
+theorem ending_clean (after : UInt32 → Nat → List Nat → List Nat) (ends : Os.Signal.Ends after)
+    (alive : List Nat) :
+    (Session.ending.head?.map (·.1)) = some 1 ∧
+      Session.ending.foldl (fun still (signal : UInt32 × Nat) => after signal.1 signal.2 still)
+          alive =
+        [] := by
+  rw [Session.ending_eq]
+  exact ⟨rfl, ends.2 1000 _ (Nat.le_refl _)⟩
+
+theorem ending_clean_rejects_hangup :
+    ¬∀ (after : UInt32 → Nat → List Nat → List Nat),
+        Os.Signal.Ends after →
+          ∀ (alive : List Nat),
+            (([(1, 1000)] : List (UInt32 × Nat)).head?.map (·.1)) = some 1 ∧
+              ([(1, 1000)] : List (UInt32 × Nat)).foldl
+                  (fun still (signal : UInt32 × Nat) => after signal.1 signal.2 still) alive =
+                [] := by
+  intro h
+  have ends : Os.Signal.Ends fun sig _ alive => if sig = 9 then [] else alive := by
+    refine ⟨fun sig ms alive p hp => ?_, fun ms alive _ => by simp⟩
+    by_cases h9 : sig = 9 <;> simp_all
+  have survives := (h _ ends [1]).2
+  simp at survives
+
 theorem loadBytes_saveBytes_live (c : Checkpoint.Ckpt Vt.Vt)
     (h :
       Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce

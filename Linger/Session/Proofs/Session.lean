@@ -2997,4 +2997,10 @@ theorem step_input_exact (s : State) (id : Nat) (chunk : List UInt8) {c : Client
       h1 typist [] (by simp)
   simp only [step, hc, read, healthy, Bool.false_eq_true, ↓reduceIte, this, List.nil_append]
 
+/-! ## How a session's processes end -/
+
+/-- A daemon ends its program and the rest of the program's terminal session with SIGHUP, then
+SIGKILL a second later, and waits a second more for SIGKILL. -/
+theorem ending_eq : ending = [(1, 1000), (9, 1000)] := rfl
+
 end Linger.Session

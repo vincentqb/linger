@@ -299,6 +299,11 @@ lock and whether it holds its checkpoint lock. -/
 @[expose]
 def Linger.Session.Claim.enters : Bool → Bool → Bool := sorry
 
+/-- The signals a daemon ends its program and the rest of the program's terminal session with,
+in order, each with the milliseconds it then waits. -/
+@[expose]
+def Linger.Session.ending : List (UInt32 × Nat) := sorry
+
 /-- The session's transition: the state after one event, and the effects it asks the runtime
 for, in order. -/
 @[expose]
@@ -1644,12 +1649,11 @@ theorem run_exited_rejects_jump :
 /-! ## 6. Bounded and clean
 
 `run_total_safe` keeps the session's clients, labels, frame decoders and pty scanner within their
-caps. Not claimed yet, though suites test it: that when a session ends, no process of its terminal
-session remains. The daemon sends SIGHUP to each, then SIGKILL to those still running a second
-later, and reaps the program last, so the program's pid, which is the session's id, stays
-reserved until then. A process that leaves the session with `setsid`, or runs as another user,
-is out of reach, and on macOS, or Linux before 5.3, a pid freed and reused between reading its
-session and signalling it could receive the signal. -/
+caps. When a session ends, the daemon sends SIGHUP to its program and the rest of the program's
+terminal session, then SIGKILL to those still running a second later, and reaps the program last,
+so the program's pid, which is the session's id, stays reserved until then: no process of the
+terminal session that SIGKILL reaches remains (`ending_clean`, over the world claim
+`Signal.Ends`, which the attach suite exercises and whose comment names what it cannot reach). -/
 
 /-- The pty input queue never owes more than its cap, through any offers and flushes. -/
 theorem reachableIn_bound {cap : Nat} {b : Buf.Buf}
@@ -1778,6 +1782,29 @@ theorem captureBytes_bounded_rejects_unbounded :
         ((fun (_ : String) => List.replicate (2 * Import.Resurrect.captureLimit + 1) (0 : UInt8))
               contents).length ≤
           2 * Import.Resurrect.captureLimit := by
+  sorry
+
+/-- Nothing of an ended session that a signal can reach outlives it: its program and the rest of
+the program's terminal session hear SIGHUP first, as from a terminal that hung up, and when
+SIGKILL ends within a second every process it reaches, none of them still runs once the daemon's
+ending is over. -/
+theorem ending_clean (after : UInt32 → Nat → List Nat → List Nat) (ends : Os.Signal.Ends after)
+    (alive : List Nat) :
+    (Session.ending.head?.map (·.1)) = some 1 ∧
+      Session.ending.foldl (fun still (signal : UInt32 × Nat) => after signal.1 signal.2 still)
+          alive =
+        [] := by
+  sorry
+
+/-- `ending_clean` rejects an ending that only hangs up. -/
+theorem ending_clean_rejects_hangup :
+    ¬∀ (after : UInt32 → Nat → List Nat → List Nat),
+        Os.Signal.Ends after →
+          ∀ (alive : List Nat),
+            (([(1, 1000)] : List (UInt32 × Nat)).head?.map (·.1)) = some 1 ∧
+              ([(1, 1000)] : List (UInt32 × Nat)).foldl
+                  (fun still (signal : UInt32 × Nat) => after signal.1 signal.2 still) alive =
+                [] := by
   sorry
 
 /-! ## 7. Recovery

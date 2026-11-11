@@ -339,6 +339,8 @@ example (s : Session.State) (o : Session.Outcome) :
 example {o₁ o₂ : Session.Outcome} (h : Session.outcomeFields o₁ = Session.outcomeFields o₂) :
     o₁ = o₂ := by with_reducible exact Session.outcomeFields_injective h
 
+example : Session.ending = [(1, 1000), (9, 1000)] := by with_reducible exact Session.ending_eq
+
 example (r : Session.Record) : Session.Record.decode (Session.Record.encode r) = some r := by
   with_reducible exact Session.Record.decode_encode r
 

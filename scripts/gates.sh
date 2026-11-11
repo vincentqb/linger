@@ -1104,6 +1104,15 @@ for tie in \
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "a session starts outside Start.environment, Start.failureStatus or Start.metadata: $tie"
 done
+# A session's end sends its program and the rest of the program's terminal session the signals
+# of `Session.ending`, SIGHUP and then SIGKILL (`ending_clean`, over the world claim
+# `Signal.Ends`, which the attach suite exercises), both while the program is unreaped.
+for tie in \
+  'for [(]sig, ms[)] in Linger[.]Session[.]ending do if ← ended then break kill pid sig discard <[|] signalSession pid sig if ← within ms 10 ended then break' \
+  'for [(]sig, ms[)] in Linger[.]Session[.]ending do if ← gone then return discard <[|] signalSession pid sig if ← within ms 50 gone then return'; do
+  printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "a session's processes end other than by Session.ending: $tie"
+done
 # A resume runs in its saved directory, else in a nonempty HOME, else nowhere
 # (resumeDir_absent): the daemon reads HOME for it into Env.resumeDir, and the resume suite
 # runs it with HOME unset and empty.

@@ -35,6 +35,12 @@ open Linger.Terminal.Replay (Plan)
 each replay step. -/
 def outputChunk : Nat := 65536
 
+/-- How a daemon ends its program and every other process of the program's terminal session: the
+signals it sends, in order, each with the milliseconds it then waits for them to end. SIGHUP
+first, as a terminal that hangs up sends, so a program can save its work, then SIGKILL to
+whatever outlives a second of it. -/
+def ending : List (UInt32 × Nat) := [(1, 1000), (9, 1000)]
+
 /-- Maximum encoded info answer, shared by the producer and the CLI accumulator. -/
 def infoReplyCap : Nat := 1048576
 
