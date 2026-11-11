@@ -304,6 +304,11 @@ in order, each with the milliseconds it then waits. -/
 @[expose]
 def Linger.Session.ending : List (UInt32 × Nat) := sorry
 
+/-- How long a daemon's poll sleeps, given the time now and the deadlines the daemon holds, in
+milliseconds; `-1` waits for an event however long that takes. -/
+@[expose]
+def Linger.Session.pollTimeout : Nat → List Nat → Int32 := sorry
+
 /-- The session's transition: the state after one event, and the effects it asks the runtime
 for, in order. -/
 @[expose]
@@ -1999,10 +2004,12 @@ theorem leave_canonical_all_rejects_escape :
 
 /-! ## 9. Work follows events
 
-Not claimed yet: that an event's work follows its size and its audience, never the number of
-sessions, and that a daemon sleeps until its session's next tick or its next event.
-`scripts/gates.sh` lists every timer the program sets, with its bound, and the quiet suite counts
-the wakeups of idle sessions. -/
+A daemon's state holds its own session alone, so no event's work depends on how many sessions
+exist. Program output costs work only for the clients attached to its session, and a daemon
+sleeps until the earliest deadline it holds, or until an event when it holds none, when poll(2)
+sleeps as asked (`Poll.Sleeps`, which the quiet suite exercises by counting the wakeups of idle
+sessions). `scripts/gates.sh` lists every timer the program sets, with its bound. Not claimed
+yet: that an event's work follows its size. -/
 
 /-- After the last event, a session's daemon wakes at most twice on its own: ticking at the
 deadlines the session sets, for its save and for the end of its output's freshness, it then needs
@@ -2024,6 +2031,48 @@ theorem ticks_settle_rejects_poll :
           (fun (_ : State) => (some 0 : Option Nat))
               (Session.trace Session.step s [.tick now, .tick t₁, .tick t₂]).1 =
             none := by
+  sorry
+
+/-- A daemon sleeps until the earliest deadline it holds, at once for one already past, or until
+an event when it holds none: when poll(2) sleeps as asked, a daemon's poll whose descriptors stay
+quiet returns at the earliest of its deadlines, and never when it holds none. -/
+theorem poll_wakes (returns : Int32 → Option Nat) (sleeps : Os.Poll.Sleeps returns) (now : Nat)
+    (deadlines : List Nat) (fit : ∀ d ∈ deadlines, d - now ≤ 2147483647) :
+    returns (Session.pollTimeout now deadlines) = deadlines.min?.map (· - now) := by sorry
+
+/-- `poll_wakes` rejects a daemon that wakes every tenth of a second. -/
+theorem poll_wakes_rejects_polling :
+    ¬∀ (returns : Int32 → Option Nat),
+        Os.Poll.Sleeps returns →
+          ∀ (now : Nat) (deadlines : List Nat),
+            (∀ d ∈ deadlines, d - now ≤ 2147483647) →
+              returns ((fun (_ : Nat) (_ : List Nat) => (100 : Int32)) now deadlines) =
+                deadlines.min?.map (· - now) := by
+  sorry
+
+/-- A chunk of the program's output costs work only for its audience: each effect it asks for is
+a write to the program, of the replies its queries ask, or an output frame of at most 64 KiB to a
+client attached to the session. No other client, and no other session, hears of it. -/
+theorem step_output_audience (s : State) (chunk : List UInt8) :
+    ∀ eff ∈ (Session.step s (.ptyOut chunk)).2,
+      (∃ bytes, eff = .writePty bytes) ∨
+        ∃ c ∈ s.roster,
+          c.attached = true ∧
+            ∃ payload, eff = .send c.id (.output payload) ∧ payload.length ≤ 65536 := by
+  sorry
+
+/-- `step_output_audience` rejects a session that sends output to a client it does not have. -/
+theorem step_output_audience_rejects_stranger :
+    ¬∀ (s : State) (chunk : List UInt8),
+        ∀
+          eff ∈
+            ((fun (s : State) (_ : Event) =>
+                  (s, ([.send 0 (.output [])] : List (Effect Replay.Plan))))
+                s (.ptyOut chunk)).2,
+          (∃ bytes, eff = .writePty bytes) ∨
+            ∃ c ∈ s.roster,
+              c.attached = true ∧
+                ∃ payload, eff = .send c.id (.output payload) ∧ payload.length ≤ 65536 := by
   sorry
 
 /-! ## 10. Graceful under load

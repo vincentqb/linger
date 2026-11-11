@@ -1771,6 +1771,55 @@ theorem ticks_settle_rejects_poll :
   intro h
   exact absurd (h (State.boot (Vt.Vt.init 1 1) [] []) 0 0 0 rfl rfl) (by simp)
 
+theorem poll_wakes (returns : Int32 → Option Nat) (sleeps : Os.Poll.Sleeps returns) (now : Nat)
+    (deadlines : List Nat) (fit : ∀ d ∈ deadlines, d - now ≤ 2147483647) :
+    returns (Session.pollTimeout now deadlines) = deadlines.min?.map (· - now) := by
+  rw [Session.pollTimeout_eq]
+  cases h : deadlines.min? with
+  | none => simpa using sleeps.1
+  | some due =>
+    have near : due - now ≤ 2147483647 := fit due (List.min?_mem h)
+    simp only [Option.map_some, Option.getD_some, Nat.min_eq_left near]
+    exact sleeps.2 _ near
+
+theorem poll_wakes_rejects_polling :
+    ¬∀ (returns : Int32 → Option Nat),
+        Os.Poll.Sleeps returns →
+          ∀ (now : Nat) (deadlines : List Nat),
+            (∀ d ∈ deadlines, d - now ≤ 2147483647) →
+              returns ((fun (_ : Nat) (_ : List Nat) => (100 : Int32)) now deadlines) =
+                deadlines.min?.map (· - now) := by
+  intro h
+  have sleeps :
+    Os.Poll.Sleeps fun (t : Int32) => if t.toInt < 0 then none else some t.toNatClampNeg := by
+    refine ⟨by decide, fun ms near => ?_⟩
+    have small : ms < 2 ^ 31 := by omega
+    simp [Int32.toInt_ofNat_of_lt small, Int32.toNatClampNeg_ofNat_of_lt small]
+  exact absurd (h _ sleeps 0 [] (by simp)) (by decide)
+
+theorem step_output_audience (s : State) (chunk : List UInt8) :
+    ∀ eff ∈ (Session.step s (.ptyOut chunk)).2,
+      (∃ bytes, eff = .writePty bytes) ∨
+        ∃ c ∈ s.roster,
+          c.attached = true ∧
+            ∃ payload, eff = .send c.id (.output payload) ∧ payload.length ≤ 65536 :=
+  Session.step_ptyOut_audience s chunk
+
+theorem step_output_audience_rejects_stranger :
+    ¬∀ (s : State) (chunk : List UInt8),
+        ∀
+          eff ∈
+            ((fun (s : State) (_ : Event) =>
+                  (s, ([.send 0 (.output [])] : List (Effect Replay.Plan))))
+                s (.ptyOut chunk)).2,
+          (∃ bytes, eff = .writePty bytes) ∨
+            ∃ c ∈ s.roster,
+              c.attached = true ∧
+                ∃ payload, eff = .send c.id (.output payload) ∧ payload.length ≤ 65536 := by
+  intro h
+  have sent := h (State.boot (Vt.Vt.init 1 1) [] []) [] (.send 0 (.output [])) (by simp)
+  simp [Session.boot_roster] at sent
+
 theorem start_answer_true (r : Start.Request) (h : Start.Reachable Start.proceeds Start.answer r) :
     (r.answer = some .started → r.runs = true) ∧ (r.answer = some .notStarted → r.runs = false) :=
   Start.answer_true h

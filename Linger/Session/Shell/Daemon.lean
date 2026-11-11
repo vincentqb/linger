@@ -525,39 +525,33 @@ private def programEnd (pid : UInt32) : IO (Option Outcome) := do
   | .unreapable =>
     return some .unknown
 
-/-- The earlier of the deadline already set, if any, and `due`. -/
-private def soonest (wake : Option Nat) (due : Nat) : Option Nat := some (wake.elim due (min · due))
-
 /-- One poll round: gather events from fd readiness. It sleeps until an event or its first
-deadline: the session's next tick, a retired transport's drain, admission's retry, and without
-a child-end descriptor a timer that asks whether the program has ended. With none, it waits for
-an event however long that takes, unless the caller bounds the wait with `limitMs`, as a suite
-that drives the round by hand does. The program's end is asked after only when the child-end
-descriptor says a child ended, or every round without one. -/
+deadline (`Session.pollTimeout`): the session's next tick, a retired transport's drain,
+admission's retry, and without a child-end descriptor a timer that asks whether the program has
+ended. With none, it waits for an event however long that takes, unless the caller bounds the
+wait with `limitMs`, as a suite that drives the round by hand does. The program's end is asked
+after only when the child-end descriptor says a child ended, or every round without one. -/
 def pollRound (rt : Rt) (limitMs : Option Nat := none) : IO (Rt × List Event) := do
   let now ← monotonicMs
   let rt ← expireConns rt now
   -- a write that has ended feeds back first, and the one that waited for it starts
   let (rt, saved) ← collectSave rt
   let rt ← collectRecord rt
-  let mut wake := rt.st.nextTick
+  let mut deadlines : List Nat := rt.st.nextTick.toList
   if rt.saves.running.isSome || rt.records.running.isSome then
-    wake := soonest wake (now + saveCheckMs)
+    deadlines := (now + saveCheckMs) :: deadlines
   if let some limit := limitMs then
-    wake := soonest wake (now + limit)
+    deadlines := (now + limit) :: deadlines
   -- once the terminal has closed, the program's end usually follows at once
   if rt.childEnd.isNone && rt.ending.isNone then
-    wake := soonest wake (now + if rt.ptyOpen then 1000 else rt.reapWaitMs)
+    deadlines := (now + if rt.ptyOpen then 1000 else rt.reapWaitMs) :: deadlines
   for c in rt.conns do
     if let some deadline := c.closeBy then
-      wake := soonest wake deadline
+      deadlines := deadline :: deadlines
   if let some retryAt := rt.acceptAfter then
     if now < retryAt then
-      wake := soonest wake retryAt
-  let timeout : Int32 :=
-    match wake with
-    | some due => Int32.ofNat (min (due - now) 2147483647)
-    | none => -1
+      deadlines := retryAt :: deadlines
+  let timeout := Linger.Session.pollTimeout now deadlines
   let accepting := rt.conns.length < maxClients && rt.acceptAfter.all (now ≥ ·)
   -- snapshot: only these conns are in the poll set; accepts during
   -- this round join the NEXT one (revs stays index-aligned)

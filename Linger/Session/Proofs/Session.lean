@@ -3003,4 +3003,45 @@ theorem step_input_exact (s : State) (id : Nat) (chunk : List UInt8) {c : Client
 SIGKILL a second later, and waits a second more for SIGKILL. -/
 theorem ending_eq : ending = [(1, 1000), (9, 1000)] := rfl
 
+/-! ## Work follows events -/
+
+/-- A daemon's poll sleeps until the earliest deadline it holds, at once for one already past,
+and for an event however long that takes, `-1`, when it holds none. -/
+theorem pollTimeout_eq (now : Nat) (deadlines : List Nat) :
+    pollTimeout now deadlines =
+      (deadlines.min?.map fun due => Int32.ofNat (min (due - now) 2147483647)).getD (-1) := rfl
+
+/-- A daemon boots with no clients. -/
+theorem boot_roster (vt : Vt.Vt) (labels metaKv : List (String × String)) :
+    (State.boot vt labels metaKv).roster = [] := rfl
+
+/-- **Output reaches only its audience**: every effect of a chunk of program output is a write to
+the program, of the replies its queries ask, or an output frame of at most `outputChunk` bytes,
+64 KiB, to a client attached to the session. -/
+theorem step_ptyOut_audience (s : State) (chunk : List UInt8) :
+    ∀ eff ∈ (step s (.ptyOut chunk)).2,
+      (∃ bytes, eff = .writePty bytes) ∨
+        ∃ c ∈ s.roster,
+          c.attached = true ∧
+            ∃ payload, eff = .send c.id (.output payload) ∧ payload.length ≤ 65536 := by
+  intro eff h
+  rw [step_ptyOut_effects] at h
+  dsimp only at h
+  simp only [List.mem_append] at h
+  rcases h with h | h
+  · left
+    split at h
+    · simp at h
+    · exact ⟨_, List.mem_singleton.mp h⟩
+  · right
+    unfold broadcast at h
+    split at h
+    · simp at h
+    · simp only [List.mem_flatMap, List.mem_filter] at h
+      obtain ⟨c, ⟨hc, hatt⟩, hmem⟩ := h
+      unfold outputMsgs at hmem
+      simp only [List.mem_map] at hmem
+      obtain ⟨payload, hp, rfl⟩ := hmem
+      exact ⟨c, hc, hatt, payload, rfl, chunksOf_le outputChunk (by decide) _ payload hp⟩
+
 end Linger.Session

@@ -63,3 +63,15 @@ WorldClaim Ends (after : UInt32 → Nat → List Nat → List Nat) :=
     ∀ ms alive, 1000 ≤ ms → after 9 ms alive = []
 
 end Linger.Os.Signal
+
+namespace Linger.Os.Poll
+
+/-- poll(2) sleeps until an event or its timeout. `returns timeout` is when a poll with that
+timeout, whose descriptors stay quiet, returns: after `timeout` milliseconds for a timeout from 0
+to the largest `Int32`, and never for -1. A quiet poll that returns early, or that a timeout of
+-1 lets return, falsifies it; so would a signal that interrupts it, but the only signal a daemon
+handles, SIGCHLD, also makes its child-end descriptor ready. -/
+WorldClaim Sleeps (returns : Int32 → Option Nat) :=
+  returns (-1) = none ∧ ∀ ms ≤ 2147483647, returns (Int32.ofNat ms) = some ms
+
+end Linger.Os.Poll

@@ -41,6 +41,13 @@ first, as a terminal that hangs up sends, so a program can save its work, then S
 whatever outlives a second of it. -/
 def ending : List (UInt32 × Nat) := [(1, 1000), (9, 1000)]
 
+/-- How long a daemon's poll sleeps, from the time now and the deadlines the daemon holds: until
+the earliest of them, at once for one already past, and for an event however long that takes,
+`-1`, when it holds none. A deadline beyond `Int32`'s range of milliseconds, about 24.8 days,
+waits the most a poll can, and the daemon then looks again. -/
+def pollTimeout (now : Nat) (deadlines : List Nat) : Int32 :=
+  (deadlines.min?.map fun due => Int32.ofNat (min (due - now) 2147483647)).getD (-1)
+
 /-- Maximum encoded info answer, shared by the producer and the CLI accumulator. -/
 def infoReplyCap : Nat := 1048576
 

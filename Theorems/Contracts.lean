@@ -275,6 +275,19 @@ example (s : Session.State) (now t₁ t₂ : Nat)
     (Session.trace Session.step s [.tick now, .tick t₁, .tick t₂]).1.nextTick = none := by
   with_reducible exact Session.ticks_settle s now t₁ t₂ h₁ h₂
 
+example (now : Nat) (deadlines : List Nat) :
+    Session.pollTimeout now deadlines =
+      (deadlines.min?.map fun due => Int32.ofNat (min (due - now) 2147483647)).getD (-1) := by
+  with_reducible exact Session.pollTimeout_eq now deadlines
+
+example (s : Session.State) (chunk : List UInt8) :
+    ∀ eff ∈ (Session.step s (.ptyOut chunk)).2,
+      (∃ bytes, eff = .writePty bytes) ∨
+        ∃ c ∈ s.roster,
+          c.attached = true ∧
+            ∃ payload, eff = .send c.id (.output payload) ∧ payload.length ≤ 65536 := by
+  with_reducible exact Session.step_ptyOut_audience s chunk
+
 -- Focus reports
 example (s : Session.State) (c : Session.Client) (cols rows : UInt32) (hc : s.client? c.id = some c)
     (h : c.attached = false) (hsize : (cols != 0 && rows != 0) = true)

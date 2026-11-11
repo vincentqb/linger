@@ -1057,8 +1057,14 @@ awk '
   END { exit (checked != 1 || frozen != 1 || bad) }
 ' Linger/Session/Shell/Daemon.lean \
   || fail "repeated-close guard or expire-before-poll-snapshot ordering changed"
-code_grep '^[[:space:]]+wake := soonest wake deadline$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+deadlines := deadline :: deadlines$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "ordinary polling ignores close deadlines"
+# A daemon sleeps until its earliest deadline, or for an event however long that takes when it
+# holds none (`poll_wakes`, over the world claim `Poll.Sleeps`, which the quiet suite exercises):
+# the round's one poll waits `Session.pollTimeout` of the deadlines it gathered.
+printf '%s\n' "$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Daemon.lean)" \
+  | CG_RE='(^|[[:space:]])let timeout := Linger[.]Session[.]pollTimeout now deadlines let accepting := .* let revs ← poll fds evts timeout([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "a daemon's poll waits other than Session.pollTimeout of its deadlines"
 code_grep '^[[:space:]]+let accepting := rt[.]conns[.]length < maxClients && rt[.]acceptAfter[.]all [(]now ≥ ·[)]$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "listener admission must count every transport and honor its retry deadline"
 code_grep '^[[:space:]]+#[[][(]if accepting then POLLIN else 0[)],' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
@@ -1123,7 +1129,7 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])match Linger[.]Os[.]Env[.]r
 # The live fixture exhausts real descriptors; gates pin the retry and fd cleanup.
 code_grep '^def acceptRetryMs : Nat := [1-9][0-9]*$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "admission retry must wait a positive duration"
-printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])if let some retryAt := rt[.]acceptAfter then if now < retryAt then wake := soonest wake retryAt([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])if let some retryAt := rt[.]acceptAfter then if now < retryAt then deadlines := retryAt :: deadlines([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "admission retry no longer bounds the next poll deadline"
 code_grep '^[[:space:]]+rt := [{] rt with acceptAfter := some [(][(]← monotonicMs[)] [+] acceptRetryMs[)] [}]$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "admission failures must renew their retry deadline"

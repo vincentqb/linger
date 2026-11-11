@@ -2,6 +2,8 @@ module
 
 public import Verify.Harness
 import Linger.Session
+public import Linger.Os.Spec
+import SoftwareChallenge.Commands
 
 public section
 
@@ -57,6 +59,7 @@ def wakeupsDuring {α : Type} (pid : Option UInt32) (action : IO α) : IO (Optio
 what their daemons published instead of waking them, and a `send -` waiting for input sleeps.
 Nothing asks either daemon anything between finding its pid and the last measurement, since a
 question is an event that wakes it. -/
+@[exercises Linger.Os.Poll.Sleeps]
 def run : IO UInt32 :=
   Env.suite "quiet" fun e => do
     let (idleRc, _, _) ← e.cli #["start", "q-idle", "/bin/sh", "-c", "exec sleep 1000"]
