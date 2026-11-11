@@ -9,6 +9,7 @@ public import Linger.Display.Spec
 import Linger.Display.Status
 import Linger.Target.Remote
 import Terminal.Vt
+import Terminal.Render
 import Linger.Display.View
 
 public section
@@ -52,15 +53,6 @@ private def parseRows (seen rows : List String) : Except String (List String) :=
 Metadata is ignored; malformed name records or duplicates reject the whole snapshot. -/
 private def parseListing (text : String) : Except String (List String) :=
   parseRows [] (text.splitOn "\n")
-
-/-- Exact targets plus the complete metadata records that produced them. Equality
-includes metadata, so a status-only change still invalidates the displayed frame. -/
-structure Snapshot where
-  /-- The listing's exact targets, in order and without duplicates. -/
-  candidates : List String := []
-  /-- Tab-split listing lines, from which `Snapshot.row` reads each target's metadata. -/
-  records : List (List String) := []
-  deriving BEq, Repr, Inhabited
 
 /-- The target parser validates the whole output before metadata is published.
 Consecutive name records and blank-separated records both delimit sessions. -/
@@ -234,20 +226,21 @@ def step (s : State) (key : Linger.Selector.Key) : Outcome :=
 /-- How many listed rows the query matches: what the query line shows beside it. -/
 def matchCount (s : State) : Nat := (visible s.candidates s.query).length
 
-/-- What a picker shows, as lines of text pieces with their styles, for a terminal `rows` tall:
+/-- What a picker shows, as lines of text pieces with their styles, for a terminal `rows` tall
+(a style is the parameters of the SGR sequences that select it, in order):
 the header, which counts every listed row and, with `statusOf`, those that ask for someone
 (`View.headerParts`); the query, with how many rows it matches; the rows around the cursor; a
 line that sums up the matching rows the window leaves out (`View.hidden`); and the keys. It
 never has more lines than the terminal (`frameLines_length`). -/
 def frameLines (state : State) (snapshot : Snapshot)
     (statusOf : String → Linger.Display.Status.Status) (loaded withColor savedTmux : Bool)
-    (rows : Nat) : List (List (String × String)) :=
+    (rows : Nat) : List (List (String × List (List Nat))) :=
   let height := max 1 rows
   let choices := items state.candidates state.query state.allowCreate
   let nameCol :=
     Linger.Display.Listing.nameWidth (snapshot.candidates.map fun target => [("name", target)])
   let labels := if savedTmux then ["tmux save"] else if state.allowCreate then [] else ["read-only"]
-  let title : List (List (String × String)) :=
+  let title : List (List (String × List (List Nat))) :=
     if height ≥ 7 then
       -- the counts once there is a listing to count
       let header :=
@@ -266,28 +259,28 @@ def frameLines (state : State) (snapshot : Snapshot)
                 | _ => none).take
             (height - 7)
         else []
-      [[(header, "")]] ++ metadata.map (fun text => [(text, "\x1b[2m")]) ++ [[]]
+      [[(header, [])]] ++ metadata.map (fun text => [(text, [[2]])]) ++ [[]]
     else []
-  let query : List (List (String × String)) :=
+  let query : List (List (String × List (List Nat))) :=
     if height > 1 then
       let placeholder :=
         if savedTmux then "Find a saved pane"
         else if state.allowCreate then "Find or create a session" else "Find a session"
       let line :=
-        if state.query.isEmpty then [("  › ", ""), (placeholder, "\x1b[2m")]
-        else [("  › ", ""), (state.query, ""), (s!" {matchCount state}", "\x1b[2m")]
+        if state.query.isEmpty then [("  › ", []), (placeholder, [[2]])]
+        else [("  › ", []), (state.query, []), (s!" {matchCount state}", [[2]])]
       [line] ++ if height ≥ 6 then [[]] else []
     else []
   let footerRows := if height ≥ 6 then 2 else if height > 2 then 1 else 0
   let slots := max 1 (height - (title.length + query.length) - footerRows)
-  let body : List (List (String × String)) :=
+  let body : List (List (String × List (List Nat))) :=
     if !loaded then
-      [[(if savedTmux then "  Loading saved panes…" else "  Loading sessions…", "\x1b[2m")]]
+      [[(if savedTmux then "  Loading saved panes…" else "  Loading sessions…", [[2]])]]
     else
       if choices.isEmpty then
         [[(if savedTmux then "  No matching saved panes"
               else if state.allowCreate then "  No valid target" else "  No matching sessions",
-              "\x1b[2m")]]
+              [[2]])]]
       else
         -- the matching rows a window this short leaves out are summed up on its last line
         let summarize := slots ≥ 2 && choices.length > slots
@@ -296,15 +289,15 @@ def frameLines (state : State) (snapshot : Snapshot)
         let window :=
           ((choices.drop start).take shown).zipIdx start |>.map fun (item, index) =>
             let chosen := index == state.cursor
-            let selection := if chosen then "\x1b[7m" else ""
+            let selection := if chosen then [[7]] else []
             (if chosen then "  ▸ " else "    ", selection) ::
               (emphasizeCells (highlightedPresentation snapshot nameCol state.query item)).map
                 fun char =>
                 (String.singleton char.char,
                   selection ++
-                    (if withColor then (char.status.map Linger.Display.Status.style).getD ""
-                    else "") ++
-                    if char.matched then "\x1b[4m" else "")
+                    (if withColor then char.status.toList.map Linger.Display.Status.style
+                    else []) ++
+                    if char.matched then [[4]] else [])
         let left :=
           (choices.take start ++ choices.drop (start + shown)).filterMap fun item =>
             match item with
@@ -315,8 +308,8 @@ def frameLines (state : State) (snapshot : Snapshot)
           s!"    … {count} more" ++
             if named.isEmpty then ""
             else ": " ++ String.intercalate " · " (named.map fun (key, n) => s!"{key} {n}")
-        window ++ if summarize && !left.isEmpty then [[(summary, "\x1b[2m")]] else []
-  let footer : List (List (String × String)) :=
+        window ++ if summarize && !left.isEmpty then [[(summary, [[2]])]] else []
+  let footer : List (List (String × List (List Nat))) :=
     if height > 2 then
       let action :=
         if !loaded then "  Type to search"
@@ -327,9 +320,68 @@ def frameLines (state : State) (snapshot : Snapshot)
             else if state.allowCreate then "  ↵ attach" else "  ↵ view"
           | some (.create _) => "  ↵ create"
           | none => if state.allowCreate then "  Type a valid name" else "  Type to search"
-      (if height ≥ 6 then [[]] else []) ++
-        [[(s!"{action}  ·  ↑↓ move  ·  esc / ^C quit", "\x1b[2m")]]
+      (if height ≥ 6 then [[]] else []) ++ [[(s!"{action}  ·  ↑↓ move  ·  esc / ^C quit", [[2]])]]
     else []
   (title ++ query ++ body ++ footer).take height
+
+/-- A character as a frame shows it: itself when a terminal prints it, `?` otherwise. -/
+private def frameChar (raw : Char) : Char := if Input.printable raw then raw else '?'
+
+/-- The characters of one run of a frame line that fit `width` cells after `used` of them are
+taken, each as `frameChar` shows it: their bytes, the cells now used, and whether the run was
+cut short. -/
+private def frameChars (width : Nat) : Nat → List Char → List UInt8 × Nat × Bool
+  | used, [] => ([], used, false)
+  | used, raw :: rest =>
+    if used + Terminal.Vt.charWidth (frameChar raw) > width then ([], used, true)
+    else
+      let more := frameChars width (used + Terminal.Vt.charWidth (frameChar raw)) rest
+      (String.utf8EncodeChar (frameChar raw) ++ more.1, more.2)
+
+/-- What a frame writes to put `style` in effect after `active`: nothing when they are the
+same, else an SGR reset and then the style's sequences. -/
+private def frameSwitch (active style : List (List Nat)) : List UInt8 :=
+  if style != active then ([0] :: style).flatMap Linger.Display.Listing.sgr else []
+
+/-- The runs of one frame line from the given cells used and style in effect: each run in its
+style, until a run is cut short. The bytes, and the style in effect at the end. -/
+private def framePieces (width : Nat) :
+    Nat → List (List Nat) → List (String × List (List Nat)) → List UInt8 × List (List Nat)
+  | _, active, [] => ([], active)
+  | used, active, run :: rest =>
+    let chars := frameChars width used run.1.toList
+    if chars.2.2 then (frameSwitch active run.2 ++ chars.1, run.2)
+    else
+      let more := framePieces width chars.2.1 run.2 rest
+      (frameSwitch active run.2 ++ chars.1 ++ more.1, more.2)
+
+/-- One frame line, within `width` cells, its style reset at its end. -/
+private def frameLine (width : Nat) (line : List (String × List (List Nat))) : List UInt8 :=
+  let body := framePieces width 0 [] line
+  body.1 ++ if body.2.isEmpty then [] else Linger.Display.Listing.sgr [0]
+
+/-- The picker frame's terminal bytes: reset the pen, home the cursor, clear the screen, then
+the lines of `frameLines` separated by CR LF. Each line keeps the final column unused, so
+neither a full-width name nor a resize induces an automatic line wrap. -/
+def frame (state : State) (snapshot : Snapshot) (statusOf : String → Linger.Display.Status.Status)
+    (loaded withColor savedTmux : Bool) (cols rows : Nat) : List UInt8 :=
+  Linger.Display.Listing.sgr [0] ++ Terminal.Render.csiPlain 0x48 ++
+    Terminal.Render.csiNum 2 0x4A ++
+    (((frameLines state snapshot statusOf loaded withColor savedTmux rows).map
+            (frameLine (cols - 1))).intersperse
+        Terminal.Render.crlfB).flatten
+
+/-- What the picker writes when it takes the terminal: the alternate screen, the cursor
+hidden, bracketed paste on. -/
+def enterAnsi : List UInt8 :=
+  Terminal.Render.modeSet 1049 true ++ Terminal.Render.modeSet 25 false ++
+    Terminal.Render.modeSet 2004 true
+
+/-- What the picker writes when it gives the terminal back: the pen reset, bracketed paste
+off, the cursor shown, the main screen. -/
+def exitAnsi : List UInt8 :=
+  Linger.Display.Listing.sgr [0] ++ Terminal.Render.modeSet 2004 false ++
+    Terminal.Render.modeSet 25 true ++
+    Terminal.Render.modeSet 1049 false
 
 end Linger.Selector.Picker

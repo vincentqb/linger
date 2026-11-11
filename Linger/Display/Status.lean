@@ -68,14 +68,15 @@ def ofName : String → Status
   | "idle" => .idle
   | _ => .unknown
 
-/-- Foreground styles use the terminal's standard palette. Quiet states dim the
-default foreground; no background or selection attribute belongs to a status. -/
-def style : Status → String
-  | .working => "\x1b[36m"
-  | .wantsYou | .unknown => "\x1b[33m"
-  | .exitedOk => "\x1b[32m"
-  | .exitedBad => "\x1b[31m"
-  | .idle | .resumable => "\x1b[2;39m"
+/-- A status's style, as the parameters of the SGR sequence that selects it. Foreground styles
+use the terminal's standard palette. Quiet states dim the default foreground; no background or
+selection attribute belongs to a status. -/
+def style : Status → List Nat
+  | .working => [36]
+  | .wantsYou | .unknown => [33]
+  | .exitedOk => [32]
+  | .exitedBad => [31]
+  | .idle | .resumable => [2, 39]
 
 /-- The statuses that ask for someone, in display order: titles and `ls --summary` count only
 these. Ordinary activity and successful completion do not ask for attention. -/

@@ -4,7 +4,8 @@ public section
 
 /-! # What selector headlines are stated in
 
-The actions the selector takes, the state of one selection visit, and what one action leads to. -/
+The actions the selector takes, the state of one selection visit, the listing it shows, and what
+one action leads to. -/
 
 namespace Linger.Selector
 
@@ -46,6 +47,15 @@ structure State where
   catalogs. -/
   allowCreate : Bool := true
   deriving BEq, Repr
+
+/-- Exact targets plus the complete metadata records that produced them. Equality
+includes metadata, so a status-only change still invalidates the displayed frame. -/
+structure Snapshot where
+  /-- The listing's exact targets, in order and without duplicates. -/
+  candidates : List String := []
+  /-- Tab-split listing lines, from which the picker reads each target's metadata. -/
+  records : List (List String) := []
+  deriving BEq, Repr, Inhabited
 
 /-- The result of one action: a next state, or a decision for the executor. -/
 inductive Outcome where

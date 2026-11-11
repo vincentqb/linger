@@ -10,6 +10,7 @@ public import Terminal.Mediation
 public import Terminal.Render
 public import Terminal.Replay
 public import Terminal.Spec
+public import Terminal.Title
 public import Terminal.Vt
 
 /-! # Headline theorems
@@ -161,6 +162,11 @@ def Linger.Display.Listing.rowFields : String → List (String × String) → Li
 /-- The status a listing row shows. -/
 @[expose]
 def Linger.Display.Listing.rowStatus : Listing.Row → Status.Status := sorry
+
+/-- What `ls` prints to a terminal: a line per row, its badge styled when colour is on. -/
+@[expose]
+def Linger.Display.Listing.terminalListing : Bool → List (List (String × String)) → List UInt8 :=
+  sorry
 
 /-- A listing's rows, those that ask for someone first. -/
 @[expose]
@@ -367,6 +373,22 @@ def Linger.Selector.Picker.matchCount : Selector.Picker.State → Nat := sorry
 @[expose]
 def Linger.Selector.Picker.step : Selector.Picker.State → Selector.Key → Selector.Picker.Outcome :=
   sorry
+
+/-- The bytes of the selector's frame, for its state, the listing, each row's status, whether a
+listing has loaded, colour, a saved-tmux visit, and the terminal's columns and rows. -/
+@[expose]
+def Linger.Selector.Picker.frame :
+    Selector.Picker.State →
+      Selector.Picker.Snapshot →
+      (String → Status.Status) → Bool → Bool → Bool → Nat → Nat → List UInt8 := sorry
+
+/-- What the selector writes when it takes the terminal. -/
+@[expose]
+def Linger.Selector.Picker.enterAnsi : List UInt8 := sorry
+
+/-- What the selector writes when it gives the terminal back. -/
+@[expose]
+def Linger.Selector.Picker.exitAnsi : List UInt8 := sorry
 
 /-- The saved panes an import creates sessions for, given the names sessions already hold. -/
 @[expose]
@@ -1509,9 +1531,13 @@ theorem checkpoint_metadata_rejects_blank :
 
 /-! ## 8. Clean terminal
 
-The terminal package claims that screen text and history text have no control characters
-and that the handback sequence leaves a terminal canonical. Not claimed yet: one statement
-covering every sequence linger writes on its own account; each printer is claimed on its own. -/
+What linger writes to a terminal on its own account is clean (`Display.Clean`): printable text,
+line breaks, tabs and a short list of control sequences, none of which asks the terminal for a
+reply, resets it or erases its scrollback. A gate lists every write to standard output in the
+program with whose bytes it writes: a printer `writes_clean` names, or the session's own bytes,
+its output and the repaint of its screen, which the terminal package's headlines describe. Not
+claimed: what linger prints as lines of text (help, version, `ls --summary`, porcelain records)
+and its messages on standard error. -/
 
 /-- An `info` reply is UTF-8 text with no C0 control, DEL or C1 control character other than its
 field and line separators, whatever its labels hold. -/
@@ -1532,6 +1558,42 @@ theorem infoText_text_rejects_escape :
               c = '\t' ∨
                 c = '\n' ∨
                 (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := by
+  sorry
+
+/-- Everything linger writes to a terminal on its own account is clean: the listing `ls` and
+`tmux ls` print, the selector's frame and what it writes to take and give back the terminal, the
+window titles linger sets, the screen and history `capture` prints, `info`'s reply and the
+handback. -/
+theorem writes_clean :
+    (∀ withColor rows, Display.Clean (Display.Listing.terminalListing withColor rows)) ∧
+      (∀ state snapshot statusOf loaded withColor savedTmux cols rows,
+        Display.Clean
+          (Selector.Picker.frame state snapshot statusOf loaded withColor savedTmux cols rows)) ∧
+      Display.Clean Selector.Picker.enterAnsi ∧
+      Display.Clean Selector.Picker.exitAnsi ∧
+      (∀ title, Display.Clean (Terminal.Title.ansi title)) ∧
+      (∀ v title, Display.Clean (Terminal.Title.update v title)) ∧
+      (∀ v, Display.Clean (Terminal.Render.screenText v)) ∧
+      (∀ v, Display.Clean (Terminal.Render.history v)) ∧
+      (∀ s, Display.Clean (Session.infoText s)) ∧ Display.Clean Terminal.Render.leaveAnsi := by
+  sorry
+
+/-- `writes_clean` rejects a listing that resets the terminal (`ESC c`). -/
+theorem writes_clean_rejects_reset :
+    ¬((∀ withColor rows,
+          Display.Clean
+            ((fun (_ : Bool) (_ : List (List (String × String))) => ([0x1B, 0x63] : List UInt8))
+              withColor rows)) ∧
+        (∀ state snapshot statusOf loaded withColor savedTmux cols rows,
+          Display.Clean
+            (Selector.Picker.frame state snapshot statusOf loaded withColor savedTmux cols rows)) ∧
+        Display.Clean Selector.Picker.enterAnsi ∧
+        Display.Clean Selector.Picker.exitAnsi ∧
+        (∀ title, Display.Clean (Terminal.Title.ansi title)) ∧
+        (∀ v title, Display.Clean (Terminal.Title.update v title)) ∧
+        (∀ v, Display.Clean (Terminal.Render.screenText v)) ∧
+        (∀ v, Display.Clean (Terminal.Render.history v)) ∧
+        (∀ s, Display.Clean (Session.infoText s)) ∧ Display.Clean Terminal.Render.leaveAnsi) := by
   sorry
 
 /-! ## 9. Work follows events

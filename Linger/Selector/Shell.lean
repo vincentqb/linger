@@ -1,6 +1,7 @@
 module
 
-public import Linger.Selector.Picker
+public import Linger.Selector.Spec
+import Linger.Selector.Picker
 import Os.Shell
 import Linger.Target.Remote
 import Terminal.Title
@@ -51,43 +52,6 @@ private def statusesOf (snapshot : Linger.Selector.Picker.Snapshot) :
         pure ()
     return statuses
 
-/-- The terminal bytes of a picker frame (`Picker.frameLines`). Keep the final column unused
-so neither a full-width name nor a resize induces an automatic line wrap. -/
-private def draw (state : Linger.Selector.Picker.State) (snapshot : Linger.Selector.Picker.Snapshot)
-    (statusOf : String → Linger.Display.Status.Status) (loaded withColor savedTmux : Bool)
-    (cols rows : UInt32) : String :=
-  Id.run do
-    let width := cols.toNat - 1
-    let lines :=
-      Linger.Selector.Picker.frameLines state snapshot statusOf loaded withColor savedTmux
-        rows.toNat
-    let mut frame := "\x1b[0m\x1b[H\x1b[2J"
-    let mut first := true
-    for line in lines do
-      if !first then
-        frame := frame ++ "\r\n"
-      first := false
-      let mut used := 0
-      let mut clipped := false
-      let mut activeStyle := ""
-      for (text, style) in line do
-        if clipped then
-          break
-        if style != activeStyle then
-          frame := frame ++ "\x1b[0m" ++ style
-          activeStyle := style
-        for raw in text.toList do
-          let c := if Input.printable raw then raw else '?'
-          let cells := Terminal.Vt.charWidth c
-          if used + cells > width then
-            clipped := true
-            break
-          frame := frame.push c
-          used := used + cells
-      if !activeStyle.isEmpty then
-        frame := frame ++ "\x1b[0m"
-    return frame
-
 /-- A native visit lists local rows every second but queries remote hosts again only
 this long after its previous remote query completed: each host costs an SSH
 connection. Meanwhile remote rows stay as that query reported them. -/
@@ -111,7 +75,7 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
   let withColor := (← IO.getEnv "NO_COLOR").isNone
   let saved ← termRaw stdinFd
   try
-    writeAll stdoutFd "\x1b[?1049h\x1b[?25l\x1b[?2004h".toUTF8
+    writeAll stdoutFd (ByteArray.mk Linger.Selector.Picker.enterAnsi.toArray)
     writeAll stdoutFd (ByteArray.mk (Terminal.Title.ansi "linger").toArray)
     let fds := #[stdinFd]
     let events := #[POLLIN]
@@ -126,16 +90,16 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
     let mut lastFull : Linger.Selector.Picker.Snapshot := {}
     let mut nextRemote := 0
     let mut size := (0, 0)
-    let mut lastFrame := ""
+    let mut lastFrame : List UInt8 := []
     let mut dirty := true
     while true do
       let current ← winsizeGet stdoutFd
       if dirty || current != size then
         let frame :=
-          draw state snapshot (statuses.getD · .unknown) loaded withColor savedTmux current.1
-            current.2
+          Linger.Selector.Picker.frame state snapshot (statuses.getD · .unknown) loaded withColor
+            savedTmux current.1.toNat current.2.toNat
         if frame != lastFrame || current != size then
-          writeAll stdoutFd frame.toUTF8
+          writeAll stdoutFd (ByteArray.mk frame.toArray)
           lastFrame := frame
         size := current
         dirty := false
@@ -199,7 +163,7 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
   finally
     try
       try
-        writeAll stdoutFd "\x1b[0m\x1b[?2004l\x1b[?25h\x1b[?1049l".toUTF8
+        writeAll stdoutFd (ByteArray.mk Linger.Selector.Picker.exitAnsi.toArray)
         writeAll stdoutFd (ByteArray.mk (Terminal.Title.ansi "").toArray)
       finally
         termRestore stdinFd saved

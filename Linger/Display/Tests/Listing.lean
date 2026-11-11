@@ -61,7 +61,12 @@ example : nameWidth [[("name", "a")], [("name", "work@host")]] = 9 := by native_
 open Linger.Display.Status in
 example :
     [.working, .wantsYou, .unknown, .exitedOk, .exitedBad, .idle, .resumable].map style =
-      ["\x1b[36m", "\x1b[33m", "\x1b[33m", "\x1b[32m", "\x1b[31m", "\x1b[2;39m", "\x1b[2;39m"] := by
+      [[36], [33], [33], [32], [31], [2, 39], [2, 39]] := by
+  decide
+
+-- Each style's sequence keeps the bytes the listing always wrote.
+example :
+    [[36], [2, 39], [0]].map sgr = ["\x1b[36m", "\x1b[2;39m", "\x1b[0m"].map (·.toUTF8.toList) := by
   native_decide
 
 open Linger.Display.Status in

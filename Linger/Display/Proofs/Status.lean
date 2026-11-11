@@ -84,9 +84,7 @@ theorem name_injective (s t : Status) (h : name s = name t) : s = t := by
 /-- The complete style vocabulary contains standard foreground SGRs only; its
 quiet style adds dim and explicitly selects the default foreground. -/
 theorem style_palette (s : Status) :
-    Linger.Display.Status.style s ∈
-      ["\x1b[36m", "\x1b[33m", "\x1b[32m", "\x1b[31m", "\x1b[2;39m"] := by
-  cases s <;> decide
+    Linger.Display.Status.style s ∈ [[36], [33], [32], [31], [2, 39]] := by cases s <;> decide
 
 /-- Positive counts appear once in attention order, independent of input order. -/
 theorem attentionCounts_exact (statuses : List Status) :

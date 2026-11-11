@@ -10,9 +10,11 @@ import all Linger.Os.Proofs.Env
 import all Os.Proofs.Wait
 import all Fuzzy.Proofs
 import all Input.Proofs
+import all Linger.Display.Proofs.Clean
 import all Linger.Display.Proofs.Listing
 import all Linger.Display.Proofs.View
 import all Linger.Target.Proofs.Name
+import all Linger.Selector.Proofs.Frame
 import all Linger.Selector.Proofs.Picker
 import all Linger.Target.Proofs.Remote
 import all Terminal.Proofs.Render.Grid
@@ -621,6 +623,35 @@ example (w : Vt.Vt) (h2 : 2 ≤ w.rows) :
           alt := false } ∧
       (w.feed Render.leaveAnsi).pen = {} ∧ (w.feed Render.leaveAnsi).title = "" := by
   with_reducible exact Render.leave_canonical_all w h2
+
+-- Clean terminal
+example (withColor : Bool) (rows : List (List (String × String))) :
+    Clean (Listing.terminalListing withColor rows) := by
+  with_reducible exact terminalListing_clean withColor rows
+
+example (state : Picker.State) (snapshot : Picker.Snapshot) (statusOf : String → Status.Status)
+    (loaded withColor savedTmux : Bool) (cols rows : Nat) :
+    Clean (Picker.frame state snapshot statusOf loaded withColor savedTmux cols rows) := by
+  with_reducible exact Picker.frame_clean _ _ _ _ _ _ _ _
+
+example : Clean Picker.enterAnsi := by with_reducible exact Picker.enterAnsi_clean
+
+example : Clean Picker.exitAnsi := by with_reducible exact Picker.exitAnsi_clean
+
+example (title : String) : Clean (Terminal.Title.ansi title) := by
+  with_reducible exact title_ansi_clean title
+
+example (v : Vt.Vt) (title : String) : Clean (Terminal.Title.update v title) := by
+  with_reducible exact title_update_clean v title
+
+example (v : Vt.Vt) : Clean (Render.screenText v) := by with_reducible exact screenText_clean v
+
+example (v : Vt.Vt) : Clean (Render.history v) := by with_reducible exact history_clean v
+
+example : Clean Render.leaveAnsi := by with_reducible exact leaveAnsi_clean
+
+example {cs : List Char} (h : ∀ c ∈ cs, Printable c ∨ c = '\n' ∨ c = '\t') :
+    Clean (cs.flatMap String.utf8EncodeChar) := by with_reducible exact clean_text h
 
 -- Status and titles
 example (o : Status.Obs) (s : Status.Status) : Status.classify o = s ↔ Status.Is s o := by

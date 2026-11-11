@@ -423,7 +423,7 @@ import_closure Linger/Selector/Key.lean 'public import Linger.Selector.Spec;publ
 import_closure Linger/Selector/Spec.lean ''
 import_closure packages/fuzzy/Fuzzy.lean 'public import Fuzzy.Spec;'
 import_closure packages/fuzzy/Fuzzy/Spec.lean ''
-import_closure Linger/Selector/Picker.lean 'import Input;public import Linger.Selector.Spec;import Fuzzy;import Linger.Target.Name;import Linger.Display.Listing;public import Linger.Display.Spec;import Linger.Display.Status;import Linger.Target.Remote;import Terminal.Vt;import Linger.Display.View;'
+import_closure Linger/Selector/Picker.lean 'import Input;public import Linger.Selector.Spec;import Fuzzy;import Linger.Target.Name;import Linger.Display.Listing;public import Linger.Display.Spec;import Linger.Display.Status;import Linger.Target.Remote;import Terminal.Vt;import Terminal.Render;import Linger.Display.View;'
 import_closure Linger/Display/View.lean 'public import Linger.Display.Spec;import Linger.Display.Status;'
 import_closure Linger/Display/Spec.lean ''
 import_closure Linger/Display/Status.lean 'public import Linger.Display.Spec;'
@@ -451,9 +451,9 @@ shell_all="$(module_imports '*.lean' | awk -F: "$IMPORT_AWK"'
   printf '%s\n' "$shell_all" >&2
   fail "import all Os.Shell grants the private Boundary bindings: import it plainly"; }
 import_closure packages/os/Os/Shell/Command.lean 'import Os.Shell;'
-import_closure Linger/Import/Shell.lean 'import Linger.Import.Resurrect;import Linger.Session.Checkpoint;import Os.Shell;import Linger.Display.Listing;import Linger.Session.Shell.Paths;import Linger.Session.Shell.Resume;import Linger.Session.Shell.Inventory;import Os.Shell.Command;import Linger.Target.Remote;import Linger.Selector.Shell;import Std.Async.System;'
+import_closure Linger/Import/Shell.lean 'import Linger.Import.Resurrect;import Linger.Session.Checkpoint;import Os.Shell;import Linger.Display.Listing;import Linger.Session.Shell.Paths;import Linger.Session.Shell.Resume;import Linger.Session.Shell.Inventory;import Os.Shell.Command;import Linger.Target.Remote;import Linger.Selector.Shell;import Linger.Selector.Picker;import Std.Async.System;'
 import_closure Linger/Selector/Shell.lean \
-  'public import Linger.Selector.Picker;import Os.Shell;import Linger.Target.Remote;import Terminal.Title;import Os.Shell.Command;import Linger.Display.View;import Std.Data.HashMap.Basic;import Linger.Display.Status;import Linger.Selector.Key;import Input;'
+  'public import Linger.Selector.Spec;import Linger.Selector.Picker;import Os.Shell;import Linger.Target.Remote;import Terminal.Title;import Os.Shell.Command;import Linger.Display.View;import Std.Data.HashMap.Basic;import Linger.Display.Status;import Linger.Selector.Key;import Input;'
 import_closure Main.lean \
   'import Linger.App.Shell;import Linger.App.Entry;import Linger.Selector.Shell;import Linger.Import.Shell;'
 # `lean_lib Linger` builds the umbrella's closure, so this list is what `./lake build`
@@ -744,7 +744,9 @@ for tie in \
   'let events := #[[]POLLIN[]]' \
   'let ready ← poll fds events 50' \
   'let withColor := [(]← IO[.]getEnv "NO_COLOR"[)][.]isNone' \
+  'writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Selector[.]Picker[.]enterAnsi[.]toArray[)]' \
   'writeAll stdoutFd [(]ByteArray[.]mk [(]Terminal[.]Title[.]ansi "linger"[)][.]toArray[)]' \
+  'writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Selector[.]Picker[.]exitAnsi[.]toArray[)]' \
   'writeAll stdoutFd [(]ByteArray[.]mk [(]Terminal[.]Title[.]ansi ""[)][.]toArray[)]' \
   'discard child[.]wait' \
   'let child ← IO[.]Process[.]spawn [{] cmd := executable, args := attachArgs target readOnly [}]'; do
@@ -754,16 +756,14 @@ done
 picker_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Selector/Shell.lean)"
 # Pin traversal through shared row pieces, frame insertion and complete metadata
 # replacement. Computing rows or refreshed state without consuming them is
-# insufficient. The loop seams fix draw, poll/decode/step, then refresh ordering.
+# insufficient. The loop seams fix the frame, poll/decode/step, then refresh ordering.
 # A completed snapshot must not replace the target underneath an unread key.
 # Preserve byte order and consume both decoder results through the proved
 # application binding before dispatch.
 for tie in \
   'for byte in bytes do let [(]next, emitted[)] := Input[.]feed decoder byte decoder := next keys := keys [+][+] [(]emitted[.]filterMap Linger[.]Selector[.]Key[.]ofInput[)][.]toArray else if Input[.]pending decoder && [(]← monotonicMs[)] - lastInput ≥ 150 then let [(]next, emitted[)] := Input[.]flush decoder decoder := next keys := [(]emitted[.]filterMap Linger[.]Selector[.]Key[.]ofInput[)][.]toArray for key in keys do' \
-  'let lines := Linger[.]Selector[.]Picker[.]frameLines state snapshot statusOf loaded withColor savedTmux rows[.]toNat let mut frame :=' \
-  'let mut frame := "\\x1b[[]0m\\x1b[[]H\\x1b[[]2J" let mut first := true for line in lines do if !first then frame := frame [+][+] "\\r\\n" first := false let mut used := 0 let mut clipped := false let mut activeStyle := "" for [(]text, style[)] in line do if clipped then break if style != activeStyle then frame := frame [+][+] "\\x1b[[]0m" [+][+] style activeStyle := style for raw in text[.]toList do let c := if Input[.]printable raw then raw else '"'"'[?]'"'"' let cells := Terminal[.]Vt[.]charWidth c if used [+] cells > width then clipped := true break frame := frame[.]push c used := used [+] cells if !activeStyle[.]isEmpty then frame := frame [+][+] "\\x1b[[]0m" return frame' \
   'let incomingStatuses := statusesOf incoming let ordered := Linger[.]Display[.]View[.]sort [(]incomingStatuses[.]getD · [.]unknown[)] incoming[.]candidates let next := if loaded then Linger[.]Selector[.]Picker[.]refresh state ordered else [{] [(]Linger[.]Selector[.]Picker[.]init ordered state[.]allowCreate[)] with query := state[.]query [}] dirty := dirty [|][|] !loaded [|][|] next != state [|][|] incoming != snapshot state := next snapshot := incoming statuses := incomingStatuses loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
-  'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let frame := draw state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor savedTmux current[.]1 current[.]2 if frame != lastFrame [|][|] current != size then writeAll stdoutFd frame[.]toUTF8 lastFrame := frame size := current dirty := false let ready ← poll fds events 50' \
+  'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let frame := Linger[.]Selector[.]Picker[.]frame state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor savedTmux current[.]1[.]toNat current[.]2[.]toNat if frame != lastFrame [|][|] current != size then writeAll stdoutFd [(]ByteArray[.]mk frame[.]toArray[)] lastFrame := frame size := current dirty := false let ready ← poll fds events 50' \
   'for key in keys do if !loaded && key == [.]accept then continue match Linger[.]Selector[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target snapshot [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Os[.]Shell[.]Command[.]poll pending then' \
   'if full then lastFull := listed nextRemote := [(]← monotonicMs[)] [+] remoteRefreshMs let incoming := if full then listed else listed[.]withRemote lastFull' \
   'nextListing := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextListing then full := savedTmux [|][|] [(]← monotonicMs[)] ≥ nextRemote let args := if full then fullArgs else #[[]"ls", "--porcelain"[]] pending[.]set [(]some [(]← Os[.]Shell[.]Command[.]start executable args[)][)] return [.]cancel finally' \
@@ -1772,8 +1772,8 @@ emitter_claims="$(awk '
         if (name ~ /^[A-Za-z][A-Za-z0-9_.]*$/) sub(/.*[.]/, "", name)
         print "Verify/Coverage.lean:emitters:" name } }
     print "#rows " rows }' Verify/Coverage.lean)"
-[ "$(printf '%s\n' "$emitter_claims" | sed -n 's/^#rows //p')" = 28 ] \
-  || fail "Verify/Coverage.lean's emitter table no longer reads as its 28 rows"
+[ "$(printf '%s\n' "$emitter_claims" | sed -n 's/^#rows //p')" = 31 ] \
+  || fail "Verify/Coverage.lean's emitter table no longer reads as its 31 rows"
 { printf '%s\n' "$thm_decls" '#cites'; cite_scan; printf '%s\n' "$emitter_claims" | grep -v '^#rows '; } \
 | CITE_ABSENT="$cite_absent" CITE_FOREIGN="$cite_foreign" awk -F: '
   BEGIN { n = split(ENVIRON["CITE_ABSENT"], L, " "); for (i = 1; i <= n; i++) absent[L[i]] = 1
@@ -1963,6 +1963,57 @@ packages/os/Os/Shell/Command.lean: unless ← Os.Shell.nap deadline 5 do'
 [ "$timers" = "$expected_timers" ] \
   || fail "the program's timers changed; name each here with its bound, or wait on an event instead:
 $timers"
+# What the program writes to a terminal: every use of standard output's descriptor, each raw
+# write with whose bytes it writes (the ties above and below pin each argument). Linger's own
+# bytes are printers `writes_clean` (Challenge part 8) proves clean; the session's own are its
+# output and the repaint of its screen. A new write joins this list, and the headline when its
+# bytes are linger's own.
+#   App/Shell: the handback after a remote command (`leaveAnsi`); `ls` (`terminalListing`);
+#     `capture` of a saved session (`screenText` or `history`, as `cmdRead`'s caller passes).
+#   Import/Shell: `tmux ls` (`terminalListing`).
+#   Selector/Shell: taking the terminal (`enterAnsi`) and naming it, the window size, the frame
+#     (`frame`), giving the terminal back (`exitAnsi`) and clearing its title.
+#   Session/Shell/Client: a one-shot reply, which is the daemon's `infoText`, `screenText` or
+#     `history` in frames; a saved view's repaint (the session's), title (`Title.update`) and
+#     handback; an attach's output (the session's), title and handback.
+term_writes="$(code_grep 'stdoutFd' 'Main.lean' 'Linger/*.lean' \
+    ':!Linger/*/Suites/*' ':!Linger/*/Proofs/*' ':!Linger/*/Tests/*' \
+    'packages/*.lean' ':!packages/*/Suites/*' ':!packages/*/Proofs/*' ':!packages/*/Tests/*' \
+  | sed -E 's/^([^:]+):[0-9]+:[[:space:]]*/\1: /')"
+expected_term_writes='Linger/App/Shell.lean: writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
+Linger/App/Shell.lean: writeAll stdoutFd
+Linger/App/Shell.lean: writeAll stdoutFd (ByteArray.mk (render vt).toArray)
+Linger/Import/Shell.lean: Os.Shell.writeAll Os.Shell.stdoutFd
+Linger/Selector/Shell.lean: writeAll stdoutFd (ByteArray.mk Linger.Selector.Picker.enterAnsi.toArray)
+Linger/Selector/Shell.lean: writeAll stdoutFd (ByteArray.mk (Terminal.Title.ansi "linger").toArray)
+Linger/Selector/Shell.lean: let current ← winsizeGet stdoutFd
+Linger/Selector/Shell.lean: writeAll stdoutFd (ByteArray.mk frame.toArray)
+Linger/Selector/Shell.lean: writeAll stdoutFd (ByteArray.mk Linger.Selector.Picker.exitAnsi.toArray)
+Linger/Selector/Shell.lean: writeAll stdoutFd (ByteArray.mk (Terminal.Title.ansi "").toArray)
+Linger/Session/Shell/Client.lean: writeAll stdoutFd (ByteArray.mk payload.toArray)
+Linger/Session/Shell/Client.lean: writeAll stdoutFd (ByteArray.mk bytes.toArray)
+Linger/Session/Shell/Client.lean: writeAll stdoutFd (ByteArray.mk (Terminal.Title.update view title).toArray)
+Linger/Session/Shell/Client.lean: writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
+Linger/Session/Shell/Client.lean: writeAll stdoutFd (ByteArray.mk payload.toArray)
+Linger/Session/Shell/Client.lean: writeAll stdoutFd (ByteArray.mk bytes.toArray)
+Linger/Session/Shell/Client.lean: writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
+packages/os/Os/Shell.lean: def stdoutFd : UInt32 := 1'
+[ "$term_writes" = "$expected_term_writes" ] \
+  || fail "the program's terminal writes changed; name each here with whose bytes it writes:
+$term_writes"
+tie='[|] [.]output payload [|] [.]infoReply payload => writeAll stdoutFd [(]ByteArray[.]mk payload[.]toArray[)]'
+printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+  || fail "a one-shot reply is written other than as the daemon's frames: $tie"
+# No other way to write bytes to standard output: no literal descriptor, and the one stream
+# write in the program is a checkpoint file's.
+! code_grep '(writeAll|write) (Os[.]Shell[.])?[0-9]' 'Main.lean' 'Linger/*.lean' \
+    ':!Linger/*/Suites/*' ':!Linger/*/Proofs/*' ':!Linger/*/Tests/*' \
+  || fail "a write names a descriptor by number; use stdoutFd and list the write above"
+[ "$(code_grep '[.]write[[:space:](]' 'Main.lean' 'Linger/*.lean' \
+    ':!Linger/*/Suites/*' ':!Linger/*/Proofs/*' ':!Linger/*/Tests/*' \
+  | sed -E 's/^([^:]+):[0-9]+:[[:space:]]*/\1: /')" = \
+  'Linger/Import/Shell.lean: handle.write (Linger.Session.Checkpoint.saveBytes (checkpoint pane contents))' ] \
+  || fail "a stream write besides the imported checkpoint's could reach standard output"
 # One command table: help prints it and every usage error quotes its command's row, so no usage
 # text is written anywhere else.
 ! code_grep '"usage: linger' Linger/App/Shell.lean \

@@ -19,14 +19,18 @@ public import Linger.Target.Name
 public import Linger.Target.Remote
 public import Linger.Target.Spec
 public import Terminal.Mediation
+public import Terminal.Render
 public import Terminal.Replay
 public import Terminal.Spec
+public import Terminal.Title
 import all Linger.App.Proofs.Commands
 import all Linger.App.Proofs.Entry
+import Linger.Display.Proofs.Clean
 import all Linger.Display.Proofs.Listing
 import all Linger.Display.Proofs.Status
 import all Linger.Display.Proofs.View
 import all Linger.Import.Proofs.Resurrect
+import Linger.Selector.Proofs.Frame
 import all Linger.Selector.Proofs.Picker
 import all Linger.Display.Proofs.Title
 import all Linger.Os.Proofs.Env
@@ -1261,6 +1265,47 @@ theorem infoText_text_rejects_escape :
     decide
   · rw [← Render.utf8_eq_utf8EncodeChar] at byte
     exact absurd (Render.utf8_no_ctl c printable notDel _ byte).1 (by decide)
+
+theorem writes_clean :
+    (∀ withColor rows, Display.Clean (Display.Listing.terminalListing withColor rows)) ∧
+      (∀ state snapshot statusOf loaded withColor savedTmux cols rows,
+        Display.Clean
+          (Selector.Picker.frame state snapshot statusOf loaded withColor savedTmux cols rows)) ∧
+      Display.Clean Selector.Picker.enterAnsi ∧
+      Display.Clean Selector.Picker.exitAnsi ∧
+      (∀ title, Display.Clean (Terminal.Title.ansi title)) ∧
+      (∀ v title, Display.Clean (Terminal.Title.update v title)) ∧
+      (∀ v, Display.Clean (Terminal.Render.screenText v)) ∧
+      (∀ v, Display.Clean (Terminal.Render.history v)) ∧
+      (∀ s, Display.Clean (Session.infoText s)) ∧ Display.Clean Terminal.Render.leaveAnsi := by
+  have info (s : State) : Display.Clean (Session.infoText s) := by
+    obtain ⟨cs, text, safe⟩ := infoText_text s
+    rw [text]
+    exact
+      Display.clean_text fun c hc =>
+        (safe c hc).elim (fun tab => .inr (.inr tab)) fun rest =>
+          rest.elim (fun newline => .inr (.inl newline)) .inl
+  exact
+    ⟨Display.terminalListing_clean, Selector.Picker.frame_clean, Selector.Picker.enterAnsi_clean,
+      Selector.Picker.exitAnsi_clean, Display.title_ansi_clean, Display.title_update_clean,
+      Display.screenText_clean, Display.history_clean, info, Display.leaveAnsi_clean⟩
+
+theorem writes_clean_rejects_reset :
+    ¬((∀ withColor rows,
+          Display.Clean
+            ((fun (_ : Bool) (_ : List (List (String × String))) => ([0x1B, 0x63] : List UInt8))
+              withColor rows)) ∧
+        (∀ state snapshot statusOf loaded withColor savedTmux cols rows,
+          Display.Clean
+            (Selector.Picker.frame state snapshot statusOf loaded withColor savedTmux cols rows)) ∧
+        Display.Clean Selector.Picker.enterAnsi ∧
+        Display.Clean Selector.Picker.exitAnsi ∧
+        (∀ title, Display.Clean (Terminal.Title.ansi title)) ∧
+        (∀ v title, Display.Clean (Terminal.Title.update v title)) ∧
+        (∀ v, Display.Clean (Terminal.Render.screenText v)) ∧
+        (∀ v, Display.Clean (Terminal.Render.history v)) ∧
+        (∀ s, Display.Clean (Session.infoText s)) ∧ Display.Clean Terminal.Render.leaveAnsi) :=
+  fun h => Display.not_clean_reset (h.1 true [])
 
 theorem ticks_settle (s : State) (now t₁ t₂ : Nat)
     (h₁ : (Session.trace Session.step s [.tick now]).1.nextTick = some t₁)

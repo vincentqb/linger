@@ -10,6 +10,7 @@ import Linger.Session.Shell.Inventory
 import Os.Shell.Command
 import Linger.Target.Remote
 import Linger.Selector.Shell
+import Linger.Selector.Picker
 import Std.Async.System
 
 public section

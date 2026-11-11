@@ -150,15 +150,18 @@ def humanRow (nameCol : Nat) (info : List (String × String)) : List UInt8 :=
 def nameWidth (rows : List (List (String × String))) : Nat :=
   rows.foldl (fun m r => max m ((r.lookup "name").getD "").toList.length) 0
 
+/-- `CSI <params> m`, select graphic rendition: the sequence that sets a style, its parameters
+in decimal separated by `;`. -/
+def sgr (params : List Nat) : List UInt8 :=
+  Terminal.Render.csiB ++ ((params.map Terminal.Render.digits).intersperse [0x3B]).flatten ++ [0x6D]
+
 /-- Render already-separated row pieces. Styling surrounds only the badge and
 resets immediately, so names and details retain the default foreground. -/
 private def renderPieces (withColor : Bool) (pieces : List RowPiece) : List UInt8 :=
   pieces.flatMap fun piece =>
     let text := utf8s piece.text
     match piece.status with
-    | some status =>
-      if withColor then (Status.style status).toUTF8.toList ++ text ++ "\x1b[0m".toUTF8.toList
-      else text
+    | some status => if withColor then sgr (Status.style status) ++ text ++ sgr [0] else text
     | none => text
 
 /-- The whole human-readable listing, one LF-terminated row per session (or the

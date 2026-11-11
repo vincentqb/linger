@@ -98,3 +98,82 @@ inductive Row where
   deriving Repr
 
 end Linger.Display.Listing
+
+namespace Linger.Display
+
+/-- A character a terminal prints: neither a C0 control, DEL nor a C1 control. -/
+@[expose]
+def Printable (c : Char) : Prop :=
+  0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)
+
+/-- A number's decimal digits, as bytes, most significant first. -/
+@[expose]
+def digits (n : Nat) : List UInt8 :=
+  if n < 10 then [UInt8.ofNat (0x30 + n)] else digits (n / 10) ++ [UInt8.ofNat (0x30 + n % 10)]
+termination_by n
+decreasing_by omega
+
+/-- One piece of what linger writes to a terminal on its own account: a character, a line
+break or tab, or one of the control sequences linger uses. -/
+inductive Piece where
+  /-- A character, which must be printable. -/
+  | text (c : Char)
+  /-- Line feed. -/
+  | lf
+  /-- Carriage return. -/
+  | cr
+  /-- Horizontal tab. -/
+  | tab
+  /-- A control sequence: `ESC [`, `?` when it is private, numeric parameters separated by `;`,
+  and a final byte. -/
+  | csi (priv : Bool) (params : List Nat) (final : UInt8)
+  /-- `ESC ] 2 ;`, a window title, `BEL`. -/
+  | title (cs : List Char)
+  /-- `ESC` and a final byte. -/
+  | esc (final : UInt8)
+  /-- `ESC (` or, for G1, `ESC )`, and `B`: ASCII in G0 or G1. -/
+  | ascii (g1 : Bool)
+  /-- Shift in (`SI`): select G0. -/
+  | shiftIn
+  deriving DecidableEq, Repr
+
+/-- A piece's bytes. -/
+@[expose]
+def Piece.bytes : Piece → List UInt8
+  | .text c => String.utf8EncodeChar c
+  | .lf => [0x0A]
+  | .cr => [0x0D]
+  | .tab => [0x09]
+  | .csi priv params final =>
+    [0x1B, 0x5B] ++ (if priv then [0x3F] else []) ++
+      ((params.map digits).intersperse [0x3B]).flatten ++
+      [final]
+  | .title cs => [0x1B, 0x5D, 0x32, 0x3B] ++ cs.flatMap String.utf8EncodeChar ++ [0x07]
+  | .esc final => [0x1B, final]
+  | .ascii g1 => [0x1B, if g1 then 0x29 else 0x28, 0x42]
+  | .shiftIn => [0x0F]
+
+/-- The pieces linger may write. Text and titles are printable. A control sequence selects
+graphic rendition (`m`), moves the cursor (`H`), sets the scroll region (`r`), erases the screen
+but not its scrollback (`J` with parameters at most 2), resets a mode (`l`), or sets DEC private
+mode 7 (autowrap), 25 (cursor shown), 1049 (alternate screen) or 2004 (bracketed paste) (`h`).
+An escape ends a string (`\`) or selects the keypad's numeric mode (`>`). No piece asks the
+terminal for a reply, resets it or erases its scrollback, and bracketed paste is the one mode a
+piece sets that changes what the terminal sends. -/
+@[expose]
+def Piece.Ok : Piece → Prop
+  | .text c => Printable c
+  | .csi priv params final =>
+    (priv = false ∧
+        (final = 0x6D ∨ final = 0x48 ∨ final = 0x72 ∨ (final = 0x4A ∧ ∀ n ∈ params, n ≤ 2))) ∨
+      final = 0x6C ∨ (final = 0x68 ∧ priv = true ∧ ∀ n ∈ params, n ∈ [7, 25, 1049, 2004])
+  | .title cs => ∀ c ∈ cs, Printable c
+  | .esc final => final = 0x5C ∨ final = 0x3E
+  | .lf | .cr | .tab | .ascii _ | .shiftIn => True
+
+/-- Bytes made only of pieces linger may write. -/
+@[expose]
+def Clean (bytes : List UInt8) : Prop :=
+  ∃ pieces : List Piece, (∀ p ∈ pieces, p.Ok) ∧ pieces.flatMap Piece.bytes = bytes
+
+end Linger.Display
