@@ -1,14 +1,14 @@
 module
 
-import Linger.Os.Spec
-import all Linger.Os.Wait
+import Os.Spec
+import all Os.Wait
 
 /-! A wait's sleeps, decided for every deadline, step and time: it gives up exactly once its
 deadline has passed, sleeps between 1 ms and its step without passing the deadline, and so,
 when each sleep lasts as long as asked (`Wait.Lasts`), gives up after at most one look per
 millisecond of its window. -/
 
-namespace Linger.Os.Wait
+namespace Os.Wait
 
 /-- A wait gives up exactly once its deadline has passed. -/
 theorem next_eq_none_iff (deadline step now : Nat) :
@@ -50,4 +50,4 @@ theorem ends_within {after : Nat → Nat → Nat} (lasts : Lasts after) (deadlin
       obtain ⟨looks, hlooks, hends⟩ := ih (after now ms) (by omega)
       exact ⟨looks + 1, by omega, .slept hn hends⟩
 
-end Linger.Os.Wait
+end Os.Wait

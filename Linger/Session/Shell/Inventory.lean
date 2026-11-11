@@ -1,6 +1,6 @@
 module
 
-import Linger.Os.Shell
+import Os.Shell
 public import Linger.Session
 import Linger.Session.Buf
 import Linger.Session.Shell.Client
@@ -22,7 +22,7 @@ through this module. -/
 
 namespace Linger.Session.Shell.Inventory
 
-open Linger.Os.Shell
+open Os.Shell
 
 /-- Bound on accumulated `infoReply` bytes, independent of the request deadline.
 A peer exceeding the producer's policy has not supplied a usable answer. -/

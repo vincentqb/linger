@@ -12,7 +12,7 @@ its own specification. The claims about a session's processes and descriptors ar
 session's, in `Linger/Session/Spec.lean`; this one is about time, which the boundary's own
 waits use too. -/
 
-namespace Linger.Os.Wait
+namespace Os.Wait
 
 /-- A wait from `now` gives up after `looks` looks: it looks, and while `next` asks for a sleep
 of `ms`, sleeps until the clock reads `after now ms` and looks again, until `next` reports that
@@ -31,4 +31,4 @@ returns, less than `ms` above the one before it falsifies it, as would a sleep t
 returns. -/
 WorldClaim Lasts (after : Nat → Nat → Nat) := ∀ now ms, now + ms ≤ after now ms
 
-end Linger.Os.Wait
+end Os.Wait

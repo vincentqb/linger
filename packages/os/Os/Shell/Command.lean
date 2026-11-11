@@ -1,13 +1,13 @@
 module
 
-import Linger.Os.Shell
+import Os.Shell
 
 public section
 
 /-! A cancellable command with one owner. Both pipe readers and the isolated
 process group live until that owner collects or stops the job. -/
 
-namespace Linger.Os.Shell.Command
+namespace Os.Shell.Command
 
 /-- A started command and its two pipe readers, held by one owner until it collects the
 job with `poll` or retires it with `stop`. -/
@@ -81,7 +81,7 @@ private def retireGroup (job : Job) : IO Unit := do
   catch err =>
     match err with
     | .permissionDenied .. | .noSuchThing .. =>
-      Linger.Os.Shell.kill job.child.pid 9
+      Os.Shell.kill job.child.pid 9
     | _ =>
       throw err
 
@@ -96,12 +96,12 @@ def stop (pending : IO.Ref (Option Job)) (graceMs : Nat := 0) : IO Unit := do
       try
         try
           if graceMs > 0 then
-            Linger.Os.Shell.kill job.child.pid 15
-            let deadline := (← Linger.Os.Shell.monotonicMs) + graceMs
+            Os.Shell.kill job.child.pid 15
+            let deadline := (← Os.Shell.monotonicMs) + graceMs
             repeat
               if (← IO.hasFinished job.stdout) && (← IO.hasFinished job.stderr) then
                 break
-              unless ← Linger.Os.Shell.nap deadline 5 do
+              unless ← Os.Shell.nap deadline 5 do
                 break
         finally
           retireGroup job
@@ -111,4 +111,4 @@ def stop (pending : IO.Ref (Option Job)) (graceMs : Nat := 0) : IO Unit := do
       discard <| IO.wait job.stdout
       discard <| IO.wait job.stderr
 
-end Linger.Os.Shell.Command
+end Os.Shell.Command

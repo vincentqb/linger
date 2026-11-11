@@ -2,14 +2,14 @@
  *
  * Contract (AGENTS.md): syscall + errno only. No buffering, no retry
  * policy beyond EINTR, no session logic. Every function is a thin
- * wrapper bound in Linger/Os/Boundary.lean; its behavior is stated on
- * the Lean wrapper of the same name in Linger/Os/Shell.lean. All Lean
+ * wrapper bound in packages/os/Os/Boundary.lean; its behavior is stated on
+ * the Lean wrapper of the same name in packages/os/Os/Shell.lean. All Lean
  * object parameters are borrowed (@& on the Lean side), so nothing here
  * inc/decs references except allocations we hand back.
  *
  * The pinned Lean compiler erases IO's world parameter and represents
  * Int32 arguments as uint32_t bits. Keep these signatures aligned with
- * the declarations generated from Linger/Os/Boundary.lean.
+ * the declarations generated from packages/os/Os/Boundary.lean.
  */
 /* accept4 needs _GNU_SOURCE on glibc */
 #define _GNU_SOURCE
@@ -788,7 +788,7 @@ LEAN_EXPORT lean_obj_res linger_alive(uint32_t pid) {
  * -1: the requested child is still running. -2: not our child or already
  * reaped (ECHILD -- the caller then asks linger_alive). 0..255: the exit
  * code; 256+sig: killed by signal sig. The two ranges keep an exit code
- * apart from a signal (Linger.Os.Shell.reapNohang). An ended child is
+ * apart from a signal (Os.Shell.reapNohang). An ended child is
  * reaped unless keep is set; with keep it stays waitable, so its zombie
  * holds its pid (WNOWAIT).
  *
@@ -797,7 +797,7 @@ LEAN_EXPORT lean_obj_res linger_alive(uint32_t pid) {
  * caller set it, hence the zeroed siginfo. There is no fourth outcome to
  * report: the only other errno waitid can set here is EINVAL for bad
  * options, and the options are constant. Selectors (pid 0, negative pid_t)
- * never arrive -- Linger.Os.Shell.checkPid rejects them -- so a failure
+ * never arrive -- Os.Shell.checkPid rejects them -- so a failure
  * that is not ECHILD is answered -2 rather than "running", which degrades
  * to a liveness probe instead of waiting forever on a child that cannot
  * be reaped. */
@@ -934,7 +934,7 @@ LEAN_EXPORT lean_obj_res linger_signal_session(uint32_t sid, uint32_t sig) {
 /* misc                                                                  */
 
 /* getpid, chmod, both clocks, hostname, stdin tty detection, and the
- * full-write loop are Lean/core; see Linger/Os/Shell.lean. */
+ * full-write loop are Lean/core; see packages/os/Os/Shell.lean. */
 
 /* linger_getuid : IO UInt32 */
 LEAN_EXPORT lean_obj_res linger_getuid(void) {

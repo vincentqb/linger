@@ -75,7 +75,7 @@ private def Fixture.cwdIs (f : Fixture) (name : String) (dir : System.FilePath) 
     | none =>
       return false
     | some pid =>
-      return (← Linger.Os.Shell.getcwdOf pid) == dir.toString
+      return (← Os.Shell.getcwdOf pid) == dir.toString
 
 /-- Session `name` is saved, with no daemon, to resume in `dir`: what an import leaves. -/
 private def Fixture.savedIn (f : Fixture) (name : String) (dir : System.FilePath) : IO Bool :=
@@ -610,17 +610,17 @@ private def resumableCwd (f : Fixture) : IO Bool := do
             return (loadBytes bytes).any (·.cwd == changed.toString)) do
     throw (IO.userError "last detach did not checkpoint the changed cwd")
   try
-    Linger.Os.Shell.kill daemon.toUInt32 9
+    Os.Shell.kill daemon.toUInt32 9
     unless
       ←
         waitFor 5000
             (do
-              return !(← Linger.Os.Shell.alive daemon.toUInt32)) do
+              return !(← Os.Shell.alive daemon.toUInt32)) do
       throw (IO.userError "fixture daemon did not stop")
     return (← f.exportFields "resumable" [(name, changed.toString)]) && (← f.pid name).isNone
   finally
-    if ← Linger.Os.Shell.alive shellPid then
-      Linger.Os.Shell.kill shellPid 9
+    if ← Os.Shell.alive shellPid then
+      Os.Shell.kill shellPid 9
 
 private def publication (f : Fixture) (kind : String) : IO Bool := do
   f.seed "native" (f.root / "home").toString
@@ -677,11 +677,11 @@ private def obsoleteProvenance (f : Fixture) (matching : Bool) : IO Bool := do
 private def incompleteSnapshot (f : Fixture) : IO Bool := do
   f.seed "valid" (f.root / "home").toString
   let socket := System.FilePath.mk f.env.dir / "unresponsive.sock"
-  let fd ← Linger.Os.Shell.unixListen socket.toString
+  let fd ← Os.Shell.unixListen socket.toString
   try
     f.refused
   finally
-    Linger.Os.Shell.close fd
+    Os.Shell.close fd
     IO.FS.removeFile socket
 
 private def unrepresentableCwd (f : Fixture) : IO Bool := do
@@ -952,13 +952,12 @@ private def boundedCommand (f : Fixture) (stderr : Bool) : IO Bool := do
   let redirect := if stderr then " >&2" else ""
   let script :=
     s!"i=0; while [ \"$i\" -lt 30000 ]; do printf 1234567890{redirect}; i=$((i+1)); done; printf done > '{reached}'"
-  let pending ←
-    IO.mkRef (some (← Linger.Os.Shell.Command.startLimited "/bin/sh" #["-c", script] 100))
+  let pending ← IO.mkRef (some (← Os.Shell.Command.startLimited "/bin/sh" #["-c", script] 100))
   let refused ← IO.mkRef false
   try
     let done ←
       waitFor 5000 do
-          let result ← (Linger.Os.Shell.Command.poll pending).toBaseIO
+          let result ← (Os.Shell.Command.poll pending).toBaseIO
           match result with
           | .error error =>
             refused.set <|
@@ -970,30 +969,30 @@ private def boundedCommand (f : Fixture) (stderr : Bool) : IO Bool := do
     return done && (← refused.get) && (← pending.get).isNone &&
         (← readBytes reached) == some "done".toUTF8
   finally
-    Linger.Os.Shell.Command.stop pending
+    Os.Shell.Command.stop pending
 
 /-- An exited leader must still own and retire a descendant holding its pipes open. -/
 private def heldPipeCommand (f : Fixture) : IO Bool := do
   let reached := f.root / "descendant-pid"
   let script := s!"sleep 30 & printf '%s' \"$!\" > '{reached}'"
-  let job ← Linger.Os.Shell.Command.startLimited "/bin/sh" #["-c", script] 100
+  let job ← Os.Shell.Command.startLimited "/bin/sh" #["-c", script] 100
   let pending ← IO.mkRef (some job)
   try
     unless ← waitFor 3000 (reached.pathExists) do
       return false
     let some pid := (← IO.FS.readFile reached).toNat? | return false
-    let running ← Linger.Os.Shell.alive pid.toUInt32
-    let uncollected ← Linger.Os.Shell.Command.poll pending
+    let running ← Os.Shell.alive pid.toUInt32
+    let uncollected ← Os.Shell.Command.poll pending
     let stillOwned := (← pending.get).isSome
-    Linger.Os.Shell.Command.stop pending
+    Os.Shell.Command.stop pending
     let retired ←
       waitFor 3000 do
-          return !(← Linger.Os.Shell.alive pid.toUInt32)
+          return !(← Os.Shell.alive pid.toUInt32)
     return running && uncollected.isNone && stillOwned && retired && (← pending.get).isNone &&
         (← IO.hasFinished job.stdout) &&
         (← IO.hasFinished job.stderr)
   finally
-    Linger.Os.Shell.Command.stop pending
+    Os.Shell.Command.stop pending
 
 /-- Observe the real default namespace without opening it. Only after that
 observation does the capture callback redirect checkpoint IO into a fixture.

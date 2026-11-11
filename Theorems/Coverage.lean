@@ -28,11 +28,12 @@ import all Linger.Selector.Proofs.Picker
 import all Input.Proofs
 import all Input.Solution
 import all Terminal.Solution
+import all Os.Solution
 import all Linger.Selector.Proofs.Key
 import all Linger.App.Proofs.Entry
 import all Linger.App.Proofs.Commands
 import all Linger.Os.Proofs.Env
-import all Linger.Os.Proofs.Wait
+import all Os.Proofs.Wait
 import all Theorems.Solution
 import all Theorems.Contracts
 public meta import Lean.Elab.Command
@@ -61,9 +62,10 @@ namespace Theorems.Coverage
 open Lean Elab Command
 
 /-- The module roots of the packages under `packages/`. A package's top module (`Fuzzy`), its
-other top-level modules (`Terminal.Vt`) but `Proofs`, `Tests` and `Solution`, and the modules
-under its `Spec` are pure code; its `Proofs` and `Solution` modules are proofs. -/
-public meta def packageRoots : List String := ["Fuzzy", "Input", "Terminal"]
+other top-level modules (`Terminal.Vt`) but its boundary, shell, suites, `Proofs`, `Tests` and
+`Solution`, and the modules under its `Spec` are pure code; its `Proofs` and `Solution` modules
+are proofs. -/
+public meta def packageRoots : List String := ["Fuzzy", "Input", "Terminal", "Os"]
 
 /-- A module of pure code: a component's top module (`Linger.Session`), each component's
 top-level modules other than its boundary and shell, the modules under its `Spec`, and a
@@ -74,7 +76,9 @@ public meta def pureModule (mod : Lean.Name) : Bool :=
   | ["Linger", _, leaf] => !["Boundary", "Shell"].contains leaf
   | ["Linger", _, "Spec", _] => true
   | [root] => packageRoots.contains root
-  | [root, leaf] => packageRoots.contains root && !["Proofs", "Tests", "Solution"].contains leaf
+  | [root, leaf] =>
+    packageRoots.contains root &&
+      !["Boundary", "Shell", "Suites", "Proofs", "Tests", "Solution"].contains leaf
   | root :: "Spec" :: _ => packageRoots.contains root
   | _ => false
 

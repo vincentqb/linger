@@ -3,7 +3,7 @@ module
 import Linger.Session.Checkpoint
 public import Linger.Session
 import Linger.Session.Shell.Paths
-import Linger.Os.Shell
+import Os.Shell
 
 public section
 
@@ -33,7 +33,7 @@ def saver (name : String) : IO (State → IO Unit) := do
     let live ←
       match (st.metaKv.lookup "pid").bind String.toNat? with
       | some p =>
-        Linger.Os.Shell.getcwdOf (UInt32.ofNat p)
+        Os.Shell.getcwdOf (UInt32.ofNat p)
       | none =>
         pure ""
     if !live.isEmpty then

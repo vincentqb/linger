@@ -47,8 +47,8 @@ in the foreground, as the verifier.
   gives headline theorems their meaning: value types, reference models and predicates over
   the program's operations, never the representation of a state or code that runs. It
   imports only `Spec` modules.
-- `Linger/Os/`: the operating system. `Boundary.lean` holds the foreign declarations,
-  `Shell.lean` the checked surface callers use, `Env.lean` the environment policies.
+- `Linger/Os/`: linger's environment policies (`Env.lean`) and the shim's smoke tests
+  (`Suites/Shim.lean`, `./lake exe lingertest`).
 - `Linger/Target/`: session names and remote targets.
 - `Linger/Display/`: session status, titles and listings.
 - `Linger/Terminal/Suites/`: live suites of the VT toolkit as linger runs it.
@@ -71,11 +71,13 @@ in the foreground, as the verifier.
   coverage census; `Verify/`: the verifier's harness, runner and own suites.
 - `packages/`: Lake packages linger requires by path, each with its own `Challenge`, solution,
   `comparator.json` and audit: `fuzzy`, the fuzzy matcher (module and namespace `Fuzzy`),
-  `input`, the bounded terminal key decoder (`Input`), and `terminal`, the VT toolkit
+  `input`, the bounded terminal key decoder (`Input`), `terminal`, the VT toolkit
   (`Terminal`): the emulator `Vt`, `Render`, streaming `Replay`, child-facing `Mediation` and
-  safe `Title` updates. Linger's audit trusts each package, and linger's headlines may name a
-  package's parts, which its own headlines claim. Build one alone with `../../lake build` in its
-  directory; it shares linger's `.lake/packages`.
+  safe `Title` updates, and `os`, the operating system (`Os`): `Boundary.lean` holds the
+  foreign declarations, `c/shim.c` the C they bind, `Shell.lean` the checked surface callers
+  use and `Wait.lean` the bounded wait. Linger's audit trusts each package, and linger's
+  headlines may name a package's parts, which its own headlines claim. Build one alone with
+  `../../lake build` in its directory; it shares linger's `.lake/packages`.
 - `scripts/`: build and verification orchestration.
 
 Components depend downward only: `Os` and `Target`; then `Display`; then `Session` and
@@ -97,7 +99,7 @@ Lean erases proofs regardless of file placement.
   commit, checked by `Theorems/Coverage.lean`; generated lemmas do not count.
   State invariants in `THEOREMS.md` and design code for provability.
 - The files the audit lists as `Owned:` (`Challenge.lean`, `comparator.json`, `Audit.lean`,
-  each `Spec.lean`, `Linger/Os/Boundary.lean`, the Lake configuration and the toolchain) say
+  each `Spec.lean`, `packages/os/Os/Boundary.lean`, the Lake configuration and the toolchain) say
   what linger claims. Change them to change a claim, never to make a proof pass, and restate a
   theorem there no weaker than its source.
 - Every headline in `Challenge.lean` needs a kill: a theorem there stating the headline's
@@ -121,12 +123,12 @@ Lean erases proofs regardless of file placement.
 - Read SHELL, HOME for remote hosts and for a resume, and LINGER_NO_DETACH_KEY once, into
   the pure policies of `Linger/Os/Env.lean`, which `scripts/gates.sh` ties to each read,
   and run every variable the program reads unset and empty in a suite.
-- Raw OS access belongs in `Linger/Os/` and `c/shim.c`. Every `@[extern]` declaration
-  stays private in `Linger/Os/Boundary.lean`, which declares nothing else, and
-  `Linger/Os/Shell.lean` wraps each one: it is the surface callers use. Keep the shim
-  to syscalls and errno.
+- Raw OS access belongs in the `os` package: `packages/os/Os/` and `packages/os/c/shim.c`.
+  Every `@[extern]` declaration stays private in `packages/os/Os/Boundary.lean`, which declares
+  nothing else, and `packages/os/Os/Shell.lean` wraps each one: it is the surface callers use.
+  Keep the shim to syscalls and errno.
   Return `-errno` and avoid numeric errno values in Lean. A binding that takes a pid also
-  takes the proof `Linger.Os.Shell.checkPid` returns.
+  takes the proof `Os.Shell.checkPid` returns.
 - Validate session names without rewriting them before paths; fuzzy matching
   belongs only in interactive selection. Freeze each poll loop's fd set.
   Compose displays through `Title.compose` and `Status.summary` in the order

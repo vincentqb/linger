@@ -15,14 +15,14 @@
 # times more per billed minute (measurements are in git history), so it runs only when
 # there is something new for it to learn:
 #
-#   workflow_dispatch  both        — someone asked, e.g. after touching c/shim.c
+#   workflow_dispatch  both        — someone asked, e.g. after touching packages/os/c/shim.c
 #   schedule           both if the last WINDOW has commits, otherwise none (`[]`): the
 #                      workflow then skips every check, because rebuilding an unchanged
 #                      tree re-learns last month's answer
 #   push to any tag    both        — no longer a trigger; kept so a restored trigger
 #                                    behaves as before without a change here
 #   push / PR          ubuntu, and macOS too if the diff from <base> to HEAD touches
-#                      c/shim.c or ./lake, or if <base> is empty, all zeros or not a fetched
+#                      packages/os/c/shim.c or ./lake, or if <base> is empty, all zeros or not a fetched
 #                      commit (a new branch, a force push); no longer triggers either
 #
 # WINDOW=32 days against a cron on the 1st of each month on purpose: the longest gap
@@ -63,7 +63,7 @@ case "$event" in
           macos=yes
         else
           # Outside `if`, so set -e propagates a failed diff.
-          changed="$(git diff --name-only "$base" HEAD -- c/shim.c lake)"
+          changed="$(git diff --name-only "$base" HEAD -- packages/os/c/shim.c lake)"
           if [ -n "$changed" ]; then
             macos=yes
           fi

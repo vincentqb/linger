@@ -1,6 +1,6 @@
 module
 
-import Linger.Os.Shell
+import Os.Shell
 import Linger.Session.Wire
 public import Linger.Session.Spec
 public import Terminal.Vt
@@ -28,7 +28,7 @@ Detach key: `ctrl-\` (0x1C); set `LINGER_NO_DETACH_KEY` to disable it for writab
 
 namespace Linger.Session.Shell.Client
 
-open Linger.Os.Shell
+open Os.Shell
 open Linger.Session.Wire (Msg Decoder)
 
 /-- Connect to a session socket. A nonblocking attempt can fail while a live

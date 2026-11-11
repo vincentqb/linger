@@ -9,8 +9,6 @@ public import Linger.Import.Resurrect
 public import Linger.Selector.Picker
 public import Linger.Display.Title
 public import Linger.Os.Env
-public import Linger.Os.Spec
-public import Linger.Os.Wait
 public import Linger.Session
 public import Linger.Session.Buf
 public import Linger.Session.Checkpoint
@@ -32,7 +30,7 @@ import all Linger.Import.Proofs.Resurrect
 import all Linger.Selector.Proofs.Picker
 import all Linger.Display.Proofs.Title
 import all Linger.Os.Proofs.Env
-import all Linger.Os.Proofs.Wait
+import all Os.Proofs.Wait
 import Linger.Target.Proofs.Name
 import Linger.Target.Proofs.Remote
 import all Linger.Session.Proofs.Buf
@@ -1373,36 +1371,6 @@ theorem offloop_coalesces_rejects_eager :
   intro h
   have first := (@h Nat Nat id [0, 1]).1
   simp [Offloop.run] at first
-
-theorem wait_ends (after : Nat → Nat → Nat) (lasts : Os.Wait.Lasts after) (deadline step : Nat) :
-    (∀ now, Os.Wait.next deadline step now = none ↔ deadline ≤ now) ∧
-      (∀ now ms,
-        Os.Wait.next deadline step now = some ms → 0 < ms ∧ ms ≤ max step 1 ∧ now + ms ≤ deadline) ∧
-      ∀ now,
-        ∃ looks,
-          looks ≤ deadline - now + 1 ∧ Os.Wait.Ends (Os.Wait.next deadline step) after now looks :=
-  ⟨Os.Wait.next_eq_none_iff deadline step, fun _ _ h => Os.Wait.next_some h,
-    Os.Wait.ends_within lasts deadline step⟩
-
-theorem wait_ends_rejects_endless :
-    ¬∀ (after : Nat → Nat → Nat),
-        Os.Wait.Lasts after →
-          ∀ (deadline step : Nat),
-            (∀ now,
-                (fun (_ _ _ : Nat) => (some 1 : Option Nat)) deadline step now = none ↔
-                  deadline ≤ now) ∧
-              (∀ now ms,
-                (fun (_ _ _ : Nat) => (some 1 : Option Nat)) deadline step now = some ms →
-                  0 < ms ∧ ms ≤ max step 1 ∧ now + ms ≤ deadline) ∧
-              ∀ now,
-                ∃ looks,
-                  looks ≤ deadline - now + 1 ∧
-                    Os.Wait.Ends ((fun (_ _ _ : Nat) => (some 1 : Option Nat)) deadline step) after
-                      now looks := by
-  intro h
-  -- a clock that keeps exact time, and a wait whose deadline has already passed
-  have gives := (h (fun now ms => now + ms) (fun _ _ => Nat.le_refl _) 0 1).1 0
-  simp at gives
 
 theorem classify_iff (o : Status.Obs) (s : Status.Status) : Status.classify o = s ↔ Status.Is s o :=
   Status.classify_iff o s

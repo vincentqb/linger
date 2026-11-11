@@ -2,17 +2,17 @@ module
 
 public section
 
-/-! # Linger.Os.Boundary — the foreign declarations
+/-! # Os.Boundary — the foreign declarations
 
-Every `@[extern]` in the program, each bound 1:1 to a wrapper in `c/shim.c` (syscall +
+Every `@[extern]` in the program, each bound 1:1 to a wrapper in `packages/os/c/shim.c` (syscall +
 errno only; object arguments are borrowed `@&`, so the shim never manages refcounts).
-Nothing here has a Lean body to prove. Every declaration is private: `Linger.Os.Shell`,
+Nothing here has a Lean body to prove. Every declaration is private: `Os.Shell`,
 the one module that imports this one, wraps each binding under the same name, checks the
 arguments the C side cannot represent, and states the contract in the wrapper's docstring.
 A binding that signals or waits for a process takes a proof that its pid is a real one, which
 the C call never sees. `Linger.Os.Suites.Shim` and the live suites exercise those contracts. -/
 
-namespace Linger.Os.Boundary
+namespace Os.Boundary
 
 @[extern "linger_ignore_sighup"]
 private opaque ignoreSighup : IO Unit
@@ -87,4 +87,4 @@ private opaque getuid : IO UInt32
 @[extern "linger_getcwd_of"]
 private opaque getcwdOf (pid : UInt32) : IO String
 
-end Linger.Os.Boundary
+end Os.Boundary

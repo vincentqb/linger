@@ -137,12 +137,12 @@ abi_dir="$(mktemp -d "${TMPDIR:-/tmp}/linger-abi.XXXXXX")"
 trap 'rm -r "$abi_dir"' EXIT HUP TERM
 awk '/^lean_object\* linger_[[:alnum:]_]+\([^;]*\);$/ {
   sub(/\(\);$/, "(void);"); print; count++
-} END { if (!count) exit 1 }' .lake/build/ir/Linger/Os/Boundary.c > "$abi_dir/prototypes" \
+} END { if (!count) exit 1 }' packages/os/.lake/build/ir/Os/Boundary.c > "$abi_dir/prototypes" \
   || fail "no generated shim prototypes"
 sed 's/^lean_object\* //; s/(.*//' "$abi_dir/prototypes" | sort > "$abi_dir/generated"
-sed -n 's/^LEAN_EXPORT lean_obj_res \(linger_[[:alnum:]_]*\)(.*/\1/p' c/shim.c \
+sed -n 's/^LEAN_EXPORT lean_obj_res \(linger_[[:alnum:]_]*\)(.*/\1/p' packages/os/c/shim.c \
   | sort > "$abi_dir/exports"
-sed -n 's/^@\[extern "\(linger_[[:alnum:]_]*\)"\].*/\1/p' Linger/Os/Boundary.lean \
+sed -n 's/^@\[extern "\(linger_[[:alnum:]_]*\)"\].*/\1/p' packages/os/Os/Boundary.lean \
   | sort > "$abi_dir/externs"
 cmp -s "$abi_dir/generated" "$abi_dir/exports" \
   || fail "generated ABI and C export inventories differ"
@@ -157,7 +157,7 @@ cmp -s "$abi_dir/generated" "$abi_dir/externs" \
 abi_cc="$(command -v clang)" || fail "clang missing for ABI check"
 abi_prefix="$(./lake env lean --print-prefix)"
 "$abi_cc" -fsyntax-only -Wall -Werror -Wstrict-prototypes \
-  -isystem "$abi_prefix/include" -I "$PWD/c" "$abi_dir/check.c" \
+  -isystem "$abi_prefix/include" -I "$PWD/packages/os/c" "$abi_dir/check.c" \
   || fail "C shim conflicts with the generated Lean ABI"
 rm -r "$abi_dir"
 trap - EXIT HUP TERM
@@ -252,7 +252,7 @@ shim_n="$(grep -c '^PASS ' "$shim_out")"
 
 # Keep one real session in another state directory through every suite. A suite
 # may clean up its own Env, never the user's process namespace. State directories hold
-# Unix sockets, whose paths must fit sun_path (c/shim.c rejects longer ones), so they stay
+# Unix sockets, whose paths must fit sun_path (packages/os/c/shim.c rejects longer ones), so they stay
 # under socket_root whatever TMPDIR is, as the suites' directories stay under
 # Verify.Harness.socketRoot, whose docstring records the measured path lengths. Only logs
 # and scratch files follow `${TMPDIR:-/tmp}`.

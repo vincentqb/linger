@@ -189,7 +189,7 @@ def dependencyInstall (root : String) : IO Unit := do
       for tool in present do
         IO.FS.writeFile (dir / tool) "#!/bin/sh\nexit 0\n"
       for file in [sudo, brew] ++ present.map (fun tool => dir / System.FilePath.mk tool) do
-        Linger.Os.Shell.chmod file.toString 0o700
+        Os.Shell.chmod file.toString 0o700
       let log := dir / "install.log"
       IO.FS.writeFile log ""
       let out ←
@@ -289,10 +289,10 @@ def verificationInputs (root : String) : IO Unit :=
       expect (← checkKey false) s!"documentation changes invalidate verification: {path}"
       IO.FS.writeFile (dir / path) "Documentation.\n"
       git #["add", "."]
-    Linger.Os.Shell.chmod input.toString 0o755
+    Os.Shell.chmod input.toString 0o755
     git #["add", "."]
     expect (← checkKey false) "file mode changes invalidate verification"
-    Linger.Os.Shell.chmod input.toString 0o644
+    Os.Shell.chmod input.toString 0o644
     git #["add", "."]
     git #["mv", "source with spaces.lean", "renamed.lean"]
     expect (← checkKey false) "renamed input paths invalidate verification despite identical bytes"
@@ -405,7 +405,7 @@ def run : IO UInt32 := do
   -- The per-push path: ubuntu alone unless the change touches the shim or the build
   -- wrapper. This is the one that costs money when wrong.
   let (other, otherBase) ← repoWithChange "README.md"
-  let (shim, shimBase) ← repoWithChange "c/shim.c"
+  let (shim, shimBase) ← repoWithChange "packages/os/c/shim.c"
   let (wrapper, wrapperBase) ← repoWithChange "lake"
   try
     expect ((← runners script other "push" "refs/heads/main" otherBase) == ubuntuOnly)
@@ -413,7 +413,7 @@ def run : IO UInt32 := do
     expect ((← runners script other "pull_request" "refs/pull/7/merge" otherBase) == ubuntuOnly)
         "a pull request asks for ubuntu alone"
     expect ((← runners script shim "push" "refs/heads/main" shimBase) == both)
-        "a push that changes c/shim.c asks for both platforms"
+        "a push that changes packages/os/c/shim.c asks for both platforms"
     expect ((← runners script wrapper "pull_request" "refs/pull/7/merge" wrapperBase) == both)
         "a pull request that changes ./lake asks for both platforms"
     expect

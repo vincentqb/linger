@@ -7,7 +7,7 @@ import all Linger.Session.Proofs.Driver
 import all Linger.App.Proofs.Entry
 import all Linger.App.Proofs.Commands
 import all Linger.Os.Proofs.Env
-import all Linger.Os.Proofs.Wait
+import all Os.Proofs.Wait
 import all Fuzzy.Proofs
 import all Input.Proofs
 import all Linger.Display.Proofs.Listing
@@ -43,8 +43,8 @@ instead of passing the citation gate. The `rfl` example under Resume ties the
 `Session.resumeVt` those pins spell to `Session.bootVt`, which `Daemon.serve` calls, over
 `Checkpoint.loadBytes`. -/
 
-open Linger Linger.Session Linger.App Linger.Selector Linger.Import Linger.Os Linger.Target
-  Linger.Display Terminal
+open Linger Linger.Session Linger.App Linger.Selector Linger.Import Os Linger.Target Linger.Display
+  Terminal
 open Terminal.Replay (Plan)
 
 -- Checkpoints

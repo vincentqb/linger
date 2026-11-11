@@ -1,6 +1,6 @@
 module
 
-public import Linger.Os.Shell
+public import Os.Shell
 public import Linger.Display.Status
 public import Terminal.Render
 
@@ -11,7 +11,7 @@ public section
 The suites drive the real binary through ptys, so they are `IO` and tested, not
 proved. Assertions read the implementation's definitions (`status` parses with
 `Linger.Display.Status.ofName`), so renaming a status constructor is a compile error.
-Ptys, sockets and polling come from `Linger.Os.Shell`.
+Ptys, sockets and polling come from `Os.Shell`.
 
 OUTPUT CONTRACT — load-bearing, do not reformat. Every check prints `PASS <name>`
 or `FAIL <name>`, and each suite ends with `FAILURES: <n>`. `Verify.Runner` requires
@@ -21,7 +21,7 @@ one that quietly grows — either way it is a reviewable edit. -/
 
 namespace Verify.Harness
 
-open Linger.Os.Shell
+open Os.Shell
 
 /-- The detach key, ctrl-\\ — the one byte every suite sends to leave. -/
 def detachKey : ByteArray := ByteArray.mk #[0x1C]
@@ -197,7 +197,7 @@ def tempRoot : IO System.FilePath := do
 
 /-- The root of every directory that will hold a Unix socket: `/tmp`, whatever `TMPDIR` says.
 A socket path and its terminator must fit a 104-byte address field on macOS (108 on Linux),
-and `c/shim.c` refuses a longer path; macOS's `TMPDIR` alone takes about 49 bytes. Measured
+and `packages/os/c/shim.c` refuses a longer path; macOS's `TMPDIR` alone takes about 49 bytes. Measured
 by logging every `bind` of the 16 live suites, the longest socket path is 77 bytes under
 `/tmp`, in `Linger.App.Suites.Manager`'s program-survives fixtures with a 5-digit pid (a 7-digit Linux pid
 adds 2). Rooted at a 49-byte `TMPDIR` instead, that path is 122 bytes, and even on Linux six
@@ -358,7 +358,7 @@ def Client.bye (c : Client) (sendDetach : Bool := true) : IO Unit := do
       pure ()
     let _ ← c.reap 600
   try
-    Linger.Os.Shell.close c.fd
+    Os.Shell.close c.fd
   catch _ =>
     pure ()
   let _ ← c.reap

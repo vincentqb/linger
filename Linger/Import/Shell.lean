@@ -2,12 +2,12 @@ module
 
 import Linger.Import.Resurrect
 import Linger.Session.Checkpoint
-import Linger.Os.Shell
+import Os.Shell
 import Linger.Display.Listing
 import Linger.Session.Shell.Paths
 import Linger.Session.Shell.Resume
 import Linger.Session.Shell.Inventory
-import Linger.Os.Shell.Command
+import Os.Shell.Command
 import Linger.Target.Remote
 import Linger.Selector.Shell
 import Std.Async.System
@@ -23,7 +23,7 @@ namespace Linger.Import.Shell
 
 open Linger.Session.Shell
 open Linger.Import.Resurrect
-open Linger.Os.Shell
+open Os.Shell
 
 /-- Resolve existing relative path components physically, retaining a missing
 suffix for directories linger will create. Resolve symlinks before `..`. -/
@@ -94,11 +94,10 @@ private def inContext {α : Type} (action : System.FilePath → String → IO α
 temporary exists. Linking publishes a complete new export without overwriting
 any destination. -/
 private def publish (path : System.FilePath) (content : String) : IO Unit := do
-  let tmp :=
-    System.FilePath.mk s!"{path}.linger-{← Linger.Os.Shell.getpid}-{← IO.rand 0 0xFFFFFFFF}.tmp"
+  let tmp := System.FilePath.mk s!"{path}.linger-{← Os.Shell.getpid}-{← IO.rand 0 0xFFFFFFFF}.tmp"
   let handle ← IO.FS.Handle.mk tmp .writeNew
   try
-    Linger.Os.Shell.chmod tmp.toString 0o600
+    Os.Shell.chmod tmp.toString 0o600
     handle.putStr content
     handle.flush
     IO.FS.hardLink tmp path
@@ -125,14 +124,14 @@ private def configuredDirectory : IO (Option String) := do
       | error =>
         throw error
     pending.set (some job)
-    let deadline := (← Linger.Os.Shell.monotonicMs) + 1000
+    let deadline := (← Os.Shell.monotonicMs) + 1000
     repeat
       if let some output← Command.poll pending then
         if output.exitCode != 0 then
           return none
         let dir := (output.stdout.dropSuffix "\n").toString
         return if dir.isEmpty then none else some dir
-      unless ← Linger.Os.Shell.nap deadline 10 do
+      unless ← Os.Shell.nap deadline 10 do
         break
     throw (IO.userError "tmux configuration query timed out; pass a save file explicitly")
   finally
@@ -219,13 +218,13 @@ private def archiveOutput (args : Array String) (limit : Nat) : IO String := do
   let pending ← IO.mkRef (none : Option Command.Job)
   try
     pending.set (some (← Command.startLimited "tar" args limit))
-    let deadline := (← Linger.Os.Shell.monotonicMs) + 5000
+    let deadline := (← Os.Shell.monotonicMs) + 5000
     repeat
       if let some output← Command.poll pending then
         unless output.exitCode == 0 do
           throw (IO.userError s!"could not read pane capture archive: {output.stderr}")
         return output.stdout
-      unless ← Linger.Os.Shell.nap deadline 10 do
+      unless ← Os.Shell.nap deadline 10 do
         break
     throw (IO.userError "pane capture archive timed out")
   finally
@@ -284,11 +283,10 @@ private def seedPane (pane : Pane) (contents : Option String) : IO Bool :=
     let socket ← Paths.socketPath pane.name
     if (← (System.FilePath.mk path).pathExists) || (← (System.FilePath.mk socket).pathExists) then
       return false
-    let tmp :=
-      System.FilePath.mk s!"{path}.linger-{← Linger.Os.Shell.getpid}-{← IO.rand 0 0xFFFFFFFF}.tmp"
+    let tmp := System.FilePath.mk s!"{path}.linger-{← Os.Shell.getpid}-{← IO.rand 0 0xFFFFFFFF}.tmp"
     let handle ← IO.FS.Handle.mk tmp .writeNew
     try
-      Linger.Os.Shell.chmod tmp.toString 0o600
+      Os.Shell.chmod tmp.toString 0o600
       handle.write (Linger.Session.Checkpoint.saveBytes (checkpoint pane contents))
       handle.flush
       IO.FS.hardLink tmp path
@@ -349,7 +347,7 @@ private def listSave (file : Option String) (porcelain : Bool) : IO Unit :=
       out.putStr s!"tmux save · {save.modified}\n{diagnostic save.path.toString}\n\n"
       out.flush
       let withColor := (← out.isTty) && (← IO.getEnv "NO_COLOR").isNone
-      Linger.Os.Shell.writeAll Linger.Os.Shell.stdoutFd
+      Os.Shell.writeAll Os.Shell.stdoutFd
           (ByteArray.mk (Linger.Display.Listing.terminalListing withColor rows).toArray)
 
 /-- Act on the selected snapshot's exact directory, never on a reread of `last`.
@@ -425,8 +423,8 @@ private def snapshot : IO (List (String × String)) := do
               | throw (IO.userError s!"could not read live session: {name}")
             unless pid < UInt32.size do
               throw (IO.userError s!"invalid process id for session: {name}")
-            discard <| Linger.Os.Shell.checkPid "export" pid.toUInt32
-            Linger.Os.Shell.getcwdOf pid.toUInt32
+            discard <| Os.Shell.checkPid "export" pid.toUInt32
+            Os.Shell.getcwdOf pid.toUInt32
       unless !dir.isEmpty && (System.FilePath.mk dir).isAbsolute do
         throw (IO.userError s!"could not read working directory for session: {name}")
       return (name, (← IO.FS.realPath dir).toString)

@@ -1,10 +1,10 @@
 module
 
 public import Linger.Selector.Picker
-import Linger.Os.Shell
+import Os.Shell
 import Linger.Target.Remote
 import Terminal.Title
-import Linger.Os.Shell.Command
+import Os.Shell.Command
 import Linger.Display.View
 import Std.Data.HashMap.Basic
 import Linger.Display.Status
@@ -18,7 +18,7 @@ are pure tool modules; this module owns terminal lifetime and subprocesses. -/
 
 namespace Linger.Selector.Shell
 
-open Linger.Os.Shell
+open Os.Shell
 
 /-- How one selection visit ended. -/
 inductive Choice where
@@ -107,7 +107,7 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
   let fullArgs :=
     if savedTmux then #["tmux", "ls", "--porcelain"] ++ save.toArray
     else #["ls", "-r", "--porcelain"]
-  let pending ← IO.mkRef (none : Option Linger.Os.Shell.Command.Job)
+  let pending ← IO.mkRef (none : Option Os.Shell.Command.Job)
   let withColor := (← IO.getEnv "NO_COLOR").isNone
   let saved ← termRaw stdinFd
   try
@@ -170,7 +170,7 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
           return .attach target snapshot
         | .cancel =>
           return .cancel
-      if let some result← Linger.Os.Shell.Command.poll pending then
+      if let some result← Os.Shell.Command.poll pending then
         if result.exitCode != 0 then
           return .failed result.exitCode result.stderr
         let listed ← IO.ofExcept (Linger.Selector.Picker.parseSnapshot result.stdout)
@@ -194,7 +194,7 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
       if (← pending.get).isNone && (← monotonicMs) ≥ nextListing then
         full := savedTmux || (← monotonicMs) ≥ nextRemote
         let args := if full then fullArgs else #["ls", "--porcelain"]
-        pending.set (some (← Linger.Os.Shell.Command.start executable args))
+        pending.set (some (← Os.Shell.Command.start executable args))
     return .cancel
   finally
     try
@@ -204,7 +204,7 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
       finally
         termRestore stdinFd saved
     finally
-      Linger.Os.Shell.Command.stop pending (if savedTmux then 0 else 1000)
+      Os.Shell.Command.stop pending (if savedTmux then 0 else 1000)
 
 /-- The exact attach argv for a chosen target. Its operands are the ones the attach
 parser reads back as `target` (`targetArgs_targetOperands`). -/

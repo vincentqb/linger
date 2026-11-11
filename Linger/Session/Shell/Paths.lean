@@ -1,7 +1,7 @@
 module
 
 import Linger.Session.Claim
-import Linger.Os.Shell
+import Os.Shell
 import Linger.Target.Name
 import Linger.Target.Spec
 
@@ -35,7 +35,7 @@ def socketDir : IO String := do
   if let some d← IO.getEnv "XDG_RUNTIME_DIR" then
     unless d.isEmpty do
       return s!"{d}/linger"
-  return s!"/tmp/linger-{← Linger.Os.Shell.getuid}"
+  return s!"/tmp/linger-{← Os.Shell.getuid}"
 
 /-- Checkpoints and logs. The default is namespaced by hostname: a
 network-mounted `$HOME` is shared between machines, and two hosts each
@@ -47,19 +47,19 @@ accident. -/
 def stateDir : IO String := do
   if let some d← IO.getEnv "LINGER_DIR" then
     return d
-  let host := sanitize (← Linger.Os.Shell.gethostname)
+  let host := sanitize (← Os.Shell.gethostname)
   if let some d← IO.getEnv "XDG_STATE_HOME" then
     unless d.isEmpty do
       return s!"{d}/linger/{host}"
   if let some home← IO.getEnv "HOME" then
     unless home.isEmpty do
       return s!"{home}/.local/state/linger/{host}"
-  return s!"/tmp/linger-{← Linger.Os.Shell.getuid}/state/{host}"
+  return s!"/tmp/linger-{← Os.Shell.getuid}/state/{host}"
 
 /-- Create `d` and any missing parents, then restrict `d` itself to its owner (0700). -/
 def ensureDir (d : String) : IO Unit := do
   IO.FS.createDirAll d
-  Linger.Os.Shell.chmod d 0o700
+  Os.Shell.chmod d 0o700
 
 /-- The accepted name alphabet, as every diagnostic and help text states it. -/
 def nameRule : String :=
@@ -127,7 +127,7 @@ def ckptPath (name : String) : IO String := do
 def recordPath (name : String) : IO String := do
   namedPath (← stateDir) name ".end"
 
-/-- Name-ownership lock (see `Linger.Os.Shell.flock`). Lives beside the
+/-- Name-ownership lock (see `Os.Shell.flock`). Lives beside the
 socket: same directory lifetime, same 0700 permissions. Never
 unlinked — a lock file that gets unlinked stops being a lock. -/
 def lockPath (name : String) : IO String := do
@@ -159,11 +159,11 @@ def Listed.recordPath (n : Listed) : IO String := do
 is tried again while `retry`, asked only after a failed attempt, holds. Recheck spelling after
 the atomic acquisition unless a listing read the name, letting the lock go when that fails. -/
 private def acquire (path : String) (retry : IO Bool) (listed : Bool) : IO (Option UInt32) := do
-  let mut fd ← Linger.Os.Shell.flock path
+  let mut fd ← Os.Shell.flock path
   while fd < 0 do
     unless ← retry do
       break
-    fd ← Linger.Os.Shell.flock path
+    fd ← Os.Shell.flock path
   if fd < 0 then
     return none
   let held := fd.toUInt64.toUInt32
@@ -171,7 +171,7 @@ private def acquire (path : String) (retry : IO Bool) (listed : Bool) : IO (Opti
     try
       checkSpelling path
     catch err =>
-      Linger.Os.Shell.close held
+      Os.Shell.close held
       throw err
   return some held
 
@@ -185,7 +185,7 @@ private def withLockRetrying {α : Type} (path : String) (retry : IO Bool) (acti
   try
     action
   finally
-    Linger.Os.Shell.close fd
+    Os.Shell.close fd
 
 /-- Act as the session's owner: take the socket lock at `socket`, then the checkpoint lock at
 the path `checkpoint` gives, and run `action` only when `Claim.enters` says a process holding
@@ -209,10 +209,10 @@ private def withOwnership {α : Type} (socket : String) (checkpoint : IO String)
       action
     finally
       if let some fd := state then
-        Linger.Os.Shell.close fd
+        Os.Shell.close fd
   finally
     if let some fd := held then
-      Linger.Os.Shell.close fd
+      Os.Shell.close fd
 
 /-- One attempt: a held lock fails at once. Only a starting daemon retries. -/
 def withLock {α : Type} (path : String) (action : IO α) : IO α :=

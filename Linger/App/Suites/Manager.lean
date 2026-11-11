@@ -40,7 +40,7 @@ namespace Linger.App.Suites.Manager
 
 open Terminal
 open Verify.Harness
-open Linger.Os.Shell
+open Os.Shell
 open Terminal.Render (modeSet csiNum screenText)
 open Terminal.Vt (Vt)
 open Linger.Target.Remote renaming shellQuote → quote

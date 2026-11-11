@@ -1,7 +1,6 @@
 module
 
 public import Linger.Session.Buf
-public import Linger.Os.Shell
 public import Linger.Session.Wire
 public import Terminal.Vt
 public import Linger.Target.Name
@@ -15,7 +14,6 @@ public import Linger.Display.Title
 public import Linger.Display.View
 public import Linger.Os.Env
 public import Linger.Session.Shell.Paths
-public import Linger.Os.Shell.Command
 public import Linger.Session.Shell.Daemon
 public import Linger.Session.Shell.Client
 public import Linger.Session.Shell.Inventory

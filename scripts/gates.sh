@@ -72,9 +72,24 @@ code_count() { code_grep "$@" | awk 'END { print NR + 0 }'; }   # -> a number
 # than its boundary and shell, and the modules under its `Spec/`; proofs are each component's
 # `Proofs/` plus the legacy
 # `Theorems/`. Deliberate word splitting below: no tracked path in this tree has a space.
+# A package's modules follow the same rule under its root (`packages/terminal/Terminal/`), with its
+# top module (`Fuzzy.lean`) pure and its `Solution.lean` a proof.
+package_paths() {                            # package_paths pure|proof
+  git ls-files -- 'packages/*.lean' | awk -F/ -v kind="$1" '
+    { root = toupper(substr($2, 1, 1)) substr($2, 2); rel = substr($0, length($1 "/" $2 "/") + 1)
+      n = split(rel, part, "/"); leaf = part[2]; sub(/[.]lean$/, "", leaf)
+      inside = part[1] == root
+      pure = rel == root ".lean" \
+        || (inside && n == 2 && leaf !~ /^(Boundary|Shell|Suites|Proofs|Tests|Solution)$/) \
+        || (inside && n >= 3 && part[2] == "Spec")
+      proof = inside && ((n == 2 && (leaf == "Proofs" || leaf == "Solution")) || (n >= 3 && part[2] == "Proofs"))
+      if ((kind == "pure" && pure) || (kind == "proof" && proof)) print }'
+}
 pure_paths="$(git ls-files -- 'Linger/*.lean' | awk -F/ '
-  NF == 2 || NF == 3 && $3 != "Boundary.lean" && $3 != "Shell.lean" || NF == 4 && $3 == "Spec"')"
-proof_paths="$(git ls-files -- 'Theorems/*.lean' 'Linger/*/Proofs/*.lean')"
+  NF == 2 || NF == 3 && $3 != "Boundary.lean" && $3 != "Shell.lean" || NF == 4 && $3 == "Spec"')
+$(package_paths pure)"
+proof_paths="$(git ls-files -- 'Theorems/*.lean' 'Linger/*/Proofs/*.lean')
+$(package_paths proof)"
 [ -n "$pure_paths" ] && [ -n "$proof_paths" ] || fail "no pure or proof modules found"
 
 # shellcheck disable=SC2086
@@ -118,16 +133,16 @@ code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(
   packages/terminal/Terminal/Vt.lean >/dev/null || fail "ECH lost its clamp: its span must end at min (v.cursor.x + n) v.cols"
 # the OS surface stays where AGENTS.md says it is: the attribute in any form, including
 # `@[never_extract, extern "f"]` and `attribute [extern "f"] g`
-[ "$(code_grep '(^|[^[:alnum:]_])extern([^[:alnum:]_]|$)' '*.lean' | awk -F: '!seen[$1]++ { print $1 }' | tr -d ' ')" = "Linger/Os/Boundary.lean" ] \
-  || fail "extern declarations outside Linger/Os/Boundary.lean"
+[ "$(code_grep '(^|[^[:alnum:]_])extern([^[:alnum:]_]|$)' '*.lean' | awk -F: '!seen[$1]++ { print $1 }' | tr -d ' ')" = "packages/os/Os/Boundary.lean" ] \
+  || fail "extern declarations outside packages/os/Os/Boundary.lean"
 # The boundary declares foreign functions and nothing else: no Lean body, no wrapper.
 ! code_grep '^[[:space:]]*(private[[:space:]]+)?(def|abbrev|theorem|instance|structure|inductive)[[:space:]]' \
-    Linger/Os/Boundary.lean \
-  || fail "Linger/Os/Boundary.lean holds a Lean definition: wrappers and checks belong in Linger/Os/Shell.lean"
-# Each binding is private, and Linger/Os/Shell.lean wraps it (its one importer is pinned
+    packages/os/Os/Boundary.lean \
+  || fail "packages/os/Os/Boundary.lean holds a Lean definition: wrappers and checks belong in packages/os/Os/Shell.lean"
+# Each binding is private, and packages/os/Os/Shell.lean wraps it (its one importer is pinned
 # with the import closures below), so a caller reaches the shim only through a wrapper.
-! code_grep '^[[:space:]]*(public[[:space:]]+)?opaque[[:space:]]' Linger/Os/Boundary.lean \
-  || fail "Linger/Os/Boundary.lean declares a public binding: keep it private and wrap it in Linger/Os/Shell.lean"
+! code_grep '^[[:space:]]*(public[[:space:]]+)?opaque[[:space:]]' packages/os/Os/Boundary.lean \
+  || fail "packages/os/Os/Boundary.lean declares a public binding: keep it private and wrap it in packages/os/Os/Shell.lean"
 # `unsafe` and `@[implemented_by]` — the Lean-side twin of the `@[extern` gate just
 # above, and the only route that makes the theorems false OF THE SHIPPED BINARY rather
 # than of some value inside it (SCRATCHPAD.md, "the adversarial audit of the seal",
@@ -160,7 +175,7 @@ code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(
 #
 # DECLINED: adding `opaque`. Measured rather than deferred to the earlier decision —
 # most `opaque` hits over tracked `.lean` are actual `@[extern` declarations in
-# `Linger/Os/Boundary.lean`, so the gate could only ever read "opaque outside the boundary".
+# `packages/os/Os/Boundary.lean`, so the gate could only ever read "opaque outside the boundary".
 # What that would catch is not a forge: with no `@[extern]` and no
 # `@[implemented_by]` the compiler emits no value at all, so `opaque x : Vt` is a
 # liveness hazard, not an implementation that disagrees with the model (the R5 family,
@@ -169,12 +184,13 @@ code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(
 # cheaper either.
 ! code_grep '(^|[^[:alnum:]_])(unsafe|implemented_by)' '*.lean' \
   || fail "unsafe / @[implemented_by] in Lean — the compiled program may then disagree with every theorem about it (R4; see the comment on this gate)"
-[ "$(git ls-files c/)" = c/shim.c ] || fail "more than one C file"
+[ "$(git ls-files '*.c' '*.h')" = packages/os/c/shim.c ] || fail "more than one C file"
 # The shim returns -errno and errno numbers differ by platform: 918c671's
 # `r == -111` meant ECONNREFUSED only on Linux.
 ! code_grep '(==|!=)[[:space:]]*[(]?-([2-9]|[1-9][0-9]+)([^0-9]|$)' 'Linger/*/Shell.lean' 'Linger/*/Shell/*' \
+    'packages/os/Os/Shell.lean' 'packages/os/Os/Shell/*' \
     'Main.lean' 'Verify/*' 'Linger/*/Suites/*' \
-  || fail "a negative literal comparison looks like an errno number: compare the sign, or classify the errno in c/shim.c"
+  || fail "a negative literal comparison looks like an errno number: compare the sign, or classify the errno in packages/os/c/shim.c"
 # Lean/libuv may have worker threads when the application forks. The child
 # paths and their two execution helpers must not allocate, format through
 # stdio, mutate the environment, or use execvp's libc internals. Inventory the
@@ -197,7 +213,7 @@ awk '
       failed = 1
     }
     exit failed
-  }' c/shim.c >&2 || fail "fork child call boundary changed"
+  }' packages/os/c/shim.c >&2 || fail "fork child call boundary changed"
 # The only external Lean dependency is the Lean Software Challenge audit, pinned to a commit;
 # the others are this checkout's own packages, each required by path from packages/<name>.
 checkout_packages="$(git ls-files 'packages/*/lakefile.lean' | awk -F/ '{ print $2 }' | sort -u)"
@@ -247,7 +263,7 @@ done
 # `lean_lib LingerVt` in lakefile.lean is the positive half: it elaborates the
 # closure. It cannot be the whole claim, because Lake resolves imports through one
 # package-wide LEAN_PATH, so a lib with restricted `roots` compiles an out-of-set
-# module happily -- `import Linger.Os.Shell` in Mediation.lean builds under
+# module happily -- `import Os.Shell` in Mediation.lean builds under
 # `./lake build LingerVt` without a murmur. Measured, twice, not assumed. A
 # build-level failure needs a sub-package with its own srcDir and a path `require`,
 # and the two gates immediately above forbid every `require` but the audit's. So this grep is the half
@@ -331,7 +347,7 @@ library_roots() {
 # globs below build those two with these options.
 [ "$(library_decl Linger)" = "lean_lib Linger where leanOptions := implementationOptions " ] \
   || fail "the Linger library lost implementationOptions: $(library_decl Linger)"
-[ "$(library_decl Suites)" = "lean_lib Suites where globs := #[.submodules \`Linger.Session.Suites, .one \`Linger.Os.Suites.Wait] leanOptions := implementationOptions " ] \
+[ "$(library_decl Suites)" = "lean_lib Suites where globs := #[.submodules \`Linger.Session.Suites] leanOptions := implementationOptions " ] \
   || fail "the Suites library lost its globs or implementationOptions: $(library_decl Suites)"
 [ "$(git grep -c 'def implementationOptions : Array LeanOption := #\[⟨`linter.missingDocs, true⟩\]$' -- lakefile.lean)" = lakefile.lean:1 ] \
   || fail "implementationOptions no longer enables linter.missingDocs"
@@ -414,48 +430,50 @@ import_closure Linger/Display/Status.lean 'public import Linger.Display.Spec;'
 import_closure packages/input/Input.lean 'public import Input.Spec;'
 import_closure packages/input/Input/Spec.lean ''
 import_closure packages/input/Input/Proofs.lean 'public import Input;import all Input;'
+import_closure packages/os/Os/Spec.lean 'import SoftwareChallenge.Commands;'
+import_closure packages/os/Os/Wait.lean ''
 import_closure Linger/App/Entry.lean 'public import Linger.App.Spec;'
 import_closure Linger/App/Spec.lean ''
 import_closure Linger/Target/Name.lean 'import Linger.Target.Spec;'
 import_closure Linger/Target/Remote.lean 'import Linger.Target.Name;import Linger.Target.Spec;'
 import_closure Linger/Display/Title.lean 'import Linger.Target.Name;'
 import_closure Linger/Os/Env.lean ''
-import_closure Linger/Os/Boundary.lean ''
-# Linger/Os/Shell.lean is the one module that may import the private bindings.
+import_closure packages/os/Os/Boundary.lean ''
+# packages/os/Os/Shell.lean is the one module that may import the private bindings.
 [ "$(module_imports '*.lean' | awk -F: "$IMPORT_AWK"'
-    import_mod($3) == "Linger.Os.Boundary" && !seen[$1]++ { print $1 }')" = "Linger/Os/Shell.lean" ] \
-  || fail "a module other than Linger/Os/Shell.lean imports Linger.Os.Boundary"
-# `import all` transits (see the Vt friend set below), so `import all Linger.Os.Shell` would
+    import_mod($3) == "Os.Boundary" && !seen[$1]++ { print $1 }')" = "packages/os/Os/Shell.lean" ] \
+  || fail "a module other than packages/os/Os/Shell.lean imports Os.Boundary"
+# `import all` transits (see the Vt friend set below), so `import all Os.Shell` would
 # grant the private bindings it wraps: every other module imports it plainly.
 shell_all="$(module_imports '*.lean' | awk -F: "$IMPORT_AWK"'
-  $3 ~ /import[[:space:]]+all[[:space:]]/ && import_mod($3) == "Linger.Os.Shell" { print "  " $0 }')"
+  $3 ~ /import[[:space:]]+all[[:space:]]/ && import_mod($3) == "Os.Shell" { print "  " $0 }')"
 [ -z "$shell_all" ] || {
   printf '%s\n' "$shell_all" >&2
-  fail "import all Linger.Os.Shell grants the private Boundary bindings: import it plainly"; }
-import_closure Linger/Os/Shell/Command.lean 'import Linger.Os.Shell;'
-import_closure Linger/Import/Shell.lean 'import Linger.Import.Resurrect;import Linger.Session.Checkpoint;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Session.Shell.Paths;import Linger.Session.Shell.Resume;import Linger.Session.Shell.Inventory;import Linger.Os.Shell.Command;import Linger.Target.Remote;import Linger.Selector.Shell;import Std.Async.System;'
+  fail "import all Os.Shell grants the private Boundary bindings: import it plainly"; }
+import_closure packages/os/Os/Shell/Command.lean 'import Os.Shell;'
+import_closure Linger/Import/Shell.lean 'import Linger.Import.Resurrect;import Linger.Session.Checkpoint;import Os.Shell;import Linger.Display.Listing;import Linger.Session.Shell.Paths;import Linger.Session.Shell.Resume;import Linger.Session.Shell.Inventory;import Os.Shell.Command;import Linger.Target.Remote;import Linger.Selector.Shell;import Std.Async.System;'
 import_closure Linger/Selector/Shell.lean \
-  'public import Linger.Selector.Picker;import Linger.Os.Shell;import Linger.Target.Remote;import Terminal.Title;import Linger.Os.Shell.Command;import Linger.Display.View;import Std.Data.HashMap.Basic;import Linger.Display.Status;import Linger.Selector.Key;import Input;'
+  'public import Linger.Selector.Picker;import Os.Shell;import Linger.Target.Remote;import Terminal.Title;import Os.Shell.Command;import Linger.Display.View;import Std.Data.HashMap.Basic;import Linger.Display.Status;import Linger.Selector.Key;import Input;'
 import_closure Main.lean \
   'import Linger.App.Shell;import Linger.App.Entry;import Linger.Selector.Shell;import Linger.Import.Shell;'
 # `lean_lib Linger` builds the umbrella's closure, so this list is what `./lake build`
 # checks of the session library.
-import_closure Linger.lean "$(printf 'public import Linger.%s;' Session.Buf Os.Shell Session.Wire)$(
-  printf 'public import Terminal.%s;' Vt)$(
-  printf 'public import Linger.%s;' Target.Name Session Session.Driver Session.Checkpoint \
-  Target.Remote Display.Listing Display.Status Display.Title Display.View Os.Env Session.Shell.Paths \
-  Os.Shell.Command Session.Shell.Daemon Session.Shell.Client Session.Shell.Inventory App.Commands \
-  App.Shell \
-  Session.Shell.Resume)"
+import_closure Linger.lean "$(printf 'public import %s;' Linger.Session.Buf \
+  Linger.Session.Wire Terminal.Vt Linger.Target.Name Linger.Session Linger.Session.Driver \
+  Linger.Session.Checkpoint Linger.Target.Remote Linger.Display.Listing Linger.Display.Status \
+  Linger.Display.Title Linger.Display.View Linger.Os.Env Linger.Session.Shell.Paths \
+  Linger.Session.Shell.Daemon Linger.Session.Shell.Client \
+  Linger.Session.Shell.Inventory Linger.App.Commands Linger.App.Shell \
+  Linger.Session.Shell.Resume)"
 module_imports Linger/Session.lean ':(glob)Linger/Session/*.lean' 'Linger/Session/Shell/*' \
-    Linger/Os/Shell/Command.lean Linger/App/Shell.lean Linger/Os/Boundary.lean Linger/Os/Shell.lean \
+    packages/os/Os/Shell/Command.lean Linger/App/Shell.lean packages/os/Os/Boundary.lean packages/os/Os/Shell.lean \
     Linger/Os/Env.lean Linger/Target/Name.lean Linger/Target/Remote.lean Linger/Display/Status.lean \
     Linger/Display/Title.lean Linger/Display/Listing.lean packages/terminal/Terminal/Vt.lean \
     packages/terminal/Terminal/Render.lean packages/terminal/Terminal/Mediation.lean packages/terminal/Terminal/Title.lean \
     packages/terminal/Terminal/Replay.lean Linger.lean \
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
-    if (mod !~ /^(Linger[.]Session|Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Linger[.]App[.](Shell|Commands)|Std[.]Async[.](System|Signal))$/ \
+    if (mod !~ /^(Linger[.]Session|Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](Shell|Commands)|Std[.]Async[.](System|Signal))$/ \
         && mod != "SoftwareChallenge.Commands") {
       print "  " $0; bad = 1
     }
@@ -632,7 +650,7 @@ printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])[|] _ => writeSave [(]paths
 for tie in \
   'let save ← readSave origin home file let rows := catalogRows save[.]content save[.]panes' \
   'let value := if [[]"directory", "session", "window", "pane", "title", "command", "saved-command", "window-title"[]][.]contains key then value[.]quote else diagnostic value' \
-  'Linger[.]Os[.]Shell[.]writeAll Linger[.]Os[.]Shell[.]stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor rows[)][.]toArray[)]' \
+  'Os[.]Shell[.]writeAll Os[.]Shell[.]stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor rows[)][.]toArray[)]' \
   'let save ← readSave origin home file createPanes executable origin save[.]panes [(]readArchive save[.]path[)]' \
   'let path ← savePath origin home file while true do match ← Linger[.]Selector[.]Shell[.]choose executable [(]some path[.]toString[)] with' \
   '[|] [.]attach target displayed => unless displayed[.]candidates[.]contains target do throw [(]IO[.]userError "selected pane was absent from the displayed save"[)] let row := displayed[.]row target' \
@@ -658,8 +676,8 @@ for tie in \
   'unless text "archive" == some found[.]path[.]toString && row[.]lookup "archive-revision" == some [(]archiveRevision found[)] do throw [(]IO[.]userError "pane capture archive changed; refresh the saved panes"[)]' \
   'private def seedPane [(]pane : Pane[)] [(]contents : Option String[)] : IO Bool := Paths[.]withSessionLock pane[.]name do' \
   'if [(]← [(]System[.]FilePath[.]mk path[)][.]pathExists[)] [|][|] [(]← [(]System[.]FilePath[.]mk socket[)][.]pathExists[)] then return false' \
-  'let handle ← IO[.]FS[.]Handle[.]mk tmp [.]writeNew try Linger[.]Os[.]Shell[.]chmod tmp[.]toString 0o600 handle[.]write [(]Linger[.]Session[.]Checkpoint[.]saveBytes [(]checkpoint pane contents[)][)] handle[.]flush IO[.]FS[.]hardLink tmp path finally IO[.]FS[.]removeFile tmp' \
-  'pending[.]set [(]some [(]← Command[.]startLimited "tar" args limit[)][)] let deadline := [(]← Linger[.]Os[.]Shell[.]monotonicMs[)] [+] 5000' \
+  'let handle ← IO[.]FS[.]Handle[.]mk tmp [.]writeNew try Os[.]Shell[.]chmod tmp[.]toString 0o600 handle[.]write [(]Linger[.]Session[.]Checkpoint[.]saveBytes [(]checkpoint pane contents[)][)] handle[.]flush IO[.]FS[.]hardLink tmp path finally IO[.]FS[.]removeFile tmp' \
+  'pending[.]set [(]some [(]← Command[.]startLimited "tar" args limit[)][)] let deadline := [(]← Os[.]Shell[.]monotonicMs[)] [+] 5000' \
   'throw [(]IO[.]userError "pane capture archive timed out"[)] finally Command[.]stop pending'; do
   printf '%s\n' "$import_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "tmux capture import lost its bounded reader, frozen archive or checkpoint contract: $tie"
@@ -670,8 +688,8 @@ done
 # its lookup spelling: readSave resolves the current symlink target each time.
 for tie in \
   'Command[.]start "tmux" #[[]"show-options", "-gqv", "@resurrect-dir"[]]' \
-  'let deadline := [(]← Linger[.]Os[.]Shell[.]monotonicMs[)] [+] 1000 repeat' \
-  'unless ← Linger[.]Os[.]Shell[.]nap deadline 10 do break throw [(]IO[.]userError "tmux configuration query timed out; pass a save file explicitly"[)]' \
+  'let deadline := [(]← Os[.]Shell[.]monotonicMs[)] [+] 1000 repeat' \
+  'unless ← Os[.]Shell[.]nap deadline 10 do break throw [(]IO[.]userError "tmux configuration query timed out; pass a save file explicitly"[)]' \
   'finally Command[.]stop pending' \
   'match file with [|] some path => pure path [|] none => if let some dir[[:space:]]*← configuredDirectory then' \
   'let path := System[.]FilePath[.]mk path return if path[.]isAbsolute then path else origin / path' \
@@ -746,10 +764,10 @@ for tie in \
   'let mut frame := "\\x1b[[]0m\\x1b[[]H\\x1b[[]2J" let mut first := true for line in lines do if !first then frame := frame [+][+] "\\r\\n" first := false let mut used := 0 let mut clipped := false let mut activeStyle := "" for [(]text, style[)] in line do if clipped then break if style != activeStyle then frame := frame [+][+] "\\x1b[[]0m" [+][+] style activeStyle := style for raw in text[.]toList do let c := if Input[.]printable raw then raw else '"'"'[?]'"'"' let cells := Terminal[.]Vt[.]charWidth c if used [+] cells > width then clipped := true break frame := frame[.]push c used := used [+] cells if !activeStyle[.]isEmpty then frame := frame [+][+] "\\x1b[[]0m" return frame' \
   'let incomingStatuses := statusesOf incoming let ordered := Linger[.]Display[.]View[.]sort [(]incomingStatuses[.]getD · [.]unknown[)] incoming[.]candidates let next := if loaded then Linger[.]Selector[.]Picker[.]refresh state ordered else [{] [(]Linger[.]Selector[.]Picker[.]init ordered state[.]allowCreate[)] with query := state[.]query [}] dirty := dirty [|][|] !loaded [|][|] next != state [|][|] incoming != snapshot state := next snapshot := incoming statuses := incomingStatuses loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
   'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let frame := draw state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor savedTmux current[.]1 current[.]2 if frame != lastFrame [|][|] current != size then writeAll stdoutFd frame[.]toUTF8 lastFrame := frame size := current dirty := false let ready ← poll fds events 50' \
-  'for key in keys do if !loaded && key == [.]accept then continue match Linger[.]Selector[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target snapshot [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Linger[.]Os[.]Shell[.]Command[.]poll pending then' \
+  'for key in keys do if !loaded && key == [.]accept then continue match Linger[.]Selector[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target snapshot [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Os[.]Shell[.]Command[.]poll pending then' \
   'if full then lastFull := listed nextRemote := [(]← monotonicMs[)] [+] remoteRefreshMs let incoming := if full then listed else listed[.]withRemote lastFull' \
-  'nextListing := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextListing then full := savedTmux [|][|] [(]← monotonicMs[)] ≥ nextRemote let args := if full then fullArgs else #[[]"ls", "--porcelain"[]] pending[.]set [(]some [(]← Linger[.]Os[.]Shell[.]Command[.]start executable args[)][)] return [.]cancel finally' \
-  'finally Linger[.]Os[.]Shell[.]Command[.]stop pending [(]if savedTmux then 0 else 1000[)]' \
+  'nextListing := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextListing then full := savedTmux [|][|] [(]← monotonicMs[)] ≥ nextRemote let args := if full then fullArgs else #[[]"ls", "--porcelain"[]] pending[.]set [(]some [(]← Os[.]Shell[.]Command[.]start executable args[)][)] return [.]cancel finally' \
+  'finally Os[.]Shell[.]Command[.]stop pending [(]if savedTmux then 0 else 1000[)]' \
   'let fullArgs := if savedTmux then #[[]"tmux", "ls", "--porcelain"[]] [+][+] save[.]toArray else #[[]"ls", "-r", "--porcelain"[]]' \
   'match ← choose executable [(]readOnly := readOnly[)] with' \
   'def attachArgs [(]target : String[)] [(]readOnly : Bool := false[)] : Array String := [(]"attach" :: [(]if readOnly then [[]"--read-only"[]] else [[][]][)] [+][+] Linger[.]Target[.]Remote[.]targetOperands target[)][.]toArray'; do
@@ -763,15 +781,15 @@ code_grep '^def remoteRefreshMs : Nat := [1-9][0-9]*$' Linger/Selector/Shell.lea
 # Cancellation can first request cooperative cleanup. It always force-retires
 # the isolated group before reaping its reserved leader PID, then joins both
 # readers even when termination or reaping throws.
-command_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Os/Shell/Command.lean)"
+command_code="$(awk '{ $1 = $1; printf "%s ", $0 }' packages/os/Os/Shell/Command.lean)"
 for tie in \
   'IO[.]Process[.]spawn [{] cmd := executable, args, stdin := [.]null, stdout := [.]piped, stderr := [.]piped, setsid := true [}] let stdout ← IO[.]asTask child[.]stdout[.]readToEnd Task[.]Priority[.]dedicated let stderr ← IO[.]asTask child[.]stderr[.]readToEnd Task[.]Priority[.]dedicated return [{] child, stdout, stderr [}]' \
   'IO[.]Process[.]spawn [{] cmd := executable, args, stdin := [.]null, stdout := [.]piped, stderr := [.]piped, setsid := true [}] let stdout ← IO[.]asTask [(]readLimited child[.]stdout limit[)] Task[.]Priority[.]dedicated let stderr ← IO[.]asTask [(]readLimited child[.]stderr [(]64 [*] 1024[)][)] Task[.]Priority[.]dedicated return [{] child, stdout, stderr [}]' \
   'let chunk ← handle[.]read 4096 if chunk[.]isEmpty then break if !exceeded && bytes[.]size [+] chunk[.]size ≤ limit then bytes := bytes [+][+] chunk else exceeded := true' \
   'if exceeded then throw [(]IO[.]userError s!"command output exceeds [{]limit[}] bytes"[)] let some text := String[.]fromUTF8[?] bytes [|] throw [(]IO[.]userError "command output is not UTF-8"[)] return text' \
   'def poll [(]pending : IO[.]Ref [(]Option Job[)][)] : IO [(]Option IO[.]Process[.]Output[)] := do if let some job[[:space:]]*← pending[.]get then if [(]← IO[.]hasFinished job[.]stdout[)] && [(]← IO[.]hasFinished job[.]stderr[)] then if let some exitCode[[:space:]]*← job[.]child[.]tryWait then pending[.]set none let stdout ← IO[.]ofExcept [(]← IO[.]wait job[.]stdout[)] let stderr ← IO[.]ofExcept [(]← IO[.]wait job[.]stderr[)] return some [{] exitCode, stdout, stderr [}] return none' \
-  'if let some job[[:space:]]*← pending[.]get then pending[.]set none try try try if graceMs > 0 then Linger[.]Os[.]Shell[.]kill job[.]child[.]pid 15 let deadline := [(]← Linger[.]Os[.]Shell[.]monotonicMs[)] [+] graceMs repeat if [(]← IO[.]hasFinished job[.]stdout[)] && [(]← IO[.]hasFinished job[.]stderr[)] then break unless ← Linger[.]Os[.]Shell[.]nap deadline 5 do break finally retireGroup job finally discard job[.]child[.]wait finally discard <[|] IO[.]wait job[.]stdout discard <[|] IO[.]wait job[.]stderr' \
-  'private def retireGroup [(]job : Job[)] : IO Unit := do try job[.]child[.]kill catch err => match err with [|] [.]permissionDenied [.][.] [|] [.]noSuchThing [.][.] => Linger[.]Os[.]Shell[.]kill job[.]child[.]pid 9 [|] _ => throw err'; do
+  'if let some job[[:space:]]*← pending[.]get then pending[.]set none try try try if graceMs > 0 then Os[.]Shell[.]kill job[.]child[.]pid 15 let deadline := [(]← Os[.]Shell[.]monotonicMs[)] [+] graceMs repeat if [(]← IO[.]hasFinished job[.]stdout[)] && [(]← IO[.]hasFinished job[.]stderr[)] then break unless ← Os[.]Shell[.]nap deadline 5 do break finally retireGroup job finally discard job[.]child[.]wait finally discard <[|] IO[.]wait job[.]stdout discard <[|] IO[.]wait job[.]stderr' \
+  'private def retireGroup [(]job : Job[)] : IO Unit := do try job[.]child[.]kill catch err => match err with [|] [.]permissionDenied [.][.] [|] [.]noSuchThing [.][.] => Os[.]Shell[.]kill job[.]child[.]pid 9 [|] _ => throw err'; do
   printf '%s\n' "$command_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "owned command lost its process or pipe lifetime contract: $tie"
 done
@@ -831,7 +849,7 @@ done
 printf '%s\n' "$cli_code" | CG_RE='(^|[[:space:]])match Linger[.]Os[.]Env[.]remotesFile [(]← IO[.]getEnv "HOME"[)] with [|] none => pure [[][]] [|] some path => if ← System[.]FilePath[.]pathExists path then pure [(][(]← IO[.]FS[.]readFile path[)][.]splitOn([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "remote configuration bypasses Env.remotesFile, which reads no file for an unset or empty HOME"
 for var in SHELL LINGER_NO_DETACH_KEY; do
-  [ "$(code_count "getEnv \"$var\"" 'Linger/*' Main.lean)" -eq 1 ] \
+  [ "$(code_count "getEnv \"$var\"" 'Linger/*' 'packages/*' Main.lean)" -eq 1 ] \
     || fail "$var is read more than once or not at all; read it once, into its Env policy"
 done
 # Discovery keeps bounded ownership until completion. Remote signal handlers
@@ -1006,7 +1024,7 @@ code_grep "$VT_ALL_RE" '*.lean' \
 # need a syscall wrapper, or does Lean core already have it?" (see the
 # C-vs-Rust and shrink-the-shim notes in SCRATCHPAD.md).
 SHIM_CAP=23
-shim_n="$(code_count 'LEAN_EXPORT' 'c/shim.c')"
+shim_n="$(code_count 'LEAN_EXPORT' 'packages/os/c/shim.c')"
 [ "$shim_n" -le "$SHIM_CAP" ] \
   || fail "shim grew to $shim_n wrappers (cap $SHIM_CAP); justify the new syscall and bump the cap"
 
@@ -1023,11 +1041,11 @@ shim_n="$(code_count 'LEAN_EXPORT' 'c/shim.c')"
 # Cli.queryInfo's accumulator, and two .extract compactions). Each used to spell its
 # regex twice — once to test, once to print the hits — and `code_grep` prints them, so
 # the duplicate is gone: two copies of a pattern is two things to keep in step.
-! code_grep '^[[:space:]]+[a-zA-Z_]+ : ByteArray' 'Linger/App/Shell.lean' 'Linger/Os/Shell/Command.lean' 'Linger/Session/Shell/*' \
+! code_grep '^[[:space:]]+[a-zA-Z_]+ : ByteArray' 'Linger/App/Shell.lean' 'packages/os/Os/Shell/Command.lean' 'Linger/Session/Shell/*' \
   || fail "a ByteArray field in a runtime shell (use Linger.Session.Buf, which is proved)"
-! code_grep 'mut [a-zA-Z_]+ : ByteArray' 'Linger/App/Shell.lean' 'Linger/Os/Shell/Command.lean' 'Linger/Session/Shell/*' \
+! code_grep 'mut [a-zA-Z_]+ : ByteArray' 'Linger/App/Shell.lean' 'packages/os/Os/Shell/Command.lean' 'Linger/Session/Shell/*' \
   || fail "an accumulating ByteArray local in a runtime shell (use Linger.Session.Buf: it is capped)"
-! code_grep '[.]extract([^[:alnum:]_]|$)' 'Linger/App/Shell.lean' 'Linger/Os/Shell/Command.lean' 'Linger/Session/Shell/*' \
+! code_grep '[.]extract([^[:alnum:]_]|$)' 'Linger/App/Shell.lean' 'packages/os/Os/Shell/Command.lean' 'Linger/Session/Shell/*' \
   || fail "buffer arithmetic in a runtime shell (Buf.bufAdvance owns it, and is proved)"
 
 # The cursor proofs describe pure values. These ties keep the runtime on the
@@ -1165,13 +1183,14 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def Offloop[.]ask [(]w : Of
 # past its deadline, and `false` once that has passed, when the wait reports what it missed. The
 # one wait with no deadline that sleeps, `start` or `resume` waiting on a daemon that took the
 # request's ticket, sleeps through `Os.Shell.pause`. No timer task stands in for a deadline.
-sleeps="$(code_grep '(^|[^A-Za-z0-9_.])IO[.]sleep([^A-Za-z0-9_]|$)' 'Linger/*.lean' Main.lean \
+sleeps="$(code_grep '(^|[^A-Za-z0-9_.])IO[.]sleep([^A-Za-z0-9_]|$)' 'Linger/*.lean' 'packages/*.lean' Main.lean \
   | grep -v -e '^Linger/[^/]*/Proofs/' -e '^Linger/[^/]*/Tests/' -e '^Linger/[^/]*/Suites/' \
+      -e '^packages/[^/]*/[^/]*/Proofs/' -e '^packages/[^/]*/[^/]*/Tests/' -e '^packages/[^/]*/[^/]*/Suites/' \
   | cut -d: -f1 | sort | uniq -c | awk '{ printf "%s:%s ", $2, $1 }')"
-[ "$sleeps" = "Linger/Os/Shell.lean:2 " ] \
+[ "$sleeps" = "packages/os/Os/Shell.lean:2 " ] \
   || fail "a wait sleeps outside Os.Shell.nap and Os.Shell.pause: $sleeps"
-code_grep '^[[:space:]]+match Linger[.]Os[.]Wait[.]next deadline step [(]← monotonicMs[)] with$' \
-  Linger/Os/Shell.lean >/dev/null \
+code_grep '^[[:space:]]+match Os[.]Wait[.]next deadline step [(]← monotonicMs[)] with$' \
+  packages/os/Os/Shell.lean >/dev/null \
   || fail "Os.Shell.nap sleeps other than as Os.Wait.next decides"
 [ "$(code_count '(^|[^A-Za-z0-9_.])pause [0-9]' 'Linger/*.lean')" -eq 1 ] \
   && code_grep '^[[:space:]]+pause 10$' Linger/App/Shell.lean >/dev/null \
@@ -1301,9 +1320,9 @@ for tie in \
   'def lockPath [(]name : String[)] : IO String := do namedPath [(]← socketDir[)] name "[.]lock"' \
   'def stateLockPath [(]name : String[)] : IO String := do namedPath [(][(]← stateDir[)] [+][+] "/[.]locks"[)] name "[.]lock"' \
   'def logPath [(]name : String[)] : IO String := do namedPath [(][(]← stateDir[)] [+][+] "/logs"[)] name "[.]log"' \
-  'def acquire [(]path : String[)] [(]retry : IO Bool[)] [(]listed : Bool[)] : IO [(]Option UInt32[)] := do let mut fd ← Linger[.]Os[.]Shell[.]flock path while fd < 0 do unless ← retry do break fd ← Linger[.]Os[.]Shell[.]flock path if fd < 0 then return none let held := fd[.]toUInt64[.]toUInt32 unless listed do try checkSpelling path catch err => Linger[.]Os[.]Shell[.]close held throw err return some held' \
-  'def withLockRetrying [{]α : Type[}] [(]path : String[)] [(]retry : IO Bool[)] [(]action : IO α[)] [(]listed : Bool := false[)] : IO α := do let some fd ← acquire path retry listed [|] throw [(]IO[.]userError s!"session is owned by another process [(][{]path[}][)]"[)] try action finally Linger[.]Os[.]Shell[.]close fd' \
-  'def withOwnership [{]α : Type[}] [(]socket : String[)] [(]checkpoint : IO String[)] [(]retry : IO Bool[)] [(]listed : Bool[)] [(]action : IO α[)] : IO α := do let held ← acquire socket retry listed try let [(]state, refused[)] ← match held with [|] none => pure [(]none, socket[)] [|] some _ => do let path ← checkpoint pure [(]← acquire path retry listed, path[)] try unless Claim[.]enters held[.]isSome state[.]isSome do throw [(]IO[.]userError s!"session is owned by another process [(][{]refused[}][)]"[)] action finally if let some fd := state then Linger[.]Os[.]Shell[.]close fd finally if let some fd := held then Linger[.]Os[.]Shell[.]close fd' \  'def Listed[.]withLock [{]α : Type[}] [(]n : Listed[)] [(]action : IO α[)] : IO α := do withLockRetrying [(]← pathIn [(]← socketDir[)] n[.]name "[.]lock" true[)] [(]pure false[)] action [(]listed := true[)]' \  'def Listed[.]withSessionLock [{]α : Type[}] [(]n : Listed[)] [(]action : IO α[)] : IO α := do withOwnership [(]← pathIn [(]← socketDir[)] n[.]name "[.]lock" true[)] [(]do let locks := [(]← stateDir[)] [+][+] "/[.]locks" ensureDir locks pathIn locks n[.]name "[.]lock" true[)] [(]pure false[)] true action' \
+  'def acquire [(]path : String[)] [(]retry : IO Bool[)] [(]listed : Bool[)] : IO [(]Option UInt32[)] := do let mut fd ← Os[.]Shell[.]flock path while fd < 0 do unless ← retry do break fd ← Os[.]Shell[.]flock path if fd < 0 then return none let held := fd[.]toUInt64[.]toUInt32 unless listed do try checkSpelling path catch err => Os[.]Shell[.]close held throw err return some held' \
+  'def withLockRetrying [{]α : Type[}] [(]path : String[)] [(]retry : IO Bool[)] [(]action : IO α[)] [(]listed : Bool := false[)] : IO α := do let some fd ← acquire path retry listed [|] throw [(]IO[.]userError s!"session is owned by another process [(][{]path[}][)]"[)] try action finally Os[.]Shell[.]close fd' \
+  'def withOwnership [{]α : Type[}] [(]socket : String[)] [(]checkpoint : IO String[)] [(]retry : IO Bool[)] [(]listed : Bool[)] [(]action : IO α[)] : IO α := do let held ← acquire socket retry listed try let [(]state, refused[)] ← match held with [|] none => pure [(]none, socket[)] [|] some _ => do let path ← checkpoint pure [(]← acquire path retry listed, path[)] try unless Claim[.]enters held[.]isSome state[.]isSome do throw [(]IO[.]userError s!"session is owned by another process [(][{]refused[}][)]"[)] action finally if let some fd := state then Os[.]Shell[.]close fd finally if let some fd := held then Os[.]Shell[.]close fd' \  'def Listed[.]withLock [{]α : Type[}] [(]n : Listed[)] [(]action : IO α[)] : IO α := do withLockRetrying [(]← pathIn [(]← socketDir[)] n[.]name "[.]lock" true[)] [(]pure false[)] action [(]listed := true[)]' \  'def Listed[.]withSessionLock [{]α : Type[}] [(]n : Listed[)] [(]action : IO α[)] : IO α := do withOwnership [(]← pathIn [(]← socketDir[)] n[.]name "[.]lock" true[)] [(]do let locks := [(]← stateDir[)] [+][+] "/[.]locks" ensureDir locks pathIn locks n[.]name "[.]lock" true[)] [(]pure false[)] true action' \
   'def withLock [{]α : Type[}] [(]path : String[)] [(]action : IO α[)] : IO α := withLockRetrying path [(]pure false[)] action' \
   'def withSessionLockRetrying [{]α : Type[}] [(]name : String[)] [(]retry : IO Bool[)] [(]action : IO α[)] : IO α := do withOwnership [(]← lockPath name[)] [(]stateLockPath name[)] retry false action' \
   'def withSessionLock [{]α : Type[}] [(]name : String[)] [(]action : IO α[)] : IO α := withSessionLockRetrying name [(]pure false[)] action'; do
@@ -1434,7 +1453,7 @@ code_grep '^theorem step_tick_before_interval ' 'Linger/Session/Proofs/Session.l
   || fail "the no-early-checkpoint theorem disappeared"
 code_grep '^theorem step_tick_checkpoint_elapsed ' 'Linger/Session/Proofs/Session.lean' > /dev/null \
   || fail "the checkpoint elapsed-time theorem disappeared"
-code_grep '^def monotonicMs : IO Nat := IO[.]monoMsNow$' 'Linger/Os/Shell.lean' > /dev/null \
+code_grep '^def monotonicMs : IO Nat := IO[.]monoMsNow$' 'packages/os/Os/Shell.lean' > /dev/null \
   || fail "the monotonic clock no longer forwards Lean's Nat clock directly"
 code_grep '^[[:space:]]+let now ← monotonicMs$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "the daemon tick no longer reads the monotonic clock"
@@ -1570,14 +1589,14 @@ done
 # script signals the harness, the agent running it, and whatever shell shares that
 # group — which is exactly what happened on 2026-09-15, from `kill 0 15` inside
 # `lingertest`. Scoped to the shell and the shim, because that is where nothing else
-# stops it: from Lean every process binding takes the proof `Linger.Os.Shell.checkPid`
+# stops it: from Lean every process binding takes the proof `Os.Shell.checkPid`
 # returns, which it gives for no 0 and no value that casts to a negative `pid_t` (a type,
 # not a grep), and `Linger/Os/Suites/Shim.lean`'s `kill 0 15` is that mechanism's
 # regression test, so including Lean here would flag the assertion instead of the hazard.
 # `kill -0 $pid` (the
 # liveness probe) is a signal flag, not a target, and is deliberately not matched.
 ! code_grep 'kill([[:space:]]+-[A-Za-z0-9]+)*[[:space:]]+(--[[:space:]]+)?(0|-[0-9]+)([^0-9]|$)' \
-    'scripts/*.sh' 'c/shim.c' 'recipes/*' \
+    'scripts/*.sh' 'packages/os/c/shim.c' 'recipes/*' \
   || fail "a signal targets process group 0 or a negative pid — name the pid the suite created"
 ! code_grep '["]python([0-9.]*)' 'Verify/*' 'Linger/*/Suites/*' \
   || fail "a suite executes embedded Python — use the suites binary as the child probe"
@@ -1641,7 +1660,7 @@ suite_unreached="$(module_imports Verify/Main.lean 'Verify/*' 'Linger/*/Suites/*
     k = split(files, F, " ")
     for (j = 1; j <= k; j++)
       if (F[j] != "Verify/Coverage.lean" && F[j] != "Linger/Os/Suites/Shim.lean" &&
-          F[j] != "Linger/Os/Suites/Wait.lean" && !(F[j] in reached)) printf "%s ", F[j] }')"
+          F[j] != "packages/os/Os/Suites/Wait.lean" && !(F[j] in reached)) printf "%s ", F[j] }')"
 [ -z "$suite_unreached" ] \
   || fail "outside the import closure of Verify/Main.lean, so './lake build suites' never elaborates them: ${suite_unreached% }"
 # Every registered suite but the opt-in remote-live runs in the verifier: Verify.Main.suites
@@ -1868,7 +1887,7 @@ awk '/^say "[0-9]+[.] live suites / { live=1 }
 grep -qE '^ +- cron:' "$ci_yml" \
   || fail "$ci_yml: no schedule — the monthly cron is when CI runs at all"
 grep -q 'workflow_dispatch' "$ci_yml" \
-  || fail "$ci_yml: no workflow_dispatch — a commit touching c/shim.c needs a way to ask for macOS without waiting for the monthly run"
+  || fail "$ci_yml: no workflow_dispatch — a commit touching packages/os/c/shim.c needs a way to ask for macOS without waiting for the monthly run"
 # Suite fixed-sleep ratchet: a wait for something to appear polls its readiness
 # signal (`waitFor`, `Client.awaitText`); the sleeps left are negative-assertion
 # windows, fixture pacing, poll intervals and waits not yet converted. Both ratchets count
@@ -1903,8 +1922,8 @@ ed_n="$(code_count '(^|[^[:alnum:]_.])drain(Str)?[[:space:]]+[^[:space:]]+[[:spa
 #     remoteQueryTimeoutMs (3 s); `send -` wakes only for input, replies and closes; `wait`
 #     and `kill` look at a held name every 20 ms for at most heldNameMs (8 s).
 #   Import/Shell: tmux's configuration and a pane archive, every 10 ms for at most 1 s and 5 s.
-#   Os/Shell: `nap` and `pause`, the only sleeps.
-#   Os/Shell/Command: a stopped command's output, every 5 ms for its grace period.
+#   packages/os, Os/Shell: `nap` and `pause`, the only sleeps; Os/Shell/Command: a stopped
+#     command's output, every 5 ms for its grace period.
 #   Selector/Shell: the picker, every 50 ms while it is open, for keys, the escape deadline and
 #     a listing each second.
 #   Session/Shell/Client: a one-shot reply, until replySilenceMs (10 s) of silence; a saved view
@@ -1916,6 +1935,7 @@ ed_n="$(code_count '(^|[^[:alnum:]_.])drain(Str)?[[:space:]]+[^[:space:]]+[[:spa
 #   Session/Shell/Inventory: an info reply, until the request's deadline.
 timers="$(code_grep '(IO[.]sleep [^[:space:]]|← poll [^[:space:]]|(^|[[:space:].])nap [^[:space:]]|(^|[[:space:]])pause [0-9])' 'Linger/*.lean' \
     ':!Linger/*/Suites/*' ':!Linger/*/Proofs/*' ':!Linger/*/Tests/*' \
+    'packages/*.lean' ':!packages/*/Suites/*' ':!packages/*/Proofs/*' ':!packages/*/Tests/*' \
   | sed -E 's/^([^:]+):[0-9]+:[[:space:]]*/\1: /')"
 expected_timers='Linger/App/Shell.lean: unless ← nap deadline 10 do
 Linger/App/Shell.lean: pause 10
@@ -1924,12 +1944,8 @@ Linger/App/Shell.lean: unless ← nap deadline 5 do
 Linger/App/Shell.lean: let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] (-1)
 Linger/App/Shell.lean: unless ← nap heldUntil 20 do
 Linger/App/Shell.lean: unless ← nap deadline 20 do
-Linger/Import/Shell.lean: unless ← Linger.Os.Shell.nap deadline 10 do
-Linger/Import/Shell.lean: unless ← Linger.Os.Shell.nap deadline 10 do
-Linger/Os/Shell.lean: def nap (deadline step : Nat) : IO Bool := do
-Linger/Os/Shell.lean: IO.sleep ms.toUInt32
-Linger/Os/Shell.lean: def pause (ms : Nat) : IO Unit := IO.sleep ms.toUInt32
-Linger/Os/Shell/Command.lean: unless ← Linger.Os.Shell.nap deadline 5 do
+Linger/Import/Shell.lean: unless ← Os.Shell.nap deadline 10 do
+Linger/Import/Shell.lean: unless ← Os.Shell.nap deadline 10 do
 Linger/Selector/Shell.lean: let ready ← poll fds events 50
 Linger/Session/Shell/Client.lean: let revs ← poll #[fd] #[POLLIN] silenceMs
 Linger/Session/Shell/Client.lean: let ready ← poll fds events 200
@@ -1939,7 +1955,11 @@ Linger/Session/Shell/Daemon.lean: let revs ← poll fds evts timeout
 Linger/Session/Shell/Daemon.lean: let revs ← poll fds (Array.replicate fds.size POLLOUT) (Int32.ofNat (min 100 (deadline - now)))
 Linger/Session/Shell/Daemon.lean: unless ← nap deadline step do
 Linger/Session/Shell/Daemon.lean: nap deadline 10
-Linger/Session/Shell/Inventory.lean: let revs ← poll #[fd] #[POLLIN] (Int32.ofNat (min 100 remaining))'
+Linger/Session/Shell/Inventory.lean: let revs ← poll #[fd] #[POLLIN] (Int32.ofNat (min 100 remaining))
+packages/os/Os/Shell.lean: def nap (deadline step : Nat) : IO Bool := do
+packages/os/Os/Shell.lean: IO.sleep ms.toUInt32
+packages/os/Os/Shell.lean: def pause (ms : Nat) : IO Unit := IO.sleep ms.toUInt32
+packages/os/Os/Shell/Command.lean: unless ← Os.Shell.nap deadline 5 do'
 [ "$timers" = "$expected_timers" ] \
   || fail "the program's timers changed; name each here with its bound, or wait on an event instead:
 $timers"

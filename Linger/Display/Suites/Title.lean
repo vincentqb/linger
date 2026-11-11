@@ -22,7 +22,7 @@ namespace Linger.Display.Suites.Title
 open Linger.Session.Shell
 open Terminal
 open Verify.Harness
-open Linger.Os.Shell
+open Os.Shell
 open Linger.Display.Status (Status icon)
 open Terminal.Title (maxChars)
 open Terminal.Vt (Vt)

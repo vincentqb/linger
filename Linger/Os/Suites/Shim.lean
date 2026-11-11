@@ -1,7 +1,7 @@
 module
 
-import Linger.Os.Shell
-import Linger.Os.Suites.Wait
+import Os.Shell
+import Os.Suites.Wait
 
 /-! # lingertest — IO smoke tests for the Posix shim
 
@@ -10,7 +10,7 @@ processes and poll fds need a real process. Each check prints PASS/FAIL;
 exit code is the count of failures. Run via `./lake exe lingertest`.
 -/
 
-open Linger.Os.Shell
+open Os.Shell
 
 /-- The checks that have printed `FAIL` in this run. -/
 initialize failed : IO.Ref Nat ←
@@ -64,7 +64,7 @@ def reap (pid : UInt32) : IO Int64 := do
 def testPtyEcho : IO Unit := do
   let (pid, master) ← spawnPty 80 24 "" "sh" #["-c", "echo hi-from-pty"] #["ZT=1"]
   let out ← drain master ((← monotonicMs) + 5000) .empty
-  Linger.Os.Shell.close master
+  Os.Shell.close master
   check "pty spawn+echo roundtrip" ((String.fromUTF8! out).contains "hi-from-pty")
   check "child reaped with status 0" ((← reap pid) == 0)
 
@@ -74,7 +74,7 @@ def testPtyEnvAndInput : IO Unit := do
   let (pid, master) ← spawnPty 80 24 "/" "sh" #[] #["LINGERTEST=marker42"]
   let _ ← write master "echo $LINGERTEST; pwd; exit\n".toUTF8 0
   let out ← drain master ((← monotonicMs) + 5000) .empty
-  Linger.Os.Shell.close master
+  Os.Shell.close master
   let txt := String.fromUTF8! out
   check "extra env visible in child" (txt.contains "marker42")
   check "cwd honored" (txt.contains "\n/\r")
@@ -98,12 +98,12 @@ def testUnixSocket : IO Unit := do
   let got := (← read afd 100).getD .empty
   check "bytes cross the socket" (String.fromUTF8! got == "ping")
   -- peer-gone detection: close client, write from server side
-  Linger.Os.Shell.close cfd
+  Os.Shell.close cfd
   let w1 ← write afd "x".toUTF8 0
   let w2 ← write afd "x".toUTF8 0
   check "write to dead peer yields -1 (not a crash)" (w1 == -1 || w2 == -1)
-  Linger.Os.Shell.close afd
-  Linger.Os.Shell.close lfd
+  Os.Shell.close afd
+  Os.Shell.close lfd
   IO.FS.removeDirAll dir
   -- connect to a nonexistent path: -ENOENT, not an exception
   let r ← unixConnect s!"{dir}/absent.sock"
@@ -112,7 +112,7 @@ def testUnixSocket : IO Unit := do
 def testWinsize : IO Unit := do
   let (pid, master) ← spawnPty 121 43 "" "sh" #["-c", "stty size; exit"] #[]
   let out ← drain master ((← monotonicMs) + 5000) .empty
-  Linger.Os.Shell.close master
+  Os.Shell.close master
   let _ ← reap pid
   -- stty prints "rows cols"
   check "pty spawned with requested winsize" ((String.fromUTF8! out).contains "43 121")
@@ -133,14 +133,14 @@ def testProcessSelectors : IO Unit := do
   -- A live child of our own is still answered normally.
   let (pid, master) ← spawnPty 80 24 "" "sh" #["-c", "exit 3"] #[]
   let _ ← drain master ((← monotonicMs) + 5000) .empty
-  Linger.Os.Shell.close master
+  Os.Shell.close master
   check "waitpidNohang reports a real child's status" ((← reap pid) == 3)
 
 /-- How a child ended, once `reapNohang` reaps it or the deadline passes. -/
 def reapEnding (script : String) : IO Reaped := do
   let (pid, master) ← spawnPty 80 24 "" "sh" #["-c", script] #[]
   let _ ← drain master ((← monotonicMs) + 5000) .empty
-  Linger.Os.Shell.close master
+  Os.Shell.close master
   let deadline := (← monotonicMs) + 5000
   let mut got ← reapNohang pid
   while got == .running && (← monotonicMs) < deadline do
@@ -158,7 +158,7 @@ def testReapEnding : IO Unit := do
 def testPeekKeepsChild : IO Unit := do
   let (pid, master) ← spawnPty 80 24 "" "sh" #["-c", "exit 5"] #[]
   let _ ← drain master ((← monotonicMs) + 5000) .empty
-  Linger.Os.Shell.close master
+  Os.Shell.close master
   let deadline := (← monotonicMs) + 5000
   let mut seen ← peekNohang pid
   while seen == .running && (← monotonicMs) < deadline do
@@ -213,7 +213,7 @@ def testSignalSession : IO Unit := do
   finally
     outsider.kill
     discard <| outsider.wait
-    Linger.Os.Shell.close master
+    Os.Shell.close master
     kill leader 9
     discard <| reap leader
 
@@ -252,7 +252,7 @@ def testSpawnFailures : IO Unit := do
     try
       let (pid, master) ← spawnPty 80 24 "" script #[] #[]
       let out ← drain master ((← monotonicMs) + 5000) .empty
-      Linger.Os.Shell.close master
+      Os.Shell.close master
       let _ ← reap pid
       pure ((String.fromUTF8! out).contains "shebangless-ran")
     catch _ =>
@@ -270,7 +270,7 @@ def ptyResult (cwd prog : String) (args extraEnv : Array String := #[]) (cols : 
       let status ← reap pid
       return .ok (String.fromUTF8! out, status)
     finally
-      Linger.Os.Shell.close master
+      Os.Shell.close master
       if (← waitpidNohang pid) == -1 then
         kill pid 9
         let _ ← reap pid
@@ -346,7 +346,7 @@ def testPtyPath : IO Unit :=
 /-- Run in a disposable process: closing stdio must not clobber the spawn report. -/
 def closedStdioProbe (kind logPath : String) : IO UInt32 := do
   for fd in #[0, 1, 2] do
-    Linger.Os.Shell.close fd
+    Os.Shell.close fd
   let passed : Bool ←
     if kind == "pty-error" then
       do
@@ -440,7 +440,7 @@ def testCStringInputs : IO Unit :=
         (←
           throws do
               let fd ← unixListen (socket ++ suffix)
-              Linger.Os.Shell.close fd)
+              Os.Shell.close fd)
     -- The broken listen above creates its valid prefix; give the connect fixture
     -- its own live socket so it cannot pass merely because a socket is absent.
     let socket2 := (dir / "connect").toString
@@ -451,15 +451,15 @@ def testCStringInputs : IO Unit :=
             throws do
                 let fd ← unixConnect (socket2 ++ suffix)
                 if fd ≥ 0 then
-                  Linger.Os.Shell.close fd.toUInt64.toUInt32)
+                  Os.Shell.close fd.toUInt64.toUInt32)
     finally
-      Linger.Os.Shell.close lfd
+      Os.Shell.close lfd
     check "flock rejects a NUL path"
         (←
           throws do
               let fd ← flock ((dir / "lock").toString ++ suffix)
               if fd ≥ 0 then
-                Linger.Os.Shell.close fd.toUInt64.toUInt32)
+                Os.Shell.close fd.toUInt64.toUInt32)
     let file := (dir / "mode").toString
     IO.FS.writeFile file ""
     check "chmod rejects a NUL path" (← throws (chmod (file ++ suffix) 0o600))
@@ -492,7 +492,7 @@ def testWinsizeBounds : IO Unit := do
     check "winsizeSet preserves zero and the largest representable size" preserved
   finally
     kill pid 9
-    Linger.Os.Shell.close master
+    Os.Shell.close master
     let _ ← reap pid
 
 /-- `getcwdOf` feeds the checkpoint's `cwd`, which a resume hands to `chdir`, so a
@@ -516,7 +516,7 @@ def testDeepCwd : IO Unit := do
   -- `#ifdef __APPLE__` branch NUL-terminates a libproc path rather than refusing it.
   let usable ← orFalse (if cwd == "" then pure true else System.FilePath.isDir cwd)
   kill pid 9
-  Linger.Os.Shell.close master
+  Os.Shell.close master
   let _ ← reap pid
   -- `removeDirAll` builds full paths, which this tree is too deep for; `rm -r`
   -- walks it with directory-relative openat.

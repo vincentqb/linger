@@ -2,7 +2,7 @@ module
 
 public import Verify.Harness
 import Linger.App.Shell
-import Linger.Os.Shell.Command
+import Os.Shell.Command
 import Linger.Target.Remote
 import Linger.Session.Shell.Client
 
@@ -14,7 +14,7 @@ shell boundary; a fake remote linger records the resulting arguments. -/
 namespace Linger.Target.Suites.Remote
 
 open Verify.Harness
-open Linger.Os.Shell (chmod)
+open Os.Shell (chmod)
 
 private def devHost : String := "dev-a"
 
@@ -71,7 +71,7 @@ def readArgs (path : System.FilePath) : IO (List String) := do
 
 /-- A descendant keeps the SSH pipes open until its owner terminates the group. -/
 def discoveryLeaf (root host : String) : IO UInt32 := do
-  IO.FS.writeFile s!"{root}/{host}.leaf.tmp" (toString (← Linger.Os.Shell.getpid))
+  IO.FS.writeFile s!"{root}/{host}.leaf.tmp" (toString (← Os.Shell.getpid))
   IO.FS.rename s!"{root}/{host}.leaf.tmp" s!"{root}/{host}.leaf"
   IO.sleep 15000
   return 0
@@ -101,22 +101,22 @@ def discoverySsh (root : String) (args : List String) : IO UInt32 := do
 
 /-- The local peer answers only after remote discovery has started. -/
 def discoveryInfo (root : String) : IO UInt32 := do
-  let listener ← Linger.Os.Shell.unixListen s!"{root}/state/local.sock"
-  Linger.Os.Shell.setNonblock listener
+  let listener ← Os.Shell.unixListen s!"{root}/state/local.sock"
+  Os.Shell.setNonblock listener
   try
     IO.FS.writeFile s!"{root}/local.ready" ""
-    let deadline := (← Linger.Os.Shell.monotonicMs) + 5000
-    while (← Linger.Os.Shell.monotonicMs) < deadline do
-      let accepted ← Linger.Os.Shell.accept listener
+    let deadline := (← Os.Shell.monotonicMs) + 5000
+    while (← Os.Shell.monotonicMs) < deadline do
+      let accepted ← Os.Shell.accept listener
       if accepted < 0 then
         IO.sleep 10
         continue
       let fd := accepted.toUInt64.toUInt32
       try
-        let ready ← Linger.Os.Shell.poll #[fd] #[Linger.Os.Shell.POLLIN] 2000
+        let ready ← Os.Shell.poll #[fd] #[Os.Shell.POLLIN] 2000
         if ready[0]! == 0 then
           return 1
-        discard <| Linger.Os.Shell.read fd 4096
+        discard <| Os.Shell.read fd 4096
         IO.FS.writeFile s!"{root}/local.request" ""
         unless ← waitFor 5000 (System.FilePath.pathExists s!"{root}/first.started") do
           return 1
@@ -124,10 +124,10 @@ def discoveryInfo (root : String) : IO UInt32 := do
         Linger.Session.Shell.Client.sendMsg fd .done
         return 0
       finally
-        Linger.Os.Shell.close fd
+        Os.Shell.close fd
     return 1
   finally
-    Linger.Os.Shell.close listener
+    Os.Shell.close listener
 
 private def discoverySetup (e : Env) (slug : String) : IO (Env × String × String) := do
   let root := s!"{e.dir}/{slug}"
@@ -147,7 +147,7 @@ private def discoveryGone (root host : String) : IO Bool := do
   unless ← System.FilePath.pathExists path do
     return false
   let pid := (← IO.FS.readFile path).toNat?.getD 0
-  return pid > 0 && !(← Linger.Os.Shell.alive (UInt32.ofNat pid))
+  return pid > 0 && !(← Os.Shell.alive (UInt32.ofNat pid))
 
 /-- Retire fixture descendants even when intentionally breaking group cleanup. -/
 private def cleanupDiscovery (root : String) : IO Unit := do
@@ -157,7 +157,7 @@ private def cleanupDiscovery (root : String) : IO Unit := do
       unless ← discoveryGone root host do
         if let some pid := (← IO.FS.readFile entry.path).toNat? then
           try
-            Linger.Os.Shell.kill (UInt32.ofNat pid) 15
+            Os.Shell.kill (UInt32.ofNat pid) 15
           catch _ =>
             pure ()
 
@@ -185,7 +185,7 @@ private def discoveryChecks (e : Env) : IO Unit := do
   let limit := Linger.App.Shell.remoteQueryLimit
   let hosts := (List.range (limit + 1)).map (fun i => s!"stall-{i}")
   let active := hosts.take limit
-  let start ← Linger.Os.Shell.monotonicMs
+  let start ← Os.Shell.monotonicMs
   let command ←
     IO.Process.spawn
         { cmd := e.bin,
@@ -198,7 +198,7 @@ private def discoveryChecks (e : Env) : IO Unit := do
     expect (ready && !(← System.FilePath.pathExists s!"{root}/{hosts.getLast!}.started"))
         "remote discovery limits simultaneous SSH jobs and reuses completed slots"
     let code ← waitProcess command (Linger.App.Shell.remoteQueryTimeoutMs + 1500)
-    let elapsed := (← Linger.Os.Shell.monotonicMs) - start
+    let elapsed := (← Os.Shell.monotonicMs) - start
     let stopped ← waitFor 2000 (active.allM (discoveryGone root))
     if code.isNone then
       cleanupDiscovery root
@@ -218,27 +218,27 @@ private def discoveryChecks (e : Env) : IO Unit := do
     IO.mkRef
         (some
           (←
-            Linger.Os.Shell.Command.start (← IO.appPath).toString
+            Os.Shell.Command.start (← IO.appPath).toString
                 #["--discovery-ssh", root, "--", "stall-stop"]))
   try
     let ready ← waitFor 2000 (System.FilePath.pathExists s!"{root}/stall-stop.leaf")
-    let start ← Linger.Os.Shell.monotonicMs
-    Linger.Os.Shell.Command.stop pending 100
-    let elapsed := (← Linger.Os.Shell.monotonicMs) - start
+    let start ← Os.Shell.monotonicMs
+    Os.Shell.Command.stop pending 100
+    let elapsed := (← Os.Shell.monotonicMs) - start
     let stopped ← waitFor 2000 (discoveryGone root "stall-stop")
     expect (ready && stopped && elapsed < 1500 && (← pending.get).isNone)
         "cooperative stop force-retires descendants that retain pipes after their leader exits"
   finally
-    Linger.Os.Shell.Command.stop pending
+    Os.Shell.Command.stop pending
     cleanupDiscovery root
   -- Once its pipes close, the leader is an unreaped zombie until stop reaps it; Darwin's
   -- killpg refuses a group whose only member is that zombie.
-  let exited ← IO.mkRef (some (← Linger.Os.Shell.Command.start "/bin/sh" #["-c", "exit 0"]))
+  let exited ← IO.mkRef (some (← Os.Shell.Command.start "/bin/sh" #["-c", "exit 0"]))
   let finished ←
     waitFor 2000 do
         let some job ← exited.get | return false
         return (← IO.hasFinished job.stdout) && (← IO.hasFinished job.stderr)
-  let outcome ← (Linger.Os.Shell.Command.stop exited).toBaseIO
+  let outcome ← (Os.Shell.Command.stop exited).toBaseIO
   if let .error err := outcome then
     IO.eprintln s!"remote: stopping an exited job failed: {err}"
   expect (finished && outcome matches .ok _) "stopping a job whose leader already exited succeeds"
@@ -248,10 +248,10 @@ private def discoveryChecks (e : Env) : IO Unit := do
   let chooser ← state.spawnEnv #[s!"PATH={path}", s!"HOME={root}"] #["attach"]
   try
     let ready ← waitFor 2000 (System.FilePath.pathExists s!"{root}/stall-cancel.leaf")
-    let start ← Linger.Os.Shell.monotonicMs
+    let start ← Os.Shell.monotonicMs
     chooser.type "\x03"
     let code ← chooser.reap 1500
-    expect (ready && code == 130 && (← Linger.Os.Shell.monotonicMs) - start < 1500)
+    expect (ready && code == 130 && (← Os.Shell.monotonicMs) - start < 1500)
         "cancelling bare attach retires discovery promptly"
     let stopped ← waitFor 2000 (discoveryGone root "stall-cancel")
     expect (ready && stopped) "chooser cancellation reaches SSH descendants"

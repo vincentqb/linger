@@ -20,6 +20,10 @@ require input from "packages/input"
 title emission, a package of its own with its own challenge and audit. -/
 require terminal from "packages/terminal"
 
+/-- The OS boundary: the foreign declarations, the C shim they bind, the checked wrappers
+callers use and the bounded wait, a package of its own with its own challenge and audit. -/
+require os from "packages/os"
+
 /-- Options for every library but `Verify`: Lake builds a module with the options of one library
 that contains it, and these libraries overlap, so they share a single set. With the package's
 `warningAsError`, a public declaration without a docstring fails the build. -/
@@ -27,17 +31,6 @@ def implementationOptions : Array LeanOption := #[⟨`linter.missingDocs, true�
 
 /-- The session library, with no external Lean dependencies. -/
 @[default_target] lean_lib Linger where leanOptions := implementationOptions
-
-/-- The native OS boundary, compiled with the clang selected by `./lake`. -/
-target shim.o pkg : System.FilePath := do
-  let oFile := pkg.buildDir / "c" / "shim.o"
-  let srcJob ← inputTextFile <| pkg.dir / "c" / "shim.c"
-  let weakArgs := #["-I", (← getLeanIncludeDir).toString]
-  buildO oFile srcJob weakArgs #["-fPIC", "-O2", "-Wall", "-Werror"] "clang" getLeanTrace
-
-extern_lib liblingershim pkg := do
-  let shimO ← fetch <| pkg.target ``shim.o
-  buildStaticLib (pkg.staticLibDir / nameToStaticLib "lingershim") #[shimO]
 
 /-- IO smoke tests for the OS boundary: `./lake exe lingertest`. -/
 lean_exe lingertest where root := `Linger.Os.Suites.Shim
@@ -61,10 +54,9 @@ lean_lib Tests where
     .submodules `Linger.Target.Tests]
   leanOptions := implementationOptions
 
-/-- The session suites, and the shim's wait checks that `lingertest` runs, built by default so the
-audit sees which claims they exercise. -/
+/-- The session suites, built by default so the audit sees which claims they exercise. -/
 @[default_target] lean_lib Suites where
-  globs := #[.submodules `Linger.Session.Suites, .one `Linger.Os.Suites.Wait]
+  globs := #[.submodules `Linger.Session.Suites]
   leanOptions := implementationOptions
 
 /-- Executable suites: `./lake exe suites <suite>`. -/

@@ -41,11 +41,11 @@ hooks. Keeping the roster in this process prevents a reconnect from reusing the
 closed fd and accidentally hiding a phantom attached client. -/
 def closeFeedback (e : Env) : IO Unit := do
   let path := s!"{e.dir}/close-feedback.sock"
-  let listener ← Linger.Os.Shell.unixListen path
+  let listener ← Os.Shell.unixListen path
   try
     for exiting in [false, true] do
-      let peer ← Linger.Os.Shell.unixConnect path
-      let accepted ← Linger.Os.Shell.accept listener
+      let peer ← Os.Shell.unixConnect path
+      let accepted ← Os.Shell.accept listener
       if peer < 0 || accepted < 0 then
         throw (IO.userError "close-feedback socket was not accepted")
       let fd := accepted.toUInt64.toUInt32
@@ -75,9 +75,9 @@ def closeFeedback (e : Env) : IO Unit := do
           expect (clients == some "0" && after.conns.isEmpty && (← saved.get) == 1)
               "detach-all removes the size owner and checkpoints the last detach"
       finally
-        Linger.Os.Shell.close peer.toUInt64.toUInt32
+        Os.Shell.close peer.toUInt64.toUInt32
   finally
-    Linger.Os.Shell.close listener
+    Os.Shell.close listener
     IO.FS.removeFile path
 
 /-- The hazards `leaveAnsi` undoes, each spelled with the emitter's own primitive
@@ -144,9 +144,9 @@ private def jobEnds (path : String) : IO Bool := do
   unless ← waitFor 3000 (return (← pidIn).isSome) do
     return false
   let some job ← pidIn | return false
-  let ended ← waitFor 5000 (return !(← Linger.Os.Shell.alive job))
+  let ended ← waitFor 5000 (return !(← Os.Shell.alive job))
   unless ended do
-    Linger.Os.Shell.kill job 9
+    Os.Shell.kill job 9
   return ended
 
 /-- Focus reports reach the program. One that enabled focus reporting reads nothing from a
@@ -282,9 +282,9 @@ def run : IO UInt32 :=
     -- 7. wait returns the exit status. `typeIn` types its command into the session
     -- shell, so the command must `exec` to make its status the shell's.
     let _ ← e.typeIn "w2" #["exec sh -c \"sleep 0.5; exit 7\""]
-    let t0 ← Linger.Os.Shell.monotonicMs
+    let t0 ← Os.Shell.monotonicMs
     let (rc, _, _) ← e.cli #["wait", "w2"]
-    let took := (← Linger.Os.Shell.monotonicMs) - t0
+    let took := (← Os.Shell.monotonicMs) - t0
     expect (rc == 7 && took ≥ 200)
         s!"wait blocks until exit and returns status (rc={rc}, took={took}ms)"
     -- A death by signal reads as 128 plus its number, and wait says which signal it was.
@@ -316,9 +316,9 @@ def run : IO UInt32 :=
     expect (bothRc == 37) s!"wait reports the last of several sessions (rc={bothRc})"
     -- A time limit stops the wait with 124 and leaves the session running.
     let _ ← e.typeIn "w6" #["exec sleep 30"]
-    let limitStart ← Linger.Os.Shell.monotonicMs
+    let limitStart ← Os.Shell.monotonicMs
     let limited ← e.cliTimeout #["wait", "--timeout", "0.5", "w6"] 5000
-    let limitMs := (← Linger.Os.Shell.monotonicMs) - limitStart
+    let limitMs := (← Os.Shell.monotonicMs) - limitStart
     let running := (← e.info "w6" "pid").isSome
     expect
         (limited.map (·.1) == some 124 && limited.any (has ·.2.2 "timed out") && 400 ≤ limitMs &&
@@ -471,7 +471,7 @@ def run : IO UInt32 :=
     let text (path : String) : IO String := return (← readText path).trimAscii.toString
     let outTty := s!"{e.dir}/raw-cleanup.out-tty"
     let (outPid, outFd) ←
-      Linger.Os.Shell.spawnPty cols rows "" "sh"
+      Os.Shell.spawnPty cols rows "" "sh"
           #["-c", s!"tty > {outTty}.tmp && mv {outTty}.tmp {outTty}; exec sleep 600"] e.ptyEnv
     let _ ← waitFor 5000 (return (← text outTty).startsWith "/dev/")
     let rawTty := s!"{e.dir}/raw-cleanup.tty"
@@ -483,7 +483,7 @@ def run : IO UInt32 :=
          {e.bin} attach raw-cleanup >{← text outTty} 2>/dev/null; rc=$?; after=$(stty -g); \
          printf '%s\\n%s\\n%s\\n' \"$before\" \"$after\" \"$rc\" > {modesPath}.tmp && \
          mv {modesPath}.tmp {modesPath}"
-    let (rawPid, rawFd) ← Linger.Os.Shell.spawnPty cols rows "" "sh" #["-c", cleanupScript] e.ptyEnv
+    let (rawPid, rawFd) ← Os.Shell.spawnPty cols rows "" "sh" #["-c", cleanupScript] e.ptyEnv
     let rawProbe : Verify.Harness.Client := { pid := rawPid, fd := rawFd }
     -- attach registers before it enters raw mode, so wait for the mode itself. The tty
     -- path is written before `before`, and only a successful, nonempty read counts.
@@ -519,7 +519,7 @@ def run : IO UInt32 :=
       nd.detach -- would detach if the key were enabled
       IO.sleep 500
       -- `-1` from WNOHANG waitpid is "still running"
-      expect ((← Linger.Os.Shell.waitpidNohang nd.pid) == -1)
+      expect ((← Os.Shell.waitpidNohang nd.pid) == -1)
           s!"LINGER_NO_DETACH_KEY={value}: ctrl-\\ does not detach (client still attached)"
       expect (has (← e.out #["list"]) name) s!"LINGER_NO_DETACH_KEY={value}: session still live"
       nd.type "echo nd-$((20+2))\r" -- still interactive: input reaches the pty

@@ -25,7 +25,7 @@ open Linger.Display.Status (Status)
 /-- Child-side winsize probe. It must execute inside the resumed session's pty;
 reading the parent process's tty would test the harness instead. -/
 def winsizeProbe (resultPath : String) : IO UInt32 := do
-  let (cols, rows) ← Linger.Os.Shell.winsizeGet Linger.Os.Shell.stdinFd
+  let (cols, rows) ← Os.Shell.winsizeGet Os.Shell.stdinFd
   IO.FS.writeFile resultPath s!"{cols} {rows}"
   return 0
 
@@ -73,15 +73,15 @@ private def scaleChecks (e : Env) : IO Unit := do
   try
     let _ ← e.typeIn name #["true"]
     let _ ← e.cli #["resize", name, "200", "50"]
-    let start ← Linger.Os.Shell.monotonicMs
+    let start ← Os.Shell.monotonicMs
     let _ ←
       e.typeIn name
           #["awk 'BEGIN { for (i = 0; i < 10050; i++) { s = \"\"; for (j = 0; j < 20; j++) s = s sprintf(\"%09d \", 20 * i + j); print s } }'; echo SCALE-$((40+2))"]
     let filled ← waitFor fillBudget (return has (← e.out #["capture", name]) "SCALE-42")
-    let fillMs := (← Linger.Os.Shell.monotonicMs) - start
-    let start ← Linger.Os.Shell.monotonicMs
+    let fillMs := (← Os.Shell.monotonicMs) - start
+    let start ← Os.Shell.monotonicMs
     let (historyRc, history, _) ← e.cli #["capture", "--history", name]
-    let captureMs := (← Linger.Os.Shell.monotonicMs) - start
+    let captureMs := (← Os.Shell.monotonicMs) - start
     let historyLines := (lines history).length
     expect
         (filled && historyRc == 0 && historyLines ≥ Terminal.Vt.sbCap + 50 &&
@@ -90,10 +90,10 @@ private def scaleChecks (e : Env) : IO Unit := do
     let client ← e.spawn #["attach", name] 200 50
     let saved ←
       try
-        let start ← Linger.Os.Shell.monotonicMs
+        let start ← Os.Shell.monotonicMs
         let replayed ← client.awaitNeedle "SCALE-42" replayBudget
-        let replayMs := (← Linger.Os.Shell.monotonicMs) - start
-        let start ← Linger.Os.Shell.monotonicMs
+        let replayMs := (← Os.Shell.monotonicMs) - start
+        let start ← Os.Shell.monotonicMs
         client.detach
         -- The detach save runs on its own thread, so the daemon answers at once: the save is
         -- done when the checkpoint on disk holds the full ring, which the rename makes whole.
@@ -102,7 +102,7 @@ private def scaleChecks (e : Env) : IO Unit := do
         let sizeOf : IO UInt64 := do
           return ((← ckpt.metadata.toBaseIO).toOption.map (·.byteSize)).getD 0
         let saved ← waitFor saveBudget (return (← sizeOf) ≥ full)
-        let saveMs := (← Linger.Os.Shell.monotonicMs) - start
+        let saveMs := (← Os.Shell.monotonicMs) - start
         let size ← sizeOf
         expect (replayed && saved && size ≥ full && replayMs ≤ replayBudget && saveMs ≤ saveBudget)
             s!"reattach replays and detach checkpoints a full ring within budget (replay {replayMs} ms, save {saveMs} ms, {size} bytes)"
@@ -157,10 +157,10 @@ private def directoryChecks (e : Env) : IO Unit := do
 
 /-- Whether no process holds the lock at `path`: `flock` takes it, and lets it go at once. -/
 private def lockFree (path : String) : IO Bool := do
-  let fd ← Linger.Os.Shell.flock path
+  let fd ← Os.Shell.flock path
   if fd < 0 then
     return false
-  Linger.Os.Shell.close fd.toUInt64.toUInt32
+  Os.Shell.close fd.toUInt64.toUInt32
   return true
 
 /-- A request's answer is true (`start_answer_true`). A daemon whose request's ticket is gone, as
@@ -187,7 +187,7 @@ private def answerChecks (e : Env) : IO Unit := do
   IO.FS.writeBinFile source
       (Linger.Session.Checkpoint.saveBytes ⟨Terminal.Vt.Vt.init 40 5, a.dir, []⟩)
   let made ← IO.Process.output { cmd := "mkfifo", args := #[fifo] }
-  let begun ← Linger.Os.Shell.monotonicMs
+  let begun ← Os.Shell.monotonicMs
   let fed ← IO.mkRef (none : Option UInt32)
   let resumed ←
     try
@@ -198,7 +198,7 @@ private def answerChecks (e : Env) : IO Unit := do
             { cmd := "sh", args := #["-c", s!"cat '{source}' > '{fifo}'"], stdin := .null,
               stdout := .null, stderr := .null }
       fed.set (← waitOrKill feed 10000)
-  let waitedMs := (← Linger.Os.Shell.monotonicMs) - begun
+  let waitedMs := (← Os.Shell.monotonicMs) - begun
   let settled ← waitFor 10000 (lockFree s!"{a.dir}/late.lock")
   IO.FS.removeFile fifo
   let sockets ← a.dirNames ".sock"
@@ -453,14 +453,14 @@ def run : IO UInt32 :=
     -- long before the 30 s cap.
     let readPath := s!"{e.dir}/read-fail.ckpt"
     IO.FS.createDirAll readPath
-    let readStart ← Linger.Os.Shell.monotonicMs
+    let readStart ← Os.Shell.monotonicMs
     let readResume ← e.cliTimeout #["resume", "read-fail"] 10000
     let reader ← e.spawn #["attach", "read-fail"] cols rows
     let readOut ← IO.mkRef ByteArray.empty
     let gaveUp ← reader.awaitText readOut (hasText · "see ") (ms := 10000)
     let readRc ← reader.reap 1000
     reader.bye (sendDetach := false)
-    let readMs := (← Linger.Os.Shell.monotonicMs) - readStart
+    let readMs := (← Os.Shell.monotonicMs) - readStart
     let readSockets ← e.dirNames ".sock"
     let readLog ← e.log "read-fail"
     expect
@@ -481,10 +481,10 @@ def run : IO UInt32 :=
       IO.Process.spawn
           { cmd := "sh", args := #["-c", s!"sleep 4; printf not-a-checkpoint > '{slowPath}'"],
             stdin := .null, stdout := .null, stderr := .null }
-    let slowStart ← Linger.Os.Shell.monotonicMs
+    let slowStart ← Os.Shell.monotonicMs
     let slow ← e.spawn #["attach", "slow"] cols rows
     let attached ← waitFor 10000 (return (← e.info "slow" "clients") == some "1")
-    let slowMs := (← Linger.Os.Shell.monotonicMs) - slowStart
+    let slowMs := (← Os.Shell.monotonicMs) - slowStart
     let _ ← waitOrKill release 10000
     slow.bye
     expect (made.exitCode == 0 && attached && slowMs ≥ 3000)

@@ -1,7 +1,7 @@
 module
 
-public import Linger.Os.Shell
-public import Linger.Os.Spec
+public import Os.Shell
+public import Os.Spec
 import SoftwareChallenge.Commands
 
 /-! # The shim smoke tests' wait checks
@@ -10,13 +10,13 @@ Kept apart from `Linger/Os/Suites/Shim.lean`, which `lingertest` runs and which 
 `main`, so that the default build, and with it the audit, sees the claim these checks
 exercise. -/
 
-open Linger.Os.Shell
+open Os.Shell
 
-/-- A sleep lasts at least as long as asked (`Linger.Os.Wait.Lasts`), and a wait naps only until
+/-- A sleep lasts at least as long as asked (`Os.Wait.Lasts`), and a wait naps only until
 its deadline and then gives up: with the deadline ahead each nap sleeps and none goes past it,
 and a nap asked for once the deadline has passed reports so without sleeping. Each result goes
 to `check`. -/
-@[exercises Linger.Os.Wait.Lasts]
+@[exercises Os.Wait.Lasts]
 public def testWaits (check : String → Bool → IO Unit) : IO Unit := do
   let mut lasted := true
   for ms in [1, 7, 20] do

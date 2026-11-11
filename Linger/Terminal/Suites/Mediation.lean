@@ -43,7 +43,7 @@ WHAT IS DERIVED, AND WHAT CANNOT BE:
 namespace Linger.Terminal.Suites.Mediation
 
 open Verify.Harness
-open Linger.Os.Shell
+open Os.Shell
 open Terminal.Render (csiPlain escSeq)
 open Terminal.Mediation (STFinal classifyCsi xtgetcapReply)
 

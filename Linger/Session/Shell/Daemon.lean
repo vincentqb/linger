@@ -1,6 +1,6 @@
 module
 
-import Linger.Os.Shell
+import Os.Shell
 public import Linger.Session.Buf
 import Linger.Session.Driver
 public import Linger.Session
@@ -47,7 +47,7 @@ the output changes (`publish`), so a summary reads the record instead of waking 
 
 namespace Linger.Session.Shell.Daemon
 
-open Linger.Os.Shell
+open Os.Shell
 open Linger.Session (State Event Effect Outcome maxClients)
 open Linger.Session.Buf (Buf owedLen bufOffer bufEnqueue bufAdvance followingCap)
 open Terminal
@@ -65,7 +65,7 @@ exactly the bytes still owed, and the loop calls `Buf.bufAdvance` once when it
 stops. Passing the cursor here rather than re-slicing per iteration keeps a flush
 to a single copy.
 
-This wraps `Linger.Os.Shell.write`, so it is not a new syscall. It cannot read a `Buf`'s
+This wraps `Os.Shell.write`, so it is not a new syscall. It cannot read a `Buf`'s
 representation — `bytes` is `private`, and this calls the one API window, `writeFrom`.
 `scripts/gates.sh`'s greps still gate the session shell against declaring parallel byte
 buffers of its own, the half privacy cannot see. -/

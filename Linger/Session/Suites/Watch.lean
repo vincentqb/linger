@@ -57,10 +57,10 @@ def checkpointChecks (e : Env) : IO Unit := do
           !(← System.FilePath.pathExists s!"{e.dir}/saved.sock"))
         "saved viewing discards input without changing the checkpoint or starting a daemon"
     for lock in [s!"{e.dir}/saved.lock", s!"{e.dir}/.locks/saved.lock"] do
-      let fd ← Linger.Os.Shell.flock lock
+      let fd ← Os.Shell.flock lock
       expect (fd ≥ 0) "saved viewing releases ownership after loading"
       if fd ≥ 0 then
-        Linger.Os.Shell.close fd.toUInt64.toUInt32
+        Os.Shell.close fd.toUInt64.toUInt32
     viewer.resize 12 2
     let narrow ← drain viewer.fd 500
     expect (hasBytes narrow (Terminal.Render.restore (vt.resize 12 2)))
@@ -121,7 +121,7 @@ def checkpointChecks (e : Env) : IO Unit := do
     finally
       unsized.bye
   for lock in [s!"{e.dir}/saved.lock", s!"{e.dir}/.locks/saved.lock"] do
-    let fd ← Linger.Os.Shell.flock lock
+    let fd ← Os.Shell.flock lock
     unless fd ≥ 0 do
       throw (IO.userError s!"fixture lock unavailable: {lock}")
     try
@@ -135,7 +135,7 @@ def checkpointChecks (e : Env) : IO Unit := do
       finally
         blocked.bye
     finally
-      Linger.Os.Shell.close fd.toUInt64.toUInt32
+      Os.Shell.close fd.toUInt64.toUInt32
   IO.FS.writeBinFile s!"{e.dir}/bad.ckpt" ⟨#[1, 2, 3]⟩
   let bad ← e.spawn #["attach", "--read-only", "bad"]
   try
@@ -237,7 +237,7 @@ def run : IO UInt32 :=
     -- 6b. a watcher may look and leave, nothing more. On its own connection, its
     -- requests to end the session, disconnect every client or change labels are
     -- refused, and the session keeps its program, its clients and its labels.
-    let raw ← Linger.Os.Shell.unixConnect s!"{e.dir}/w.sock"
+    let raw ← Os.Shell.unixConnect s!"{e.dir}/w.sock"
     expect (raw ≥ 0) "a raw watcher connects to the session"
     let watcherFd := raw.toUInt64.toUInt32
     Linger.Session.Shell.Client.sendMsg watcherFd (.attach 0 0)
@@ -252,9 +252,9 @@ def run : IO UInt32 :=
       let before ← errors why
       Linger.Session.Shell.Client.sendMsg watcherFd m
       waitFor 4000 do
-          let ready ← Linger.Os.Shell.poll #[watcherFd] #[Linger.Os.Shell.POLLIN] 100
-          if ready[0]! &&& Linger.Os.Shell.POLLIN != 0 then
-            if let some bytes← Linger.Os.Shell.read watcherFd 65536 then
+          let ready ← Os.Shell.poll #[watcherFd] #[Os.Shell.POLLIN] 100
+          if ready[0]! &&& Os.Shell.POLLIN != 0 then
+            if let some bytes← Os.Shell.read watcherFd 65536 then
               stream.modify (· ++ bytes)
           return (← errors why) == before + 1
     let refused := refusedWith "read-only"
@@ -270,7 +270,7 @@ def run : IO UInt32 :=
         ((← e.info "w" "clients") == some "3" && (← e.info "w" "label.owner") == none &&
           has (← e.out #["ls"]) "w")
         "the session keeps its program, its clients and its labels"
-    Linger.Os.Shell.close watcherFd
+    Os.Shell.close watcherFd
     expect (← waitFor 4000 (return (← e.info "w" "clients") == some "2")) "the raw watcher left"
     -- 7/8. a watcher is not the size owner, so `linger resize` still applies.
     -- With guard A intact `sizeOwner` is none and controlResize applies; with A

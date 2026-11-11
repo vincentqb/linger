@@ -1,6 +1,6 @@
 module
 
-import Linger.Os.Shell
+import Os.Shell
 import Linger.Os.Env
 import Linger.Session.Shell.Paths
 import Linger.Session.Shell.Daemon
@@ -11,7 +11,7 @@ import Terminal.Render
 import Linger.Display.Listing
 import Linger.Display.View
 import Linger.App.Commands
-import Linger.Os.Shell.Command
+import Os.Shell.Command
 import Linger.Session.Shell.Resume
 import Linger.Session.Shell.Record
 import Terminal.Mediation
@@ -34,7 +34,7 @@ namespace Linger.App.Shell
 
 open Linger.Session.Shell
 open Linger.Session.Shell.Inventory
-open Linger.Os.Shell
+open Os.Shell
 open Linger.Session.Wire (Msg)
 
 /-- One line per command, from the command table, printed by help and bare invocation, or to

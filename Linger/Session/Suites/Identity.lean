@@ -11,7 +11,7 @@ public section
 namespace Linger.Session.Suites.Identity
 
 open Verify.Harness
-open Linger.Os.Shell
+open Os.Shell
 
 private def splitEnv (e : Env) (runtime : Nat) : Array (String × Option String) :=
   #[("LINGER_DIR", none), ("XDG_RUNTIME_DIR", some s!"{e.dir}/r{runtime}"),

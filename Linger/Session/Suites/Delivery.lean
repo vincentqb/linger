@@ -12,7 +12,7 @@ public section
 namespace Linger.Session.Suites.Delivery
 
 open Verify.Harness
-open Linger.Os.Shell
+open Os.Shell
 open Terminal
 open Linger.Session.Shell.Daemon
 open Linger.Session.Buf (owedLen)

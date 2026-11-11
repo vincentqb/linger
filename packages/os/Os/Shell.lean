@@ -1,15 +1,15 @@
 module
 
-import all Linger.Os.Boundary
-import Linger.Os.Wait
+import all Os.Boundary
+import Os.Wait
 import Std.Async.System
 
 public section
 
-/-! # Linger.Os.Shell — the POSIX surface callers use
+/-! # Os.Shell — the POSIX surface callers use
 
-Every binding in `Linger.Os.Boundary` is private, and each is wrapped here under its own
-name, so this module is the program's only route to `c/shim.c`. The wrappers check what
+Every binding in `Os.Boundary` is private, and each is wrapped here under its own
+name, so this module is the program's only route to `packages/os/c/shim.c`. The wrappers check what
 the C side cannot represent and state the binding's contract. A few operations are thin
 wrappers over Lean core's own primitives rather than our shim — `getpid`, `chmod`,
 `monotonicMs`, `realtimeS`, `stdinIsTty`, `gethostname` — so the shim is smaller for them.
@@ -19,10 +19,10 @@ Rejecting an unrepresentable value prevents a path or argument from silently
 becoming its prefix. Empty strings retain each operation's documented meaning.
 -/
 
-namespace Linger.Os.Shell
+namespace Os.Shell
 
 /-- Reading will not block; on a listening socket, a connection is waiting. These poll(2)
-bits are fixed here, and `c/shim.c` `_Static_assert`s them against each platform's ABI. -/
+bits are fixed here, and `packages/os/c/shim.c` `_Static_assert`s them against each platform's ABI. -/
 def POLLIN : UInt32 := 0x001
 
 /-- Writing will not block. -/
@@ -321,12 +321,12 @@ def gethostname : IO String := do
 core's `IO.monoMsNow` supplies natural-number milliseconds directly. -/
 def monotonicMs : IO Nat := IO.monoMsNow
 
-/-- Sleep before a wait's next look, as `Linger.Os.Wait.next` decides for a wait with `deadline`
+/-- Sleep before a wait's next look, as `Os.Wait.next` decides for a wait with `deadline`
 on the monotonic clock: at least 1 ms and at most `step`, never past the deadline. `false`,
 without sleeping, once the deadline has passed, when the wait has missed what it waited for.
 Every bounded wait sleeps through this (`scripts/gates.sh`). -/
 def nap (deadline step : Nat) : IO Bool := do
-  match Linger.Os.Wait.next deadline step (← monotonicMs) with
+  match Os.Wait.next deadline step (← monotonicMs) with
   | none =>
     return false
   | some ms =>
@@ -347,4 +347,4 @@ def stdinFd : UInt32 := 0
 /-- Standard output's descriptor. -/
 def stdoutFd : UInt32 := 1
 
-end Linger.Os.Shell
+end Os.Shell

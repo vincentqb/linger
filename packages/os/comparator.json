@@ -1,0 +1,12 @@
+{
+  "challenge_module": "OsChallenge",
+  "solution_module": "Os.Solution",
+  "theorem_names": [
+    "Os.wait_ends",
+    "Os.wait_ends_rejects_endless"
+  ],
+  "definition_names": [
+    "Os.Wait.next"
+  ],
+  "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"]
+}
