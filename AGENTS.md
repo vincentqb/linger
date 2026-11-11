@@ -34,6 +34,11 @@ See [.github/workflows/ci.yml](.github/workflows/ci.yml) for tool installation.
 CI runs at 06:17 UTC on the first of each month, on Linux and macOS, when the month
 brought commits, and on manual dispatch. Pushes and pull requests do not trigger it.
 
+`./lake script run software_challenge/grade <commit>` judges a commit as the Lean Software
+Challenge does: it refuses one that changes a file the audit lists as `Owned:`, then builds it
+from scratch in a temporary worktree and runs `lake comparator` and `lake test` there. Run it
+in the foreground, as the verifier.
+
 ## Layout
 
 - `Linger/<Component>/`: a component's pure modules, its `Shell.lean` or `Shell/` for IO
@@ -91,7 +96,10 @@ Lean erases proofs regardless of file placement.
 - Every headline in `Challenge.lean` needs a kill: a theorem there stating the headline's
   negation with a wrong part in place of a hole, proved in `Theorems/Solution.lean`.
 - State each assumption about the outside world as a `WorldClaim` in a `Spec.lean`, and mark
-  the suites that exercise it with `@[exercises]`.
+  the suites that exercise it with `@[exercises]`. A module that declares claims imports their
+  syntax with a private `import SoftwareChallenge.Commands`, which `Audit.lean` trusts:
+  `lake shake` rejects a `meta` import there, and a public one would pass Lean's own syntax to
+  every importer, where `{ id }` then reads as a singleton set.
 - Every public declaration in a library needs a docstring: `lakefile.lean` enables
   `linter.missingDocs` for every library but `Verify`, and `scripts/verify.sh` checks the
   modules under `Linger/` outside `Proofs/` and `Tests/` directly.

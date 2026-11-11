@@ -6,6 +6,8 @@ import Linger.Display.Listing
 import Linger.Session.Shell.Daemon
 import Linger.Session.Shell.Inventory
 import Linger.Session.Shell.Client
+public import Linger.Session.Spec
+import SoftwareChallenge.Commands
 
 public section
 
@@ -374,7 +376,10 @@ def slowSave (e : Env) : IO Unit := do
     e.killAll #[name]
     reapOrKill reader 2000
 
-/-- The robust suite: runtime boundaries under adverse timing. -/
+/-- The robust suite: runtime boundaries under adverse timing. Concurrent starts of one name,
+and a resume while an offline capture holds the name's locks, exercise the operating system's
+lock contract. -/
+@[exercises Linger.Session.Claim.Exclusive]
 def run : IO UInt32 :=
   Env.suite "robust" fun e => do
     -- ── 1. busy daemon still lists correctly ──────────────────────────────────

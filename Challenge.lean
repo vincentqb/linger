@@ -288,6 +288,11 @@ def Linger.Session.State : Type := sorry
 def Linger.Session.State.boot : Vt.Vt → List (String × String) → List (String × String) → State :=
   sorry
 
+/-- Whether a process may act as a session's owner, from whether it holds the session's socket
+lock and whether it holds its checkpoint lock. -/
+@[expose]
+def Linger.Session.Claim.enters : Bool → Bool → Bool := sorry
+
 /-- The session's transition: the state after one event, and the effects it asks the runtime
 for, in order. -/
 @[expose]
@@ -734,10 +739,29 @@ theorem step_closed_focus_rejects_eager :
 
 /-! ## 2. Authority and attribution
 
-A watcher is a client attached without a size. Not claimed yet: that a name has one owner
-(proved of a model of the lock protocol, `Claim.at_most_one_owner`, and tested of the daemon),
-and which source each reported value has. `start` takes no name a session holds
-(`start_plan`); the daemon decides that holding the name. -/
+A watcher is a client attached without a size. Not claimed yet: which source each reported value
+has. `start` takes no name a session holds (`start_plan`); the daemon decides that holding the
+name, which has one owner (`one_owner`). -/
+
+/-- A name has one owner. Whatever processes do, in any order, two that act at once as owners
+of sessions sharing a socket or a checkpoint lock are the same process, when the operating system
+grants a lock only when it is free and each process acts as an owner only when linger decides it
+may. -/
+theorem one_owner (grant : Claim.State → Nat → Nat → Bool) (exclusive : Claim.Exclusive grant)
+    {s : Claim.State} (reached : Claim.Reachable grant Claim.enters s) {a b resource : Nat}
+    {left right : Claim.Lease} (ha : s.active a = some left) (hb : s.active b = some right)
+    (leftUses : left.Uses resource) (rightUses : right.Uses resource) : a = b := by sorry
+
+/-- `one_owner` rejects a process that acts as an owner once it holds the socket lock alone. -/
+theorem one_owner_rejects_socket :
+    ¬∀ (grant : Claim.State → Nat → Nat → Bool),
+        Claim.Exclusive grant →
+          ∀ {s : Claim.State},
+            Claim.Reachable grant (fun (socket _ : Bool) => socket) s →
+              ∀ {a b resource : Nat} {left right : Claim.Lease},
+                s.active a = some left →
+                  s.active b = some right → left.Uses resource → right.Uses resource → a = b := by
+  sorry
 
 /-- `start` takes a name only when no live session holds it and none is saved. Otherwise it
 refuses, saying which holds it: a live one first, whose daemon also owns any saved state. -/

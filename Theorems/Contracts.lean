@@ -373,19 +373,23 @@ example (ms : List Wire.Msg) (hms : ∀ (m : Wire.Msg), m ∈ ms → m.WF) (chun
   with_reducible exact Wire.decode_encode_chunked ms hms chunks hc
 
 -- Ownership
-example {s : Claim.State} (reached : Claim.Reachable s) : Claim.Protected s := by
-  with_reducible exact Claim.reachable_protected reached
+example {grant : Claim.State → Nat → Nat → Bool} (exclusive : Claim.Exclusive grant)
+    {s : Claim.State} (reached : Claim.Reachable grant Claim.enters s) : Claim.Protected s := by
+  with_reducible exact Claim.reachable_protected exclusive reached
 
-example {s : Claim.State} (reached : Claim.Reachable s) {a b resource : Nat}
+example {grant : Claim.State → Nat → Nat → Bool} (exclusive : Claim.Exclusive grant)
+    {s : Claim.State} (reached : Claim.Reachable grant Claim.enters s) {a b resource : Nat}
     {left right : Claim.Lease} (ha : s.active a = some left) (hb : s.active b = some right)
     (leftUses : left.Uses resource) (rightUses : right.Uses resource) : a = b := by
-  with_reducible exact Claim.at_most_one_owner reached ha hb leftUses rightUses
+  with_reducible exact Claim.at_most_one_owner exclusive reached ha hb leftUses rightUses
 
-example {s : Claim.State} (reached : Claim.Reachable s) (actor : Nat) (lease : Claim.Lease)
-    (idle : s.active actor = none) (socket : s.locks lease.socket = none)
+example {grant : Claim.State → Nat → Nat → Bool}
+    (grants : ∀ s actor resource, s.locks resource = none → grant s actor resource = true)
+    {s : Claim.State} (reached : Claim.Reachable grant Claim.enters s) (actor : Nat)
+    (lease : Claim.Lease) (idle : s.active actor = none) (socket : s.locks lease.socket = none)
     (checkpoint : s.locks lease.checkpoint = none) (distinct : lease.checkpoint ≠ lease.socket) :
-    ∃ after, Claim.Reachable after ∧ after.active actor = some lease := by
-  with_reducible exact Claim.claim_free reached actor lease idle socket checkpoint distinct
+    ∃ after, Claim.Reachable grant Claim.enters after ∧ after.active actor = some lease := by
+  with_reducible exact Claim.claim_free grants reached actor lease idle socket checkpoint distinct
 
 -- Buffers
 example {cap : Nat} {b : Buf.Buf} (h : Buf.ReachableIn cap b) : Buf.owedLen b ≤ cap := by

@@ -14,6 +14,7 @@ public import Linger.Os.Env
 public import Linger.Session
 public import Linger.Session.Buf
 public import Linger.Session.Checkpoint
+public import Linger.Session.Claim
 public import Linger.Session.Driver
 public import Linger.Session.Spec
 public import Linger.Target.Name
@@ -37,6 +38,7 @@ import Linger.Target.Proofs.Name
 import Linger.Target.Proofs.Remote
 import all Linger.Session.Proofs.Buf
 import all Linger.Session.Proofs.Checkpoint
+import all Linger.Session.Proofs.Claim
 import all Linger.Session.Proofs.Driver
 import all Linger.Session.Proofs.Record
 import all Linger.Session.Proofs.Session
@@ -413,6 +415,39 @@ theorem step_closed_focus_rejects_eager :
   have heard := (h (State.boot (Vt.Vt.init 1 1) [] []) 1 [0x1B, 0x5B, 0x4F]).mp (by simp)
   rw [none] at heard
   exact absurd heard.2.2.1 (by decide)
+
+theorem one_owner (grant : Claim.State → Nat → Nat → Bool) (exclusive : Claim.Exclusive grant)
+    {s : Claim.State} (reached : Claim.Reachable grant Claim.enters s) {a b resource : Nat}
+    {left right : Claim.Lease} (ha : s.active a = some left) (hb : s.active b = some right)
+    (leftUses : left.Uses resource) (rightUses : right.Uses resource) : a = b :=
+  Claim.at_most_one_owner exclusive reached ha hb leftUses rightUses
+
+theorem one_owner_rejects_socket :
+    ¬∀ (grant : Claim.State → Nat → Nat → Bool),
+        Claim.Exclusive grant →
+          ∀ {s : Claim.State},
+            Claim.Reachable grant (fun (socket _ : Bool) => socket) s →
+              ∀ {a b resource : Nat} {left right : Claim.Lease},
+                s.active a = some left →
+                  s.active b = some right → left.Uses resource → right.Uses resource → a = b := by
+  intro h
+  -- the operating system grants every free lock, and only a free one
+  let grant : Claim.State → Nat → Nat → Bool := fun s _ resource => s.locks resource == none
+  have exclusive : Claim.Exclusive grant := fun s _ resource granted => by
+    simpa [grant] using granted
+  -- process 1 takes socket 1 and acts on lease (1, 3); process 2 takes socket 2 and checkpoint 3
+  let s1 : Claim.State := { Claim.initial with locks := Claim.put Claim.initial.locks 1 (some 1) }
+  let s2 : Claim.State := { s1 with active := Claim.put s1.active 1 (some ⟨1, 3⟩) }
+  let s3 : Claim.State := { s2 with locks := Claim.put s2.locks 2 (some 2) }
+  let s4 : Claim.State := { s3 with locks := Claim.put s3.locks 3 (some 2) }
+  let s5 : Claim.State := { s4 with active := Claim.put s4.active 2 (some ⟨2, 3⟩) }
+  have reached : Claim.Reachable grant (fun (socket _ : Bool) => socket) s5 :=
+    ((((Claim.Reachable.initial.next (.acquire _ 1 1 rfl)).next (.enter _ 1 ⟨1, 3⟩ rfl rfl)).next
+              (.acquire _ 2 2 rfl)).next
+          (.acquire _ 2 3 rfl)).next
+      (.enter _ 2 ⟨2, 3⟩ rfl rfl)
+  have same := @h grant exclusive s5 reached 1 2 3 ⟨1, 3⟩ ⟨2, 3⟩ rfl rfl (.inr rfl) (.inr rfl)
+  exact absurd same (by decide)
 
 theorem start_plan (live saved : Bool) :
     Start.plan live saved = if live then .running else if saved then .saved else .take :=

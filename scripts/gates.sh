@@ -1201,9 +1201,11 @@ done
   || fail "remote SSH termination no longer establishes canonical handback"
 
 # Lifetime ownership covers two resources: the socket namespace and the saved
-# state namespace. The model assumes stable lock inodes and exclusive flock;
-# these IO ties and Linger.Session.Suites.Identity check acquisition before use and release after
-# cleanup. A connected daemon's failure must never fall back to older saved data.
+# state namespace. The model takes the operating system's lock contract as the world claim
+# `Claim.Exclusive`, which Linger.Session.Suites.Robust exercises, and linger's decision to act as
+# an owner as `Claim.enters`, which every two-lock acquisition asks before it acts; these IO ties
+# and Linger.Session.Suites.Identity check acquisition before use and release after cleanup. A
+# connected daemon's failure must never fall back to older saved data.
 for claim in reachable_protected owner_holds_lock at_most_one_owner claim_free; do
   code_grep "^theorem $claim " Linger/Session/Proofs/Claim.lean >/dev/null \
     || fail "resource ownership contract disappeared: $claim"
@@ -1217,9 +1219,11 @@ for tie in \
   'def lockPath [(]name : String[)] : IO String := do namedPath [(]← socketDir[)] name "[.]lock"' \
   'def stateLockPath [(]name : String[)] : IO String := do namedPath [(][(]← stateDir[)] [+][+] "/[.]locks"[)] name "[.]lock"' \
   'def logPath [(]name : String[)] : IO String := do namedPath [(][(]← stateDir[)] [+][+] "/logs"[)] name "[.]log"' \
-  'def withLockRetrying [{]α : Type[}] [(]path : String[)] [(]retry : IO Bool[)] [(]action : IO α[)] [(]listed : Bool := false[)] : IO α := do let mut fd ← Linger[.]Os[.]Shell[.]flock path while fd < 0 do unless ← retry do break fd ← Linger[.]Os[.]Shell[.]flock path if fd < 0 then throw [(]IO[.]userError s!"session is owned by another process [(][{]path[}][)]"[)] try unless listed do checkSpelling path action finally Linger[.]Os[.]Shell[.]close fd[.]toUInt64[.]toUInt32' \  'def Listed[.]withLock [{]α : Type[}] [(]n : Listed[)] [(]action : IO α[)] : IO α := do withLockRetrying [(]← pathIn [(]← socketDir[)] n[.]name "[.]lock" true[)] [(]pure false[)] action [(]listed := true[)]' \  'def Listed[.]withSessionLock [{]α : Type[}] [(]n : Listed[)] [(]action : IO α[)] : IO α := do n[.]withLock do let locks := [(]← stateDir[)] [+][+] "/[.]locks" ensureDir locks withLockRetrying [(]← pathIn locks n[.]name "[.]lock" true[)] [(]pure false[)] action [(]listed := true[)]' \
+  'def acquire [(]path : String[)] [(]retry : IO Bool[)] [(]listed : Bool[)] : IO [(]Option UInt32[)] := do let mut fd ← Linger[.]Os[.]Shell[.]flock path while fd < 0 do unless ← retry do break fd ← Linger[.]Os[.]Shell[.]flock path if fd < 0 then return none let held := fd[.]toUInt64[.]toUInt32 unless listed do try checkSpelling path catch err => Linger[.]Os[.]Shell[.]close held throw err return some held' \
+  'def withLockRetrying [{]α : Type[}] [(]path : String[)] [(]retry : IO Bool[)] [(]action : IO α[)] [(]listed : Bool := false[)] : IO α := do let some fd ← acquire path retry listed [|] throw [(]IO[.]userError s!"session is owned by another process [(][{]path[}][)]"[)] try action finally Linger[.]Os[.]Shell[.]close fd' \
+  'def withOwnership [{]α : Type[}] [(]socket : String[)] [(]checkpoint : IO String[)] [(]retry : IO Bool[)] [(]listed : Bool[)] [(]action : IO α[)] : IO α := do let held ← acquire socket retry listed try let [(]state, refused[)] ← match held with [|] none => pure [(]none, socket[)] [|] some _ => do let path ← checkpoint pure [(]← acquire path retry listed, path[)] try unless Claim[.]enters held[.]isSome state[.]isSome do throw [(]IO[.]userError s!"session is owned by another process [(][{]refused[}][)]"[)] action finally if let some fd := state then Linger[.]Os[.]Shell[.]close fd finally if let some fd := held then Linger[.]Os[.]Shell[.]close fd' \  'def Listed[.]withLock [{]α : Type[}] [(]n : Listed[)] [(]action : IO α[)] : IO α := do withLockRetrying [(]← pathIn [(]← socketDir[)] n[.]name "[.]lock" true[)] [(]pure false[)] action [(]listed := true[)]' \  'def Listed[.]withSessionLock [{]α : Type[}] [(]n : Listed[)] [(]action : IO α[)] : IO α := do withOwnership [(]← pathIn [(]← socketDir[)] n[.]name "[.]lock" true[)] [(]do let locks := [(]← stateDir[)] [+][+] "/[.]locks" ensureDir locks pathIn locks n[.]name "[.]lock" true[)] [(]pure false[)] true action' \
   'def withLock [{]α : Type[}] [(]path : String[)] [(]action : IO α[)] : IO α := withLockRetrying path [(]pure false[)] action' \
-  'def withSessionLockRetrying [{]α : Type[}] [(]name : String[)] [(]retry : IO Bool[)] [(]action : IO α[)] : IO α := do withLockRetrying [(]← lockPath name[)] retry do withLockRetrying [(]← stateLockPath name[)] retry action' \
+  'def withSessionLockRetrying [{]α : Type[}] [(]name : String[)] [(]retry : IO Bool[)] [(]action : IO α[)] : IO α := do withOwnership [(]← lockPath name[)] [(]stateLockPath name[)] retry false action' \
   'def withSessionLock [{]α : Type[}] [(]name : String[)] [(]action : IO α[)] : IO α := withSessionLockRetrying name [(]pure false[)] action'; do
   printf '%s\n' "$paths_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "session paths or lifetime locking bypassed their contract: $tie"

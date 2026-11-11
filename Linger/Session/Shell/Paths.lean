@@ -1,5 +1,6 @@
 module
 
+import Linger.Session.Claim
 import Linger.Os.Shell
 import Linger.Target.Name
 import Linger.Target.Spec
@@ -154,25 +155,64 @@ def Listed.socketPath (n : Listed) : IO String := do
 def Listed.recordPath (n : Listed) : IO String := do
   pathIn (← stateDir) n.name ".end" true
 
-/-- Failed acquisition does not run the action. A held lock is tried again while
-`retry`, asked only after a failed attempt, holds. Always release after the action,
-including startup/read exceptions; recheck spelling after the atomic acquisition unless a
-listing read the name. -/
-private def withLockRetrying {α : Type} (path : String) (retry : IO Bool) (action : IO α)
-    (listed : Bool := false) : IO α := do
+/-- The lock at `path`: its descriptor, or `none` when another process holds it. A held lock
+is tried again while `retry`, asked only after a failed attempt, holds. Recheck spelling after
+the atomic acquisition unless a listing read the name, letting the lock go when that fails. -/
+private def acquire (path : String) (retry : IO Bool) (listed : Bool) : IO (Option UInt32) := do
   let mut fd ← Linger.Os.Shell.flock path
   while fd < 0 do
     unless ← retry do
       break
     fd ← Linger.Os.Shell.flock path
   if fd < 0 then
-    throw (IO.userError s!"session is owned by another process ({path})")
-  try
-    unless listed do
+    return none
+  let held := fd.toUInt64.toUInt32
+  unless listed do
+    try
       checkSpelling path
+    catch err =>
+      Linger.Os.Shell.close held
+      throw err
+  return some held
+
+/-- Failed acquisition does not run the action. Always release after the action, including
+startup/read exceptions. -/
+private def withLockRetrying {α : Type} (path : String) (retry : IO Bool) (action : IO α)
+    (listed : Bool := false) : IO α := do
+  let some fd ←
+    acquire path retry
+        listed | throw (IO.userError s!"session is owned by another process ({path})")
+  try
     action
   finally
-    Linger.Os.Shell.close fd.toUInt64.toUInt32
+    Linger.Os.Shell.close fd
+
+/-- Act as the session's owner: take the socket lock at `socket`, then the checkpoint lock at
+the path `checkpoint` gives, and run `action` only when `Claim.enters` says a process holding
+them may, which `Claim.Reachable` models. Both locks are let go after the action, in reverse
+order, whatever it does; the checkpoint lock is tried only once the socket lock is taken. -/
+private def withOwnership {α : Type} (socket : String) (checkpoint : IO String) (retry : IO Bool)
+    (listed : Bool) (action : IO α) : IO α := do
+  let held ← acquire socket retry listed
+  try
+    let (state, refused) ←
+      match held with
+      | none =>
+        pure (none, socket)
+      | some _ =>
+        do
+          let path ← checkpoint
+          pure (← acquire path retry listed, path)
+    try
+      unless Claim.enters held.isSome state.isSome do
+        throw (IO.userError s!"session is owned by another process ({refused})")
+      action
+    finally
+      if let some fd := state then
+        Linger.Os.Shell.close fd
+  finally
+    if let some fd := held then
+      Linger.Os.Shell.close fd
 
 /-- One attempt: a held lock fails at once. Only a starting daemon retries. -/
 def withLock {α : Type} (path : String) (action : IO α) : IO α :=
@@ -183,8 +223,7 @@ Either shared socket storage or shared checkpoint storage excludes another owner
 `retry` applies to both acquisitions. -/
 def withSessionLockRetrying {α : Type} (name : String) (retry : IO Bool) (action : IO α) : IO α :=
   do
-  withLockRetrying (← lockPath name) retry do
-      withLockRetrying (← stateLockPath name) retry action
+  withOwnership (← lockPath name) (stateLockPath name) retry false action
 
 /-- Both locks, one attempt each: every offline reader. -/
 def withSessionLock {α : Type} (name : String) (action : IO α) : IO α :=
@@ -197,10 +236,12 @@ def Listed.withLock {α : Type} (n : Listed) (action : IO α) : IO α := do
 /-- `withSessionLock` for a session a listing named. A listing makes sure of the directories it
 reads, not of the persistent lock directory, so this does. -/
 def Listed.withSessionLock {α : Type} (n : Listed) (action : IO α) : IO α := do
-  n.withLock do
-      let locks := (← stateDir) ++ "/.locks"
-      ensureDir locks
-      withLockRetrying (← pathIn locks n.name ".lock" true) (pure false) action (listed := true)
+  withOwnership (← pathIn (← socketDir) n.name ".lock" true)
+      (do
+        let locks := (← stateDir) ++ "/.locks"
+        ensureDir locks
+        pathIn locks n.name ".lock" true)
+      (pure false) true action
 
 /-- Valid session names among `dir`'s entries ending in `suffix`, as the directory spells them. -/
 private def listNames (dir suffix : String) : IO (List Listed) := do

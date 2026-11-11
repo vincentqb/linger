@@ -476,16 +476,16 @@ end Linger.Session.Buf
 
 /-! ## Claiming a session's resources
 
-A resource identifies a stable lock inode, not a pathname string. Successful exclusive
-acquisition requires that resource to be free. Failed acquisition leaves the state unchanged,
-so a starting daemon that retries a held lock for a short time takes only `unchanged` steps
-until it acquires. A daemon or offline reader enters only after holding both resources, and
-releases them only after leaving and completing its cleanup.
+A resource identifies a stable lock inode, not a pathname string. The operating system decides
+which attempts to take a lock succeed (`grant`), and `Exclusive` claims that it grants only a free
+lock. A failed attempt leaves the state unchanged, so a starting daemon that retries a held lock
+for a short time takes only `unchanged` steps until it acquires. A daemon or offline reader
+enters when linger's decision `enters`, given which of the lease's two locks it holds, lets it,
+and releases a lock only after leaving and completing its cleanup.
 
-The model permits acquisition, release and later reuse by different processes. Its
-assumptions require cooperating processes, lock files that are never unlinked or replaced, and
-a filesystem that implements the locking contract. The runtime correspondence is tested and
-source-gated, not proved. -/
+The model permits acquisition, release and later reuse by different processes. The runtime
+takes each lock with `flock` and asks the decision before it acts; that correspondence is tested
+and source-gated, not proved. -/
 
 namespace Linger.Session.Claim
 
@@ -519,34 +519,47 @@ def initial : State := ⟨fun _ => none, fun _ => none⟩
 def put {α : Type} (map : Nat → α) (key : Nat) (value : α) : Nat → α := fun index =>
   if index = key then value else map index
 
-/-- The OS acquisition contract and the application's lifetime protocol.
-`enter` covers both daemon ownership and an offline reader's critical section.
+/-- The operating system grants a lock only when no process holds it, as `flock` does on a lock
+file that is never unlinked or replaced. Two processes holding one lock file's lock at once
+falsify it. -/
+WorldClaim Exclusive (grant : State → Nat → Nat → Bool) :=
+  ∀ s actor resource, grant s actor resource = true → s.locks resource = none
+
+/-- One step of any process, given which lock attempts the operating system grants (`grant`) and
+linger's decision to enter a lease from whether the process holds its socket and its checkpoint
+lock (`enters`). `enter` covers both daemon ownership and an offline reader's critical section.
 `leave` means all resource access and cleanup have finished. -/
-inductive Step : State → State → Prop where
-  /-- An actor takes a free resource's lock. -/
+inductive Step (grant : State → Nat → Nat → Bool) (enters : Bool → Bool → Bool) :
+    State → State → Prop where
+  /-- The operating system grants an actor a resource's lock. -/
   |
-  acquire (s : State) (actor resource : Nat) (free : s.locks resource = none) :
-    Step s { s with locks := put s.locks resource (some actor) }
-  /-- An idle actor holding both of a lease's locks enters it. -/
+  acquire (s : State) (actor resource : Nat) (granted : grant s actor resource = true) :
+    Step grant enters s { s with locks := put s.locks resource (some actor) }
+  /-- An idle actor enters a lease when linger decides it may. -/
   |
   enter (s : State) (actor : Nat) (lease : Lease) (idle : s.active actor = none)
-    (socket : s.locks lease.socket = some actor)
-    (checkpoint : s.locks lease.checkpoint = some actor) :
-    Step s { s with active := put s.active actor (some lease) }
+    (decided :
+      enters (s.locks lease.socket == some actor) (s.locks lease.checkpoint == some actor) = true) :
+    Step grant enters s { s with active := put s.active actor (some lease) }
   /-- An actor leaves its lease after finishing all access and cleanup. -/
-  | leave (s : State) (actor : Nat) : Step s { s with active := put s.active actor none }
+  |
+  leave (s : State) (actor : Nat) : Step grant enters s { s with active := put s.active actor none }
   /-- An idle actor releases a lock it holds. -/
   |
   release (s : State) (actor resource : Nat) (owned : s.locks resource = some actor)
-    (idle : s.active actor = none) : Step s { s with locks := put s.locks resource none }
+    (idle : s.active actor = none) :
+    Step grant enters s { s with locks := put s.locks resource none }
   /-- A failed acquisition, or any step that changes nothing. -/
-  | unchanged (s : State) : Step s s
+  | unchanged (s : State) : Step grant enters s s
 
 /-- The states reached from `initial` by finitely many `Step`s. -/
-inductive Reachable : State → Prop where
+inductive Reachable (grant : State → Nat → Nat → Bool) (enters : Bool → Bool → Bool) :
+    State → Prop where
   /-- The start: nothing held, nobody active. -/
-  | initial : Reachable initial
+  | initial : Reachable grant enters initial
   /-- One more step from a reachable state. -/
-  | next {before after} (reached : Reachable before) (step : Step before after) : Reachable after
+  |
+  next {before after} (reached : Reachable grant enters before)
+    (step : Step grant enters before after) : Reachable grant enters after
 
 end Linger.Session.Claim
