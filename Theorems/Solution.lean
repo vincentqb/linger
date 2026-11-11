@@ -1178,6 +1178,25 @@ theorem record_answer_rejects_unknown :
   intro h
   exact absurd (h (.exited 0) none).1 (by simp)
 
+theorem record_kept (afterSave : List UInt8 → Option (List UInt8)) (kept : Record.Kept afterSave)
+    (o : Outcome) (seen : Option Seen) :
+    Record.answer (afterSave (Record.encode (.ended o))) = some o ∧
+      Record.answer (afterSave (Record.encode (.running seen))) = some .unknown := by
+  rw [kept, kept]
+  exact ⟨Record.answer_ended o, Record.answer_running seen⟩
+
+theorem record_kept_rejects_blank :
+    ¬∀ (afterSave : List UInt8 → Option (List UInt8)),
+        Record.Kept afterSave →
+          ∀ (o : Outcome) (seen : Option Seen),
+            Record.answer (afterSave ((fun (_ : Record) => ([] : List UInt8)) (.ended o))) =
+                some o ∧
+              Record.answer (afterSave ((fun (_ : Record) => ([] : List UInt8)) (.running seen))) =
+                some .unknown := by
+  intro h
+  have blank := (h some (fun _ => rfl) (.exited 0) none).1
+  simp [Record.answer, Record.decode] at blank
+
 theorem outcomeFields_injective (o₁ o₂ : Outcome)
     (h : Session.outcomeFields o₁ = Session.outcomeFields o₂) : o₁ = o₂ :=
   Session.outcomeFields_injective h

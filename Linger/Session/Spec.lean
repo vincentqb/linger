@@ -371,6 +371,13 @@ end Linger.Session
 
 namespace Linger.Session
 
+/-- The file system keeps what linger saves as a name's end record whole: once linger saved
+`bytes`, writing them to a temporary file and renaming that over the record, a reader reads
+exactly `bytes` until linger saves or removes the record again. A reader that sees part of a
+record, an older one, or a mix of two falsifies it. -/
+WorldClaim Record.Kept (afterSave : List UInt8 → Option (List UInt8)) :=
+  ∀ bytes, afterSave bytes = some bytes
+
 /-- The kernel passes the bytes linger writes to a session's pty to its program, in order, as
 it passes a terminal's input: `reads written` is what the program reads, in raw mode, once
 linger wrote `written`. A byte lost, added or moved on the way falsifies it. -/

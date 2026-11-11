@@ -1424,8 +1424,8 @@ theorem start_runs_rejects_unnamed :
 
 /-! ## 5. Accountability
 
-Not claimed yet: that whoever asks after a session ends hears its outcome. The name's end record
-keeps it, and suites test the files and locks around it. -/
+A name's end record keeps how its last session's program ended, for whoever asks later, when the
+file system keeps what linger saves (`Record.Kept`, which the agent suite exercises). -/
 
 /-- When the session's program ends, every client attached to the session or waiting for its end
 is told how the program ended and then the status a shell would report for that ending, and the
@@ -1489,6 +1489,27 @@ theorem record_answer_rejects_unknown :
         (fun (_ : Option (List UInt8)) => some Outcome.unknown) (some (Record.encode (.ended o))) =
             some o ∧
           ((fun (_ : Option (List UInt8)) => some Outcome.unknown) file).isSome = file.isSome := by
+  sorry
+
+/-- Whoever reads a name's end record after its session's daemon last saved it hears the truth,
+when the file system keeps what linger saves: how the program ended, which the daemon saves before
+it gives the name up, and that the ending is unknown when the daemon gave the name up, as only a
+crash does, with its record still saying the program runs. -/
+theorem record_kept (afterSave : List UInt8 → Option (List UInt8)) (kept : Record.Kept afterSave)
+    (o : Outcome) (seen : Option Seen) :
+    Record.answer (afterSave (Record.encode (.ended o))) = some o ∧
+      Record.answer (afterSave (Record.encode (.running seen))) = some .unknown := by
+  sorry
+
+/-- `record_kept` rejects a record that saves nothing. -/
+theorem record_kept_rejects_blank :
+    ¬∀ (afterSave : List UInt8 → Option (List UInt8)),
+        Record.Kept afterSave →
+          ∀ (o : Outcome) (seen : Option Seen),
+            Record.answer (afterSave ((fun (_ : Record) => ([] : List UInt8)) (.ended o))) =
+                some o ∧
+              Record.answer (afterSave ((fun (_ : Record) => ([] : List UInt8)) (.running seen))) =
+                some .unknown := by
   sorry
 
 /-- `info` reports each ending with its own fields: two different endings never read the same. -/

@@ -369,7 +369,8 @@ private def endedChecks (e : Env) : IO Unit := do
 /-- The agent suite: the one-shot verbs that see and drive a session. `send -` checks that the
 program reads the bytes it is sent, byte for byte, and `start` that it runs with its words, in the
 caller's directory and with the caller's environment. -/
-@[exercises Linger.Session.Pty.Delivers, exercises Linger.Os.Spawn.Runs]
+@[exercises Linger.Session.Pty.Delivers, exercises Linger.Os.Spawn.Runs,
+  exercises Linger.Session.Record.Kept]
 def run : IO UInt32 :=
   Env.suite "agent" fun e => do
     startChecks e

@@ -94,6 +94,8 @@
     "Linger.step_childExited_keeps_rejects_drop",
     "Linger.record_answer",
     "Linger.record_answer_rejects_unknown",
+    "Linger.record_kept",
+    "Linger.record_kept_rejects_blank",
     "Linger.outcomeFields_injective",
     "Linger.outcomeFields_injective_rejects_silence",
     "Linger.infoFields_protocol",

@@ -1313,6 +1313,16 @@ for tie in \
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "daemon resource cleanup escaped its ownership lifetime: $tie"
 done
+# A name's end record is replaced whole, through a temporary sibling renamed over it, the
+# protocol the world claim `Record.Kept` (`record_kept`) takes the file system to honor; the
+# agent suite reads records after their sessions end.
+record_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Record.lean)"
+for tie in \
+  'def save [(]name : String[)] [(]record : Linger[.]Session[.]Record[)] : IO Unit := do let path ← Paths[.]recordPath name let tmp := path [+][+] "[.]tmp" IO[.]FS[.]writeBinFile tmp [(]ByteArray[.]mk [(]Linger[.]Session[.]Record[.]encode record[)][.]toArray[)] IO[.]FS[.]rename tmp path' \
+  '[|] some bytes => let tmp := path [+][+] "[.]tmp" IO[.]FS[.]writeBinFile tmp [(]ByteArray[.]mk bytes[.]toArray[)] IO[.]FS[.]rename tmp path'; do
+  printf '%s\n' "$record_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "an end record is written other than whole, through a renamed temporary file: $tie"
+done
 for tie in \
   'requestStatus name result [|] none => Paths[.]withSessionLock name do match ← Resume[.]loadCkpt name with [|] some [(]vt, _, _[)] => writeAll stdoutFd [(]ByteArray[.]mk [(]render vt[)][.]toArray[)]' \
   'if readOnly then match ← Client[.]connect name with [|] some fd => some <[$]> Client[.]attach name fd summaryText true [|] none => let [(]checkpoint, record[)] ← Paths[.]withSessionLock name do return [(]← Resume[.]loadCkpt name, ← [(]Record[.]load name[)][.]toBaseIO[)] let status := Linger[.]Display[.]Listing[.]rowStatus [(]savedRow record[)][.]1 checkpoint[.]mapM fun [(]vt, _, _[)] => Client[.]viewSaved name vt status'; do

@@ -349,6 +349,14 @@ example {file : Option (List UInt8)} {known : Option Session.Outcome}
     (h : Session.Record.settled file = some known) : Session.Record.answer file = known := by
   with_reducible exact Session.Record.settled_answer h
 
+example (outcome : Session.Outcome) :
+    Session.Record.answer (some (Session.Record.encode (.ended outcome))) = some outcome := by
+  with_reducible exact Session.Record.answer_ended outcome
+
+example (seen : Option Session.Seen) :
+    Session.Record.answer (some (Session.Record.encode (.running seen))) = some .unknown := by
+  with_reducible exact Session.Record.answer_running seen
+
 -- Command table
 example : App.Commands.words.Nodup := by with_reducible exact App.Commands.words_nodup
 
