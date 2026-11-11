@@ -369,6 +369,34 @@ structure Bounds {S : Type} (roster : S → List Client) (labels : S → List (S
 
 end Linger.Session
 
+namespace Linger.Session
+
+/-- The kernel passes the bytes linger writes to a session's pty to its program, in order, as
+it passes a terminal's input: `reads written` is what the program reads, in raw mode, once
+linger wrote `written`. A byte lost, added or moved on the way falsifies it. -/
+WorldClaim Pty.Delivers (reads : ByteArray → ByteArray) := ∀ written, reads written = written
+
+/-- A receiver that has parsed the repaint of a terminal a session can hold, taken between
+control sequences and characters, keeps showing what the terminal shows as the same output
+then reaches both: after any output, every row agrees. A repaint taken inside a control
+sequence or a character is outside it: the receiver would read the sequence's rest as text. -/
+Conjecture KeepsShowing {V P : Type} (live : V → Prop) (feed : V → List UInt8 → V)
+  (colCount rowCount : V → Nat) (getRow : V → Nat → Terminal.Vt.Row) (atBoundary : V → Bool)
+  (start : V → P) (next : Nat → P → Option (Terminal.Render.Bytes × P)) :=
+  ∀ (budget : Nat) (v w : V) (later : List UInt8),
+    0 < budget →
+      live v →
+      live w →
+      colCount w = colCount v →
+      rowCount w = rowCount v →
+      atBoundary v = true →
+      ∃ bytes,
+        Terminal.Replay.Emits next budget (start v) bytes ∧
+          ∀ y < rowCount (feed v later),
+            getRow (feed (feed w bytes) later) y = getRow (feed v later) y
+
+end Linger.Session
+
 namespace Linger.Session.Driver
 
 /-- A transport operation reports whether its target disconnected; a checkpoint
@@ -477,6 +505,27 @@ inductive OutputReach {B : Type} (empty : B) (enqueue : Nat → B → ByteArray 
   |
   advance (b : B) (n : Nat) :
     OutputReach empty enqueue advance cap b → OutputReach empty enqueue advance cap (advance b n)
+
+/-- The pty-input queue's history: the input it `accepted`, the bytes it handed the kernel
+(`written`), and the queue, as capped offers and flushes move it. A flush hands the kernel the
+first `n` bytes of what the queue holds (`pending`), then drops them. -/
+inductive InputLife {B : Type} (empty : B) (offer : Nat → B → ByteArray → B × Bool)
+    (advance : B → Nat → B) (pending : B → ByteArray) (cap : Nat) :
+    ByteArray → ByteArray → B → Prop where
+  /-- The queue every session starts with: nothing accepted, nothing written. -/
+  | empty : InputLife empty offer advance pending cap .empty .empty empty
+  /-- An offer: its frame joins the accepted input unless the queue refused it. -/
+  |
+  offer (accepted written : ByteArray) (b : B) (more : ByteArray) :
+    InputLife empty offer advance pending cap accepted written b →
+      InputLife empty offer advance pending cap
+        (if (offer cap b more).2 then accepted else accepted ++ more) written (offer cap b more).1
+  /-- A flush of `n` bytes. -/
+  |
+  advance (accepted written : ByteArray) (b : B) (n : Nat) :
+    InputLife empty offer advance pending cap accepted written b →
+      InputLife empty offer advance pending cap accepted (written ++ (pending b).extract 0 n)
+        (advance b n)
 
 end Linger.Session.Buf
 

@@ -421,6 +421,10 @@ def Linger.Session.Buf.bufAdvance : Buf.Buf → Nat → Buf.Buf := sorry
 @[expose]
 def Linger.Session.Buf.owedLen : Buf.Buf → Nat := sorry
 
+/-- The bytes the queue still owes, oldest first: what its writer writes from. -/
+@[expose]
+def Linger.Session.Buf.writeFrom : Buf.Buf → ByteArray := sorry
+
 /-! ### Selector and import -/
 
 /-- Decode one input byte for the selector: its next state, and the keys the byte completes. -/
@@ -467,8 +471,11 @@ The terminals the claims quantify over are those a session can hold: fresh, fed,
 quiesced, or read back by the checkpoint decoder, so every claim here also holds of a resumed
 session. A client receives the repaint as a stream, in steps of any positive byte budget; each
 claim says that the stream ends and that a receiver of the session's size that parses it shows
-what the session shows. Not claimed yet: that the receiver keeps showing it as output continues,
-and that the program reads exactly the bytes its writers sent. -/
+what the session shows. That the receiver then keeps showing it as output continues is
+conjectured (`KeepsShowing`), for a repaint taken between control sequences and characters. The
+program reads exactly the input linger accepted for it, in order, when the kernel delivers what
+linger writes (`Pty.Delivers`); linger accepts each frame a client that may type sends, whole,
+or refuses it whole when the program's queue is full. -/
 
 /-- Streaming the repaint of a terminal a session can hold ends, and a receiver of the same size
 that parses it ends with the session's dimensions and every row of its screen. -/
@@ -504,6 +511,114 @@ theorem replay_grid_rejects_silence :
                   (w.feed bytes).colCount = v.colCount ∧
                   (w.feed bytes).rowCount = v.rowCount ∧
                   ∀ y < v.rowCount, (w.feed bytes).getRow y = v.getRow y := by
+  sorry
+
+/-- A receiver of the same size that has parsed the repaint of a terminal a session can hold,
+taken between control sequences and characters, shows every row of the session's screen, and
+keeps showing it as the same output then reaches both. -/
+theorem replay_keeps_showing
+    (keeps :
+      KeepsShowing
+        (Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+          (Checkpoint.Decoded Checkpoint.loadBytes))
+        Vt.Vt.feed Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.atBoundary Replay.start
+        Replay.next)
+    (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
+    (hv :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) v)
+    (hw :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) w)
+    (hcols : w.colCount = v.colCount) (hrows : w.rowCount = v.rowCount)
+    (boundary : v.atBoundary = true) (later : List UInt8) :
+    ∃ bytes,
+      Replay.Emits Replay.next budget (Replay.start v) bytes ∧
+        (∀ y < v.rowCount, (w.feed bytes).getRow y = v.getRow y) ∧
+        ∀ y < (v.feed later).rowCount,
+          ((w.feed bytes).feed later).getRow y = (v.feed later).getRow y := by
+  sorry
+
+/-- `replay_keeps_showing` rejects a terminal that every input leaves on one fixed screen: it
+keeps showing what follows, but not the session's screen. -/
+theorem replay_keeps_showing_rejects_fixed :
+    ¬(KeepsShowing
+          (Vt.Live Vt.Vt.init (fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) Vt.Vt.resize
+            Vt.Vt.quiesce (Checkpoint.Decoded Checkpoint.loadBytes))
+          (fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) Vt.Vt.colCount Vt.Vt.rowCount
+          Vt.Vt.getRow Vt.Vt.atBoundary Replay.start Replay.next →
+        ∀ (budget : Nat),
+          0 < budget →
+            ∀ (v w : Vt.Vt),
+              Vt.Live Vt.Vt.init (fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) Vt.Vt.resize
+                  Vt.Vt.quiesce (Checkpoint.Decoded Checkpoint.loadBytes) v →
+                Vt.Live Vt.Vt.init (fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) Vt.Vt.resize
+                  Vt.Vt.quiesce (Checkpoint.Decoded Checkpoint.loadBytes) w →
+                w.colCount = v.colCount →
+                w.rowCount = v.rowCount →
+                v.atBoundary = true →
+                ∀ (later : List UInt8),
+                  ∃ bytes,
+                    Replay.Emits Replay.next budget (Replay.start v) bytes ∧
+                      (∀ y < v.rowCount,
+                        ((fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) w bytes).getRow y =
+                          v.getRow y) ∧
+                      ∀ y < ((fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) v later).rowCount,
+                        ((fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1)
+                                ((fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) w bytes)
+                                later).getRow
+                            y =
+                          ((fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) v later).getRow
+                            y) := by
+  sorry
+
+/-- A read of input from a client that may type is written to the program exactly: one write per
+input message, its bytes, in the order the client sent them, and nothing else. -/
+theorem step_input_exact (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
+    {dec : Wire.Decoder} {inputs : List (List UInt8)} (hc : s.client? id = some c)
+    (typist : c.attached = false ∨ c.sizer = true)
+    (read : c.decoder.feed chunk = (dec, inputs.map Wire.Msg.input))
+    (healthy : dec.errored = false) :
+    (Session.step s (.bytes id chunk)).2 = inputs.map Effect.writePty := by sorry
+
+/-- `step_input_exact` rejects a session that drops its typists' input. -/
+theorem step_input_exact_rejects_drop :
+    ¬∀ (s : State) (id : Nat) (chunk : List UInt8) {c : Client} {dec : Wire.Decoder}
+        {inputs : List (List UInt8)},
+        s.client? id = some c →
+          (c.attached = false ∨ c.sizer = true) →
+          c.decoder.feed chunk = (dec, inputs.map Wire.Msg.input) →
+          dec.errored = false →
+          ((fun (s : State) (_ : Event) => (s, ([] : List (Effect Replay.Plan)))) s
+                (.bytes id chunk)).2 =
+            inputs.map Effect.writePty := by
+  sorry
+
+/-- The program reads exactly the input linger accepted for it, in order: when the kernel
+delivers what linger writes, the program's reads followed by what the program's queue still
+holds are the accepted input, and the queue refuses a frame whole only when holding it would pass
+its cap. -/
+theorem input_exact (reads : ByteArray → ByteArray) (delivers : Pty.Delivers reads) {cap : Nat}
+    {accepted written : ByteArray} {b : Buf.Buf}
+    (life :
+      Buf.InputLife Buf.Buf.empty Buf.bufOffer Buf.bufAdvance Buf.writeFrom cap accepted written
+        b) :
+    reads written ++ Buf.writeFrom b = accepted ∧
+      ∀ more, (Buf.bufOffer cap b more).2 = true ↔ cap < Buf.owedLen b + more.size := by
+  sorry
+
+/-- `input_exact` rejects a queue that accepts input without keeping it. -/
+theorem input_exact_rejects_lost :
+    ¬∀ (reads : ByteArray → ByteArray),
+        Pty.Delivers reads →
+          ∀ {cap : Nat} {accepted written : ByteArray} {b : Buf.Buf},
+            Buf.InputLife Buf.Buf.empty (fun (_ : Nat) (b : Buf.Buf) (_ : ByteArray) => (b, false))
+                Buf.bufAdvance Buf.writeFrom cap accepted written b →
+              reads written ++ Buf.writeFrom b = accepted ∧
+                ∀ more,
+                  ((fun (_ : Nat) (b : Buf.Buf) (_ : ByteArray) => (b, false)) cap b more).2 =
+                      true ↔
+                    cap < Buf.owedLen b + more.size := by
   sorry
 
 /-- Streaming the repaint of a terminal a session can hold, with retained history, ends, and a

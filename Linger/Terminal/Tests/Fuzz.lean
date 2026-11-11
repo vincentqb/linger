@@ -97,4 +97,25 @@ def failingDeep (count : Nat) : List Nat :=
 
 example : failingDeep 150 = [] := by native_decide
 
+/-- Whether a receiver that parsed `v`'s repaint shows every row `v` shows once `later` reaches
+both. A stream of any positive budget is `restore v` (`Replay.drain_start`). A repaint taken
+inside a control sequence or a character is outside the claim, so such a case passes. -/
+def keepsShowing (v : Vt.Vt) (later : String) : Bool :=
+  let bytes := later.toUTF8.toList
+  let w := (Vt.Vt.init v.colCount v.rowCount).feed (restore v)
+  !v.atBoundary ||
+    (List.range (v.feed bytes).rowCount).all fun y =>
+      (w.feed bytes).getRow y == (v.feed bytes).getRow y
+
+/-- The indices whose case stops showing the session once more output arrives: a fuzz test of
+the conjecture `Linger.Session.KeepsShowing`. **The list is empty**, and pinned as empty. -/
+def failingLater (count : Nat) : List Nat :=
+  (List.range count).filter
+    (fun i =>
+      let seed := nextRand (i * 7919 + 3)
+      let (c, r) := dims[seed % dims.size]!
+      !keepsShowing (screen c r (genCase seed 8)) (genCase (nextRand seed) 6))
+
+example : failingLater 400 = [] := by native_decide
+
 end Linger.Terminal.Render.Fuzz

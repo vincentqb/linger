@@ -194,4 +194,38 @@ theorem buf_observed (cap n : Nat) (b : Buf) (more : ByteArray) :
   · simp [bufEnqueue, owedLen, ByteArray.size_append]
   · simp [bufEnqueue, owedLen, ByteArray.size_append]
 
+/-! ## The program reads what the queue accepted -/
+
+/-- The queue refuses a frame exactly when holding it would pass the cap. -/
+theorem bufOffer_refuses_iff (cap : Nat) (b : Buf) (more : ByteArray) :
+    (bufOffer cap b more).2 = true ↔ cap < owedLen b + more.size := by
+  unfold bufOffer
+  split <;> simp_all
+
+/-- A byte array is its first `n` bytes followed by the rest. -/
+theorem extract_append_extract (a : ByteArray) (n : Nat) :
+    a.extract 0 n ++ a.extract n a.size = a := by
+  apply ByteArray.ext
+  simp
+
+/-- **Nothing is lost, added or moved**: the bytes a queue handed the kernel, followed by those
+it still holds, are the input it accepted. -/
+theorem inputLife_exact {cap : Nat} {accepted written : ByteArray} {b : Buf}
+    (life : InputLife Buf.empty bufOffer bufAdvance writeFrom cap accepted written b) :
+    written ++ writeFrom b = accepted := by
+  induction life with
+  | empty => rfl
+  | offer accepted written b more _
+    ih =>
+    by_cases refused : (bufOffer cap b more).2 = true
+    · simp only [refused, ↓reduceIte, bufOffer_rejected cap b more refused]
+      exact ih
+    · have kept : (bufOffer cap b more).2 = false := by simpa using refused
+      simp only [kept, Bool.false_eq_true, ↓reduceIte, bufOffer_writeFrom cap b more kept]
+      rw [← ByteArray.append_assoc, ih]
+  | advance accepted written b n _
+    ih =>
+    rw [bufAdvance_writeFrom, ByteArray.append_assoc, extract_append_extract]
+    exact ih
+
 end Linger.Session.Buf

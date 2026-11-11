@@ -2945,4 +2945,56 @@ theorem foldl_resize_origin (v : Vt.Vt) (h : v.cursorPos = (0, 0)) (sizes : List
     simp only [Vt.Vt.cursorPos, Prod.mk.injEq] at h ⊢
     simp [Vt.Vt.resize, h.1, h.2]
 
+/-! ## A typist's input is written exactly -/
+
+/-- Input messages from a client that may type become one write each, in order. -/
+theorem feedMsgs_inputs (id : Nat) (inputs : List (List UInt8)) (t : State) (c : Client)
+    (hc : t.client? id = some c) (typist : c.attached = false ∨ c.sizer = true)
+    (effs : List (Effect Plan)) (clean : Effect.close id ∉ effs ∧ Effect.exit ∉ effs) :
+    feedMsgs id (inputs.map Msg.input) (t, effs) = (t, effs ++ inputs.map Effect.writePty) := by
+  induction inputs generalizing effs with
+  | nil => simp [feedMsgs]
+  | cons bytes inputs
+    ih =>
+    have stays : onMsg t c (.input bytes) = (t, [.writePty bytes]) := by
+      unfold onMsg
+      rcases typist with h | h <;> simp [h]
+    have next := ih (effs ++ [.writePty bytes]) (by simpa using clean)
+    simp only [feedMsgs, List.map_cons, List.foldl_cons] at next ⊢
+    simp only [List.contains_eq_mem, decide_eq_true_eq, clean.1, clean.2, Bool.or_self, ↓reduceIte,
+      hc, stays] at ⊢
+    simpa using next
+
+/-- **A typist's input is written exactly**: a read of input messages from a client that may
+type is one write per message, its bytes, in order, and nothing else. -/
+theorem step_input_exact (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
+    {dec : Wire.Decoder} {inputs : List (List UInt8)} (hc : s.client? id = some c)
+    (typist : c.attached = false ∨ c.sizer = true)
+    (read : c.decoder.feed chunk = (dec, inputs.map Msg.input)) (healthy : dec.errored = false) :
+    (step s (.bytes id chunk)).2 = inputs.map Effect.writePty := by
+  have he :
+    ({ c with
+            decoder := dec, answered := false } :
+          Client).id =
+      id :=
+    (client?_id hc : c.id = id)
+  have h1 :
+    (s.setClient
+            { c with
+              decoder := dec, answered := false }).client?
+        id =
+      some
+        { c with
+          decoder := dec, answered := false } := by
+    rw [← he]; exact client?_setClient (he ▸ hc)
+  have :=
+    feedMsgs_inputs id inputs
+      (s.setClient
+        { c with
+          decoder := dec, answered := false })
+      { c with
+        decoder := dec, answered := false }
+      h1 typist [] (by simp)
+  simp only [step, hc, read, healthy, Bool.false_eq_true, ↓reduceIte, this, List.nil_append]
+
 end Linger.Session

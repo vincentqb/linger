@@ -108,6 +108,33 @@ example (s : Session.State) (id : Nat) (chunks : List (List UInt8)) {c : Session
         (∃ m, eff = .send id m) ∨ eff = .close id ∨ eff = .checkpoint := by
   with_reducible exact Session.run_readonly s id chunks hc attached watcher
 
+example (s : Session.State) (id : Nat) (chunk : List UInt8) {c : Session.Client}
+    {dec : Wire.Decoder} {inputs : List (List UInt8)} (hc : s.client? id = some c)
+    (typist : c.attached = false ∨ c.sizer = true)
+    (read : c.decoder.feed chunk = (dec, inputs.map Wire.Msg.input))
+    (healthy : dec.errored = false) :
+    (Session.step s (.bytes id chunk)).2 = inputs.map Session.Effect.writePty := by
+  with_reducible exact Session.step_input_exact s id chunk hc typist read healthy
+
+example (s : Session.State) (ev : Session.Event)
+    (changed : (Session.step s ev).1.labelList ≠ s.labelList) :
+    ∃ id chunk c,
+      ev = .bytes id chunk ∧
+        s.client? id = some c ∧
+        (c.attached = false ∨ c.sizer = true) ∧
+        ∃ m ∈ (c.decoder.feed chunk).2, m.ChangesLabels := by
+  with_reducible exact Session.step_labels_sources s ev changed
+
+example (s : Session.State) (ev : Session.Event) : (Session.step s ev).1.metaKv = s.metaKv := by
+  with_reducible exact Session.step_metaKv s ev
+
+example (s : Session.State) (ev : Session.Event) :
+    (∃ chunk, ev = .ptyOut chunk ∧ (Session.step s ev).1.vt = s.vt.feed chunk) ∨
+      ∃ sizes : List (Nat × Nat),
+        (Session.step s ev).1.vt =
+          sizes.foldl (fun v (size : Nat × Nat) => v.resize size.1 size.2) s.vt := by
+  with_reducible exact Session.step_vt_sources s ev
+
 -- Listing rows
 example (socketName : String) (info : List (String × String)) :
     (Listing.rowFields socketName info).lookup "name" = some socketName := by
@@ -397,6 +424,16 @@ example {cap : Nat} {b : Buf.Buf} (h : Buf.ReachableIn cap b) : Buf.owedLen b �
 
 example {cap : Nat} {b : Buf.Buf} (h : Buf.ReachableOut cap b) : Buf.owedLen b ≤ cap := by
   with_reducible exact Buf.reachableOut_bound h
+
+example {cap : Nat} {accepted written : ByteArray} {b : Buf.Buf}
+    (life :
+      Buf.InputLife Buf.Buf.empty Buf.bufOffer Buf.bufAdvance Buf.writeFrom cap accepted written
+        b) :
+    written ++ Buf.writeFrom b = accepted := by with_reducible exact Buf.inputLife_exact life
+
+example (cap : Nat) (b : Buf.Buf) (more : ByteArray) :
+    (Buf.bufOffer cap b more).2 = true ↔ cap < Buf.owedLen b + more.size := by
+  with_reducible exact Buf.bufOffer_refuses_iff cap b more
 
 -- Screen restoration
 example (v w : Vt.Vt) (hgood : Vt.Good w) (hren : Vt.Renderable w) (hcols : w.cols = v.cols)

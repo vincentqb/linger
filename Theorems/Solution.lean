@@ -122,6 +122,135 @@ theorem replay_grid_rejects_silence :
     have row := rows 0 (by decide +kernel)
     exact absurd (congrArg (fun r : Vt.Row => (r.getD 0 {}).base) row) (by decide +kernel)
 
+theorem replay_keeps_showing
+    (keeps :
+      KeepsShowing
+        (Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+          (Checkpoint.Decoded Checkpoint.loadBytes))
+        Vt.Vt.feed Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.atBoundary Replay.start
+        Replay.next)
+    (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
+    (hv :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) v)
+    (hw :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) w)
+    (hcols : w.colCount = v.colCount) (hrows : w.rowCount = v.rowCount)
+    (boundary : v.atBoundary = true) (later : List UInt8) :
+    ∃ bytes,
+      Replay.Emits Replay.next budget (Replay.start v) bytes ∧
+        (∀ y < v.rowCount, (w.feed bytes).getRow y = v.getRow y) ∧
+        ∀ y < (v.feed later).rowCount,
+          ((w.feed bytes).feed later).getRow y = (v.feed later).getRow y := by
+  obtain ⟨bytes, emits, -, -, rows⟩ := replay_grid budget positive v w hv hw hcols hrows
+  obtain ⟨other, streamed, kept⟩ := keeps budget v w later positive hv hw hcols hrows boundary
+  have same := Replay.Emits.unique emits streamed
+  subst same
+  exact ⟨bytes, emits, rows, kept⟩
+
+theorem replay_keeps_showing_rejects_fixed :
+    ¬(KeepsShowing
+          (Vt.Live Vt.Vt.init (fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) Vt.Vt.resize
+            Vt.Vt.quiesce (Checkpoint.Decoded Checkpoint.loadBytes))
+          (fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) Vt.Vt.colCount Vt.Vt.rowCount
+          Vt.Vt.getRow Vt.Vt.atBoundary Replay.start Replay.next →
+        ∀ (budget : Nat),
+          0 < budget →
+            ∀ (v w : Vt.Vt),
+              Vt.Live Vt.Vt.init (fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) Vt.Vt.resize
+                  Vt.Vt.quiesce (Checkpoint.Decoded Checkpoint.loadBytes) v →
+                Vt.Live Vt.Vt.init (fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) Vt.Vt.resize
+                  Vt.Vt.quiesce (Checkpoint.Decoded Checkpoint.loadBytes) w →
+                w.colCount = v.colCount →
+                w.rowCount = v.rowCount →
+                v.atBoundary = true →
+                ∀ (later : List UInt8),
+                  ∃ bytes,
+                    Replay.Emits Replay.next budget (Replay.start v) bytes ∧
+                      (∀ y < v.rowCount,
+                        ((fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) w bytes).getRow y =
+                          v.getRow y) ∧
+                      ∀ y < ((fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) v later).rowCount,
+                        ((fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1)
+                                ((fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) w bytes)
+                                later).getRow
+                            y =
+                          ((fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) v later).getRow
+                            y) := by
+  intro h
+  have keeps :
+    KeepsShowing
+      (Vt.Live Vt.Vt.init (fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) Vt.Vt.resize
+        Vt.Vt.quiesce (Checkpoint.Decoded Checkpoint.loadBytes))
+      (fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) Vt.Vt.colCount Vt.Vt.rowCount
+      Vt.Vt.getRow Vt.Vt.atBoundary Replay.start Replay.next := by
+    intro budget v _ _ positive _ _ _ _ _
+    exact ⟨_, Replay.emits_remaining budget positive (Replay.start v), fun _ _ => rfl⟩
+  obtain ⟨_, -, rows, -⟩ :=
+    h keeps 1 Nat.one_pos (Vt.Vt.init 2 1) (Vt.Vt.init 2 1) (.init 2 1) (.init 2 1) rfl rfl
+      (by decide +kernel) []
+  have row : (Vt.Vt.init 1 1).getRow 0 = (Vt.Vt.init 2 1).getRow 0 := rows 0 (by decide +kernel)
+  exact absurd (congrArg (fun r : Vt.Row => r.size) row) (by decide +kernel)
+
+theorem step_input_exact (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
+    {dec : Wire.Decoder} {inputs : List (List UInt8)} (hc : s.client? id = some c)
+    (typist : c.attached = false ∨ c.sizer = true)
+    (read : c.decoder.feed chunk = (dec, inputs.map Wire.Msg.input))
+    (healthy : dec.errored = false) :
+    (Session.step s (.bytes id chunk)).2 = inputs.map Effect.writePty :=
+  Session.step_input_exact s id chunk hc typist read healthy
+
+theorem step_input_exact_rejects_drop :
+    ¬∀ (s : State) (id : Nat) (chunk : List UInt8) {c : Client} {dec : Wire.Decoder}
+        {inputs : List (List UInt8)},
+        s.client? id = some c →
+          (c.attached = false ∨ c.sizer = true) →
+          c.decoder.feed chunk = (dec, inputs.map Wire.Msg.input) →
+          dec.errored = false →
+          ((fun (s : State) (_ : Event) => (s, ([] : List (Effect Replay.Plan)))) s
+                (.bytes id chunk)).2 =
+            inputs.map Effect.writePty := by
+  intro h
+  obtain ⟨joined, -⟩ := Session.connected_client_witness
+  have wrote :=
+    @h (Session.trace Session.step (State.boot (Vt.Vt.init 1 1) [] []) [.connected 1]).1 1
+      (Wire.encode (.input [0x61])) { id := 1 } {} [[0x61]] joined (.inl rfl)
+      (Session.feed_encode_fresh (.input [0x61]) (by simp [Wire.Msg.Fits, Wire.maxPayload])) rfl
+  simp at wrote
+
+theorem input_exact (reads : ByteArray → ByteArray) (delivers : Pty.Delivers reads) {cap : Nat}
+    {accepted written : ByteArray} {b : Buf.Buf}
+    (life :
+      Buf.InputLife Buf.Buf.empty Buf.bufOffer Buf.bufAdvance Buf.writeFrom cap accepted written
+        b) :
+    reads written ++ Buf.writeFrom b = accepted ∧
+      ∀ more, (Buf.bufOffer cap b more).2 = true ↔ cap < Buf.owedLen b + more.size := by
+  refine ⟨?_, fun more => Buf.bufOffer_refuses_iff cap b more⟩
+  rw [delivers written]
+  exact Buf.inputLife_exact life
+
+theorem input_exact_rejects_lost :
+    ¬∀ (reads : ByteArray → ByteArray),
+        Pty.Delivers reads →
+          ∀ {cap : Nat} {accepted written : ByteArray} {b : Buf.Buf},
+            Buf.InputLife Buf.Buf.empty (fun (_ : Nat) (b : Buf.Buf) (_ : ByteArray) => (b, false))
+                Buf.bufAdvance Buf.writeFrom cap accepted written b →
+              reads written ++ Buf.writeFrom b = accepted ∧
+                ∀ more,
+                  ((fun (_ : Nat) (b : Buf.Buf) (_ : ByteArray) => (b, false)) cap b more).2 =
+                      true ↔
+                    cap < Buf.owedLen b + more.size := by
+  intro h
+  have life :=
+    Buf.InputLife.offer (empty := Buf.Buf.empty) (offer :=
+      fun (_ : Nat) (b : Buf.Buf) (_ : ByteArray) => (b, false)) (advance := Buf.bufAdvance)
+      (pending := Buf.writeFrom) (cap := 1) ByteArray.empty ByteArray.empty Buf.Buf.empty ⟨#[0x61]⟩
+      .empty
+  have lost := congrArg ByteArray.size (h id (fun _ => rfl) life).1
+  simp [Buf.writeFrom_empty] at lost
+  exact absurd lost (by decide)
+
 theorem replay_history (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
     (hv :
       Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce

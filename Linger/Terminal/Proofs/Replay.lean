@@ -258,4 +258,22 @@ theorem emits_remaining (budget : Nat) (positive : 0 < budget) (p : Plan) :
 termination_by work p
 decreasing_by exact next_progress positive h
 
+/-- A plan's stream is one: two streams of the same plan with the same budget are equal. -/
+theorem Emits.unique {P : Type} {next : Nat → P → Option (Render.Bytes × P)} {budget : Nat} {p : P}
+    {a b : Render.Bytes} (ha : Emits next budget p a) (hb : Emits next budget p b) : a = b := by
+  induction ha generalizing b with
+  | done h =>
+    cases hb with
+    | done => rfl
+    | step h' =>
+      rw [h] at h'; cases h'
+  | step h _ _ ih =>
+    cases hb with
+    | done h' =>
+      rw [h] at h'; cases h'
+    | step h' _ more' =>
+      rw [h] at h'
+      cases h'
+      rw [ih more']
+
 end Linger.Terminal.Replay
