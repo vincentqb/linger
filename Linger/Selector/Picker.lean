@@ -2,7 +2,7 @@ module
 
 import Linger.Selector.Input
 public import Linger.Selector.Spec
-import Linger.Selector.Fuzzy
+import Fuzzy
 import Linger.Target.Name
 import Linger.Display.Listing
 public import Linger.Display.Spec
@@ -149,7 +149,7 @@ def highlightedPresentation (snapshot : Snapshot) (nameCol : Nat) (query : Strin
     List HighlightedChar :=
   let marks : List Bool :=
     match item with
-    | .existing target => ((Linger.Selector.Fuzzy.align query target).map (·.marks)).getD []
+    | .existing target => ((Fuzzy.align query target).map (·.marks)).getD []
     | .create _ => []
   (presentation snapshot nameCol item).flatMap (markPiece marks.toArray)
 

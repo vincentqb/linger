@@ -1,7 +1,7 @@
 module
 
-public import Linger.Selector.Fuzzy
-import all Linger.Selector.Fuzzy
+public import Fuzzy
+import all Fuzzy
 
 public section
 
@@ -14,7 +14,7 @@ and the configured adjacency score when the previous position was taken.
 The certificate covers every integer scoring policy.
 -/
 
-namespace Linger.Selector.Fuzzy
+namespace Fuzzy
 
 /-- Legal alignments over folded characters carrying their original word bonuses. -/
 inductive Walk (scoring : Scoring) : List Char → List (Char × Int) → Bool → Alignment → Prop where
@@ -448,17 +448,19 @@ theorem align_marks_length (query target : String) (a : Alignment)
 
 theorem align_spells (query target : String) (a : Alignment) (h : align query target = some a) :
     ((target.toList.zip a.marks).filterMap fun (c, marked) =>
-        if marked then some c.toLower else none) = query.toList.map Char.toLower :=
-  alignWith_spells {} query target a h
+        if marked then some c.toLower else none) =
+      query.toList.map Char.toLower := alignWith_spells {} query target a h
 
 theorem align_score_max (query target : String) (a b : Alignment) (h : align query target = some a)
-    (hb : Walk {} (query.toList.map Char.toLower) (weighted 4 Char.toLower ' ' target.toList) false b) :
+    (hb :
+      Walk {} (query.toList.map Char.toLower) (weighted 4 Char.toLower ' ' target.toList) false b) :
     b.score ≤ a.score := alignWith_score_max {} query target a b h hb
 
 theorem align_earliest (query target : String) (a b : Alignment) (h : align query target = some a)
-    (hb : Walk {} (query.toList.map Char.toLower) (weighted 4 Char.toLower ' ' target.toList) false b)
+    (hb :
+      Walk {} (query.toList.map Char.toLower) (weighted 4 Char.toLower ' ' target.toList) false b)
     (tie : b.score = a.score) :
     a.marks = b.marks ∨ List.Lex (fun x y => x = true ∧ y = false) a.marks b.marks :=
   alignWith_earliest {} query target a b h hb tie
 
-end Linger.Selector.Fuzzy
+end Fuzzy

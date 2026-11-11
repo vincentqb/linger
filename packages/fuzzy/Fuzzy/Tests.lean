@@ -1,9 +1,9 @@
 module
 
-import Linger.Selector.Fuzzy
-meta import Linger.Selector.Fuzzy
+import Fuzzy
+meta import Fuzzy
 
-open Linger.Selector.Fuzzy
+open Fuzzy
 
 #guard align "" "anything" == some ⟨0, List.replicate 8 false⟩
 
@@ -25,7 +25,7 @@ open Linger.Selector.Fuzzy
 
 #guard (align "é" "eé").map (·.marks) == some [false, true, true]
 
-namespace Linger.Selector.Tests.Fuzzy
+namespace Fuzzy.Tests
 
 /-- Only the small oracle enumerates masks. True-first enumeration breaks ties
 by earliest matching positions, independently of the production dynamic program. -/
@@ -296,4 +296,4 @@ def configurations : List Config :=
       (·.marks) ==
     some (List.replicate 256 true ++ List.replicate 256 false)
 
-end Linger.Selector.Tests.Fuzzy
+end Fuzzy.Tests

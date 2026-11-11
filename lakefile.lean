@@ -10,6 +10,9 @@ package linger where leanOptions :=
 require software_challenge from git
   "https://github.com/vincentqb/lean-software-challenge"@"a6725aa1ed50884d52788171a5ebdf0b53bda9c9"
 
+/-- The fuzzy matcher, a package of its own with its own challenge and audit. -/
+require fuzzy from "packages/fuzzy"
+
 /-- Options for every library but `Verify`: Lake builds a module with the options of one library
 that contains it, and these libraries overlap, so they share a single set. With the package's
 `warningAsError`, a public declaration without a docstring fails the build. -/
@@ -40,11 +43,6 @@ lean_lib LingerInput where
 /-- Decoder contracts build without the picker action adapter or session code. -/
 lean_lib LingerInputTheorems where
   roots := #[`Linger.Selector.Proofs.Input]
-  leanOptions := implementationOptions
-
-/-- Reusable fuzzy alignment, with no session or terminal imports. -/
-lean_lib LingerFuzzy where
-  roots := #[`Linger.Selector.Fuzzy]
   leanOptions := implementationOptions
 
 /-- The native OS boundary, compiled with the clang selected by `./lake`. -/

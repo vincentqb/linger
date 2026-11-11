@@ -5,10 +5,11 @@ public meta import SoftwareChallenge.Audit
 /-- The Lean Software Challenge audit. A module takes the role of the longest prefix listed
 here. The `Linger` entry covers the umbrella module, which only gathers the session library
 for the build, and any module no longer prefix covers: as tooling, none of its code can run in
-the program, so a new component joins the program only once it is listed. -/
+the program, so a new component joins the program only once it is listed. The packages under
+`packages/` are trusted here: each has its own challenge and audit. -/
 public meta def main : List String → IO Unit :=
   SoftwareChallenge.Audit.run
-    { trusted := #[`Init, `Std, `Lean, `SoftwareChallenge]
+    { trusted := #[`Init, `Std, `Lean, `SoftwareChallenge, `Fuzzy]
       layers :=
         #[(`Linger, .tooling), (`Main, .shell), (`Theorems, .tooling), (`Verify, .tooling),
           (`Linger.App, .core), (`Linger.Display, .core), (`Linger.Import, .core),

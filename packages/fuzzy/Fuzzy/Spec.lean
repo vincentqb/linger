@@ -6,7 +6,7 @@ public section
 
 A successful match of a query against a target. -/
 
-namespace Linger.Selector.Fuzzy
+namespace Fuzzy
 
 /-- A successful match: its score and one mark per target character. -/
 structure Alignment where
@@ -17,4 +17,4 @@ structure Alignment where
   marks : List Bool
   deriving BEq, Repr
 
-end Linger.Selector.Fuzzy
+end Fuzzy

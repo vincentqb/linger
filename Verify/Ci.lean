@@ -362,13 +362,19 @@ def lakeBuilds (root : String) : IO Unit :=
     check (← build #["--wfail", "--no-build"]) 1 "warning:"
         "cached warnings fail even when warningAsError is locally disabled"
 
-/-- Exercise the real Lake drivers from another directory, including failures. -/
+/-- Exercise the real Lake drivers from another directory, including failures. The project holds
+the checkout's own packages' configurations too, since its `lakefile.lean` requires them by path. -/
 def lakeDrivers (root : String) : IO Unit :=
   IO.FS.withTempDir fun base => do
     let project := base / "project with spaces"
     IO.FS.createDirAll (project / "scripts")
     for file in ["lakefile.lean", "lean-toolchain"] do
       IO.FS.writeFile (project / file) (← IO.FS.readFile s!"{root}/{file}")
+    for entry in ← System.FilePath.readDir s!"{root}/packages" do
+      IO.FS.createDirAll (project / "packages" / entry.fileName)
+      for file in ["lakefile.lean", "lean-toolchain", "lake-manifest.json"] do
+        IO.FS.writeFile (project / "packages" / entry.fileName / file)
+            (← IO.FS.readFile (entry.path / file))
     for (verb, file) in [("test", "verify.sh"), ("lint", "lint.sh")] do
       let script := project / "scripts" / file
       let run :=

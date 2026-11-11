@@ -198,14 +198,24 @@ awk '
     }
     exit failed
   }' c/shim.c >&2 || fail "fork child call boundary changed"
-# The only external Lean dependency is the Lean Software Challenge audit, pinned to a commit.
-! code_grep '^[[:space:]]*require ' 'lakefile.lean' | grep -qv 'require software_challenge from git$' \
+# The only external Lean dependency is the Lean Software Challenge audit, pinned to a commit;
+# the others are this checkout's own packages, by path.
+! code_grep '^[[:space:]]*require ' 'lakefile.lean' \
+  | grep -v -e 'require software_challenge from git$' -e 'require fuzzy from "packages/fuzzy"$' \
+  | grep -q . \
   || fail "external Lean dependency in lakefile.lean"
 lake_packages="$(tr -d ' \n' < lake-manifest.json | grep -o '"packages":\[[^]]*\]')"
-[ "$(printf '%s' "$lake_packages" | grep -o '"name":"[^"]*"')" = '"name":"software_challenge"' ] \
+[ "$(printf '%s' "$lake_packages" | grep -o '"name":"[^"]*"' | tr '\n' ' ')" = '"name":"fuzzy" "name":"software_challenge" ' ] \
   && printf '%s' "$lake_packages" | grep -q '"url":"https://github.com/vincentqb/lean-software-challenge"' \
   && printf '%s' "$lake_packages" | grep -qE '"inputRev":"[0-9a-f]{40}"' \
-  || fail "lake-manifest may list only software_challenge, pinned to a commit"
+  && printf '%s' "$lake_packages" | grep -q '"type":"path","scope":"","name":"fuzzy","manifestFile":"lake-manifest.json","inherited":false,"dir":"packages/fuzzy"' \
+  || fail "lake-manifest may list only software_challenge, pinned to a commit, and this checkout's packages"
+for manifest in packages/*/lake-manifest.json; do
+  pkg_packages="$(tr -d ' \n' < "$manifest" | grep -o '"packages":\[[^]]*\]')"
+  [ "$(printf '%s' "$pkg_packages" | grep -o '"rev":"[0-9a-f]*"')" = "$(printf '%s' "$lake_packages" | grep -o '"rev":"[0-9a-f]*"')" ] \
+    && tr -d ' \n' < "$manifest" | grep -q '"packagesDir":"../../.lake/packages"' \
+    || fail "$manifest must pin software_challenge to linger's commit, in linger's packages"
+done
 # The audit stays a default target, and the verifier builds every default target: CI starts
 # from a fresh checkout, so a default target missing from that list is never built there.
 default_targets="$(code_grep '^@[[]default_target[]]' lakefile.lean \
@@ -316,13 +326,28 @@ library_roots LingerVtTheorems '#[`Linger.Terminal.Proofs.Mediation, `Linger.Ter
   'leanOptions := implementationOptions'
 library_roots LingerInput '#[`Linger.Selector.Input]' 'leanOptions := implementationOptions'
 library_roots LingerInputTheorems '#[`Linger.Selector.Proofs.Input]' 'leanOptions := implementationOptions'
-library_roots LingerFuzzy '#[`Linger.Selector.Fuzzy]' 'leanOptions := implementationOptions'
 [ "$(library_decl Linger)" = "lean_lib Linger where leanOptions := implementationOptions " ] \
   || fail "the Linger library lost implementationOptions: $(library_decl Linger)"
 [ "$(library_decl Suites)" = "lean_lib Suites where globs := #[.submodules \`Linger.Session.Suites, .one \`Linger.Os.Suites.Wait] leanOptions := implementationOptions " ] \
   || fail "the Suites library lost its globs or implementationOptions: $(library_decl Suites)"
 [ "$(git grep -c 'def implementationOptions : Array LeanOption := #\[⟨`linter.missingDocs, true⟩\]$' -- lakefile.lean)" = lakefile.lean:1 ] \
   || fail "implementationOptions no longer enables linter.missingDocs"
+# Each package under packages/ builds with linger's options and its own audit, and shares the
+# checkout's packages, so its code meets the same bar and building it alone fetches nothing.
+for pkg in packages/fuzzy; do
+  for opt in '⟨`autoImplicit, false⟩' '⟨`relaxedAutoImplicit, false⟩' '⟨`warningAsError, true⟩' \
+      '⟨`linter.extra.unreachableTactic, true⟩' '⟨`linter.redundantVisibility, true⟩' \
+      '⟨`linter.extra.unnecessarySeqFocus, true⟩' 'packagesDir := "../../.lake/packages"' \
+      'def implementationOptions : Array LeanOption := #[⟨`linter.missingDocs, true⟩]' \
+      '@[default_target] target audit pkg : Unit := do'; do
+    grep -qF "$opt" "$pkg/lakefile.lean" || fail "$pkg/lakefile.lean lost $opt"
+  done
+  for file in Audit.lean comparator.json lake-manifest.json lean-toolchain .lean-fmt.toml; do
+    [ -n "$(git ls-files -- "$pkg/$file")" ] || fail "$pkg has no tracked $file"
+  done
+  cmp -s lean-toolchain "$pkg/lean-toolchain" || fail "$pkg/lean-toolchain differs from linger's"
+  cmp -s .lean-fmt.toml "$pkg/.lean-fmt.toml" || fail "$pkg/.lean-fmt.toml differs from linger's"
+done
 # With `set_option` banned, the package's options and these declarations' fields are every
 # option a module is built with, so each declaration that can carry options is pinned.
 [ "$(lake_decl package linger)" = "package linger where leanOptions := #[⟨\`autoImplicit, false⟩, ⟨\`relaxedAutoImplicit, false⟩, ⟨\`warningAsError, true⟩, ⟨\`linter.extra.unreachableTactic, true⟩, ⟨\`linter.redundantVisibility, true⟩, ⟨\`linter.extra.unnecessarySeqFocus, true⟩] " ] \
@@ -375,9 +400,9 @@ import_closure Linger/Import/Spec.lean ''
 import_closure Linger/Import/Resurrect.lean 'public import Linger.Import.Spec;import Linger.Target.Name;import Linger.Display.Status;public import Linger.Terminal.Vt;public import Linger.Session.Spec;'
 import_closure Linger/Selector/Key.lean 'public import Linger.Selector.Spec;public import Linger.Selector.Spec.Input;'
 import_closure Linger/Selector/Spec.lean ''
-import_closure Linger/Selector/Fuzzy.lean 'public import Linger.Selector.Spec.Fuzzy;'
-import_closure Linger/Selector/Spec/Fuzzy.lean ''
-import_closure Linger/Selector/Picker.lean 'import Linger.Selector.Input;public import Linger.Selector.Spec;import Linger.Selector.Fuzzy;import Linger.Target.Name;import Linger.Display.Listing;public import Linger.Display.Spec;import Linger.Display.Status;import Linger.Target.Remote;import Linger.Terminal.Vt;import Linger.Display.View;'
+import_closure packages/fuzzy/Fuzzy.lean 'public import Fuzzy.Spec;'
+import_closure packages/fuzzy/Fuzzy/Spec.lean ''
+import_closure Linger/Selector/Picker.lean 'import Linger.Selector.Input;public import Linger.Selector.Spec;import Fuzzy;import Linger.Target.Name;import Linger.Display.Listing;public import Linger.Display.Spec;import Linger.Display.Status;import Linger.Target.Remote;import Linger.Terminal.Vt;import Linger.Display.View;'
 import_closure Linger/Display/View.lean 'public import Linger.Display.Spec;import Linger.Display.Status;'
 import_closure Linger/Display/Spec.lean ''
 import_closure Linger/Display/Status.lean 'public import Linger.Display.Spec;'
@@ -659,7 +684,7 @@ for claim in align_optimal align_isSome_iff_sublist align_marks_length align_spe
              alignWith_optimal alignWith_isSome_iff_sublist alignWith_marks_length \
              alignWith_spells alignWith_score_max alignWith_earliest \
              alignWith_scoring_irrelevant alignWith_smart_sensitive alignWith_smart_insensitive; do
-  code_grep "^theorem $claim " Linger/Selector/Proofs/Fuzzy.lean >/dev/null \
+  code_grep "^theorem $claim " packages/fuzzy/Fuzzy/Proofs.lean >/dev/null \
     || fail "fuzzy alignment contract disappeared: $claim"
 done
 for claim in matches_iff_sublist align_isSome_iff_matches visible_order parseListing_valid parseSnapshot_complete \
@@ -1224,7 +1249,7 @@ attach_words="$(code_grep '"attach"[[:space:]]*(,|[]]|::)' 'Linger/*/Shell.lean'
     'Linger/App/Shell.lean: | "attach" :: rest | "a" :: rest =>' \
     'Linger/Selector/Shell.lean: ("attach" :: (if readOnly then ["--read-only"] else []) ++')" ] \
   || fail "a literal attach argv: build it with Picker.attachArgs, whose operands come from Remote.targetOperands: $attach_words"
-! code_grep 'Linger[.]Selector[.]Fuzzy|Name[.]sanitize' Linger/App/Shell.lean Linger/Session/Shell/Client.lean \
+! code_grep '(^|[^A-Za-z0-9_.])Fuzzy[.]|Name[.]sanitize' Linger/App/Shell.lean Linger/Session/Shell/Client.lean \
   || fail "noninteractive command lookup must not fuzzy-match or rewrite a name"
 code_grep '^[[:space:]]+Linger[.]Target[.]Remote[.]targetValid target = true ∧ target ∉ candidates := by$' Linger/Selector/Proofs/Picker.lean >/dev/null \
   || fail "selector creation and command arguments no longer share the target grammar"

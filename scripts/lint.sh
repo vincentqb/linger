@@ -25,6 +25,13 @@ if command -v lean-fmt > /dev/null; then
   printf 'layout: %s\n' "$(head -1 "$logs/fmt.log")"
   lean-fmt check > "$logs/lint.log" 2>&1 \
     || { cat "$logs/lint.log" >&2; exit 1; }
+  # Each package under packages/ is a workspace of its own to the formatter.
+  for pkg in packages/*/; do
+    [ -d "$pkg" ] || continue
+    (cd "$pkg" && lean-fmt format --check && lean-fmt check) > "$logs/package.log" 2>&1 \
+      || { cat "$logs/package.log" >&2; exit 1; }
+    printf 'layout and lint of %s: OK\n' "${pkg%/}"
+  done
   printf 'semantic lint: OK\n'
 elif [ "${GITHUB_ACTIONS-}" = true ] && [ "${RUNNER_OS-}" = Linux ]; then
   printf 'the pinned formatter is missing from Linux CI\n' >&2

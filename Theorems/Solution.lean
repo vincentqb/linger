@@ -6,7 +6,6 @@ public import Linger.Display.Listing
 public import Linger.Display.Status
 public import Linger.Display.View
 public import Linger.Import.Resurrect
-public import Linger.Selector.Fuzzy
 public import Linger.Selector.Input
 public import Linger.Selector.Picker
 public import Linger.Display.Title
@@ -32,7 +31,6 @@ import all Linger.Display.Proofs.Listing
 import all Linger.Display.Proofs.Status
 import all Linger.Display.Proofs.View
 import all Linger.Import.Proofs.Resurrect
-import all Linger.Selector.Proofs.Fuzzy
 import all Linger.Selector.Proofs.Input
 import all Linger.Selector.Proofs.Picker
 import all Linger.Display.Proofs.Title
@@ -2116,32 +2114,5 @@ theorem paste_only_text_rejects_enter :
   intro h
   obtain ⟨c, same⟩ := h { paste := true } 0 rfl .enter (by simp)
   cases same
-
-theorem align_exact (query target : String) :
-    ((Selector.Fuzzy.align query target).isSome = true ↔
-        (query.toList.map Char.toLower).Sublist (target.toList.map Char.toLower)) ∧
-      ∀ a,
-        Selector.Fuzzy.align query target = some a →
-          a.marks.length = target.length ∧
-            ((target.toList.zip a.marks).filterMap fun (c, marked) =>
-                if marked then some c.toLower else none) =
-              query.toList.map Char.toLower :=
-  ⟨Selector.Fuzzy.align_isSome_iff_sublist query target, fun a found =>
-    ⟨Selector.Fuzzy.align_marks_length query target a found,
-      Selector.Fuzzy.align_spells query target a found⟩⟩
-
-theorem align_exact_rejects_none :
-    ¬∀ (query target : String),
-        (((fun (_ _ : String) => (none : Option Selector.Fuzzy.Alignment)) query target).isSome =
-              true ↔
-            (query.toList.map Char.toLower).Sublist (target.toList.map Char.toLower)) ∧
-          ∀ a,
-            (fun (_ _ : String) => (none : Option Selector.Fuzzy.Alignment)) query target = some a →
-              a.marks.length = target.length ∧
-                ((target.toList.zip a.marks).filterMap fun (c, marked) =>
-                    if marked then some c.toLower else none) =
-                  query.toList.map Char.toLower := by
-  intro h
-  exact absurd ((h "" "").1.mpr (by simp)) (by simp)
 
 end Linger

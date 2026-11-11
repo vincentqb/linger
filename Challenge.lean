@@ -5,7 +5,6 @@ public import Linger.Display.Spec
 public import Linger.Import.Spec
 public import Linger.Os.Spec
 public import Linger.Selector.Spec
-public import Linger.Selector.Spec.Fuzzy
 public import Linger.Selector.Spec.Input
 public import Linger.Session.Spec
 public import Linger.Target.Spec
@@ -472,10 +471,6 @@ def Linger.Session.Buf.writeFrom : Buf.Buf → ByteArray := sorry
 @[expose]
 def Linger.Selector.Input.feed :
     Selector.Input.State → UInt8 → Selector.Input.State × List Selector.Input.Key := sorry
-
-/-- The selector's fuzzy match of a query against a target, if there is one. -/
-@[expose]
-def Linger.Selector.Fuzzy.align : String → String → Option Selector.Fuzzy.Alignment := sorry
 
 /-- How many listed rows the selector's query matches. -/
 @[expose]
@@ -2395,34 +2390,6 @@ theorem paste_only_text_rejects_enter :
                     (state, [Selector.Input.Key.enter]))
                   state byte).2,
             ∃ c, key = .text c := by
-  sorry
-
-/-- A target matches the selector's query exactly when the query's characters, case folded, appear
-in it in order, and the characters the selector highlights spell the query, one mark per target
-character. -/
-theorem align_exact (query target : String) :
-    ((Selector.Fuzzy.align query target).isSome = true ↔
-        (query.toList.map Char.toLower).Sublist (target.toList.map Char.toLower)) ∧
-      ∀ a,
-        Selector.Fuzzy.align query target = some a →
-          a.marks.length = target.length ∧
-            ((target.toList.zip a.marks).filterMap fun (c, marked) =>
-                if marked then some c.toLower else none) =
-              query.toList.map Char.toLower := by
-  sorry
-
-/-- `align_exact` rejects a matcher that matches nothing. -/
-theorem align_exact_rejects_none :
-    ¬∀ (query target : String),
-        (((fun (_ _ : String) => (none : Option Selector.Fuzzy.Alignment)) query target).isSome =
-              true ↔
-            (query.toList.map Char.toLower).Sublist (target.toList.map Char.toLower)) ∧
-          ∀ a,
-            (fun (_ _ : String) => (none : Option Selector.Fuzzy.Alignment)) query target = some a →
-              a.marks.length = target.length ∧
-                ((target.toList.zip a.marks).filterMap fun (c, marked) =>
-                    if marked then some c.toLower else none) =
-                  query.toList.map Char.toLower := by
   sorry
 
 end Linger

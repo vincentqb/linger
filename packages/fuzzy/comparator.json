@@ -1,0 +1,12 @@
+{
+  "challenge_module": "FuzzyChallenge",
+  "solution_module": "Fuzzy.Solution",
+  "theorem_names": [
+    "Fuzzy.align_exact",
+    "Fuzzy.align_exact_rejects_none"
+  ],
+  "definition_names": [
+    "Fuzzy.align"
+  ],
+  "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"]
+}

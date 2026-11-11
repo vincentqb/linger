@@ -1,13 +1,13 @@
 module
 
-import Linger.Selector.Fuzzy
+import Fuzzy
 
 /-! Check the reusable fuzzy API through an ordinary import. Evaluation tests
-live in `Linger.Selector.Tests.Fuzzy`, whose meta import must not hide missing public exports. -/
+live in `Fuzzy.Tests`, whose meta import must not hide missing public exports. -/
 
-open Linger.Selector.Fuzzy
+open Fuzzy
 
-namespace Linger.Selector.Tests.FuzzyApi
+namespace Fuzzy.Tests.Api
 
 example : CaseMode := .sensitive
 
@@ -36,4 +36,4 @@ example (config : Config) (query : String) : Char → Char := config.caseMode.fo
 
 example (answer : Alignment) : Int × List Bool := (answer.score, answer.marks)
 
-end Linger.Selector.Tests.FuzzyApi
+end Fuzzy.Tests.Api

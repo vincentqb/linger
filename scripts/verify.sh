@@ -87,7 +87,7 @@ say "1. build (program + theorems + tests + audit)"
 # default target (scripts/gates.sh checks), so a fresh checkout runs the Lean Software Challenge audit
 # here, as a local `./lake build` does.
 ./lake --rehash --wfail build Linger LingerVt LingerVtTheorems LingerInput LingerInputTheorems \
-    LingerFuzzy Theorems Tests Suites linger lingertest suites audit > "$logs/build.log" 2>&1 \
+    Theorems Tests Suites linger lingertest suites audit > "$logs/build.log" 2>&1 \
   || { tail -30 "$logs/build.log"; fail "build (see $logs/build.log)"; }
 # --wfail ignores warnings from elaborating lakefile.lean; this grep sees them.
 if grep -qE '^(warning|error)' "$logs/build.log"; then
@@ -204,6 +204,26 @@ say "2d. headline theorems (Challenge.lean against Theorems/Solution.lean)"
 if grep '^warning' "$logs/comparator.log"; then
   fail "Challenge.lean has warnings (see $logs/comparator.log)"
 fi
+
+say "2e. packages (each package's build, audit and headline theorems, on its own)"
+# Each package under packages/ is a Lake package with its own challenge and audit, which linger
+# trusts: build it alone, with its unit tests and audit, and check that its solution proves its
+# challenge. It shares this checkout's packages (`packagesDir`), so this fetches nothing.
+for pkg in packages/*/; do
+  pkg="${pkg%/}"
+  name="$(basename "$pkg")"
+  (cd "$pkg" && ../../lake --rehash --wfail build) > "$logs/$name-build.log" 2>&1 \
+    || { tail -30 "$logs/$name-build.log"; fail "$pkg does not build (see $logs/$name-build.log)"; }
+  if grep -qE '^(warning|error)' "$logs/$name-build.log"; then
+    grep -E '^(warning|error)' "$logs/$name-build.log"
+    fail "$pkg is not warning-clean"
+  fi
+  (cd "$pkg" && ../../lake comparator --inadvisably-no-sandbox) > "$logs/$name-comparator.log" 2>&1 \
+    || { grep -v '^Exporting' "$logs/$name-comparator.log" | tail -20; fail "lake comparator rejected $pkg's headline theorems"; }
+  [ "$(tail -1 "$logs/$name-comparator.log")" = 'Your solution is okay!' ] \
+    || fail "lake comparator did not accept $pkg's headline theorems (see $logs/$name-comparator.log)"
+  printf '  %s: build, audit and headline theorems OK\n' "$pkg"
+done
 
 say "3. posix shim smoke tests"
 shim_out="$logs/shim.out"

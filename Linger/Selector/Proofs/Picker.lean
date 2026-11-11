@@ -6,7 +6,7 @@ import all Linger.Display.Listing
 import all Linger.Target.Remote
 import all Init.Data.String.Legacy
 import Linger.Target.Proofs.Name
-import Linger.Selector.Proofs.Fuzzy
+import Fuzzy.Proofs
 import Linger.Target.Proofs.Remote
 import Linger.Selector.Proofs.Input
 import all Linger.Display.Proofs.View
@@ -27,10 +27,8 @@ theorem matches_iff_sublist (query target : String) :
 
 /-- Scoring changes emphasis without changing which targets the filter accepts. -/
 theorem align_isSome_iff_matches (query target : String) :
-    (Linger.Selector.Fuzzy.align query target).isSome = true ↔
-      Linger.Selector.Picker.matches query target = true :=
-  (Linger.Selector.Fuzzy.align_isSome_iff_sublist query target).trans
-    (matches_iff_sublist query target).symm
+    (Fuzzy.align query target).isSome = true ↔ Linger.Selector.Picker.matches query target = true :=
+  (Fuzzy.align_isSome_iff_sublist query target).trans (matches_iff_sublist query target).symm
 
 theorem matches_empty (target : String) : Linger.Selector.Picker.matches "" target = true := by
   simp [Linger.Selector.Picker.matches]
@@ -531,9 +529,9 @@ theorem highlightedPresentation_existing_marked_iff (snapshot : Snapshot) (nameC
     (h : (highlightedPresentation snapshot nameCol query (.existing target))[index]? = some char) :
     char.matched = true ↔
       ∃ alignment,
-        Linger.Selector.Fuzzy.align query target = some alignment ∧
+        Fuzzy.align query target = some alignment ∧
           2 ≤ index ∧ index < 2 + target.length ∧ alignment.marks[index - 2]? = some true := by
-  let marks := ((Linger.Selector.Fuzzy.align query target).map (·.marks)).getD []
+  let marks := ((Fuzzy.align query target).map (·.marks)).getD []
   let body :=
     ((Linger.Display.Listing.rowPieces nameCol (snapshot.row target))[1]?).getD { text := [] }
   have span : body.nameSpan = some (1, target.length) := by
@@ -561,7 +559,7 @@ theorem highlightedPresentation_existing_marked_iff (snapshot : Snapshot) (nameC
     rw [row] at h
     rw [markPiece_marked_iff marks.toArray body index char h]
     simp only [span, Option.some.injEq, Prod.mk.injEq]
-    cases ha : Linger.Selector.Fuzzy.align query target with
+    cases ha : Fuzzy.align query target with
     | none => simp [marks, ha]
     | some
       a =>

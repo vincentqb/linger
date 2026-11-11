@@ -22,7 +22,8 @@ import all Linger.Display.Proofs.Status
 import all Linger.Display.Proofs.Title
 import all Linger.Display.Proofs.View
 import all Linger.Import.Proofs.Resurrect
-import all Linger.Selector.Proofs.Fuzzy
+import all Fuzzy.Proofs
+import all Fuzzy.Solution
 import all Linger.Selector.Proofs.Picker
 import all Linger.Selector.Proofs.Input
 import all Linger.Selector.Proofs.Key
@@ -57,33 +58,49 @@ namespace Theorems.Coverage
 
 open Lean Elab Command
 
+/-- The packages under `packages/`, each of whose top module (`Fuzzy`) and `Spec` modules are
+pure code, and whose `Proofs` and `Solution` modules are proofs. -/
+public meta def packageRoots : List String := ["Fuzzy"]
+
 /-- A module of pure code: a component's top module (`Linger.Session`), each component's
-top-level modules other than its boundary and shell, and the modules under its `Spec`. -/
+top-level modules other than its boundary and shell, the modules under its `Spec`, and a
+package's top module and `Spec` modules. -/
 public meta def pureModule (mod : Lean.Name) : Bool :=
   match mod.components.map toString with
   | ["Linger", _] => true
   | ["Linger", _, leaf] => !["Boundary", "Shell"].contains leaf
   | ["Linger", _, "Spec", _] => true
+  | [root] => packageRoots.contains root
+  | root :: "Spec" :: _ => packageRoots.contains root
   | _ => false
 
-/-- A module of proofs: the legacy `Theorems` tree and each component's `Proofs/`. -/
+/-- A module of proofs: the legacy `Theorems` tree, each component's `Proofs/`, and a package's
+`Proofs` and `Solution` modules. -/
 public meta def proofModule (mod : Lean.Name) : Bool :=
   match mod.components.map toString with
   | "Theorems" :: _ => true
   | "Linger" :: _ :: "Proofs" :: _ :: _ => true
+  | root :: "Proofs" :: _ => packageRoots.contains root
+  | [root, "Solution"] => packageRoots.contains root
   | _ => false
 
-/-- The source files under `Linger/` and `Theorems/` whose module `keep` selects, read from
-the tree so that a module nothing imports still counts. -/
+/-- The source files under `Linger/`, `Theorems/` and each package's directory whose module
+`keep` selects, read from the tree so that a module nothing imports still counts. A package's
+modules are named from its own directory. -/
 public meta def sourceModules (keep : Lean.Name → Bool) :
     IO (Array (System.FilePath × Lean.Name)) := do
   let mut found := #[]
-  for dir in ["Linger", "Theorems"] do
+  let mut roots : Array (List String × System.FilePath) := #[([], "Linger"), ([], "Theorems")]
+  if ← System.FilePath.pathExists "packages" then
+    for entry in ← System.FilePath.readDir "packages" do
+      if ← entry.path.isDir then
+        roots := roots.push (["packages", entry.fileName], entry.path)
+  for (base, dir) in roots do
     unless ← System.FilePath.pathExists dir do
       continue
     for file in ← System.FilePath.walkDir dir do
       if file.extension == some "lean" then
-        let mod := (file.withExtension "").components.foldl .mkStr .anonymous
+        let mod := ((file.withExtension "").components.drop base.length).foldl .mkStr .anonymous
         if keep mod then
           found := found.push (file, mod)
   return found.qsort (·.2.toString < ·.2.toString)
