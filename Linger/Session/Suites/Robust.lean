@@ -311,9 +311,8 @@ private def inputBurst (e : Env) : IO Unit := do
 when checkpoints and logs share a full filesystem. Exercise each recovery path. -/
 def failedDiagnostics : IO Unit := do
   let rt : Linger.Session.Shell.Daemon.Rt :=
-    { st := Linger.Session.State.boot (Linger.Terminal.Vt.Vt.init 80 24) [] [], listenFd := 0,
-      ptyFd := 0, childPid := 0,
-      saveCkpt := fun _ => throw (IO.userError "injected checkpoint save failure"),
+    { st := Linger.Session.State.boot (Terminal.Vt.Vt.init 80 24) [] [], listenFd := 0, ptyFd := 0,
+      childPid := 0, saveCkpt := fun _ => throw (IO.userError "injected checkpoint save failure"),
       dropCkpt := throw (IO.userError "injected checkpoint delete failure") }
   let full :=
     (Linger.Session.Buf.bufOffer ptyInCap .empty (ByteArray.mk (Array.replicate ptyInCap 0))).1
@@ -569,8 +568,8 @@ def run : IO UInt32 :=
       if fd ≥ 0 then
         peers := peers.push fd.toUInt64.toUInt32
     let rt : Linger.Session.Shell.Daemon.Rt :=
-      { st := Linger.Session.State.boot (Linger.Terminal.Vt.Vt.init 80 24) [] [], listenFd := lfd,
-        ptyFd, childPid := sleepPid, saveCkpt := fun _ => pure (), dropCkpt := pure () }
+      { st := Linger.Session.State.boot (Terminal.Vt.Vt.init 80 24) [] [], listenFd := lfd, ptyFd,
+        childPid := sleepPid, saveCkpt := fun _ => pure (), dropCkpt := pure () }
     let (bounded, connected) ← Linger.Session.Shell.Daemon.pollRound rt
     expect
         (peers.size == 2 * maxClients && bounded.conns.length ≤ maxClients &&
@@ -598,7 +597,7 @@ def run : IO UInt32 :=
     let cutFd := cutFdRaw.toUInt64.toUInt32
     Linger.Os.Shell.setNonblock cutFd
     let id := cutFd.toNat
-    let st0 := Linger.Session.State.boot (Linger.Terminal.Vt.Vt.init 80 24) [] []
+    let st0 := Linger.Session.State.boot (Terminal.Vt.Vt.init 80 24) [] []
     let st := (Linger.Session.step st0 (.connected id)).1
     let full := ByteArray.mk (Array.replicate outbufCap (0 : UInt8))
     let q := (Linger.Session.Buf.bufEnqueue outbufCap .empty full).1
@@ -672,8 +671,7 @@ def run : IO UInt32 :=
     let reader := "offline-reader"
     try
       let rows := (List.range 4000).map fun i => s!"row {i} {String.ofList (List.replicate 60 'x')}"
-      let saved :=
-        (Linger.Terminal.Vt.Vt.init 80 24).feedBytes (String.intercalate "\r\n" rows).toUTF8
+      let saved := (Terminal.Vt.Vt.init 80 24).feedBytes (String.intercalate "\r\n" rows).toUTF8
       IO.FS.writeBinFile s!"{e.dir}/{reader}.ckpt"
           (Linger.Session.Checkpoint.saveBytes ⟨saved, e.dir, []⟩)
       let capture ← e.spawn #["capture", "--history", reader]

@@ -3,7 +3,7 @@ module
 public import Linger.Import.Spec
 import Linger.Target.Name
 import Linger.Display.Status
-public import Linger.Terminal.Vt
+public import Terminal.Vt
 public import Linger.Session.Spec
 
 public section
@@ -169,10 +169,10 @@ private def commandNotice (details : Details) : String :=
 exact commands and source identity in labels. Quiesce captured controls before
 appending the informational command notice. -/
 def checkpoint (pane : Pane) (contents : Option String) :
-    Linger.Session.Checkpoint.Ckpt Linger.Terminal.Vt.Vt :=
+    Linger.Session.Checkpoint.Ckpt Terminal.Vt.Vt :=
   {
     vt :=
-      (((Linger.Terminal.Vt.Vt.init pane.details.cols pane.details.rows).feed
+      (((Terminal.Vt.Vt.init pane.details.cols pane.details.rows).feed
               (captureBytes (contents.getD ""))).quiesce.feed
           (commandNotice pane.details).toUTF8.toList).quiesce,
     cwd := pane.dir,

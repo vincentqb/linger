@@ -16,6 +16,10 @@ require fuzzy from "packages/fuzzy"
 /-- The terminal key decoder, a package of its own with its own challenge and audit. -/
 require input from "packages/input"
 
+/-- The VT toolkit: the emulator, renderer, streaming replay, child-facing mediation and safe
+title emission, a package of its own with its own challenge and audit. -/
+require terminal from "packages/terminal"
+
 /-- Options for every library but `Verify`: Lake builds a module with the options of one library
 that contains it, and these libraries overlap, so they share a single set. With the package's
 `warningAsError`, a public declaration without a docstring fails the build. -/
@@ -23,20 +27,6 @@ def implementationOptions : Array LeanOption := #[‚ü®`linter.missingDocs, true‚ü
 
 /-- The session library, with no external Lean dependencies. -/
 @[default_target] lean_lib Linger where leanOptions := implementationOptions
-
-/-- The VT toolkit: the emulator, renderer, streaming replay, child-facing
-mediation and safe title emission. Lake roots select what to build;
-`scripts/gates.sh` enforces the import boundary. -/
-lean_lib LingerVt where
-  roots := #[`Linger.Terminal.Mediation, `Linger.Terminal.Title, `Linger.Terminal.Replay]
-  leanOptions := implementationOptions
-
-/-- VT contracts build independently, including replay fidelity and title safety. -/
-lean_lib LingerVtTheorems where
-  roots :=
-  #[`Linger.Terminal.Proofs.Mediation, `Linger.Terminal.Proofs.Title,
-    `Linger.Terminal.Proofs.Replay]
-  leanOptions := implementationOptions
 
 /-- The native OS boundary, compiled with the clang selected by `./lake`. -/
 target shim.o pkg : System.FilePath := do
@@ -59,7 +49,7 @@ under a component's `Proofs/` is built. Lean erases proofs regardless of file pl
   #[.submodules `Theorems, .submodules `Linger.App.Proofs, .submodules `Linger.Display.Proofs,
     .submodules `Linger.Import.Proofs, .submodules `Linger.Os.Proofs,
     .submodules `Linger.Selector.Proofs, .submodules `Linger.Session.Proofs,
-    .submodules `Linger.Target.Proofs, .submodules `Linger.Terminal.Proofs]
+    .submodules `Linger.Target.Proofs]
   leanOptions := implementationOptions
 
 /-- Unit tests checked at elaboration time: every module under a component's `Tests/` is
@@ -68,7 +58,7 @@ lean_lib Tests where
   globs :=
   #[.submodules `Linger.Display.Tests, .submodules `Linger.Import.Tests,
     .submodules `Linger.Selector.Tests, .submodules `Linger.Session.Tests,
-    .submodules `Linger.Target.Tests, .submodules `Linger.Terminal.Tests]
+    .submodules `Linger.Target.Tests]
   leanOptions := implementationOptions
 
 /-- The session suites, and the shim's wait checks that `lingertest` runs, built by default so the

@@ -35,7 +35,7 @@ daemon lifetime. Exercise resize, ownership and chooser behavior independently
 of the live observer checks. -/
 def checkpointChecks (e : Env) : IO Unit := do
   let vt :=
-    (Linger.Terminal.Vt.Vt.init 40 4).feedBytes
+    (Terminal.Vt.Vt.init 40 4).feedBytes
       "older\r\nhistory\r\nfirst\r\nsecond\r\nthird\r\nsaved-screen-at-the-right\x1b]2;editor\x07".toUTF8
   let bytes := Linger.Session.Checkpoint.saveBytes ⟨vt, e.dir, [("saved", "yes")]⟩
   let path := s!"{e.dir}/saved.ckpt"
@@ -43,11 +43,11 @@ def checkpointChecks (e : Env) : IO Unit := do
   let viewer ← e.spawn #["attach", "--read-only", "saved"] 40 4
   try
     let output ← drain viewer.fd 1500
-    let rendered := hasBytes output (Linger.Terminal.Render.restore vt)
+    let rendered := hasBytes output (Terminal.Render.restore vt)
     expect rendered "read-only attach replays the saved terminal and scrollback"
     if !rendered then
       return
-    let title := ((Linger.Terminal.Vt.Vt.init 40 4).feed output.toList).windowTitle
+    let title := ((Terminal.Vt.Vt.init 40 4).feed output.toList).windowTitle
     expect (has title "saved" && has title "editor" && has title "~")
         "a saved view identifies the session, application and checkpoint in its title"
     viewer.type "echo unwanted-input\r"
@@ -63,16 +63,16 @@ def checkpointChecks (e : Env) : IO Unit := do
         Linger.Os.Shell.close fd.toUInt64.toUInt32
     viewer.resize 12 2
     let narrow ← drain viewer.fd 500
-    expect (hasBytes narrow (Linger.Terminal.Render.restore (vt.resize 12 2)))
+    expect (hasBytes narrow (Terminal.Render.restore (vt.resize 12 2)))
         "saved viewing redraws at the viewer's terminal size"
     viewer.resize 40 4
     let wide ← drain viewer.fd 500
-    expect (hasBytes wide (Linger.Terminal.Render.restore vt))
+    expect (hasBytes wide (Terminal.Render.restore vt))
         "expanding a saved view restores the original snapshot after clipping"
     viewer.detach
     let back ← drain viewer.fd 1000
     expect
-        ((← viewer.reap 1000) == 0 && hasBytes back Linger.Terminal.Render.leaveAnsi &&
+        ((← viewer.reap 1000) == 0 && hasBytes back Terminal.Render.leaveAnsi &&
           (← IO.FS.readBinFile path).toList == bytes.toList)
         "saved viewing detaches with canonical terminal handback and unchanged checkpoint"
   finally
@@ -85,7 +85,7 @@ def checkpointChecks (e : Env) : IO Unit := do
   let done ← e.spawn #["attach", "--read-only", "done"] 40 4
   try
     let titleOf := fun (output : ByteArray) =>
-      ((Linger.Terminal.Vt.Vt.init 40 4).feed output.toList).windowTitle
+      ((Terminal.Vt.Vt.init 40 4).feed output.toList).windowTitle
     let screen ← IO.mkRef ByteArray.empty
     let titled ←
       done.awaitText screen
@@ -116,7 +116,7 @@ def checkpointChecks (e : Env) : IO Unit := do
     let unsized ← e.spawn #["attach", "--read-only", "saved"] cols rows
     try
       let output ← drain unsized.fd 1000
-      expect (hasBytes output (Linger.Terminal.Render.restore expected))
+      expect (hasBytes output (Terminal.Render.restore expected))
           s!"saved viewing uses checkpoint dimensions when terminal size is unspecified ({cols}x{rows})"
     finally
       unsized.bye
@@ -130,7 +130,7 @@ def checkpointChecks (e : Env) : IO Unit := do
         let output ← drain blocked.fd 1500
         expect
             ((← blocked.reap 1000) == 1 && hasText output "owned by another process" &&
-              !hasBytes output (Linger.Terminal.Render.restore vt))
+              !hasBytes output (Terminal.Render.restore vt))
             "read-only attach refuses a checkpoint still owned by a daemon"
       finally
         blocked.bye
@@ -149,14 +149,14 @@ def checkpointChecks (e : Env) : IO Unit := do
   try
     let output ← drain literal.fd 1000
     expect
-        (hasBytes output (Linger.Terminal.Render.restore vt) &&
+        (hasBytes output (Terminal.Render.restore vt) &&
           !(← System.FilePath.pathExists s!"{e.dir}/--read-only.sock"))
         "an option-like name remains an exact read-only target after --"
   finally
     literal.bye
   IO.FS.writeBinFile s!"{e.dir}/--history.ckpt" bytes
   let (literalRc, literalText, _) ← e.cli #["capture", "--", "--history"]
-  expect (literalRc == 0 && literalText.toUTF8.toList == Linger.Terminal.Render.screenText vt)
+  expect (literalRc == 0 && literalText.toUTF8.toList == Terminal.Render.screenText vt)
       "capture -- distinguishes the literal --history name from its option"
   let chooser ←
     e.spawnEnv #[s!"XDG_CONFIG_HOME={e.dir}/config", "NO_COLOR=1"] #["attach", "--read-only"] 100 24
@@ -173,7 +173,7 @@ def checkpointChecks (e : Env) : IO Unit := do
     chooser.type "\x15saved\r"
     let selected ← drain chooser.fd 800
     expect
-        (hasBytes selected (Linger.Terminal.Render.restore (vt.resize 100 24)) &&
+        (hasBytes selected (Terminal.Render.restore (vt.resize 100 24)) &&
           !(← System.FilePath.pathExists s!"{e.dir}/saved.sock"))
         "read-only selection opens the checkpoint without resuming a program"
     chooser.detach
@@ -293,7 +293,7 @@ def run : IO UInt32 :=
     -- string, so the suite cannot drift from what the implementation hands back.
     -- `leave_canonical_all` is what proves the contents; this is that the client
     -- actually writes them, which no theorem can see.
-    let leave := Linger.Terminal.Render.leaveAnsi
+    let leave := Terminal.Render.leaveAnsi
     expect (startsWithBytes back (leave.take 2))
         "a watcher hands the terminal back too (leaveAnsi's leading ST)"
     expect (hasBytes back leave) "the watcher writes leaveAnsi verbatim, byte for byte"

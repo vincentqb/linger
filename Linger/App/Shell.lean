@@ -7,14 +7,14 @@ import Linger.Session.Shell.Daemon
 import Linger.Session.Shell.Client
 import Linger.Session.Shell.Inventory
 import Linger.Target.Remote
-import Linger.Terminal.Render
+import Terminal.Render
 import Linger.Display.Listing
 import Linger.Display.View
 import Linger.App.Commands
 import Linger.Os.Shell.Command
 import Linger.Session.Shell.Resume
 import Linger.Session.Shell.Record
-import Linger.Terminal.Mediation
+import Terminal.Mediation
 import Std.Async.Signal
 import Linger.Display.Status
 
@@ -449,7 +449,7 @@ private def runTarget (verb : String) (target : Linger.Target.Remote.Target) (ar
       child.wait
     finally
       if interactive then
-        writeAll stdoutFd (ByteArray.mk Linger.Terminal.Render.leaveAnsi.toArray)
+        writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
 
 /-- Run `verb` through `runTarget` once `Remote.parseTarget` accepts the operand; a
 malformed operand returns `invalidTarget`'s status 2 without connecting. -/
@@ -715,8 +715,8 @@ private def requireLiveSend (name : String) (m : Msg) : IO UInt32 := do
 /-- A connected daemon is authoritative, including its errors. Only an absent
 connection followed by successful ownership acquisition permits an offline read.
 Hold both locks through loading and rendering; never start or modify a session. -/
-private def cmdRead (name : String) (m : Msg) (render : Linger.Terminal.Vt.Vt → List UInt8) :
-    IO UInt32 := do
+private def cmdRead (name : String) (m : Msg) (render : Terminal.Vt.Vt → List UInt8) : IO UInt32 :=
+  do
   match ← Client.oneShot name m with
   | some result =>
     requestStatus name result
@@ -1005,7 +1005,7 @@ private def cmdGet (name : String) : IO UInt32 := do
 /-- `version`: print `linger` and `Mediation.versionNumber`, which sessions also see as
 `TERM_PROGRAM_VERSION`, then the socket and state directories this environment resolves. -/
 private def cmdVersion : IO UInt32 := do
-  IO.println s!"linger {Linger.Terminal.Mediation.versionNumber}"
+  IO.println s!"linger {Terminal.Mediation.versionNumber}"
   IO.println s!"sockets: {← Paths.socketDir}"
   IO.println s!"state:   {← Paths.stateDir}"
   return 0
@@ -1039,7 +1039,7 @@ private def captureArgs (args : List String) : IO UInt32 := do
       return ← usageError "capture"
   withTarget "capture" name []
       (cmdRead · (if history then .history else .screen)
-        (if history then Linger.Terminal.Render.history else Linger.Terminal.Render.screenText))
+        (if history then Terminal.Render.history else Terminal.Render.screenText))
       (if history then ["--history"] else [])
 
 /-- Run one session command and return its exit status: 2 for a usage error or invalid
@@ -1087,7 +1087,7 @@ def main (args : List String) : IO UInt32 := do
     match cs.toNat?, rs.toNat? with
     | some cols, some rows =>
       -- Accept exactly the sizes the emulator keeps, so the pty cannot disagree.
-      if Linger.Terminal.Vt.clampDim cols != cols || Linger.Terminal.Vt.clampDim rows != rows then
+      if Terminal.Vt.clampDim cols != cols || Terminal.Vt.clampDim rows != rows then
         do
           IO.eprintln "linger: size must be 1..1000 (the emulator clamps at 1000)"
           return 2

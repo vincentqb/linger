@@ -13,7 +13,7 @@ namespace Linger.Session.Suites.Delivery
 
 open Verify.Harness
 open Linger.Os.Shell
-open Linger.Terminal
+open Terminal
 open Linger.Session.Shell.Daemon
 open Linger.Session.Buf (owedLen)
 
@@ -98,8 +98,8 @@ def collect (rt : Rt) (peer : UInt32) (size : Nat) (wantEof : Bool := false) : I
       rt ← pump rt' events
   return (rt, r)
 
-private def withPair (dir tag : String) (vt : Linger.Terminal.Vt.Vt)
-    (f : Rt → UInt32 → UInt32 → IO Unit) : IO Unit := do
+private def withPair (dir tag : String) (vt : Terminal.Vt.Vt) (f : Rt → UInt32 → UInt32 → IO Unit) :
+    IO Unit := do
   let path := s!"{dir}/{tag}.sock"
   let listener ← unixListen path
   let idle ← unixListen s!"{path}.idle"
@@ -163,7 +163,7 @@ private def largeReplay (dir : String) (marks : Bool) : IO Unit := do
       expect (!got.eof && !got.decoder.errored && got.bounded) s!"delivery/{label}/live-framing"
 
 private def exitTail (dir : String) : IO Unit :=
-  withPair dir "exit" (Linger.Terminal.Vt.Vt.init 20 5) fun rt peer fd => do
+  withPair dir "exit" (Terminal.Vt.Vt.init 20 5) fun rt peer fd => do
     let st := (Session.step rt.st (.bytes fd.toNat (Wire.encode (.attach 20 5)))).1
     let mut rt := { rt with st }
     let mut expected := ByteArray.empty
@@ -185,7 +185,7 @@ private def exitTail (dir : String) : IO Unit :=
 /-- Both messages are decoded before effects run. A replay read from the final
 runtime state would paint the resized screen instead of the attach snapshot. -/
 def snapshotOrder (dir : String) : IO Unit := do
-  let vt := (Linger.Terminal.Vt.Vt.init 20 5).feed "snapshot".toUTF8.toList
+  let vt := (Terminal.Vt.Vt.init 20 5).feed "snapshot".toUTF8.toList
   let expected := ByteArray.mk (Render.restore vt).toArray
   withPair dir "snapshot" vt fun rt peer fd => do
       let rt ← pump rt [.bytes fd.toNat (Wire.encode (.attach 20 5) ++ Wire.encode (.resize 21 6))]
@@ -216,7 +216,7 @@ def pendingWrap (dir : String) : IO Unit := do
               s!"delivery/pending/{slot}-{glyph}"
 
 private def repeatedAttach (dir : String) : IO Unit := do
-  let vt := Linger.Terminal.Vt.Vt.init 20 5
+  let vt := Terminal.Vt.Vt.init 20 5
   let expected := ByteArray.mk (Render.restore vt).toArray
   withPair dir "repeat" vt fun rt peer fd => do
       let request := Wire.encode (.attach 20 5)
@@ -233,7 +233,7 @@ private def repeatedAttach (dir : String) : IO Unit := do
 /-- Even an invalid effect sequence is confined to its peer, rather than
 throwing out of the serving loop. Ordinary repeated attach never emits it. -/
 def duplicateEffect (dir : String) : IO Unit := do
-  let vt := Linger.Terminal.Vt.Vt.init 20 5
+  let vt := Terminal.Vt.Vt.init 20 5
   withPair dir "duplicate-effect" vt fun rt _peer fd => do
       let rt ← pump rt [.bytes fd.toNat (Wire.encode (.attach 0 0))]
       let cleaned ←
@@ -251,7 +251,7 @@ def duplicateEffect (dir : String) : IO Unit := do
 /-- A queued reply may precede the attach message; its short-write remainder
 must precede the captured replay, just as later PTY output must follow it. -/
 def prefixOrder (dir : String) : IO Unit := do
-  let vt := Linger.Terminal.Vt.Vt.init 20 5
+  let vt := Terminal.Vt.Vt.init 20 5
   withPair dir "prefix" vt fun rt peer fd => do
       let mut rt := rt
       let preceding := ByteArray.mk (Array.replicate (8 * Session.outputChunk) 0x41)
@@ -299,7 +299,7 @@ def liveBound (dir : String) : IO Unit := do
 /-- A deferred logical close cannot retain a nonreading transport forever. -/
 def closeGrace (dir : String) (shutdown : Bool) : IO Unit := do
   let tag := if shutdown then "shutdown-grace" else "close-grace"
-  withPair dir tag (Linger.Terminal.Vt.Vt.init 20 5) fun rt _peer fd => do
+  withPair dir tag (Terminal.Vt.Vt.init 20 5) fun rt _peer fd => do
       let mut rt := rt
       for _ in [:16] do
         let (rt', feedback) ←
@@ -375,7 +375,7 @@ def serveProbe (dir : String) : IO UInt32 := do
     if ((Session.infoFields st).lookup "exit").isSome then
       IO.FS.writeFile s!"{dir}/exited" ""
   serve "tail" dir [bin.toString, "--delivery-child", s!"{dir}/go"] saveEnded (pure ())
-      (pure (some (Linger.Terminal.Vt.Vt.init 20 5, dir, [])))
+      (pure (some (Terminal.Vt.Vt.init 20 5, dir, [])))
       { load := pure none, save := fun _ => pure (), restore := fun _ => pure () }
   return 0
 
@@ -399,7 +399,7 @@ private def serveTail (dir : String) : IO Unit := do
     peer.set (some fd)
     setNonblock fd
     writeAll fd (ByteArray.mk (Wire.encode (.attach 0 0)).toArray)
-    let repaint := ByteArray.mk (Render.restore (Linger.Terminal.Vt.Vt.init 20 5)).toArray
+    let repaint := ByteArray.mk (Render.restore (Terminal.Vt.Vt.init 20 5)).toArray
     let mut got : Received := {}
     let attachedBy := (← IO.monoMsNow) + 10000
     while !got.eof && got.bytes.size < repaint.size && (← IO.monoMsNow) < attachedBy do

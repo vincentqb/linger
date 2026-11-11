@@ -1,14 +1,14 @@
 module
 
 import all Linger.Session
-import all Linger.Terminal.Vt
-import all Linger.Terminal.Mediation
+import all Terminal.Vt
+import all Terminal.Mediation
 import all Linger.Session.Wire
-import all Linger.Terminal.Render
+import all Terminal.Render
 -- The `Vt` seal makes the proof layer module-private, so the rungs this file
 -- composes arrive through `import all`.
-import all Linger.Terminal.Proofs.Mediation
-import all Linger.Terminal.Proofs.Render
+import all Terminal.Proofs.Mediation
+import all Terminal.Proofs.Render
 import all Linger.Session.Proofs.Wire
 -- `Linger.Session.Proofs.Checkpoint` is here for one claim: `Checkpoint.load_live`, which makes
 -- `LiveVt` provable for a *resumed* daemon (§Resume at the daemon, below).
@@ -43,9 +43,9 @@ THEOREMS.md rows:
 
 namespace Linger.Session
 
-open Linger.Terminal
+open Terminal
 open Linger.Session.Wire (Msg)
-open Linger.Terminal.Replay (Plan)
+open Terminal.Replay (Plan)
 
 attribute [local grind] controlResize resizeOwned resize State.setClient
 
@@ -898,12 +898,12 @@ theorem step_vt_preserves {P : Vt.Vt → Prop}
     · exact h
   · exact h
 
-open Linger.Terminal.Vt (Good) in
+open Terminal.Vt (Good) in
 /-- §Total end-to-end: the screen state a daemon holds stays Good
 whatever events arrive — adversarial clients and pty output included. -/
 theorem step_vt_good (s : State) (ev : Event) (h : Good s.vt) : Good (step s ev).1.vt :=
-  step_vt_preserves (fun _ cols rows hv => Linger.Terminal.Vt.Good.resize cols rows hv)
-    (fun _ bytes hv => Linger.Terminal.Vt.Good.feed bytes hv) s ev h
+  step_vt_preserves (fun _ cols rows hv => Terminal.Vt.Good.resize cols rows hv)
+    (fun _ bytes hv => Terminal.Vt.Good.feed bytes hv) s ev h
 
 /-! ## §Unread — the output counter
 
@@ -1131,7 +1131,7 @@ theorem run_eq_foldl (s : State) (evs : List Event) :
 
 /-- The daemon's composite invariant: everything the per-step theorems
 preserve, as one predicate. -/
-def WF (s : State) : Prop := Bounded s ∧ Linger.Terminal.Vt.Good s.vt
+def WF (s : State) : Prop := Bounded s ∧ Terminal.Vt.Good s.vt
 
 theorem step_wf (s : State) (ev : Event) (h : WF s) : WF (step s ev).1 :=
   ⟨step_bounded s ev h.1, step_vt_good s ev h.2⟩
@@ -1164,7 +1164,7 @@ new content — which is the point: the replay theorem may assume a *reachable*
 grid without that assumption smuggling in a side condition.
 -/
 
-open Linger.Terminal.Vt (Live LiveReachableVt Renderable)
+open Terminal.Vt (Live LiveReachableVt Renderable)
 
 /-- The daemon's terminal is one a live session can hold. -/
 def LiveVt (s : State) : Prop := LiveReachableVt s.vt
@@ -1185,8 +1185,7 @@ theorem run_vt_live (s : State) (evs : List Event) (h : LiveVt s) : LiveVt (run 
 has been through — adversarial clients, hostile pty bytes, resizes, any
 interleaving — the grid it holds is one `Render.restore` can express. -/
 theorem run_vt_renderable (s : State) (evs : List Event) (h : LiveVt s) :
-    Renderable (run s evs).1.vt :=
-  Linger.Terminal.Vt.renderable_of_liveReachable (run_vt_live s evs h)
+    Renderable (run s evs).1.vt := Terminal.Vt.renderable_of_liveReachable (run_vt_live s evs h)
 
 /-- A fresh boot through `State.boot`, the one door the runtime walks through,
 satisfies the hypothesis, so the statement above is not conditional in practice. -/
@@ -1243,7 +1242,7 @@ sources for `vt0`: `none` is a fresh `Vt.init 80 24`, `some` is a decoded checkp
 is where the `ofDecoded` rung is load-bearing — the `some` branch has no other witness.
 Stated over `bootVt` itself, the term `Daemon.lean` calls. -/
 theorem liveReachableVt_resumeVt (b : ByteArray) :
-    Linger.Terminal.Vt.LiveReachableVt (bootVt ((Checkpoint.loadBytes b).map (·.vt))) := by
+    Terminal.Vt.LiveReachableVt (bootVt ((Checkpoint.loadBytes b).map (·.vt))) := by
   unfold bootVt
   rcases hl : Checkpoint.loadBytes b with - | c
   · exact Live.init 80 24
@@ -1254,7 +1253,7 @@ of `run_boot_wf`: whatever a session has been through — adversarial clients, h
 bytes, resizes, any interleaving — its terminal is still one a live session can hold,
 whether it booted fresh (`liveVt_boot`) or resumed (`liveVt_boot_of_load`). -/
 theorem run_boot_vt_live (vt : Vt.Vt) (labels metaKv : List (String × String)) (evs : List Event)
-    (h : Linger.Terminal.Vt.LiveReachableVt vt) :
+    (h : Terminal.Vt.LiveReachableVt vt) :
     LiveVt (run (State.boot vt labels metaKv) evs).1 := run_vt_live _ _ h
 
 /-- **The A2 anchor for the screen, made structural.** Every state the daemon can *possess*
@@ -1267,11 +1266,11 @@ left to assemble, and the resumed half of it did not exist: `run_vt_renderable` 
 is the second hypothesis `Render.restore_tabs_any` and `Resume.resume_tabs` ask for and
 `Renderable` does not carry. -/
 theorem run_boot_vt_shape (vt : Vt.Vt) (labels metaKv : List (String × String)) (evs : List Event)
-    (h : Linger.Terminal.Vt.LiveReachableVt vt) :
+    (h : Terminal.Vt.LiveReachableVt vt) :
     Renderable (run (State.boot vt labels metaKv) evs).1.vt ∧
-      Linger.Terminal.Vt.TabsOk (run (State.boot vt labels metaKv) evs).1.vt :=
-  ⟨Linger.Terminal.Vt.renderable_of_liveReachable (run_boot_vt_live vt labels metaKv evs h),
-    Linger.Terminal.Vt.tabsOk_of_liveReachable (run_boot_vt_live vt labels metaKv evs h)⟩
+      Terminal.Vt.TabsOk (run (State.boot vt labels metaKv) evs).1.vt :=
+  ⟨Terminal.Vt.renderable_of_liveReachable (run_boot_vt_live vt labels metaKv evs h),
+    Terminal.Vt.tabsOk_of_liveReachable (run_boot_vt_live vt labels metaKv evs h)⟩
 
 /-- **The same claim with no hypothesis at all, over the term the daemon computes.** `b` is
 an arbitrary `ByteArray` — a corrupt file, a truncated one, a hostile one, or a real
@@ -1284,7 +1283,7 @@ Unprovable before the `ofDecoded` rung: the `some` branch had no `LiveVt`. -/
 theorem run_resume_vt_shape (b : ByteArray) (labels metaKv : List (String × String))
     (evs : List Event) :
     Renderable (run (State.boot (resumeVt b) labels metaKv) evs).1.vt ∧
-      Linger.Terminal.Vt.TabsOk (run (State.boot (resumeVt b) labels metaKv) evs).1.vt :=
+      Terminal.Vt.TabsOk (run (State.boot (resumeVt b) labels metaKv) evs).1.vt :=
   run_boot_vt_shape _ labels metaKv evs (liveReachableVt_resumeVt b)
 
 /-- **A1 across a *second* reboot.** The checkpoint a resumed session writes loads back
@@ -1320,8 +1319,8 @@ simply false of a resumed daemon (the gap that sized this step). The `Good vt`
 hypothesis is honest: a fresh boot has `Good (Vt.init …)`, and the resume
 path's decoded emulator carries it from the checkpoint theorems' side. -/
 
-theorem boot_wf (vt : Vt.Vt) (labels metaKv : List (String × String))
-    (h : Linger.Terminal.Vt.Good vt) : WF (State.boot vt labels metaKv) :=
+theorem boot_wf (vt : Vt.Vt) (labels metaKv : List (String × String)) (h : Terminal.Vt.Good vt) :
+    WF (State.boot vt labels metaKv) :=
   ⟨⟨Nat.zero_le _, List.length_take_le _ _, nofun, trivial⟩, h⟩
 
 /-- **The A2 anchor made structural**: every state reachable from any boot —
@@ -1329,7 +1328,7 @@ which, by the seal, is every state the daemon can possess — is well-formed,
 whatever the trace: adversarial clients, hostile pty bytes, forged
 checkpoints' label lists, any interleaving. -/
 theorem run_boot_wf (vt : Vt.Vt) (labels metaKv : List (String × String)) (evs : List Event)
-    (h : Linger.Terminal.Vt.Good vt) :
+    (h : Terminal.Vt.Good vt) :
     WF (run (State.boot vt labels metaKv) evs).1 := run_wf _ _ (boot_wf vt labels metaKv h)
 
 /-- **Only the size owner resizes the pty** — as a theorem rather than a
@@ -1873,7 +1872,7 @@ below need no hypothesis about where a field came from.
 
 The fix is also what makes them provable at all: the old shape ended in
 `String.toUTF8`, and a `String` does not reduce in the kernel — the same argument
-`Linger/Terminal/Render.lean`'s header makes, and the same reason `Render.history` was the
+`packages/terminal/Terminal/Render.lean`'s header makes, and the same reason `Render.history` was the
 last byte stream to acquire a proof rather than merely a *bound*: it too was assembled
 through `String` until `rowText` was rebuilt on `List UInt8`, which is what earned it
 `history_framing`/`history_lines`. `Theorems/Coverage.lean` now requires exact

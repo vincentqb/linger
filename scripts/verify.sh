@@ -86,7 +86,7 @@ say "1. build (program + theorems + tests + audit)"
 # Run `./lake clean` first for clean release/compiler validation. The list holds every
 # default target (scripts/gates.sh checks), so a fresh checkout runs the Lean Software Challenge audit
 # here, as a local `./lake build` does.
-./lake --rehash --wfail build Linger LingerVt LingerVtTheorems \
+./lake --rehash --wfail build Linger \
     Theorems Tests Suites linger lingertest suites audit > "$logs/build.log" 2>&1 \
   || { tail -30 "$logs/build.log"; fail "build (see $logs/build.log)"; }
 # --wfail ignores warnings from elaborating lakefile.lean; this grep sees them.

@@ -425,7 +425,7 @@ exit 0
     let (rc, err, calls) ← invoke text "" "0" #[path]
     expect
         (rc == 1 && err.startsWith "linger tmux import: " && has err cause && err.endsWith "\n" &&
-          (err.dropEnd 1).toString.toList.all (fun c => Linger.Terminal.Render.textChar c == c) &&
+          (err.dropEnd 1).toString.toList.all (fun c => Terminal.Render.textChar c == c) &&
           calls.isEmpty)
         s!"linger tmux import renders {cause} errors without terminal controls"
   let regular := root / "regular-file"

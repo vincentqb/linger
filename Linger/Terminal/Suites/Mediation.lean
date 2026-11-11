@@ -1,7 +1,7 @@
 module
 
 public import Verify.Harness
-import Linger.Terminal.Mediation
+import Terminal.Mediation
 
 public section
 
@@ -44,8 +44,8 @@ namespace Linger.Terminal.Suites.Mediation
 
 open Verify.Harness
 open Linger.Os.Shell
-open Linger.Terminal.Render (csiPlain escSeq)
-open Linger.Terminal.Mediation (STFinal classifyCsi xtgetcapReply)
+open Terminal.Render (csiPlain escSeq)
+open Terminal.Mediation (STFinal classifyCsi xtgetcapReply)
 
 /-! ## The queries, and what the mediator itself says they answer -/
 
@@ -71,7 +71,7 @@ def evilQuery : List UInt8 := escSeq 0x50 ++ [0x2B, 0x71] ++ evilPayload ++ escS
 only the cursor sampler for CPR and the geometry for `CSI 18 t`; DA1's row does not
 look at it, so any well-formed one will do. -/
 def csiAnswer (q : List UInt8) : List UInt8 :=
-  match classifyCsi (Linger.Terminal.Vt.Vt.init 80 24) q with
+  match classifyCsi (Terminal.Vt.Vt.init 80 24) q with
   | .owned reply => reply
   | .unowned => []
 
@@ -266,7 +266,7 @@ def run : IO UInt32 :=
       -- is not an exported value; the version is derived. See the module docstring
       expect
           (data.term == some "xterm-256color" && data.termProgram == some "linger" &&
-            data.termVersion == some Linger.Terminal.Mediation.versionNumber)
+            data.termVersion == some Terminal.Mediation.versionNumber)
           s!"stable child terminal profile with {clients} client(s)"
       if clients != 0 then
         -- nested a level deeper on purpose: with nobody attached there is no client

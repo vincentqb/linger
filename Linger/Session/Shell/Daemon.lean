@@ -33,7 +33,7 @@ by itself. Between events it sleeps until the session's next tick (`State.nextTi
 idle session costs no wakeup.
 
 `Linger/Session/Proofs/Buf.lean` proves the byte-buffer caps, shared allowance and removal of
-written prefixes. `Linger/Terminal/Proofs/Replay.lean` proves the cursor's exact stream,
+written prefixes. `packages/terminal/Terminal/Proofs/Replay.lean` proves the cursor's exact stream,
 progress and storage bound. Runtime scheduling and short-write handling are
 `IO`, so source gates tie these proved operations to their actual consumers.
 
@@ -50,8 +50,8 @@ namespace Linger.Session.Shell.Daemon
 open Linger.Os.Shell
 open Linger.Session (State Event Effect Outcome maxClients)
 open Linger.Session.Buf (Buf owedLen bufOffer bufEnqueue bufAdvance followingCap)
-open Linger.Terminal
-open Linger.Terminal.Replay (Plan)
+open Terminal
+open Terminal.Replay (Plan)
 
 /-- One write attempt for a `Linger.Session.Buf` queue, skipping the `sent` bytes the
 flush loop already got out. The result is `write`'s: `≥ 0` bytes written (0 = would
@@ -835,8 +835,7 @@ and starts nothing for a live session or a name no session holds (`Start.resumeP
 it takes the request's ticket before the session is visible, and starts nothing when the command
 took it first (`Start.proceeds`). -/
 def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State → IO Unit)
-    (dropCkpt : IO Unit)
-    (loadCkpt : IO (Option (Linger.Terminal.Vt.Vt × String × List (String × String))))
+    (dropCkpt : IO Unit) (loadCkpt : IO (Option (Terminal.Vt.Vt × String × List (String × String))))
     (record : RecordFile) (start : Option Request := none) (resume : Bool := false) : IO Unit := do
   let deadline := (← monotonicMs) + claimWaitMs
   let reported ← IO.mkRef false
@@ -935,8 +934,8 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
         record.save (.running none)
         let spawned ←
           try
-            trySpawnPty (UInt32.ofNat (Linger.Terminal.Vt.clampDim vt0.colCount))
-                (UInt32.ofNat (Linger.Terminal.Vt.clampDim vt0.rowCount)) cwd prog args
+            trySpawnPty (UInt32.ofNat (Terminal.Vt.clampDim vt0.colCount))
+                (UInt32.ofNat (Terminal.Vt.clampDim vt0.rowCount)) cwd prog args
                 ((Start.environment name).toArray.map fun (key, value) => s!"{key}={value}")
           catch err =>
             record.restore previous

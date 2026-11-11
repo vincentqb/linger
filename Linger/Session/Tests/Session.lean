@@ -2,7 +2,7 @@ module
 
 import all Linger.Session
 -- These fixtures read the screen they assert about and run compiled under `native_decide`.
-import all Linger.Terminal.Vt
+import all Terminal.Vt
 import all Linger.Session.Wire
 meta import Linger.Session
 
@@ -19,10 +19,10 @@ the daemon itself cannot do the same. -/
 
 namespace Linger.Session.Tests
 
-open Linger.Terminal
-open Linger.Terminal.Mediation
+open Terminal
+open Terminal.Mediation
 open Linger.Session.Wire (Msg encode)
-open Linger.Terminal.Replay (Plan)
+open Terminal.Replay (Plan)
 
 def s0 : State := { vt := Vt.Vt.init 20 5, metaKv := [("name", "t")] }
 
@@ -603,7 +603,7 @@ example :
               .bytes 1 (encode (.resize 65536 5))]].all
         fun evs =>
         let (s, effs) := run evs
-        s.vt.colCount == Linger.Terminal.Vt.clampDim 65536 &&
+        s.vt.colCount == Terminal.Vt.clampDim 65536 &&
           (effs.filterMap fun
                 | .resizePty c r => some (c.toNat, r.toNat)
                 | _ => none).getLast? ==

@@ -7,8 +7,8 @@ import Linger.Session.Buf
 record rewriters that could plant a client the daemon never admitted. Keep this
 separate from the friend-import fixtures in `Linger.Session.Tests.Session`. -/
 
-open Linger Linger.Session Linger.Terminal
-open Linger.Terminal.Replay (Plan)
+open Linger Linger.Session Terminal
+open Terminal.Replay (Plan)
 
 example (vt : Vt.Vt) : List (Effect Plan) := (run (State.boot vt [] []) [.connected 0, .tick 0]).2
 

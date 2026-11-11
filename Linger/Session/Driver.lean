@@ -7,7 +7,7 @@ public section
 namespace Linger.Session.Driver
 
 open Linger.Session (State Event Effect step)
-open Linger.Terminal.Replay (Plan)
+open Terminal.Replay (Plan)
 
 /-- The events an effect's reply feeds back to the session. -/
 def feedback : (eff : Effect Plan) → Reply eff → List Event

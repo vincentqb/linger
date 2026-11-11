@@ -1,7 +1,7 @@
 module
 
 public import Linger.Session.Spec
-import Linger.Terminal.Mediation
+import Terminal.Mediation
 
 public section
 

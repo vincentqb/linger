@@ -46,13 +46,13 @@ def run : IO UInt32 :=
       let (emptyUnsetRc, _, _) ← e.cli #["unset", "a_b", ""]
       expect (bareSetRc == 2 && emptyUnsetRc == 2)
           "label commands reject malformed arguments as usage errors"
-      let vt := (Linger.Terminal.Vt.Vt.init 20 2).feedBytes "old\r\nmiddle\r\nscreen".toUTF8
+      let vt := (Terminal.Vt.Vt.init 20 2).feedBytes "old\r\nmiddle\r\nscreen".toUTF8
       let bytes := Linger.Session.Checkpoint.saveBytes ⟨vt, e.dir, [("saved", "yes")]⟩
       let path := s!"{e.dir}/saved.ckpt"
       IO.FS.writeBinFile path bytes
       for (args, expected) in
-        [(#["capture", "--history", "saved"], Linger.Terminal.Render.history vt),
-          (#["capture", "saved"], Linger.Terminal.Render.screenText vt)] do
+        [(#["capture", "--history", "saved"], Terminal.Render.history vt),
+          (#["capture", "saved"], Terminal.Render.screenText vt)] do
         let (rc, out, _) ← e.cli args
         expect (rc == 0 && out.toUTF8.toList == expected)
             s!"offline {repr args} reads the saved terminal exactly"

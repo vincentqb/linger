@@ -1,7 +1,7 @@
 module
 
 import Verify.Harness
-import Linger.Terminal.Mediation
+import Terminal.Mediation
 
 public section
 
@@ -35,8 +35,8 @@ literals, which makes them fixture data rather than a stale copy of an emitter. 
 namespace Linger.Terminal.Suites.Graphics
 
 open Verify.Harness
-open Linger.Terminal.Render (escSeq)
-open Linger.Terminal.Mediation (STFinal)
+open Terminal.Render (escSeq)
+open Terminal.Mediation (STFinal)
 
 /-- ST, the terminator both protocols end with, spelled as the mediator spells its
 own byte. -/

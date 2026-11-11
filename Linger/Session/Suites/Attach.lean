@@ -29,10 +29,10 @@ emitter, and it should not be read as one. -/
 
 namespace Linger.Session.Suites.Attach
 
-open Linger.Terminal
+open Terminal
 open Verify.Harness
-open Linger.Terminal.Render (leaveAnsi modeSet csiNum csiNum2 csiPlain escSeq escCharset titleAnsi)
-open Linger.Terminal.Vt (Vt)
+open Terminal.Render (leaveAnsi modeSet csiNum csiNum2 csiPlain escSeq escCharset titleAnsi)
+open Terminal.Vt (Vt)
 open Linger.Session (outputChunk)
 open Linger.Session.Shell.Daemon (outbufCap)
 
@@ -52,7 +52,7 @@ def closeFeedback (e : Env) : IO Unit := do
       let saved ← IO.mkRef (0 : Nat)
       let dropped ← IO.mkRef (0 : Nat)
       let st :=
-        (Linger.Session.run (.boot (Linger.Terminal.Vt.Vt.init 20 5) [] [])
+        (Linger.Session.run (.boot (Terminal.Vt.Vt.init 20 5) [] [])
             [.connected fd.toNat, .bytes fd.toNat (Linger.Session.Wire.encode (.attach 20 5)),
               .ptyOut "pending checkpoint".toUTF8.toList]).1
       let rt : Linger.Session.Shell.Daemon.Rt :=
@@ -115,7 +115,7 @@ def appStateCmd : String :=
   "printf '\\033[?1049h\\033[?1000h\\033[?1006h\\033[?25l\\033[?2004h" ++
     "\\033[?7l\\033[5;10r\\033(0\\033[1;31;4m\\033[?1h\\033=X" ++
     "\\033]2;hostile-detach\\007\\033]2;truncated-detach" ++
-    String.ofList (List.replicate Linger.Terminal.Mediation.oscCap 'x') ++
+    String.ofList (List.replicate Terminal.Mediation.oscCap 'x') ++
     "'; exec sleep 600\r"
 
 /-- A ring of per-cell truecolour rows — the shape whose bytes the scrollback
@@ -355,7 +355,7 @@ def run : IO UInt32 :=
     -- With no daemon, kill discards a saved session, and then finds none.
     let savedPath := s!"{e.dir}/w-saved.ckpt"
     IO.FS.writeBinFile savedPath
-        (Linger.Session.Checkpoint.saveBytes ⟨Linger.Terminal.Vt.Vt.init 20 2, e.dir, []⟩)
+        (Linger.Session.Checkpoint.saveBytes ⟨Terminal.Vt.Vt.init 20 2, e.dir, []⟩)
     let (savedRc, _, _) ← e.cli #["kill", "w-saved"]
     let discarded := !(← System.FilePath.pathExists savedPath)
     let (absentRc, _, absentErr) ← e.cli #["kill", "w-saved"]
@@ -369,7 +369,7 @@ def run : IO UInt32 :=
     -- keep the child quiet afterwards so nothing completes it before handback.
     lost.type
         ("printf '\\033]2;hostile-lost\\007\\033]2;truncated-lost" ++
-          String.ofList (List.replicate Linger.Terminal.Mediation.oscCap 'x') ++
+          String.ofList (List.replicate Terminal.Mediation.oscCap 'x') ++
           "'; exec sleep 600\r")
     let lostDirty ← drain lost.fd 800
     let lostReceiver := (receiver.feed lostInitial.toList).feed lostDirty.toList
@@ -429,8 +429,7 @@ def run : IO UInt32 :=
     -- The truncated title is the application's last output; once all of it has
     -- arrived the stream is quiet, so the handback below is the next thing read.
     let truncated :=
-      ("\x1b]2;truncated-detach" ++
-        String.ofList (List.replicate Linger.Terminal.Mediation.oscCap 'x'))
+      ("\x1b]2;truncated-detach" ++ String.ofList (List.replicate Terminal.Mediation.oscCap 'x'))
     let app ← IO.mkRef ByteArray.empty
     let _ ← h.awaitText app (hasText · truncated)
     let dirty ← app.get

@@ -51,8 +51,7 @@ in the foreground, as the verifier.
   `Shell.lean` the checked surface callers use, `Env.lean` the environment policies.
 - `Linger/Target/`: session names and remote targets.
 - `Linger/Display/`: session status, titles and listings.
-- `Linger/Terminal/`: the VT toolkit: the emulator `Vt`, `Render`, streaming `Replay`,
-  child-facing `Mediation` and safe `Title` updates.
+- `Linger/Terminal/Suites/`: live suites of the VT toolkit as linger runs it.
 - `Linger/Session.lean` and `Linger/Session/`: the session machine, its effect `Driver`,
   `Wire` format, `Buf` queues and `Checkpoint`s; `Shell/` holds the daemon, the attach
   client, checkpoint files and state paths.
@@ -71,13 +70,16 @@ in the foreground, as the verifier.
 - `Theorems/`: the headline proofs (`Solution.lean`), the cross-component contracts and the
   coverage census; `Verify/`: the verifier's harness, runner and own suites.
 - `packages/`: Lake packages linger requires by path, each with its own `Challenge`, solution,
-  `comparator.json` and audit, which linger's audit trusts: `fuzzy`, the fuzzy matcher (module
-  and namespace `Fuzzy`), and `input`, the bounded terminal key decoder (`Input`). Build one
-  alone with `../../lake build` in its directory; it shares linger's `.lake/packages`.
+  `comparator.json` and audit: `fuzzy`, the fuzzy matcher (module and namespace `Fuzzy`),
+  `input`, the bounded terminal key decoder (`Input`), and `terminal`, the VT toolkit
+  (`Terminal`): the emulator `Vt`, `Render`, streaming `Replay`, child-facing `Mediation` and
+  safe `Title` updates. Linger's audit trusts each package, and linger's headlines may name a
+  package's parts, which its own headlines claim. Build one alone with `../../lake build` in its
+  directory; it shares linger's `.lake/packages`.
 - `scripts/`: build and verification orchestration.
 
-Components depend downward only: `Os`, `Target` and `Terminal`; then `Display`; then `Session`
-and `Selector`; then `Import`; then `App`.
+Components depend downward only: `Os` and `Target`; then `Display`; then `Session` and
+`Selector`; then `Import`; then `App`. Packages import no component.
 
 Keep module paths and namespaces aligned. Use ordinary `import` for implementation
 dependencies; reserve `public import` for types in the public interface and

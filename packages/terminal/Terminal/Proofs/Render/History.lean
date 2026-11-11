@@ -1,0 +1,204 @@
+module
+
+import all Terminal.Render
+import all Terminal.Vt
+import all Terminal.Proofs.Render.Sticky
+
+-- Module-private by default: `Vt`'s fields are sealed (see `packages/terminal/Terminal/Proofs/Vt/State.lean`).
+
+/-! # §Row integrity for `linger capture --history` — a cell cannot inject a line break
+
+`history`'s framing: every byte is a line terminator or printable content, and the
+newline count is the row count, so a cell's contents cannot forge a line. Split out
+of `packages/terminal/Terminal/Proofs/Render.lean`. -/
+
+namespace Terminal.Render
+
+open Terminal.Vt
+
+/-! ## §Row integrity for `linger capture --history` — a cell cannot inject a line break
+
+`rowText` builds `List UInt8` rather than `String`, so both claims reduce in the kernel.
+
+They matter for the same reason `infoText`'s do. `linger capture --history` is line-oriented
+output that a caller may parse, and a *cell* is attacker-influenced — a program running
+in the session writes whatever it likes into the grid. `Render.safeChar` maps a C0
+control to U+FFFD on the way out, so a cell holding a newline cannot forge a line, and
+the line count is exactly the row count. -/
+
+/-- The scrubbing happens **in `rowChars`**, not only at the encoder. Worth proving
+separately: `rowText_scrubbed` below is true even without this, because `utf8s` scrubs
+again on the way out — so without it the claim would rest on a single guard, and this
+says the grid never hands a control codepoint to the encoder in the first place. -/
+theorem rowChars_scrubbed (row : Row) :
+    ∀ c ∈ rowChars row, 0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0) := by
+  intro c hc
+  obtain ⟨cell, -, hc⟩ := List.mem_flatMap.mp hc
+  split at hc
+  · simp at hc
+  · rcases List.mem_cons.mp hc with rfl | h
+    · exact textChar_safe cell.base
+    · obtain ⟨m, -, rfl⟩ := List.mem_map.mp h
+      exact textChar_safe m
+
+/-- Trimming only drops, so it cannot introduce a character `rowChars` excluded. -/
+theorem dropTrailingBlanks_subset (cs : List Char) : ∀ c ∈ dropTrailingBlanks cs, c ∈ cs := by
+  intro c hc
+  unfold dropTrailingBlanks at hc
+  rw [List.mem_reverse] at hc
+  exact List.mem_reverse.mp ((List.dropWhile_sublist _).mem hc)
+
+theorem rowText_scrubbed (row : Row) : ∀ b ∈ rowText row, 0x20 ≤ b ∧ b ≠ 0x7F := utf8s_no_ctl _
+
+theorem rowText_no_lf (row : Row) : ∀ b ∈ rowText row, b ≠ 0x0A := by
+  intro b hb; have := rowText_scrubbed row b hb; grind
+
+theorem rows_framing (rows : List Row) :
+    ∀ b ∈ rows.flatMap (fun row => rowText row ++ [0x0A]), b = 0x0A ∨ (0x20 ≤ b ∧ b ≠ 0x7F) := by
+  intro b hb
+  obtain ⟨row, -, hmem⟩ := List.mem_flatMap.mp hb
+  rcases List.mem_append.mp hmem with h | h
+  · exact Or.inr (rowText_scrubbed row b h)
+  · exact Or.inl (List.mem_singleton.mp h)
+
+/-- **Capture text, character by character.** The rows' bytes are the UTF-8 encoding of
+characters each of which is a line terminator or a codepoint that is no C0 control, DEL or C1
+control. `rows_framing` cannot say the C1 half: every byte of an encoded C1 control is at
+least `0x80`. -/
+theorem rows_text (rows : List Row) :
+    ∃ cs : List Char,
+      rows.flatMap (fun row => rowText row ++ [0x0A]) = cs.flatMap utf8 ∧
+        ∀ c ∈ cs,
+          c = '\n' ∨ (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := by
+  refine
+    ⟨rows.flatMap fun row => (dropTrailingBlanks (rowChars row)).map safeChar ++ ['\n'], ?_, ?_⟩
+  · simp only [rowText, utf8s_eq_flatMap, List.flatMap_assoc, List.flatMap_append,
+      List.flatMap_cons, List.flatMap_nil, List.append_nil]
+    rfl
+  · intro c hc
+    obtain ⟨row, -, hmem⟩ := List.mem_flatMap.mp hc
+    rcases List.mem_append.mp hmem with h | h
+    · obtain ⟨d, hd, rfl⟩ := List.mem_map.mp h
+      have hs := rowChars_scrubbed row d (dropTrailingBlanks_subset _ d hd)
+      rw [safeChar_eq_self hs.1 hs.2.1]
+      exact Or.inr hs
+    · exact Or.inl (List.mem_singleton.mp h)
+
+/-- **Every byte is a line terminator or printable content.** -/
+theorem history_framing (v : Vt) : ∀ b ∈ history v, b = 0x0A ∨ (0x20 ≤ b ∧ b ≠ 0x7F) :=
+  rows_framing _
+
+theorem count_rows :
+    ∀ (rows : List Row), (rows.flatMap (fun row => rowText row ++ [0x0A])).count 0x0A = rows.length
+  | [] => rfl
+  | row :: t => by
+    rw [List.flatMap_cons, List.count_append, count_rows t, List.count_append,
+      List.count_eq_zero.mpr (fun hmem => rowText_no_lf row 0x0A hmem rfl)]
+    simp
+    omega
+
+/-- **One line per row, structurally.** A cell cannot forge a line: the newline count is
+the row count, whatever the session's program wrote into the grid. -/
+theorem history_lines (v : Vt) :
+    (history v).count 0x0A = (v.sb.toList ++ v.grid.toList).length := by
+  unfold history
+  exact count_rows _
+
+/-! ## The same two claims for `screenText` (`linger capture`)
+
+Same emitter shape as `history`'s plain branch — `rowText`-per-row over the
+grid alone — so the anti-forgery pair transfers verbatim. `screenText_lines` is
+what makes a capture *positionally* parseable by an agent that read `rows` from
+`info`: exactly one line per grid row, so line k of the capture IS row k of the
+screen, whatever the session's program printed. -/
+
+/-- **Every byte is a line terminator or printable content.** -/
+theorem screenText_framing (v : Vt) : ∀ b ∈ screenText v, b = 0x0A ∨ (0x20 ≤ b ∧ b ≠ 0x7F) :=
+  rows_framing _
+
+/-- **`linger capture` prints no control character but its line terminators**: no C0
+control, DEL or C1 control, as characters rather than bytes. -/
+theorem screenText_text (v : Vt) :
+    ∃ cs : List Char,
+      screenText v = cs.flatMap utf8 ∧
+        ∀ c ∈ cs,
+          c = '\n' ∨
+            (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := rows_text _
+
+/-- **`linger capture --history` likewise.** -/
+theorem history_text (v : Vt) :
+    ∃ cs : List Char,
+      history v = cs.flatMap utf8 ∧
+        ∀ c ∈ cs,
+          c = '\n' ∨
+            (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := rows_text _
+
+/-- **One line per grid row, and only the grid** — the scrollback ring
+contributes nothing, which is the whole difference from `history`. -/
+theorem screenText_lines (v : Vt) : (screenText v).count 0x0A = v.grid.toList.length := by
+  unfold screenText
+  exact count_rows _
+
+/-! ## The parse contract — line k IS row k
+
+`screenText_framing` + `screenText_lines` say the right *number* of clean
+lines; neither says which bytes land on which line. `linesLF` is the
+consumer's splitter as a specification, and these say splitting the stream
+gives back exactly the rows' texts, in order — the claim an agent's positional
+parser actually relies on. (A reversed-row emitter passes both count and
+framing; only this catches it.) -/
+
+/-- One LF-terminated record peels off `linesLF` whole, whatever follows —
+provided the record itself is LF-free, which `rowText_no_lf` supplies for
+every row. -/
+theorem linesLF_record (x rest : Bytes) (hx : ∀ b ∈ x, b ≠ 0x0A) :
+    linesLF (x ++ 0x0A :: rest) = x :: linesLF rest := by
+  induction x with
+  | nil => simp [linesLF]
+  | cons b x
+    ih =>
+    have hb : (b == 0x0A) = false := beq_eq_false_iff_ne.mpr (hx b (List.mem_cons_self ..))
+    rw [List.cons_append, linesLF, ite_eq_right (by simp [hb]),
+      ih (fun b' hb' => hx b' (List.mem_cons_of_mem _ hb'))]
+
+theorem linesLF_rows (rows : List Row) :
+    linesLF (rows.flatMap (fun row => rowText row ++ [0x0A])) = rows.map rowText := by
+  induction rows with
+  | nil => rfl
+  | cons r rs ih =>
+    rw [List.flatMap_cons, List.map_cons, List.append_assoc, List.singleton_append,
+      linesLF_record _ _ (fun b hb => rowText_no_lf r b hb), ih]
+
+/-- **The capture parse contract.** Splitting a capture on `0x0A` yields the
+grid, row for row: line k IS `rowText` of row k. This is what licenses an
+agent to parse a capture positionally with `rows` from `info`. -/
+theorem screenText_records (v : Vt) :
+    linesLF (screenText v) = v.grid.toList.map rowText := linesLF_rows _
+
+/-- The same contract for `history`: the transcript parses as scrollback rows
+then screen rows, in order. -/
+theorem history_records (v : Vt) :
+    linesLF (history v) = (v.sb.toList ++ v.grid.toList).map rowText := by
+  unfold history
+  exact linesLF_rows _
+
+/-- And the two streams agree byte-for-byte on the part they share: a capture
+is exactly the tail of the transcript — same renderer, same trimming, same
+framing — so an agent may mix the two verbs without normalizing anything. -/
+theorem history_screenText_suffix (v : Vt) :
+    history v = v.sb.toList.flatMap (fun row => rowText row ++ [0x0A]) ++ screenText v := by
+  unfold history screenText
+  rw [List.flatMap_append]
+
+/-- `safeChar` is the identity on a character a cell is allowed to hold. The emit-side
+guard and the store-side one agree, which is what lets a repaint reproduce a stored
+cell — `printableChar` on store, `safeChar` on emit, both `Emittable`'s range. -/
+theorem safeChar_of_emittable {c : Char} (h : Emittable c) : safeChar c = c :=
+  safeChar_eq_self h.1 h.2
+
+/-- `linger capture` of a fresh two-column, one-row terminal that printed `A` is the line `A`,
+without its trailing blank. -/
+theorem screenText_observed : screenText ((Vt.init 2 1).feed [0x41]) = [0x41, 0x0A] := by
+  decide +kernel
+
+end Terminal.Render

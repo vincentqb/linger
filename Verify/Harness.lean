@@ -2,7 +2,7 @@ module
 
 public import Linger.Os.Shell
 public import Linger.Display.Status
-public import Linger.Terminal.Render
+public import Terminal.Render
 
 public section
 
@@ -172,7 +172,7 @@ def findText (hay : ByteArray) (needle : String) : Option Nat := findBytes hay n
 /-- Does `hay` contain `needle` as a contiguous byte run?
 
 The honest test for "the client wrote *this emitter's* output": a pty stream is
-bytes, not text, and comparing against `Linger.Terminal.Render.leaveAnsi` itself is
+bytes, not text, and comparing against `Terminal.Render.leaveAnsi` itself is
 what stops a suite hardcoding a copy of what the implementation emits — the copy
 is what goes stale when the emitter changes. -/
 def hasBytes (hay : ByteArray) (needle : List UInt8) : Bool := (findBytes hay needle).isSome

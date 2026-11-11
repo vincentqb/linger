@@ -2,10 +2,10 @@ module
 
 public import Linger.Session.Wire
 public import Linger.Session.Record
-public import Linger.Terminal.Vt
-public import Linger.Terminal.Replay
-import Linger.Terminal.Mediation
-import Linger.Terminal.Render
+public import Terminal.Vt
+public import Terminal.Replay
+import Terminal.Mediation
+import Terminal.Render
 
 public section
 
@@ -27,9 +27,9 @@ Tensions carried (THEOREMS.md):
 
 namespace Linger.Session
 
-open Linger.Terminal
+open Terminal
 open Linger.Session.Wire (Msg)
-open Linger.Terminal.Replay (Plan)
+open Terminal.Replay (Plan)
 
 /-- Largest payload of one `output` or `infoReply` frame, 64 KiB, and the byte budget of
 each replay step. -/
@@ -300,7 +300,7 @@ This was `(String.join (fields.map (fun (k, v) => s!"{k}\t{v}\n"))).toUTF8.toLis
 which passed a label's newline through verbatim (`specs/archive/restore-conformance.md`
 Step 0 ledger item 2, §Row/§Status integrity). That shape was also what made the
 output unprovable — a `String` literal does not reduce in the kernel, so no theorem
-could see its bytes, which is exactly the argument in `Linger/Terminal/Render.lean`'s
+could see its bytes, which is exactly the argument in `packages/terminal/Terminal/Render.lean`'s
 header. Building `List UInt8` directly fixes both at once. -/
 def infoText (s : State) : List UInt8 :=
   (infoFields s).flatMap

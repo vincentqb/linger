@@ -3,10 +3,7 @@ module
 public import Linger.Session.Buf
 public import Linger.Os.Shell
 public import Linger.Session.Wire
-public import Linger.Terminal.Vt
-public import Linger.Terminal.Render
-public import Linger.Terminal.Mediation
-public import Linger.Terminal.Title
+public import Terminal.Vt
 public import Linger.Target.Name
 public import Linger.Session
 public import Linger.Session.Driver
@@ -29,7 +26,7 @@ public import Linger.Session.Shell.Resume
 /-! # Linger — the session library
 
 This umbrella's closure is the library `./lake build` checks: the session machine and its
-shell, the components it builds on — the VT toolkit (`Linger/Terminal`), targets, displays
+shell, the components it builds on — the VT toolkit (`packages/terminal`), targets, displays
 and the OS boundary — and the command line's shell (`Linger/App/Shell.lean`). The entry
 route, the selector and the import component stay outside it: they may import this
 library, which never imports them. `Main` routes argv through `Entry.route` to an

@@ -2,10 +2,10 @@ module
 
 import all Linger.Session.Proofs.Buf
 import all Linger.Session.Proofs.Wire
-import all Linger.Terminal.Proofs.Vt
-import all Linger.Terminal.Proofs.Vt.History
-import all Linger.Terminal.Proofs.Mediation
-import all Linger.Terminal.Proofs.Title
+import all Terminal.Proofs.Vt
+import all Terminal.Proofs.Vt.History
+import all Terminal.Proofs.Mediation
+import all Terminal.Proofs.Title
 import all Linger.Session.Proofs.Session
 import all Linger.Session.Proofs.Driver
 import all Linger.Target.Proofs.Name
@@ -13,8 +13,8 @@ import all Linger.Session.Proofs.Checkpoint
 import all Linger.Target.Proofs.Remote
 import all Linger.Session.Proofs.Claim
 import all Linger.Display.Proofs.Listing
-import all Linger.Terminal.Proofs.Render
-import all Linger.Terminal.Proofs.Replay
+import all Terminal.Proofs.Render
+import all Terminal.Proofs.Replay
 import all Linger.Session.Proofs.Resume
 import all Linger.Session.Proofs.Record
 import all Linger.Session.Proofs.Start
@@ -27,6 +27,7 @@ import all Fuzzy.Solution
 import all Linger.Selector.Proofs.Picker
 import all Input.Proofs
 import all Input.Solution
+import all Terminal.Solution
 import all Linger.Selector.Proofs.Key
 import all Linger.App.Proofs.Entry
 import all Linger.App.Proofs.Commands
@@ -59,19 +60,21 @@ namespace Theorems.Coverage
 
 open Lean Elab Command
 
-/-- The packages under `packages/`, each of whose top module (`Fuzzy`, `Input`) and `Spec`
-modules are pure code, and whose `Proofs` and `Solution` modules are proofs. -/
-public meta def packageRoots : List String := ["Fuzzy", "Input"]
+/-- The module roots of the packages under `packages/`. A package's top module (`Fuzzy`), its
+other top-level modules (`Terminal.Vt`) but `Proofs`, `Tests` and `Solution`, and the modules
+under its `Spec` are pure code; its `Proofs` and `Solution` modules are proofs. -/
+public meta def packageRoots : List String := ["Fuzzy", "Input", "Terminal"]
 
 /-- A module of pure code: a component's top module (`Linger.Session`), each component's
 top-level modules other than its boundary and shell, the modules under its `Spec`, and a
-package's top module and `Spec` modules. -/
+package's pure modules (`packageRoots`). -/
 public meta def pureModule (mod : Lean.Name) : Bool :=
   match mod.components.map toString with
   | ["Linger", _] => true
   | ["Linger", _, leaf] => !["Boundary", "Shell"].contains leaf
   | ["Linger", _, "Spec", _] => true
   | [root] => packageRoots.contains root
+  | [root, leaf] => packageRoots.contains root && !["Proofs", "Tests", "Solution"].contains leaf
   | root :: "Spec" :: _ => packageRoots.contains root
   | _ => false
 
@@ -182,7 +185,9 @@ meta def moduleConsts (env : Environment) (keep : Lean.Name → Bool) :
           found := found.push (name, ci)
     return found
 
-/-- Resolved renderer/replay references in the built program's module closure.
+/-- Resolved renderer/replay references in the built program's module closure: `main`'s and
+those of every program module, linger's and the terminal package's, whose emitters linger's
+binary runs.
 
 Reading implementation metadata stays in the friend region; callers receive
 names only. Run after building the program. Alternate artifacts let the regression
@@ -191,7 +196,9 @@ public meta def runtimeEmitters (defs : Array Lean.Name) (main : Lean.Name := `M
     (arts : NameMap ImportArtifacts := {}) : IO (Array String) := do
   let env ← importModules #[{ module := main }] {} (arts := arts)
   let mut refs : NameHashSet := {}
-  for (name, ci) in moduleConsts env (fun mod => mod == main || (`Linger).isPrefixOf mod) do
+  let program (mod : Lean.Name) :=
+    mod == main || (`Linger).isPrefixOf mod || (`Terminal).isPrefixOf mod
+  for (name, ci) in moduleConsts env program do
     let some idx := env.getModuleIdxFor? name | continue
     let mod := env.header.modules[idx.toNat]!.module
     if ci.isTheorem then
@@ -203,11 +210,10 @@ public meta def runtimeEmitters (defs : Array Lean.Name) (main : Lean.Name := `M
       let logical := privateToUserName target
       if
           defs.contains logical && mod != targetMod &&
-            [`Linger.Terminal.Render, `Linger.Terminal.Replay].any
+            [`Terminal.Render, `Terminal.Replay].any
               (fun family => family.isPrefixOf logical && family.isPrefixOf targetMod) then
         refs := refs.insert logical
-  return (refs.toList.map
-          (fun n => (n.replacePrefix `Linger.Terminal .anonymous).toString)).toArray.qsort
+  return (refs.toList.map (fun n => (n.replacePrefix `Terminal .anonymous).toString)).toArray.qsort
       (· < ·)
 
 /-- Require every pure or proof module in the import closure and reject any axiom one
@@ -313,7 +319,7 @@ run_cmd
     r#"module
 public import Lean.Elab.Command
 public import Linger.Probe.CoverageShadow
-public import Linger.Terminal.Render
+public import Terminal.Render
 public section
 namespace Probe
   def indented : Nat := 0
@@ -342,19 +348,19 @@ namespace Probe.Inner
   #check `(command| end Decoy)
 end Probe
 namespace Linger.ReferenceProbe
-private def canonical := Linger.Terminal.Render.titleAnsi
+private def canonical := Terminal.Render.titleAnsi
 def relative := Terminal.Render.scrollbackAnsi
-def rooted := _root_.Linger.Terminal.Render.restore
-open Linger.Terminal
+def rooted := _root_.Terminal.Render.restore
+open Terminal
 def short := Render.modesAnsi
-open Linger.Terminal.Render (digits)
+open Terminal.Render (digits)
 def unqualified := digits
-open Linger.Terminal.Render renaming dropTrailingBlanks → trimmed
+open Terminal.Render renaming dropTrailingBlanks → trimmed
 def renamed := trimmed
 def field := Render.leaveAnsi.toArray
 def localShadow (digits : Nat) := digits
-def stringDecoy : String := "Linger.Terminal.Render.safeChar"
-def quotedRef : Lean.MacroM (Lean.TSyntax `term) := `(term| Linger.Terminal.Render.colorCodes)
+def stringDecoy : String := "Terminal.Render.safeChar"
+def quotedRef : Lean.MacroM (Lean.TSyntax `term) := `(term| Terminal.Render.colorCodes)
 end Linger.ReferenceProbe
 "#
   let expected :=
@@ -369,11 +375,11 @@ end Linger.ReferenceProbe
         let shadow :=
           r#"module
 public section
-namespace Linger.Terminal.Render
+namespace Terminal.Render
 private def safeChar : List UInt8 := [65]
-end Linger.Terminal.Render
+end Terminal.Render
 namespace Linger.ReferenceProbe
-def privateShadow : List UInt8 := Linger.Terminal.Render.safeChar
+def privateShadow : List UInt8 := Terminal.Render.safeChar
 end Linger.ReferenceProbe
 "#
         let mut arts : NameMap ImportArtifacts := {}

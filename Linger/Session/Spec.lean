@@ -1,6 +1,6 @@
 module
 
-public import Linger.Terminal.Spec
+public import Terminal.Spec
 import SoftwareChallenge.Commands
 
 public section
@@ -454,25 +454,6 @@ to the largest `Int32`, and never for -1. A quiet poll that returns early, or th
 handles, SIGCHLD, also makes its child-end descriptor ready. -/
 WorldClaim Poll.Sleeps (returns : Int32 → Option Nat) :=
   returns (-1) = none ∧ ∀ ms ≤ 2147483647, returns (Int32.ofNat ms) = some ms
-
-/-- A receiver that has parsed the repaint of a terminal a session can hold, taken between
-control sequences and characters, keeps showing what the terminal shows as the same output
-then reaches both: after any output, every row agrees. A repaint taken inside a control
-sequence or a character is outside it: the receiver would read the sequence's rest as text. -/
-Conjecture KeepsShowing {V P : Type} (live : V → Prop) (feed : V → List UInt8 → V)
-  (colCount rowCount : V → Nat) (getRow : V → Nat → Terminal.Vt.Row) (atBoundary : V → Bool)
-  (start : V → P) (next : Nat → P → Option (Terminal.Render.Bytes × P)) :=
-  ∀ (budget : Nat) (v w : V) (later : List UInt8),
-    0 < budget →
-      live v →
-      live w →
-      colCount w = colCount v →
-      rowCount w = rowCount v →
-      atBoundary v = true →
-      ∃ bytes,
-        Terminal.Replay.Emits next budget (start v) bytes ∧
-          ∀ y < rowCount (feed v later),
-            getRow (feed (feed w bytes) later) y = getRow (feed v later) y
 
 end Linger.Session
 

@@ -2,11 +2,11 @@ module
 
 import all Linger.Import.Resurrect
 import Linger.Display.Status
-import Linger.Terminal.Render
-import all Linger.Terminal.Vt
+import Terminal.Render
+import all Terminal.Vt
 meta import Linger.Import.Resurrect
 meta import Linger.Session.Checkpoint
-meta import Linger.Terminal.Render
+meta import Terminal.Render
 
 /-! Concrete checks of the pure API. General kernel-checked contracts live in
 `Linger.Import.Proofs.Resurrect`; these fixtures exercise the actual string operations. -/
@@ -405,9 +405,9 @@ namespace Linger.Import.Resurrect.Tests
         { session := "desk", window := "0", index := "0", title := "Editor", command := "vi",
           savedCommand := "vi 'draft.txt'", cols := 80, rows := 3 } }
   let saved := checkpoint pane (some "old λ\n\x1b[31mred\x1b[0m\nlast\n")
-  Linger.Terminal.Render.history saved.vt ==
+  Terminal.Render.history saved.vt ==
       "old λ\nred\nlast\nSaved foreground command: vi 'draft.txt'\n\n".toUTF8.toList &&
-    Linger.Terminal.Render.screenText saved.vt ==
+    Terminal.Render.screenText saved.vt ==
       "last\nSaved foreground command: vi 'draft.txt'\n\n".toUTF8.toList &&
     saved.cwd == pane.dir &&
     saved.labels.lookup "tmux.command" == some "vi" &&
@@ -428,9 +428,8 @@ namespace Linger.Import.Resurrect.Tests
     { name := "fallback", dir := "/one", line := 1, details := { command := "sh", rows := 3 } }
   let saved := checkpoint pane none
   let unknown := checkpoint { pane with details := { rows := 3 } } none
-  Linger.Terminal.Render.screenText saved.vt ==
-      "\nSaved foreground command: sh\n\n".toUTF8.toList &&
-    Linger.Terminal.Render.screenText unknown.vt == "\n\n\n".toUTF8.toList
+  Terminal.Render.screenText saved.vt == "\nSaved foreground command: sh\n\n".toUTF8.toList &&
+    Terminal.Render.screenText unknown.vt == "\n\n\n".toUTF8.toList
 
 -- A partial captured escape cannot swallow the notice. Command controls are display text.
 #guard
@@ -439,7 +438,7 @@ namespace Linger.Import.Resurrect.Tests
     { name := "controls", dir := "/one", line := 1,
       details := { command := "vim", savedCommand := command, rows := 4 } }
   let saved := checkpoint pane (some "\x1b[31m\x1b(0\x0esaved\x1b[")
-  Linger.Terminal.Render.history saved.vt ==
+  Terminal.Render.history saved.vt ==
       "saved\nSaved foreground command: vim?[2J??λ?\n\n\n".toUTF8.toList &&
     saved.labels.lookup "tmux.saved-command" == some command &&
     saved.vt.pen == {} &&

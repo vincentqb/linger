@@ -1,14 +1,14 @@
 module
 
-public import Linger.Terminal.Vt
+public import Terminal.Vt
 import Linger.Session.Checkpoint
-import all Linger.Terminal.Vt
+import all Terminal.Vt
 
 public section
 
 namespace Linger.Session.Tests.Delivery
 
-open Linger.Terminal
+open Terminal
 
 /-- Alternating truecolour and every attribute force a large, valid two-screen
 repaint. Only this test friend constructs the cells; the socket suite receives

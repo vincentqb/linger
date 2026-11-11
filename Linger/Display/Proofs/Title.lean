@@ -1,7 +1,7 @@
 module
 
 import all Linger.Display.Title
-import Linger.Terminal.Proofs.Title
+import Terminal.Proofs.Title
 
 namespace Linger.Display.Title
 

@@ -2,9 +2,9 @@ module
 
 import all Linger.Import.Resurrect
 import all Linger.Target.Name
-import all Linger.Terminal.Vt
+import all Terminal.Vt
 import Linger.Target.Proofs.Name
-import all Linger.Terminal.Proofs.Vt
+import all Terminal.Proofs.Vt
 import all Linger.Session.Proofs.Checkpoint
 
 /-! Kernel-checked importer contracts.
@@ -355,7 +355,7 @@ theorem commandNotice_bounded (details : Details) :
 and the resulting checkpoint is quiesced before it can be persisted. -/
 theorem checkpoint_notice (pane : Pane) (contents : Option String) :
     (checkpoint pane contents).vt =
-      (((Linger.Terminal.Vt.Vt.init pane.details.cols pane.details.rows).feed
+      (((Terminal.Vt.Vt.init pane.details.cols pane.details.rows).feed
             (captureBytes (contents.getD ""))).quiesce.feed
           (commandNotice pane.details).toUTF8.toList).quiesce :=
   rfl
@@ -363,7 +363,7 @@ theorem checkpoint_notice (pane : Pane) (contents : Option String) :
 /-- Imported terminal states are built solely through the public live-state
 constructors and inherit the terminal's proved invariants. -/
 theorem checkpoint_live (pane : Pane) (contents : Option String) :
-    Linger.Terminal.Vt.LiveReachableVt (checkpoint pane contents).vt :=
+    Terminal.Vt.LiveReachableVt (checkpoint pane contents).vt :=
   .quiesce (.feed (.quiesce (.feed (.init _ _) _)) _)
 
 /-- Persisting an imported pane reads back the exact screen, scrollback, cwd and
@@ -372,7 +372,7 @@ theorem checkpoint_roundtrip (pane : Pane) (contents : Option String) :
     Linger.Session.Checkpoint.loadBytes (Linger.Session.Checkpoint.saveBytes (checkpoint pane contents)) =
       some (checkpoint pane contents) := by
   rw [Linger.Session.Checkpoint.loadBytes_saveBytes_live _ (checkpoint_live pane contents)]
-  simp only [checkpoint, Linger.Terminal.Vt.Vt.quiesce]
+  simp only [checkpoint, Terminal.Vt.Vt.quiesce]
 
 /-- Every checkpoint records the exact saved command and distinguishes missing
 captures from empty captures. Commands are data in labels. -/

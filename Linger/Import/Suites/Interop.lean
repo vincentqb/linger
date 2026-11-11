@@ -100,8 +100,7 @@ private def Fixture.start (f : Fixture) (name : String) (dir : System.FilePath) 
     throw (IO.userError s!"session did not start in {dir}: {name}: {err}")
 
 private def Fixture.seed (f : Fixture) (name cwd : String) : IO Unit := do
-  let ck : Ckpt Linger.Terminal.Vt.Vt :=
-    { vt := Linger.Terminal.Vt.Vt.init 20 5, cwd, labels := [] }
+  let ck : Ckpt Terminal.Vt.Vt := { vt := Terminal.Vt.Vt.init 20 5, cwd, labels := [] }
   IO.FS.writeBinFile (System.FilePath.mk f.env.dir / s!"{name}.ckpt") (saveBytes ck)
 
 private def Fixture.importText (f : Fixture) (text : String) : IO (UInt32 × String × String) := do
@@ -272,7 +271,7 @@ private def catalogControls (f : Fixture) : IO Bool := do
   f.catalogSave path text
   let (rc, out, err) ← f.cli #["tmux", "ls", "--porcelain", path.toString]
   let (humanRc, human, humanErr) ← f.cli #["tmux", "ls", path.toString]
-  let printable := fun c => Linger.Terminal.Render.textChar c == c
+  let printable := fun c => Terminal.Render.textChar c == c
   return rc == 0 && err.isEmpty && (← f.catalogMatches path out) && humanRc == 0 &&
       humanErr.isEmpty &&
       human.toList.all (fun c => c == '\n' || printable c) &&

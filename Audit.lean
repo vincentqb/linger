@@ -9,15 +9,14 @@ the program, so a new component joins the program only once it is listed. The pa
 `packages/` are trusted here: each has its own challenge and audit. -/
 public meta def main : List String → IO Unit :=
   SoftwareChallenge.Audit.run
-    { trusted := #[`Init, `Std, `Lean, `SoftwareChallenge, `Fuzzy, `Input]
+    { trusted := #[`Init, `Std, `Lean, `SoftwareChallenge, `Fuzzy, `Input, `Terminal]
       layers :=
         #[(`Linger, .tooling), (`Main, .shell), (`Theorems, .tooling), (`Verify, .tooling),
           (`Linger.App, .core), (`Linger.Display, .core), (`Linger.Import, .core),
           (`Linger.Os, .core), (`Linger.Selector, .core), (`Linger.Session, .core),
-          (`Linger.Target, .core), (`Linger.Terminal, .core), (`Linger.App.Spec, .spec),
-          (`Linger.Display.Spec, .spec), (`Linger.Import.Spec, .spec), (`Linger.Os.Spec, .spec),
-          (`Linger.Selector.Spec, .spec), (`Linger.Session.Spec, .spec),
-          (`Linger.Target.Spec, .spec), (`Linger.Terminal.Spec, .spec),
+          (`Linger.Target, .core), (`Linger.App.Spec, .spec), (`Linger.Display.Spec, .spec),
+          (`Linger.Import.Spec, .spec), (`Linger.Os.Spec, .spec), (`Linger.Selector.Spec, .spec),
+          (`Linger.Session.Spec, .spec), (`Linger.Target.Spec, .spec),
           (`Linger.Os.Boundary, .boundary), (`Linger.App.Shell, .shell),
           (`Linger.Import.Shell, .shell), (`Linger.Os.Shell, .shell),
           (`Linger.Selector.Shell, .shell), (`Linger.Session.Shell, .shell),
@@ -30,5 +29,4 @@ public meta def main : List String → IO Unit :=
           (`Linger.Session.Proofs, .tooling), (`Linger.Session.Suites, .tooling),
           (`Linger.Session.Tests, .tooling), (`Linger.Target.Proofs, .tooling),
           (`Linger.Target.Suites, .tooling), (`Linger.Target.Tests, .tooling),
-          (`Linger.Terminal.Proofs, .tooling), (`Linger.Terminal.Suites, .tooling),
-          (`Linger.Terminal.Tests, .tooling)] }
+          (`Linger.Terminal.Suites, .tooling)] }

@@ -15,7 +15,7 @@ It does not assume that writes or checkpoint saves succeed. -/
 namespace Linger.Session.Driver
 
 open Linger.Session (State Event Effect step WF LiveVt)
-open Linger.Terminal.Replay (Plan)
+open Terminal.Replay (Plan)
 variable {World : Type}
 
 /-- A total effect interpreter over an abstract world, with typed replies. -/

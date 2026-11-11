@@ -36,7 +36,7 @@ def checkpointRetry : IO Unit := do
   let saved ← IO.mkRef ([] : List (String × String))
   let labels := [("quiet", "kept")]
   let rt : Linger.Session.Shell.Daemon.Rt :=
-    { st := Linger.Session.State.boot (Linger.Terminal.Vt.Vt.init 20 5) labels [], listenFd := 0,
+    { st := Linger.Session.State.boot (Terminal.Vt.Vt.init 20 5) labels [], listenFd := 0,
       ptyFd := 0, childPid := 0,
       saveCkpt := fun st => do
         attempts.modify (· + 1)
@@ -84,7 +84,7 @@ private def scaleChecks (e : Env) : IO Unit := do
     let captureMs := (← Linger.Os.Shell.monotonicMs) - start
     let historyLines := (lines history).length
     expect
-        (filled && historyRc == 0 && historyLines ≥ Linger.Terminal.Vt.sbCap + 50 &&
+        (filled && historyRc == 0 && historyLines ≥ Terminal.Vt.sbCap + 50 &&
           captureMs ≤ captureBudget)
         s!"a full ring at 200 columns fills and exports with capture --history within budget (fill {fillMs} ms, capture {captureMs} ms for {historyLines} lines)"
     let client ← e.spawn #["attach", name] 200 50
@@ -98,7 +98,7 @@ private def scaleChecks (e : Env) : IO Unit := do
         -- The detach save runs on its own thread, so the daemon answers at once: the save is
         -- done when the checkpoint on disk holds the full ring, which the rename makes whole.
         let ckpt := System.FilePath.mk s!"{e.dir}/{name}.ckpt"
-        let full := (Linger.Terminal.Vt.sbCap * 200).toUInt64
+        let full := (Terminal.Vt.sbCap * 200).toUInt64
         let sizeOf : IO UInt64 := do
           return ((← ckpt.metadata.toBaseIO).toOption.map (·.byteSize)).getD 0
         let saved ← waitFor saveBudget (return (← sizeOf) ≥ full)
@@ -130,7 +130,7 @@ private def directoryChecks (e : Env) : IO Unit := do
   let gone := s!"{e.dir}/gone"
   let save (name dir : String) : IO Unit :=
     IO.FS.writeBinFile s!"{e.dir}/{name}.ckpt"
-      (Linger.Session.Checkpoint.saveBytes ⟨Linger.Terminal.Vt.Vt.init 40 5, dir, []⟩)
+      (Linger.Session.Checkpoint.saveBytes ⟨Terminal.Vt.Vt.init 40 5, dir, []⟩)
   save "rk" kept
   let (keptRc, _, _) ← e.cliEnv #[("HOME", some home)] #["resume", "rk"]
   expect
@@ -185,7 +185,7 @@ private def answerChecks (e : Env) : IO Unit := do
   let fifo := s!"{a.dir}/late.ckpt"
   let source := s!"{a.dir}/late.src"
   IO.FS.writeBinFile source
-      (Linger.Session.Checkpoint.saveBytes ⟨Linger.Terminal.Vt.Vt.init 40 5, a.dir, []⟩)
+      (Linger.Session.Checkpoint.saveBytes ⟨Terminal.Vt.Vt.init 40 5, a.dir, []⟩)
   let made ← IO.Process.output { cmd := "mkfifo", args := #[fifo] }
   let begun ← Linger.Os.Shell.monotonicMs
   let fed ← IO.mkRef (none : Option UInt32)

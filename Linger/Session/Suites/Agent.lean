@@ -4,7 +4,7 @@ public import Verify.Harness
 import Linger.Session.Shell.Inventory
 import Linger.Session.Shell.Client
 import Linger.Session.Checkpoint
-import Linger.Terminal.Mediation
+import Terminal.Mediation
 public import Linger.Session.Spec
 import SoftwareChallenge.Commands
 
@@ -246,7 +246,7 @@ private def startChecks (e : Env) : IO Unit := do
   let expected :=
     caller ++
       ["LINGER_SESSION=st0", "TERM=xterm-256color", "TERM_PROGRAM=linger",
-        s!"TERM_PROGRAM_VERSION={Linger.Terminal.Mediation.versionNumber}"]
+        s!"TERM_PROGRAM_VERSION={Terminal.Mediation.versionNumber}"]
   expect
       (exact.exitCode == 0 && envRc == 0 && seen.length == expected.length &&
         expected.all seen.contains)
@@ -255,7 +255,7 @@ private def startChecks (e : Env) : IO Unit := do
   expect (liveRc == 1 && has liveErr "is running" && (← e.info "st1" "pid") == pid)
       "start refuses a name a live session holds, and says so"
   let savedPath := s!"{e.dir}/stsv.ckpt"
-  let saved := Linger.Session.Checkpoint.saveBytes ⟨Linger.Terminal.Vt.Vt.init 20 2, work, []⟩
+  let saved := Linger.Session.Checkpoint.saveBytes ⟨Terminal.Vt.Vt.init 20 2, work, []⟩
   IO.FS.writeBinFile savedPath saved
   let (savedRc, savedErr) ← startIn e work #[] #["stsv", "true"]
   expect
@@ -573,7 +573,7 @@ def run : IO UInt32 :=
     -- the boundary itself: 0 is the largest rejected value below the range, and
     -- `clampDim` saturating means `clampDim 5000 + 1` is the smallest rejected
     -- value above it.
-    let tooBig := Linger.Terminal.Vt.clampDim 5000 + 1
+    let tooBig := Terminal.Vt.clampDim 5000 + 1
     let (zrc, _, _) ← e.cli #["resize", "rz", "0", "10"]
     let (brc, _, _) ← e.cli #["resize", "rz", toString tooBig, "10"]
     expect (zrc == 2 && brc == 2) "zero and oversize are rejected client-side"

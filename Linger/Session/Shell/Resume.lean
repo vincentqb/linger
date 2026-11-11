@@ -40,7 +40,7 @@ def saver (name : String) : IO (State → IO Unit) := do
       lastDir.set live
     let known ← lastDir.get
     let cwd := if known.isEmpty then (st.metaKv.lookup "start_dir").getD "" else known
-    let ck : Ckpt Linger.Terminal.Vt.Vt := { vt := st.terminal, cwd, labels := st.labelList }
+    let ck : Ckpt Terminal.Vt.Vt := { vt := st.terminal, cwd, labels := st.labelList }
     let bytes := saveBytes ck
     let tmp := path ++ ".tmp"
     IO.FS.writeBinFile tmp bytes
@@ -55,8 +55,7 @@ def dropCkpt (name : String) : IO Unit := do
 /-- The session's saved terminal state, working directory and labels. `none` when there is
 no checkpoint or its bytes do not decode (`loadBytes`); an existing file that cannot be
 read throws. -/
-def loadCkpt (name : String) :
-    IO (Option (Linger.Terminal.Vt.Vt × String × List (String × String))) := do
+def loadCkpt (name : String) : IO (Option (Terminal.Vt.Vt × String × List (String × String))) := do
   let path ← Paths.ckptPath name
   if !(← System.FilePath.pathExists path) then
     return none

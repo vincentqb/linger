@@ -1,0 +1,16 @@
+{"version": "1.3.0",
+ "packagesDir": "../../.lake/packages",
+ "packages":
+ [{"url": "https://github.com/vincentqb/lean-software-challenge",
+   "type": "git",
+   "subDir": null,
+   "scope": "",
+   "rev": "a6725aa1ed50884d52788171a5ebdf0b53bda9c9",
+   "name": "software_challenge",
+   "manifestFile": "lake-manifest.json",
+   "inputRev": "a6725aa1ed50884d52788171a5ebdf0b53bda9c9",
+   "inherited": false,
+   "configFile": "lakefile.lean"}],
+ "name": "terminal",
+ "lakeDir": ".lake",
+ "fixedToolchain": false}

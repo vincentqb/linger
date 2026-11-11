@@ -102,20 +102,20 @@ proof_paths="$(git ls-files -- 'Theorems/*.lean' 'Linger/*/Proofs/*.lean')"
 # The build proves both fuzz claims; this keeps them in place at their full ranges.
 for c in '^example : failing 400 = [[][]] := by native_decide$' \
          '^example : failingDeep 150 = [[][]] := by native_decide$'; do
-  code_grep "$c" Linger/Terminal/Tests/Fuzz.lean >/dev/null || fail "fuzz claim weakened or disabled: $c"
+  code_grep "$c" packages/terminal/Terminal/Tests/Fuzz.lean >/dev/null || fail "fuzz claim weakened or disabled: $c"
 done
 # A CSI count reaches 65535, so every repeat it drives goes through Vt.repeatAtMost, which
 # clamps it by the screen (repeatAtMost_eq_repeat). A loop counting `a1`, an `arg` or a
 # stage's count `n` itself lets one CSI 65535 S fill the history ring with blank rows.
 csi_loop='(List[.]range|Array[.]range|Nat[.]fold|Nat[.]repeat[[:space:]]+[[:alnum:]_.]+)[[:space:]]+'
 csi_count='([(][^)]*[^[:alnum:]_.]|[(])?(a1|n)([^[:alnum:]_]|$)|[(][^)]*[.]arg([^[:alnum:]_]|$)'
-! code_grep "$csi_loop($csi_count)" Linger/Terminal/Vt.lean \
+! code_grep "$csi_loop($csi_count)" packages/terminal/Terminal/Vt.lean \
   || fail "a loop counts a CSI parameter directly: route it through Vt.repeatAtMost, which clamps it by the screen"
 # ECH's span is the one other loop a count sizes. Its clamp to the screen's width shows in
 # no result, since cells past the row are skipped either way, so this pins it at the call;
 # without it one CSI 65535 X runs 65535 iterations.
 code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(]v[.]cursor[.]x [+] n[)] v[.]cols[)]$' \
-  Linger/Terminal/Vt.lean >/dev/null || fail "ECH lost its clamp: its span must end at min (v.cursor.x + n) v.cols"
+  packages/terminal/Terminal/Vt.lean >/dev/null || fail "ECH lost its clamp: its span must end at min (v.cursor.x + n) v.cols"
 # the OS surface stays where AGENTS.md says it is: the attribute in any form, including
 # `@[never_extract, extern "f"]` and `attribute [extern "f"] g`
 [ "$(code_grep '(^|[^[:alnum:]_])extern([^[:alnum:]_]|$)' '*.lean' | awk -F: '!seen[$1]++ { print $1 }' | tr -d ' ')" = "Linger/Os/Boundary.lean" ] \
@@ -131,7 +131,7 @@ code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(
 # `unsafe` and `@[implemented_by]` — the Lean-side twin of the `@[extern` gate just
 # above, and the only route that makes the theorems false OF THE SHIPPED BINARY rather
 # than of some value inside it (SCRATCHPAD.md, "the adversarial audit of the seal",
-# finding R4). Re-measured here, in `Linger/Terminal/Proofs/Render/Ends.lean`, on v4.34.0-rc2:
+# finding R4). Re-measured here, in `packages/terminal/Terminal/Proofs/Render/Ends.lean`, on v4.34.0-rc2:
 #
 #   unsafe def launderImpl (_v : Vt) : Vt := unsafeCast (0 : Nat)
 #   @[implemented_by launderImpl] def launder (v : Vt) : Vt := v
@@ -242,7 +242,7 @@ for default_target in $default_targets; do
 done
 
 # The vt-toolkit's import closure (`specs/archive/vt-toolkit.md` Step 4). The toolkit is
-# Linger/Terminal/{Spec,Vt,Render,Mediation,Title,Replay}.lean, and the claim worth having is
+# packages/terminal/Terminal/{Spec,Vt,Render,Mediation,Title,Replay}.lean, and the claim worth having is
 # that its closure contains NOTHING else -- no Posix, no Runtime, no Checkpoint, no Session.
 # `lean_lib LingerVt` in lakefile.lean is the positive half: it elaborates the
 # closure. It cannot be the whole claim, because Lake resolves imports through one
@@ -259,7 +259,7 @@ done
 # when an import GOES, which is right -- the list below is the recorded header, so
 # Step 2/3 taking a friend import out is a reviewable edit here rather than a
 # silent one. Vt imports only the Terminal spec, which imports nothing; Render imports Vt;
-# Mediation, Title and Replay import Render. The `import all Linger.Terminal.Vt` lines grant
+# Mediation, Title and Replay import Render. The `import all Terminal.Vt` lines grant
 # access within the sealed toolkit; Title reads only the public surface. Because the spec is a
 # leaf, these six headers define the whole closure.
 import_re='^[[:space:]]*((public|private|meta)[[:space:]]+)*import[[:space:]]+'
@@ -291,15 +291,15 @@ import_closure() {
     printf '  want: %s\n   got: %s\n' "${2:-(no imports)}" "${tk_got:-(no imports)}" >&2; \
     fail "$1 left its declared import closure — review the library boundary"; }
 }
-import_closure Linger/Terminal/Spec.lean ''
-import_closure Linger/Terminal/Vt.lean 'public import Linger.Terminal.Spec;'
-import_closure Linger/Terminal/Render.lean \
-  'public import Linger.Terminal.Vt;import all Linger.Terminal.Vt;'
-import_closure Linger/Terminal/Mediation.lean \
-  'public import Linger.Terminal.Vt;import Linger.Terminal.Render;import all Linger.Terminal.Vt;'
-import_closure Linger/Terminal/Title.lean 'public import Linger.Terminal.Vt;import Linger.Terminal.Render;'
-import_closure Linger/Terminal/Replay.lean \
-  'public import Linger.Terminal.Vt;import Linger.Terminal.Render;import all Linger.Terminal.Vt;'
+import_closure packages/terminal/Terminal/Spec.lean ''
+import_closure packages/terminal/Terminal/Vt.lean 'public import Terminal.Spec;'
+import_closure packages/terminal/Terminal/Render.lean \
+  'public import Terminal.Vt;import all Terminal.Vt;'
+import_closure packages/terminal/Terminal/Mediation.lean \
+  'public import Terminal.Vt;import Terminal.Render;import all Terminal.Vt;'
+import_closure packages/terminal/Terminal/Title.lean 'public import Terminal.Vt;import Terminal.Render;'
+import_closure packages/terminal/Terminal/Replay.lean \
+  'public import Terminal.Vt;import Terminal.Render;import all Terminal.Vt;'
 
 # Named targets must build the promised roots, not just happen to succeed.
 # Read declaration lines through code_grep, then compare their verbatim Name
@@ -329,10 +329,6 @@ library_roots() {
 # the libraries overlap, and Lake builds a module with one containing library's options.
 # scripts/verify.sh also checks every Linger module outside Proofs/ and Tests/ directly; the
 # globs below build those two with these options.
-library_roots LingerVt '#[`Linger.Terminal.Mediation, `Linger.Terminal.Title, `Linger.Terminal.Replay]' \
-  'leanOptions := implementationOptions'
-library_roots LingerVtTheorems '#[`Linger.Terminal.Proofs.Mediation, `Linger.Terminal.Proofs.Title, `Linger.Terminal.Proofs.Replay]' \
-  'leanOptions := implementationOptions'
 [ "$(library_decl Linger)" = "lean_lib Linger where leanOptions := implementationOptions " ] \
   || fail "the Linger library lost implementationOptions: $(library_decl Linger)"
 [ "$(library_decl Suites)" = "lean_lib Suites where globs := #[.submodules \`Linger.Session.Suites, .one \`Linger.Os.Suites.Wait] leanOptions := implementationOptions " ] \
@@ -391,11 +387,11 @@ done
 
 # Check every member of the proof family, not only the root headers: an
 # intermediate VT or renderer lemma must not pull session policy into the target.
-module_imports Linger/Terminal/Proofs/Vt.lean 'Linger/Terminal/Proofs/Vt/*' Linger/Terminal/Proofs/Mediation.lean Linger/Terminal/Proofs/Title.lean \
-  Linger/Terminal/Proofs/Replay.lean Linger/Terminal/Proofs/Render.lean 'Linger/Terminal/Proofs/Render/*' \
+module_imports packages/terminal/Terminal/Proofs/Vt.lean 'packages/terminal/Terminal/Proofs/Vt/*' packages/terminal/Terminal/Proofs/Mediation.lean packages/terminal/Terminal/Proofs/Title.lean \
+  packages/terminal/Terminal/Proofs/Replay.lean packages/terminal/Terminal/Proofs/Render.lean 'packages/terminal/Terminal/Proofs/Render/*' \
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
-    if (mod !~ /^(Linger[.]Terminal[.](Vt|Render|Mediation|Title|Replay|Spec)|Linger[.]Terminal[.]Proofs[.]((Vt|Render)([.][[:alnum:]_]+)*|Mediation|Title|Replay)|Init[.]Data[.]String[.]Legacy)$/) {
+    if (mod !~ /^(Terminal[.](Vt|Render|Mediation|Title|Replay|Spec)|Terminal[.]Proofs[.]((Vt|Render)([.][[:alnum:]_]+)*|Mediation|Title|Replay)|Init[.]Data[.]String[.]Legacy)$/) {
       print "  " $0; bad = 1
     }
   }
@@ -406,12 +402,12 @@ module_imports Linger/Terminal/Proofs/Vt.lean 'Linger/Terminal/Proofs/Vt/*' Ling
 # imports them, even through an intermediate module: every library import
 # stays in Core, Runtime or the OS boundary.
 import_closure Linger/Import/Spec.lean ''
-import_closure Linger/Import/Resurrect.lean 'public import Linger.Import.Spec;import Linger.Target.Name;import Linger.Display.Status;public import Linger.Terminal.Vt;public import Linger.Session.Spec;'
+import_closure Linger/Import/Resurrect.lean 'public import Linger.Import.Spec;import Linger.Target.Name;import Linger.Display.Status;public import Terminal.Vt;public import Linger.Session.Spec;'
 import_closure Linger/Selector/Key.lean 'public import Linger.Selector.Spec;public import Input.Spec;'
 import_closure Linger/Selector/Spec.lean ''
 import_closure packages/fuzzy/Fuzzy.lean 'public import Fuzzy.Spec;'
 import_closure packages/fuzzy/Fuzzy/Spec.lean ''
-import_closure Linger/Selector/Picker.lean 'import Input;public import Linger.Selector.Spec;import Fuzzy;import Linger.Target.Name;import Linger.Display.Listing;public import Linger.Display.Spec;import Linger.Display.Status;import Linger.Target.Remote;import Linger.Terminal.Vt;import Linger.Display.View;'
+import_closure Linger/Selector/Picker.lean 'import Input;public import Linger.Selector.Spec;import Fuzzy;import Linger.Target.Name;import Linger.Display.Listing;public import Linger.Display.Spec;import Linger.Display.Status;import Linger.Target.Remote;import Terminal.Vt;import Linger.Display.View;'
 import_closure Linger/Display/View.lean 'public import Linger.Display.Spec;import Linger.Display.Status;'
 import_closure Linger/Display/Spec.lean ''
 import_closure Linger/Display/Status.lean 'public import Linger.Display.Spec;'
@@ -439,14 +435,14 @@ shell_all="$(module_imports '*.lean' | awk -F: "$IMPORT_AWK"'
 import_closure Linger/Os/Shell/Command.lean 'import Linger.Os.Shell;'
 import_closure Linger/Import/Shell.lean 'import Linger.Import.Resurrect;import Linger.Session.Checkpoint;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Session.Shell.Paths;import Linger.Session.Shell.Resume;import Linger.Session.Shell.Inventory;import Linger.Os.Shell.Command;import Linger.Target.Remote;import Linger.Selector.Shell;import Std.Async.System;'
 import_closure Linger/Selector/Shell.lean \
-  'public import Linger.Selector.Picker;import Linger.Os.Shell;import Linger.Target.Remote;import Linger.Terminal.Title;import Linger.Os.Shell.Command;import Linger.Display.View;import Std.Data.HashMap.Basic;import Linger.Display.Status;import Linger.Selector.Key;import Input;'
+  'public import Linger.Selector.Picker;import Linger.Os.Shell;import Linger.Target.Remote;import Terminal.Title;import Linger.Os.Shell.Command;import Linger.Display.View;import Std.Data.HashMap.Basic;import Linger.Display.Status;import Linger.Selector.Key;import Input;'
 import_closure Main.lean \
   'import Linger.App.Shell;import Linger.App.Entry;import Linger.Selector.Shell;import Linger.Import.Shell;'
 # `lean_lib Linger` builds the umbrella's closure, so this list is what `./lake build`
 # checks of the session library.
-import_closure Linger.lean "$(printf 'public import Linger.%s;' Session.Buf Os.Shell Session.Wire \
-  Terminal.Vt Terminal.Render Terminal.Mediation Terminal.Title Target.Name Session \
-  Session.Driver Session.Checkpoint \
+import_closure Linger.lean "$(printf 'public import Linger.%s;' Session.Buf Os.Shell Session.Wire)$(
+  printf 'public import Terminal.%s;' Vt)$(
+  printf 'public import Linger.%s;' Target.Name Session Session.Driver Session.Checkpoint \
   Target.Remote Display.Listing Display.Status Display.Title Display.View Os.Env Session.Shell.Paths \
   Os.Shell.Command Session.Shell.Daemon Session.Shell.Client Session.Shell.Inventory App.Commands \
   App.Shell \
@@ -454,12 +450,12 @@ import_closure Linger.lean "$(printf 'public import Linger.%s;' Session.Buf Os.S
 module_imports Linger/Session.lean ':(glob)Linger/Session/*.lean' 'Linger/Session/Shell/*' \
     Linger/Os/Shell/Command.lean Linger/App/Shell.lean Linger/Os/Boundary.lean Linger/Os/Shell.lean \
     Linger/Os/Env.lean Linger/Target/Name.lean Linger/Target/Remote.lean Linger/Display/Status.lean \
-    Linger/Display/Title.lean Linger/Display/Listing.lean Linger/Terminal/Vt.lean \
-    Linger/Terminal/Render.lean Linger/Terminal/Mediation.lean Linger/Terminal/Title.lean \
-    Linger/Terminal/Replay.lean Linger.lean \
+    Linger/Display/Title.lean Linger/Display/Listing.lean packages/terminal/Terminal/Vt.lean \
+    packages/terminal/Terminal/Render.lean packages/terminal/Terminal/Mediation.lean packages/terminal/Terminal/Title.lean \
+    packages/terminal/Terminal/Replay.lean Linger.lean \
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
-    if (mod !~ /^(Linger[.]Session|Linger[.](Session|Os|Target|Display|Terminal)[.][[:alnum:]_.]+|Linger[.]App[.](Shell|Commands)|Std[.]Async[.](System|Signal))$/ \
+    if (mod !~ /^(Linger[.]Session|Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Linger[.]App[.](Shell|Commands)|Std[.]Async[.](System|Signal))$/ \
         && mod != "SoftwareChallenge.Commands") {
       print "  " $0; bad = 1
     }
@@ -470,7 +466,7 @@ module_imports Linger/Session.lean ':(glob)Linger/Session/*.lean' 'Linger/Sessio
 # modules of its own component or of a lower layer, never a peer's or a higher one's.
 # Suites run the composed program and may import any component. A component this table
 # does not name fails, so a new one has to be placed before it can import anything.
-component_layers='Os:0 Target:0 Terminal:0 Display:1 Session:2 Selector:2 Import:3 App:4'
+component_layers='Os:0 Target:0 Display:1 Session:2 Selector:2 Import:3 App:4'
 layer_bad="$(module_imports 'Linger/*' ':!Linger/*/Suites/*' \
 | awk -F: -v layers="$component_layers" "$IMPORT_AWK"'
   BEGIN { n = split(layers, L, " ")
@@ -492,7 +488,8 @@ layer_bad="$(module_imports 'Linger/*' ':!Linger/*/Suites/*' \
 # that each proof matches its statement, and that no other axiom is used. These gates keep the
 # lists equal, so neither a headline nor a hole can leave that check by being dropped from one
 # of them, and keep the statements' meaning out of the program: the challenge and the Spec
-# modules import only Spec modules.
+# modules import only Spec modules, and the challenge the terminal package, whose parts linger's
+# headlines name and which linger's audit trusts.
 headline_names() {                           # headline_names <file>: theorem names, in order
   code_grep '^theorem [A-Za-z_][A-Za-z0-9_]*' "$1" | sed 's/^[^:]*:[0-9]*://; s/^theorem //; s/[[:space:]].*//'
 }
@@ -501,7 +498,7 @@ headline_count="$(printf '%s\n' "$headlines" | awk 'END { print NR }')"
 [ -n "$headlines" ] || fail "Challenge.lean states no headline theorem"
 [ "$(headline_names Theorems/Solution.lean)" = "$headlines" ] \
   || fail "Theorems/Solution.lean must prove exactly the theorems Challenge.lean states, in its order"
-hole_names="$(awk 'prev == "@[expose]" && /^def Linger[.]/ { print $2 } { prev = $0 }' Challenge.lean)"
+hole_names="$(awk 'prev == "@[expose]" && /^def [A-Z][A-Za-z0-9_]*[.]/ { print $2 } { prev = $0 }' Challenge.lean)"
 hole_count="$(printf '%s' "$hole_names" | awk 'END { print NR }')"
 config_want="$(printf '%s\n' "$headlines" "--" "$hole_names" | awk '
   $0 == "--" { holes = 1; next }
@@ -548,14 +545,14 @@ awk '(/^theorem / || /^@[[]expose[]]$/) && prev !~ /-[/]$/ { print FILENAME ":" 
   END { exit bad }' Challenge.lean >&2 \
   || fail "every Challenge.lean hole and theorem needs a docstring"
 challenge_imports_bad="$(module_imports Challenge.lean | awk -F: "$IMPORT_AWK"'
-  { if ($3 !~ /^public[[:space:]]+import[[:space:]]+Linger[.]/ || $3 ~ /import[[:space:]]+all[[:space:]]/ \
-        || import_mod($3) !~ /^Linger[.][A-Z][A-Za-z]*[.]Spec([.][A-Z][A-Za-z]*)?$/) print "  " $0 }')"
+  { if ($3 !~ /^public[[:space:]]+import[[:space:]]+/ || $3 ~ /import[[:space:]]+all[[:space:]]/ \
+        || import_mod($3) !~ /^(Linger[.][A-Z][A-Za-z]*[.]Spec([.][A-Z][A-Za-z]*)?|Terminal([.][A-Z][A-Za-z]*)+)$/) print "  " $0 }')"
 [ -z "$challenge_imports_bad" ] || {
   printf '%s\n' "$challenge_imports_bad" >&2
-  fail "Challenge.lean imports only Spec modules, publicly"; }
+  fail "Challenge.lean imports only Spec modules and the terminal package, which linger trusts, publicly"; }
 # One pathspec for a component's Spec.lean and any module under its Spec/: git's * crosses /.
 spec_imports_bad="$(module_imports 'Linger/*/Spec*.lean' | awk -F: "$IMPORT_AWK"'
-  { if ($3 ~ /import[[:space:]]+all[[:space:]]/ || (import_mod($3) !~ /^Linger[.][A-Z][A-Za-z]*[.]Spec([.][A-Z][A-Za-z]*)?$/ \
+  { if ($3 ~ /import[[:space:]]+all[[:space:]]/ || (import_mod($3) !~ /^(Linger[.][A-Z][A-Za-z]*[.]Spec([.][A-Z][A-Za-z]*)?|Terminal[.]Spec)$/ \
         && import_mod($3) != "SoftwareChallenge.Commands"))
       print "  " $0 }')"
 [ -z "$spec_imports_bad" ] || {
@@ -729,8 +726,8 @@ for tie in \
   'let events := #[[]POLLIN[]]' \
   'let ready ← poll fds events 50' \
   'let withColor := [(]← IO[.]getEnv "NO_COLOR"[)][.]isNone' \
-  'writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Terminal[.]Title[.]ansi "linger"[)][.]toArray[)]' \
-  'writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Terminal[.]Title[.]ansi ""[)][.]toArray[)]' \
+  'writeAll stdoutFd [(]ByteArray[.]mk [(]Terminal[.]Title[.]ansi "linger"[)][.]toArray[)]' \
+  'writeAll stdoutFd [(]ByteArray[.]mk [(]Terminal[.]Title[.]ansi ""[)][.]toArray[)]' \
   'discard child[.]wait' \
   'let child ← IO[.]Process[.]spawn [{] cmd := executable, args := attachArgs target readOnly [}]'; do
   code_grep "^[[:space:]]+$tie$" Linger/Selector/Shell.lean >/dev/null \
@@ -746,7 +743,7 @@ picker_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Selector/Shell.lean)"
 for tie in \
   'for byte in bytes do let [(]next, emitted[)] := Input[.]feed decoder byte decoder := next keys := keys [+][+] [(]emitted[.]filterMap Linger[.]Selector[.]Key[.]ofInput[)][.]toArray else if Input[.]pending decoder && [(]← monotonicMs[)] - lastInput ≥ 150 then let [(]next, emitted[)] := Input[.]flush decoder decoder := next keys := [(]emitted[.]filterMap Linger[.]Selector[.]Key[.]ofInput[)][.]toArray for key in keys do' \
   'let lines := Linger[.]Selector[.]Picker[.]frameLines state snapshot statusOf loaded withColor savedTmux rows[.]toNat let mut frame :=' \
-  'let mut frame := "\\x1b[[]0m\\x1b[[]H\\x1b[[]2J" let mut first := true for line in lines do if !first then frame := frame [+][+] "\\r\\n" first := false let mut used := 0 let mut clipped := false let mut activeStyle := "" for [(]text, style[)] in line do if clipped then break if style != activeStyle then frame := frame [+][+] "\\x1b[[]0m" [+][+] style activeStyle := style for raw in text[.]toList do let c := if Input[.]printable raw then raw else '"'"'[?]'"'"' let cells := Linger[.]Terminal[.]Vt[.]charWidth c if used [+] cells > width then clipped := true break frame := frame[.]push c used := used [+] cells if !activeStyle[.]isEmpty then frame := frame [+][+] "\\x1b[[]0m" return frame' \
+  'let mut frame := "\\x1b[[]0m\\x1b[[]H\\x1b[[]2J" let mut first := true for line in lines do if !first then frame := frame [+][+] "\\r\\n" first := false let mut used := 0 let mut clipped := false let mut activeStyle := "" for [(]text, style[)] in line do if clipped then break if style != activeStyle then frame := frame [+][+] "\\x1b[[]0m" [+][+] style activeStyle := style for raw in text[.]toList do let c := if Input[.]printable raw then raw else '"'"'[?]'"'"' let cells := Terminal[.]Vt[.]charWidth c if used [+] cells > width then clipped := true break frame := frame[.]push c used := used [+] cells if !activeStyle[.]isEmpty then frame := frame [+][+] "\\x1b[[]0m" return frame' \
   'let incomingStatuses := statusesOf incoming let ordered := Linger[.]Display[.]View[.]sort [(]incomingStatuses[.]getD · [.]unknown[)] incoming[.]candidates let next := if loaded then Linger[.]Selector[.]Picker[.]refresh state ordered else [{] [(]Linger[.]Selector[.]Picker[.]init ordered state[.]allowCreate[)] with query := state[.]query [}] dirty := dirty [|][|] !loaded [|][|] next != state [|][|] incoming != snapshot state := next snapshot := incoming statuses := incomingStatuses loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
   'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let frame := draw state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor savedTmux current[.]1 current[.]2 if frame != lastFrame [|][|] current != size then writeAll stdoutFd frame[.]toUTF8 lastFrame := frame size := current dirty := false let ready ← poll fds events 50' \
   'for key in keys do if !loaded && key == [.]accept then continue match Linger[.]Selector[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target snapshot [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Linger[.]Os[.]Shell[.]Command[.]poll pending then' \
@@ -873,24 +870,24 @@ for claim in compose_parts compose_context compose_attention_last compose_bound 
 done
 for claim in payload_safe payload_append ansi_payload_bound ansi_ends update_waits \
              update_nonempty_iff update_requires_boundary; do
-  code_grep "^(public )?theorem $claim " Linger/Terminal/Proofs/Title.lean >/dev/null \
+  code_grep "^(public )?theorem $claim " packages/terminal/Terminal/Proofs/Title.lean >/dev/null \
     || fail "title contract disappeared: $claim"
 done
 for claim in observe_append observe_no_history observe_dims observe_invariants \
              observe_esc_intermediates observe_escInter_pending observe_del_boundary \
              step_escInter_final_boundary; do
-  code_grep "^(public )?theorem $claim " Linger/Terminal/Proofs/Vt.lean >/dev/null \
+  code_grep "^(public )?theorem $claim " packages/terminal/Terminal/Proofs/Vt.lean >/dev/null \
     || fail "pending terminal sequence contract disappeared: $claim"
 done
-code_grep '^theorem leave_boundary_title ' Linger/Terminal/Proofs/Render/Modes.lean >/dev/null \
+code_grep '^theorem leave_boundary_title ' packages/terminal/Terminal/Proofs/Render/Modes.lean >/dev/null \
   || fail "default title handback theorem disappeared"
 client_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Client.lean)"
 for tie in \
-  'let mut observer := Linger[.]Terminal[.]Vt[.]Vt[.]init 1 1' \
+  'let mut observer := Terminal[.]Vt[.]Vt[.]init 1 1' \
   'while !leaving do if let some task[[:space:]]*← pending[.]get then if ← IO[.]hasFinished task then pending[.]set none let fresh := match ← IO[.]wait task with [|] [.]ok text => text [|] [.]error _ => String[.]singleton [(]Linger[.]Display[.]Status[.]icon [.]unknown[)] titleDirty := titleDirty [|][|] fresh != summary summary := fresh nextSummary := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextSummary then pending[.]set [(]some [(]← IO[.]asTask sample Task[.]Priority[.]dedicated[)][)] let revs ← poll #[[]stdinFd, fd[]] #[[]POLLIN, POLLIN[]] 200' \
   'writeAll stdoutFd [(]ByteArray[.]mk payload[.]toArray[)] observer := observer[.]observe payload receivedOutput := true' \
-  'if receivedOutput && titleDirty && !leaving then let title := Linger[.]Display[.]Title[.]compose name observer[.]windowTitle summary Linger[.]Terminal[.]Title[.]maxChars let bytes := Linger[.]Terminal[.]Title[.]update observer title if !bytes[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] titleDirty := false' \
-  'try writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Terminal[.]Render[.]leaveAnsi[.]toArray[)] finally termRestore stdinFd saved return result finally close fd' \
+  'if receivedOutput && titleDirty && !leaving then let title := Linger[.]Display[.]Title[.]compose name observer[.]windowTitle summary Terminal[.]Title[.]maxChars let bytes := Terminal[.]Title[.]update observer title if !bytes[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] titleDirty := false' \
+  'try writeAll stdoutFd [(]ByteArray[.]mk Terminal[.]Render[.]leaveAnsi[.]toArray[)] finally termRestore stdinFd saved return result finally close fd' \
   'def attach [(]name : String[)] [(]fd : UInt32[)] [(]sample : IO String[)] [(]readOnly : Bool := false[)] : IO Outcome := do let pending ← IO[.]mkRef [(]none : Option [(]Task [(]Except IO[.]Error String[)][)][)] try converse name fd sample readOnly pending finally if let some task[[:space:]]*← pending[.]get then discard <[|] IO[.]wait task'; do
   printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "attached title lost its observer, sampler or handback contract: $tie"
@@ -912,12 +909,12 @@ awk '
 # The `Vt` friend set — who may forge a `Vt` (SCRATCHPAD.md, "the adversarial audit of
 # the seal", finding R1). `import all M` grants M's OWN all-access set, including
 # whatever M has all-access to, so **`import all` TRANSITS** and
-# `git grep -l 'import all Linger.Terminal.Vt'` is NOT an enumeration of the friend set.
+# `git grep -l 'import all Terminal.Vt'` is NOT an enumeration of the friend set.
 # Measured in the real position, not a scratch file: one added
-# `import all Linger.Terminal.Render` in `Linger/Session/Shell/Client.lean` plus a five-field
+# `import all Terminal.Render` in `Linger/Session/Shell/Client.lean` plus a five-field
 # `{ cols := 0, rows := 0, grid := #[], … }` gives `./lake build linger` exit 0 AND
 # `sh scripts/gates.sh` exit 0. Two hops is the same: `import all Linger.Display.Proofs.Listing` from
-# a file holding neither `import all Linger.Terminal.Vt` nor `import all Linger.Terminal.Render`
+# a file holding neither `import all Terminal.Vt` nor `import all Terminal.Render`
 # compiles the identical forge. That is the Step 4 situation exactly — the compiler
 # consents, so a grep is the only possible oracle — except that until now no grep
 # existed, which made joining the friend set cost one line that nothing objected to, and
@@ -928,7 +925,7 @@ awk '
 # transit, and neither does the `Linger` umbrella, whose imports are all `public`), so
 # the closure over those edges IS the friend set and nothing else can widen it. Gating
 # the edges instead would mean recording all of them, though few matter, and
-# would fire on every legitimate rewire of the `Linger/Terminal/Proofs/Render/*` chain — noise on the
+# would fire on every legitimate rewire of the `packages/terminal/Terminal/Proofs/Render/*` chain — noise on the
 # common change, which is how a gate stops being read.
 #
 # The permitted region is an EXACT file list plus the proof and fixture directories,
@@ -937,7 +934,7 @@ awk '
 # one beside `Vt`, and few of those join the closure. So a per-file list over
 # `Theorems/**` would be edited reflexively, while the core list changes rarely, which
 # is what makes it a checkpoint. The proof and fixture directories are friends BY
-# DECLARATION (see `Linger/Terminal/Vt.lean`, "## Every door"), and a component's `Tests/` deliberately forges invalid
+# DECLARATION (see `packages/terminal/Terminal/Vt.lean`, "## Every door"), and a component's `Tests/` deliberately forges invalid
 # states in its negative fixtures, so listing its files one by one would gate a
 # non-property. Everything else is outside and fail-closed — `Verify/**`, each component's
 # `Suites/`, `Main.lean`, every shell and the other component modules. Replay joins only
@@ -961,15 +958,16 @@ awk '
 # survives is narrower and still worth writing down: do not begin a docstring line with
 # a BARE, unbackticked `import all`.
 VT_ALL_RE='^[[:space:]]*(meta[[:space:]]+)*import[[:space:]]+all[[:space:]]+'
-VT_FRIEND_EXACT='Linger/Terminal/Vt.lean Linger/Terminal/Render.lean Linger/Terminal/Mediation.lean Linger/Session/Checkpoint.lean Linger/Terminal/Replay.lean'
+VT_FRIEND_EXACT='packages/terminal/Terminal/Vt.lean packages/terminal/Terminal/Render.lean packages/terminal/Terminal/Mediation.lean Linger/Session/Checkpoint.lean packages/terminal/Terminal/Replay.lean'
 VT_FRIEND_DIRS='Theorems/'
-VT_FRIEND_RE='^Linger/[^/]+/(Proofs|Tests)/'
+VT_FRIEND_RE='^(Linger/[^/]+|packages/terminal/Terminal)/(Proofs|Tests)/|^packages/terminal/Terminal/Solution[.]lean$'
 code_grep "$VT_ALL_RE" '*.lean' \
-| awk -F: -v seed='Linger/Terminal/Vt.lean' -v exact="$VT_FRIEND_EXACT" -v dirs="$VT_FRIEND_DIRS" \
+| awk -F: -v seed='packages/terminal/Terminal/Vt.lean' -v exact="$VT_FRIEND_EXACT" -v dirs="$VT_FRIEND_DIRS" \
     -v friend_re="$VT_FRIEND_RE" \
     "$IMPORT_AWK"'
   BEGIN { ne = split(exact, E, " "); nd = split(dirs, D, " ") }
   { tgt = import_mod($3); gsub(/[.]/, "/", tgt)
+    if (tgt ~ /^Terminal[/]/) tgt = "packages/terminal/" tgt
     n++; src[n] = $1; ln[n] = $2; raw[n] = $3; dst[n] = tgt ".lean" }
   END {
     # Breadth-first BACKWARDS from the seal, so via[] is a shortest witness chain and
@@ -990,17 +988,17 @@ code_grep "$VT_ALL_RE" '*.lean' \
       if (f ~ friend_re) ok = 1
       if (ok) continue
       bad++
-      printf "  %s has all-access to Linger.Terminal.Vt -- its private fields, its\n", f
+      printf "  %s has all-access to Terminal.Vt -- its private fields, its\n", f
       printf "  private constructor and Vt.ofDecoded -- by this chain of import all:\n"
       for (cur = f; cur != seed; cur = dst[via[cur]])
         printf "    %s:%s:%s\n", src[via[cur]], ln[via[cur]], raw[via[cur]] }
     for (j = 1; j <= ne; j++)
       if (!(E[j] in inset)) { bad++
-        printf "  %s is a RECORDED friend that no longer reaches Linger.Terminal.Vt", E[j]
+        printf "  %s is a RECORDED friend that no longer reaches Terminal.Vt", E[j]
         printf " (renamed, moved, or its import all went)\n" }
     if (bad > 0) printf "  permitted: %s -- plus anything under: %s, or matching %s\n", exact, dirs, friend_re
     exit (bad == 0 ? 0 : 1) }' >&2 \
-  || fail "the Linger.Terminal.Vt friend set changed (import all TRANSITS: it re-grants whatever the imported module itself has all-access to)"
+  || fail "the Terminal.Vt friend set changed (import all TRANSITS: it re-grants whatever the imported module itself has all-access to)"
 
 # shim-size ratchet: the C trust boundary must not grow silently. This
 # number only ever goes DOWN without discussion; raising it is a
@@ -1037,7 +1035,7 @@ shim_n="$(code_count 'LEAN_EXPORT' 'c/shim.c')"
 # suite separately observes framing, prior/replay/live ordering and exit tails.
 for claim in start_faithful next_faithful next_bounded next_progress steps_storage \
              drain_start; do
-  code_grep "^(public )?theorem $claim " 'Linger/Terminal/Proofs/Replay.lean' > /dev/null \
+  code_grep "^(public )?theorem $claim " 'packages/terminal/Terminal/Proofs/Replay.lean' > /dev/null \
     || fail "replay claim $claim disappeared"
 done
 for claim in followingCap_front followingCap_frame followingCap_iff; do
@@ -1140,7 +1138,7 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let [(]prog, args[)] := Sta
 # start reports `Start.failureStatus` (`failureStatus_exact`); and `info` reports the start as
 # `Start.metadata` says (`metadata_dirs`). The daemon asks the operating system with exactly these.
 for tie in \
-  'trySpawnPty [(]UInt32[.]ofNat [(]Linger[.]Terminal[.]Vt[.]clampDim vt0[.]colCount[)][)] [(]UInt32[.]ofNat [(]Linger[.]Terminal[.]Vt[.]clampDim vt0[.]rowCount[)][)] cwd prog args [(][(]Start[.]environment name[)][.]toArray[.]map fun [(]key, value[)] => s!"[{]key[}]=[{]value[}]"[)]' \
+  'trySpawnPty [(]UInt32[.]ofNat [(]Terminal[.]Vt[.]clampDim vt0[.]colCount[)][)] [(]UInt32[.]ofNat [(]Terminal[.]Vt[.]clampDim vt0[.]rowCount[)][)] cwd prog args [(][(]Start[.]environment name[)][.]toArray[.]map fun [(]key, value[)] => s!"[{]key[}]=[{]value[}]"[)]' \
   'req[.]tell [(][.]failed [(]Start[.]failureStatus failure[)] why[.]toUTF8[.]toList[)]' \
   'private def failureOf : SpawnFailure → Linger[.]Session[.]Spawn[.]Failure [|] [.]directory why => [.]directory why [|] [.]notFound why => [.]notFound why [|] [.]notRunnable why => [.]notRunnable why' \
   'if let [.]error reported := spawned then record[.]restore previous let failure := failureOf reported' \
@@ -1273,15 +1271,15 @@ for tie in \
   'rc ← runTarget "wait" target [[]] [(]cmdWait deadline[)] options' \
   'let interactive := verb == "attach" if interactive && [(]![(]← stdinIsTty[)] [|][|] ![(]← [(]← IO[.]getStdout[)][.]isTty[)][)] then' \
   'let operands := if verb == "attach" [|][|] verb == "capture" then Linger[.]Target[.]Remote[.]targetOperands target[.]name else [[]target[.]name[]]' \
-  'IO[.]Process[.]spawn [{] cmd := "ssh", args := #[[]if interactive then "-t" else "-T", "--", host, Linger[.]Target[.]Remote[.]command verb [(]options [+][+] operands [+][+] args[)][]], stdin := [.]inherit [}] try child[.]wait finally if interactive then writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Terminal[.]Render[.]leaveAnsi[.]toArray[)]' \
+  'IO[.]Process[.]spawn [{] cmd := "ssh", args := #[[]if interactive then "-t" else "-T", "--", host, Linger[.]Target[.]Remote[.]command verb [(]options [+][+] operands [+][+] args[)][]], stdin := [.]inherit [}] try child[.]wait finally if interactive then writeAll stdoutFd [(]ByteArray[.]mk Terminal[.]Render[.]leaveAnsi[.]toArray[)]' \
   'let readOnly := args[.]head[?] == some "--read-only" let args := if readOnly then args[.]tail else args let some [(]name, cmd[)] := Linger[.]Target[.]Remote[.]targetArgs args [|]' \
   'let history := args[.]head[?] == some "--history" let args := if history then args[.]tail else args let some [(]name, [[][]][)] := Linger[.]Target[.]Remote[.]targetArgs args [|]' \
   'withTarget "attach" name cmd [(]cmdAttach · cmd readOnly[)] [(]if readOnly then [[]"--read-only"[]] else [[][]][)]' \
-  'withTarget "capture" name [[][]] [(]cmdRead · [(]if history then [.]history else [.]screen[)] [(]if history then Linger[.]Terminal[.]Render[.]history else Linger[.]Terminal[.]Render[.]screenText[)][)] [(]if history then [[]"--history"[]] else [[][]][)]'; do
+  'withTarget "capture" name [[][]] [(]cmdRead · [(]if history then [.]history else [.]screen[)] [(]if history then Terminal[.]Render[.]history else Terminal[.]Render[.]screenText[)][)] [(]if history then [[]"--history"[]] else [[][]][)]'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "command transport lost exact targets, argv, stdin or terminal ownership: $tie"
 done
-[ "$(code_count '^[[:space:]]+writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Terminal[.]Render[.]leaveAnsi[.]toArray[)]$' Linger/App/Shell.lean)" -eq 1 ] \
+[ "$(code_count '^[[:space:]]+writeAll stdoutFd [(]ByteArray[.]mk Terminal[.]Render[.]leaveAnsi[.]toArray[)]$' Linger/App/Shell.lean)" -eq 1 ] \
   || fail "remote SSH termination no longer establishes canonical handback"
 
 # Lifetime ownership covers two resources: the socket namespace and the saved
@@ -1410,9 +1408,9 @@ printf '%s\n' "$inventory_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk
 # Linger.Session.Suites.Watch observes input discard, lock release, exact replay and handback.
 for tie in \
   'let mut lastSize : Option [(]UInt32 × UInt32[)] := none while true do let size ← winsizeGet stdinFd if lastSize != some size then let cols := if size[.]1 == 0 then snapshot[.]colCount else size[.]1[.]toNat let rows := if size[.]2 == 0 then snapshot[.]rowCount else size[.]2[.]toNat' \
-  'let view := if snapshot[.]colCount == cols && snapshot[.]rowCount == rows then snapshot else snapshot[.]resize cols rows let mut repaint := Linger[.]Terminal[.]Replay[.]start view repeat match Linger[.]Terminal[.]Replay[.]next 65536 repaint with [|] none => break [|] some [(]bytes, next[)] => if !bytes[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] repaint := next' \
-  'let title := Linger[.]Display[.]Title[.]compose name view[.]windowTitle [(]String[.]singleton [(]Linger[.]Display[.]Status[.]icon status[)][)] Linger[.]Terminal[.]Title[.]maxChars writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Terminal[.]Title[.]update view title[)][.]toArray[)]' \
-  'if [(]splitDetach bytes true[)][.]2 then return [.]detached return [.]detached finally try writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Terminal[.]Render[.]leaveAnsi[.]toArray[)] finally termRestore stdinFd saved'; do
+  'let view := if snapshot[.]colCount == cols && snapshot[.]rowCount == rows then snapshot else snapshot[.]resize cols rows let mut repaint := Terminal[.]Replay[.]start view repeat match Terminal[.]Replay[.]next 65536 repaint with [|] none => break [|] some [(]bytes, next[)] => if !bytes[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] repaint := next' \
+  'let title := Linger[.]Display[.]Title[.]compose name view[.]windowTitle [(]String[.]singleton [(]Linger[.]Display[.]Status[.]icon status[)][)] Terminal[.]Title[.]maxChars writeAll stdoutFd [(]ByteArray[.]mk [(]Terminal[.]Title[.]update view title[)][.]toArray[)]' \
+  'if [(]splitDetach bytes true[)][.]2 then return [.]detached return [.]detached finally try writeAll stdoutFd [(]ByteArray[.]mk Terminal[.]Render[.]leaveAnsi[.]toArray[)] finally termRestore stdinFd saved'; do
   printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "saved viewer bypassed bounded replay, snapshot preservation or terminal ownership: $tie"
 done
@@ -1471,7 +1469,7 @@ code_grep '^[[:space:]]+let [(]out, detach[)] := splitDetach bs detachEnabled$' 
   || fail "attach no longer splits input with its detach policy"
 
 # The checkpoint decoder must not grow its forge back (`specs/archive/vt-toolkit.md` Step 2).
-# `Linger/Session/Checkpoint.lean` keeps a PERMANENT `import all Linger.Terminal.Vt`: `wVt` reads
+# `Linger/Session/Checkpoint.lean` keeps a PERMANENT `import all Terminal.Vt`: `wVt` reads
 # 17 sealed fields, and dropping the import would force `Vt.ofDecoded` to be public — a
 # second public door admitting any `Good` state, for every module forever, which is a
 # wider hole than the one it replaces. The trade is that this one file retains the raw
@@ -1554,7 +1552,7 @@ done
 # (`loadBytes_eq`).
 resume_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Resume.lean)"
 for tie in \
-  'let ck : Ckpt Linger[.]Terminal[.]Vt[.]Vt := [{] vt := st[.]terminal, cwd, labels := st[.]labelList [}] let bytes := saveBytes ck' \
+  'let ck : Ckpt Terminal[.]Vt[.]Vt := [{] vt := st[.]terminal, cwd, labels := st[.]labelList [}] let bytes := saveBytes ck' \
   'match loadBytes bytes with [|] some ck => return some [(]ck[.]vt, ck[.]cwd, ck[.]labels[)]'; do
   printf '%s\n' "$resume_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "checkpoint hooks bypassed the proved codec: $tie"

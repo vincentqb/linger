@@ -7,7 +7,7 @@ import Linger.Display.View
 import Linger.Target.Name
 import Linger.Target.Remote
 import Linger.Target.Spec
-import Linger.Terminal.Title
+import Terminal.Title
 import Linger.Session.Shell.Paths
 import Linger.Import.Resurrect
 import Linger.Session.Checkpoint
@@ -38,11 +38,11 @@ same checks and recorder drive preserved predecessor executables.
 
 namespace Linger.App.Suites.Manager
 
-open Linger.Terminal
+open Terminal
 open Verify.Harness
 open Linger.Os.Shell
-open Linger.Terminal.Render (modeSet csiNum screenText)
-open Linger.Terminal.Vt (Vt)
+open Terminal.Render (modeSet csiNum screenText)
+open Terminal.Vt (Vt)
 open Linger.Target.Remote renaming shellQuote → quote
 
 /-- PTY acquisition uses libc's shared `ptsname` buffer and briefly holds
@@ -56,7 +56,7 @@ private def withLaunchLock {α : Type} (action : IO α) : IO α :=
   launchMutex.atomically fun _ => action
 
 private def rowText (vt : Vt) (row : Nat) : String :=
-  String.fromUTF8! (ByteArray.mk (Linger.Terminal.Render.rowText (vt.getRow row)).toArray)
+  String.fromUTF8! (ByteArray.mk (Terminal.Render.rowText (vt.getRow row)).toArray)
 
 private def call (args : List String) : String :=
   "CALL\x00linger\x00" ++ String.intercalate "\x00" args ++ "\x00\n"
@@ -1164,7 +1164,7 @@ private def statusChecks (e : Env) : IO Unit := do
           IO.FS.writeFile (f.root / "no-color") value
         -- the picker lists them as `ls` does, what asks for someone first (`View.sort`), each
         -- with its badge's color and dimness
-        let expectedColors : List Linger.Terminal.Vt.Color :=
+        let expectedColors : List Terminal.Vt.Color :=
           [.idx 6, .idx 3, .idx 2, .idx 1, .default, .default, .idx 3]
         let shown :=
           Linger.Display.View.sort (fun (_, status, _) => status)
@@ -1203,8 +1203,8 @@ private def statusChecks (e : Env) : IO Unit := do
               s.text "\x03"
               let clean ← restored s 130
               return rowsMatch vt && plain && rowsMatch matched && emphasis && onlyAnsi && clean &&
-                  hasBytes output (Linger.Terminal.Title.ansi "linger") &&
-                  hasBytes (← s.output.get) (Linger.Terminal.Title.ansi ""))
+                  hasBytes output (Terminal.Title.ansi "linger") &&
+                  hasBytes (← s.output.get) (Terminal.Title.ansi ""))
             "both" 100 20
   check e "status-metadata-refresh"
       "picker redraws changed metadata with unchanged names and preserves query, target and all details"

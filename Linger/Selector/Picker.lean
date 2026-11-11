@@ -8,7 +8,7 @@ import Linger.Display.Listing
 public import Linger.Display.Spec
 import Linger.Display.Status
 import Linger.Target.Remote
-import Linger.Terminal.Vt
+import Terminal.Vt
 import Linger.Display.View
 
 public section
@@ -162,8 +162,7 @@ def emphasizeCells : List HighlightedChar → List HighlightedChar
     { char with
         matched :=
           char.matched ||
-            tail.head?.any
-              (fun next => Linger.Terminal.Vt.charWidth next.char == 0 && next.matched) } ::
+            tail.head?.any (fun next => Terminal.Vt.charWidth next.char == 0 && next.matched) } ::
       tail
 
 /-- Existing matches come first. Creation, when enabled, is explicit and never

@@ -15,22 +15,22 @@ import all Linger.Display.Proofs.View
 import all Linger.Target.Proofs.Name
 import all Linger.Selector.Proofs.Picker
 import all Linger.Target.Proofs.Remote
-import all Linger.Terminal.Proofs.Render.Grid
-import all Linger.Terminal.Proofs.Render.History
-import all Linger.Terminal.Proofs.Render.Modes
-import all Linger.Terminal.Proofs.Render.PendingWrap
-import all Linger.Terminal.Proofs.Render.Scrollback
-import all Linger.Terminal.Proofs.Render.Sticky
-import all Linger.Terminal.Proofs.Render.Tabs
-import all Linger.Terminal.Proofs.Replay
+import all Terminal.Proofs.Render.Grid
+import all Terminal.Proofs.Render.History
+import all Terminal.Proofs.Render.Modes
+import all Terminal.Proofs.Render.PendingWrap
+import all Terminal.Proofs.Render.Scrollback
+import all Terminal.Proofs.Render.Sticky
+import all Terminal.Proofs.Render.Tabs
+import all Terminal.Proofs.Replay
 import all Linger.Import.Proofs.Resurrect
 import all Linger.Session.Proofs.Session
 import all Linger.Display.Proofs.Status
 import all Linger.Display.Proofs.Title
-import all Linger.Terminal.Proofs.Vt
-import all Linger.Terminal.Proofs.Vt.History
-import all Linger.Terminal.Proofs.Vt.Renderable
-import all Linger.Terminal.Proofs.Vt.State
+import all Terminal.Proofs.Vt
+import all Terminal.Proofs.Vt.History
+import all Terminal.Proofs.Vt.Renderable
+import all Terminal.Proofs.Vt.State
 import all Linger.Session.Proofs.Wire
 import all Linger.Session.Proofs.Record
 import all Linger.Session.Proofs.Start
@@ -44,8 +44,8 @@ instead of passing the citation gate. The `rfl` example under Resume ties the
 `Checkpoint.loadBytes`. -/
 
 open Linger Linger.Session Linger.App Linger.Selector Linger.Import Linger.Os Linger.Target
-  Linger.Display Linger.Terminal
-open Linger.Terminal.Replay (Plan)
+  Linger.Display Terminal
+open Terminal.Replay (Plan)
 
 -- Checkpoints
 example (c : Checkpoint.Ckpt Vt.Vt) (h : Vt.LiveReachableVt c.vt) :
