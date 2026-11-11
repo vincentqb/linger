@@ -227,6 +227,12 @@ def Msg.Fits : Msg → Prop
   | .unknown tag payload => payload.length ≤ maxPayload ∧ 17 < tag.toNat
   | _ => True
 
+/-- A request to change a session's labels: set one, remove one, or remove them all. -/
+@[expose]
+def Msg.ChangesLabels : Msg → Prop
+  | .labelSet _ | .labelUnset _ | .labelClear => True
+  | _ => False
+
 /-- What a decoder reads from chunks fed one after another, starting in state `d`, as the
 runtime's read loop feeds one chunk each poll round: the state after the last chunk, and every
 message read, in order. -/

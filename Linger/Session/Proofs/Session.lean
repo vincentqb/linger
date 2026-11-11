@@ -2755,4 +2755,194 @@ theorem feed_encode_fresh (m : Msg) (hm : m.Fits) :
   have := Wire.decode_encode_stream [m] (by simpa using Wire.fits_wf m hm)
   simpa [Wire.decode] using this
 
+/-! ## One source for what a session reports
+
+The labels change only through a label request from a client that is not a watcher, the boot
+metadata never changes, and only program output feeds the terminal: every other event keeps it
+or resizes it. -/
+
+/-- A message that is no label request leaves the labels as they were. -/
+theorem onMsg_labels_kept (s : State) (c : Client) (m : Msg) (h : ¬m.ChangesLabels) :
+    (onMsg s c m).1.labels = s.labels := by
+  cases m
+  all_goals simp only [Msg.ChangesLabels, not_true_eq_false] at h
+  all_goals
+    unfold onMsg controlResize resizeOwned resize focusEffects infoMsgs outputMsgs
+    dsimp only
+    repeat' split
+  all_goals simp_all [State.setClient]
+
+/-- A batch with no label request leaves the labels as they were. -/
+theorem feedMsgs_labels (id : Nat) (msgs : List Msg) (acc : State × List (Effect Plan))
+    (none : ∀ m ∈ msgs, ¬m.ChangesLabels) : (feedMsgs id msgs acc).1.labels = acc.1.labels := by
+  exact
+    feedMsgs_induct id msgs acc (P := fun r => r.1.labels = acc.1.labels)
+      (fun current c m hm _ _ _ hs => (onMsg_labels_kept current.1 c m (none m hm)).trans hs) rfl
+
+/-- **The labels have one source**: an event that changes them is a read, from a client that is
+not a watcher, that holds a label request. -/
+theorem step_labels_sources (s : State) (ev : Event)
+    (changed : (step s ev).1.labelList ≠ s.labelList) :
+    ∃ id chunk c,
+      ev = .bytes id chunk ∧
+        s.client? id = some c ∧
+        (c.attached = false ∨ c.sizer = true) ∧
+        ∃ m ∈ (c.decoder.feed chunk).2, m.ChangesLabels := by
+  cases ev with
+  | bytes id chunk =>
+    cases hc : s.client? id with
+    | none => exact absurd (by simp [step, hc, State.labelList]) changed
+    | some c =>
+      refine ⟨id, chunk, c, rfl, hc, ?_, ?_⟩
+      · by_cases hw : c.attached = true ∧ c.sizer = false
+        · have hwatch : Watches s id := by
+            intro c' h'
+            rw [hc] at h'
+            cases h'
+            exact hw
+          exact absurd (step_bytes_watcher s id chunk hwatch).2.2.1 changed
+        · cases ha : c.attached <;> cases hs : c.sizer <;> simp_all
+      · apply Classical.byContradiction
+        intro hnone
+        apply changed
+        simp only [not_exists, not_and] at hnone
+        simp only [step, hc, State.labelList]
+        split
+        · simp
+        · rw [feedMsgs_labels]
+          · simp [State.setClient]
+          · exact fun m hm => hnone m hm
+  | connected id =>
+    refine absurd ?_ changed
+    dsimp only [step]
+    split <;> rfl
+  | closed id => exact absurd (by simp [step, State.labelList]) changed
+  | ptyOut chunk => exact absurd rfl changed
+  | childExited o => exact absurd rfl changed
+  | tick now =>
+    refine absurd ?_ changed
+    dsimp only [step]
+    split <;> rfl
+  | checkpointFailed => exact absurd rfl changed
+
+/-- Closing a connection keeps the boot metadata. -/
+theorem closeClient_metaKv (s : State) (id : Nat) : (closeClient s id).1.metaKv = s.metaKv := by
+  unfold closeClient; dsimp only; split <;> rfl
+
+/-- No message changes the boot metadata. -/
+theorem onMsg_metaKv (s : State) (c : Client) (m : Msg) : (onMsg s c m).1.metaKv = s.metaKv := by
+  cases m
+  all_goals
+    unfold onMsg controlResize resizeOwned resize focusEffects infoMsgs outputMsgs
+    dsimp only
+    repeat' split
+  all_goals simp_all [State.setClient]
+
+/-- No event changes the boot metadata. -/
+theorem step_metaKv (s : State) (ev : Event) : (step s ev).1.metaKv = s.metaKv := by
+  cases ev with
+  | bytes id chunk =>
+    dsimp only [step]
+    split
+    · rfl
+    · split
+      · simp [closeClient_metaKv]
+      · exact
+          feedMsgs_preserves _ _ _ (P := fun t => t.metaKv = s.metaKv)
+            (fun t _ m _ ht => (onMsg_metaKv t _ m).trans ht) rfl
+  | connected id =>
+    dsimp only [step]
+    split <;> rfl
+  | closed id => simp [step, closeClient_metaKv]
+  | tick now =>
+    dsimp only [step]
+    split <;> rfl
+  | _ => rfl
+
+/-- **The boot metadata has one source, the daemon that booted the session**: whatever events
+follow, `info` starts with the metadata the daemon booted with. -/
+theorem run_boot_infoFields (vt : Vt.Vt) (labels metaKv : List (String × String))
+    (evs : List Event) :
+    ∃ rest, infoFields (run (State.boot vt labels metaKv) evs).1 = metaKv ++ rest := by
+  have kept : ∀ (s : State) (evs : List Event), (run s evs).1.metaKv = s.metaKv := by
+    intro s evs
+    induction evs generalizing s with
+    | nil => rfl
+    | cons ev evs ih =>
+      simp only [run]
+      rw [ih, step_metaKv]
+  refine ⟨?rest, ?eq⟩
+  case eq =>
+    simp only [infoFields, kept, List.append_assoc]
+    rfl
+
+/-- A daemon boots with the metadata it is given. -/
+theorem boot_metaKv (vt : Vt.Vt) (labels metaKv : List (String × String)) :
+    (State.boot vt labels metaKv).metaKv = metaKv := rfl
+
+/-- `info` starts with the boot metadata, then the number of attached clients. -/
+theorem infoFields_metaKv (s : State) :
+    ∃ rest,
+      infoFields s =
+        s.metaKv ++ ("clients", toString (s.roster.filter (·.attached)).length) :: rest := by
+  refine ⟨?rest, ?eq⟩
+  case eq =>
+    simp only [infoFields, List.append_assoc, List.cons_append, List.nil_append]
+    rfl
+
+/-- **The terminal has one source, the program**: only program output feeds it, and every other
+event keeps it or resizes it. -/
+theorem step_vt_sources (s : State) (ev : Event) :
+    (∃ chunk, ev = .ptyOut chunk ∧ (step s ev).1.vt = s.vt.feed chunk) ∨
+      ∃ sizes : List (Nat × Nat),
+        (step s ev).1.vt =
+          sizes.foldl (fun v (size : Nat × Nat) => v.resize size.1 size.2) s.vt := by
+  let Sized : Vt.Vt → Prop := fun vt =>
+    ∃ sizes : List (Nat × Nat),
+      vt = sizes.foldl (fun v (size : Nat × Nat) => v.resize size.1 size.2) s.vt
+  have hresize : ∀ vt cols rows, Sized vt → Sized (vt.resize cols rows) := by
+    rintro vt cols rows ⟨sizes, rfl⟩
+    exact ⟨sizes ++ [(cols, rows)], by simp⟩
+  have kept : Sized s.vt := ⟨[], rfl⟩
+  cases ev with
+  | ptyOut chunk => exact .inl ⟨chunk, rfl, step_ptyOut_vt s chunk⟩
+  | bytes id chunk =>
+    right
+    show Sized (step s (.bytes id chunk)).1.vt
+    dsimp only [step]
+    split
+    · exact kept
+    · split
+      · simpa only [closeClient_vt] using kept
+      · exact
+          feedMsgs_preserves _ _ _ (P := fun t => Sized t.vt)
+            (fun _ _ m _ hs => onMsg_vt_preserves hresize m hs) kept
+  | connected id =>
+    right
+    show Sized (step s (.connected id)).1.vt
+    dsimp only [step]
+    split <;> exact kept
+  | closed id =>
+    right
+    show Sized (step s (.closed id)).1.vt
+    simpa only [step, closeClient_vt] using kept
+  | childExited o => exact .inr kept
+  | tick now =>
+    right
+    show Sized (step s (.tick now)).1.vt
+    dsimp only [step]
+    split <;> exact kept
+  | checkpointFailed => exact .inr kept
+
+/-- Resizes keep a cursor at the origin there: the witness that the terminal's one source
+rejects a session that prints on its own. -/
+theorem foldl_resize_origin (v : Vt.Vt) (h : v.cursorPos = (0, 0)) (sizes : List (Nat × Nat)) :
+    (sizes.foldl (fun v (size : Nat × Nat) => v.resize size.1 size.2) v).cursorPos = (0, 0) := by
+  induction sizes generalizing v with
+  | nil => exact h
+  | cons size sizes ih =>
+    apply ih
+    simp only [Vt.Vt.cursorPos, Prod.mk.injEq] at h ⊢
+    simp [Vt.Vt.resize, h.1, h.2]
+
 end Linger.Session

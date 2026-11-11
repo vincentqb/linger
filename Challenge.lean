@@ -739,9 +739,10 @@ theorem step_closed_focus_rejects_eager :
 
 /-! ## 2. Authority and attribution
 
-A watcher is a client attached without a size. Not claimed yet: which source each reported value
-has. `start` takes no name a session holds (`start_plan`); the daemon decides that holding the
-name, which has one owner (`one_owner`). -/
+A watcher is a client attached without a size. `start` takes no name a session holds
+(`start_plan`); the daemon decides that holding the name, which has one owner (`one_owner`). The
+labels, the boot metadata and the terminal a session reports each have one source, and a listing
+names each row by its socket. -/
 
 /-- A name has one owner. Whatever processes do, in any order, two that act at once as owners
 of sessions sharing a socket or a checkpoint lock are the same process, when the operating system
@@ -761,6 +762,77 @@ theorem one_owner_rejects_socket :
               ∀ {a b resource : Nat} {left right : Claim.Lease},
                 s.active a = some left →
                   s.active b = some right → left.Uses resource → right.Uses resource → a = b := by
+  sorry
+
+/-- A session's labels have one source, the label requests of a client that may change them: an
+event that changes them is a read, from a client that is not a watcher, that holds a label
+request. -/
+theorem step_labels_requested (s : State) (ev : Event)
+    (changed : (Session.step s ev).1.labelList ≠ s.labelList) :
+    ∃ id chunk c,
+      ev = .bytes id chunk ∧
+        s.client? id = some c ∧
+        (c.attached = false ∨ c.sizer = true) ∧
+        ∃ m ∈ (c.decoder.feed chunk).2, m.ChangesLabels := by
+  sorry
+
+/-- `step_labels_requested` rejects a session that drops its labels on every event. -/
+theorem step_labels_requested_rejects_reset :
+    ¬∀ (s : State) (ev : Event),
+        ((fun (s : State) (_ : Event) =>
+                  (State.boot s.terminal [] [], ([] : List (Effect Replay.Plan))))
+                s ev).1.labelList ≠
+            s.labelList →
+          ∃ id chunk c,
+            ev = .bytes id chunk ∧
+              s.client? id = some c ∧
+              (c.attached = false ∨ c.sizer = true) ∧
+              ∃ m ∈ (c.decoder.feed chunk).2, m.ChangesLabels := by
+  sorry
+
+/-- A session's name, pid, creation time, command and start directory have one source, the daemon
+that booted it: whatever events follow, `info` reports them as it booted with them. -/
+theorem infoFields_boot (vt : Vt.Vt) (labels metadata : List (String × String)) (evs : List Event) :
+    ∃ rest,
+      Session.infoFields (Session.trace Session.step (State.boot vt labels metadata) evs).1 =
+        metadata ++ rest := by
+  sorry
+
+/-- `infoFields_boot` rejects a session that boots again on every event. -/
+theorem infoFields_boot_rejects_reboot :
+    ¬∀ (vt : Vt.Vt) (labels metadata : List (String × String)) (evs : List Event),
+        ∃ rest,
+          Session.infoFields
+              (Session.trace
+                  (fun (_ : State) (_ : Event) =>
+                    (State.boot (Vt.Vt.init 1 1) [] [], ([] : List (Effect Replay.Plan))))
+                  (State.boot vt labels metadata) evs).1 =
+            metadata ++ rest := by
+  sorry
+
+/-- A session's terminal has one source, its program: only the program's output writes it, and
+every other event keeps it or resizes it. -/
+theorem step_terminal_sources (s : State) (ev : Event) :
+    (∃ chunk, ev = .ptyOut chunk ∧ (Session.step s ev).1.terminal = s.terminal.feed chunk) ∨
+      ∃ sizes : List (Nat × Nat),
+        (Session.step s ev).1.terminal =
+          sizes.foldl (fun v (size : Nat × Nat) => v.resize size.1 size.2) s.terminal := by
+  sorry
+
+/-- `step_terminal_sources` rejects a session that prints on its own. -/
+theorem step_terminal_sources_rejects_print :
+    ¬∀ (s : State) (ev : Event),
+        (∃ chunk,
+            ev = .ptyOut chunk ∧
+              ((fun (s : State) (_ : Event) =>
+                      (State.boot (s.terminal.feed [0x41]) [] [], ([] : List (Effect Replay.Plan))))
+                    s ev).1.terminal =
+                s.terminal.feed chunk) ∨
+          ∃ sizes : List (Nat × Nat),
+            ((fun (s : State) (_ : Event) =>
+                    (State.boot (s.terminal.feed [0x41]) [] [], ([] : List (Effect Replay.Plan))))
+                  s ev).1.terminal =
+              sizes.foldl (fun v (size : Nat × Nat) => v.resize size.1 size.2) s.terminal := by
   sorry
 
 /-- `start` takes a name only when no live session holds it and none is saved. Otherwise it

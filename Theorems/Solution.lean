@@ -449,6 +449,100 @@ theorem one_owner_rejects_socket :
   have same := @h grant exclusive s5 reached 1 2 3 ⟨1, 3⟩ ⟨2, 3⟩ rfl rfl (.inr rfl) (.inr rfl)
   exact absurd same (by decide)
 
+theorem step_labels_requested (s : State) (ev : Event)
+    (changed : (Session.step s ev).1.labelList ≠ s.labelList) :
+    ∃ id chunk c,
+      ev = .bytes id chunk ∧
+        s.client? id = some c ∧
+        (c.attached = false ∨ c.sizer = true) ∧
+        ∃ m ∈ (c.decoder.feed chunk).2, m.ChangesLabels := Session.step_labels_sources s ev changed
+
+theorem step_labels_requested_rejects_reset :
+    ¬∀ (s : State) (ev : Event),
+        ((fun (s : State) (_ : Event) =>
+                  (State.boot s.terminal [] [], ([] : List (Effect Replay.Plan))))
+                s ev).1.labelList ≠
+            s.labelList →
+          ∃ id chunk c,
+            ev = .bytes id chunk ∧
+              s.client? id = some c ∧
+              (c.attached = false ∨ c.sizer = true) ∧
+              ∃ m ∈ (c.decoder.feed chunk).2, m.ChangesLabels := by
+  intro h
+  obtain ⟨-, -, -, -, labelled, -⟩ := Session.boot_observed (Vt.Vt.init 1 1) [("a", "b")] []
+  obtain ⟨-, -, -, -, emptied, -⟩ :=
+    Session.boot_observed (State.boot (Vt.Vt.init 1 1) [("a", "b")] []).terminal [] []
+  have changed :
+    (State.boot (State.boot (Vt.Vt.init 1 1) [("a", "b")] []).terminal [] []).labelList ≠
+      (State.boot (Vt.Vt.init 1 1) [("a", "b")] []).labelList := by
+    rw [emptied, labelled]
+    simp [maxLabels]
+  obtain ⟨_, _, _, ticked, -⟩ := h (State.boot (Vt.Vt.init 1 1) [("a", "b")] []) (.tick 0) changed
+  cases ticked
+
+theorem infoFields_boot (vt : Vt.Vt) (labels metadata : List (String × String)) (evs : List Event) :
+    ∃ rest,
+      Session.infoFields (Session.trace Session.step (State.boot vt labels metadata) evs).1 =
+        metadata ++ rest := by
+  rw [Session.trace_step]
+  exact Session.run_boot_infoFields vt labels metadata evs
+
+theorem infoFields_boot_rejects_reboot :
+    ¬∀ (vt : Vt.Vt) (labels metadata : List (String × String)) (evs : List Event),
+        ∃ rest,
+          Session.infoFields
+              (Session.trace
+                  (fun (_ : State) (_ : Event) =>
+                    (State.boot (Vt.Vt.init 1 1) [] [], ([] : List (Effect Replay.Plan))))
+                  (State.boot vt labels metadata) evs).1 =
+            metadata ++ rest := by
+  intro h
+  obtain ⟨rest, named⟩ := h (Vt.Vt.init 1 1) [] [("name", "a")] [.tick 0]
+  obtain ⟨tail, counted⟩ := Session.infoFields_metaKv (State.boot (Vt.Vt.init 1 1) [] [])
+  have booted :
+    (Session.trace
+          (fun (_ : State) (_ : Event) =>
+            (State.boot (Vt.Vt.init 1 1) [] [], ([] : List (Effect Replay.Plan))))
+          (State.boot (Vt.Vt.init 1 1) [] [("name", "a")]) [.tick 0]).1 =
+      State.boot (Vt.Vt.init 1 1) [] [] :=
+    rfl
+  rw [booted, counted, Session.boot_metaKv] at named
+  simp at named
+
+theorem step_terminal_sources (s : State) (ev : Event) :
+    (∃ chunk, ev = .ptyOut chunk ∧ (Session.step s ev).1.terminal = s.terminal.feed chunk) ∨
+      ∃ sizes : List (Nat × Nat),
+        (Session.step s ev).1.terminal =
+          sizes.foldl (fun v (size : Nat × Nat) => v.resize size.1 size.2) s.terminal :=
+  Session.step_vt_sources s ev
+
+theorem step_terminal_sources_rejects_print :
+    ¬∀ (s : State) (ev : Event),
+        (∃ chunk,
+            ev = .ptyOut chunk ∧
+              ((fun (s : State) (_ : Event) =>
+                      (State.boot (s.terminal.feed [0x41]) [] [], ([] : List (Effect Replay.Plan))))
+                    s ev).1.terminal =
+                s.terminal.feed chunk) ∨
+          ∃ sizes : List (Nat × Nat),
+            ((fun (s : State) (_ : Event) =>
+                    (State.boot (s.terminal.feed [0x41]) [] [], ([] : List (Effect Replay.Plan))))
+                  s ev).1.terminal =
+              sizes.foldl (fun v (size : Nat × Nat) => v.resize size.1 size.2) s.terminal := by
+  intro h
+  obtain ⟨-, -, kept, -, -, -⟩ := Session.boot_observed (Vt.Vt.init 2 1) [] []
+  obtain ⟨-, -, printed, -, -, -⟩ :=
+    Session.boot_observed ((State.boot (Vt.Vt.init 2 1) [] []).terminal.feed [0x41]) [] []
+  rcases h (State.boot (Vt.Vt.init 2 1) [] []) (.tick 0) with ⟨_, ticked, -⟩ | ⟨sizes, resized⟩
+  · cases ticked
+  · change
+      (State.boot ((State.boot (Vt.Vt.init 2 1) [] []).terminal.feed [0x41]) [] []).terminal =
+        _ at resized
+    rw [printed, kept] at resized
+    have moved : ((Vt.Vt.init 2 1).feed [0x41]).cursorPos = (1, 0) := by decide +kernel
+    rw [resized, Session.foldl_resize_origin _ (by decide +kernel)] at moved
+    simp at moved
+
 theorem start_plan (live saved : Bool) :
     Start.plan live saved = if live then .running else if saved then .saved else .take :=
   Start.plan_eq live saved
