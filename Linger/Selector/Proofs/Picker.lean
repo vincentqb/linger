@@ -8,7 +8,7 @@ import all Init.Data.String.Legacy
 import Linger.Target.Proofs.Name
 import Fuzzy.Proofs
 import Linger.Target.Proofs.Remote
-import Linger.Selector.Proofs.Input
+import Input.Proofs
 import all Linger.Display.Proofs.View
 
 /-! Selection contracts within and between listing snapshots.
@@ -898,10 +898,10 @@ theorem step_cancel (s : State) : step s .cancel = .cancel := by simp [step]
 theorem step_control_ignored (s : State) (char : Char)
     (h : char.toNat < 32 ∨ (127 ≤ char.toNat ∧ char.toNat < 160)) :
     step s (.text char) = .stay s := by
-  have hc : Linger.Selector.Input.printable char = false := by
+  have hc : Input.printable char = false := by
     simp only [Bool.eq_false_iff]
     intro hp
-    have clean := (Linger.Selector.Input.printable_iff char).mp hp
+    have clean := (Input.printable_iff char).mp hp
     omega
   simp [step, hc]
 

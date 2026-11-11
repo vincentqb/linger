@@ -9,7 +9,7 @@ import Linger.Display.View
 import Std.Data.HashMap.Basic
 import Linger.Display.Status
 import Linger.Selector.Key
-import Linger.Selector.Input
+import Input
 
 public section
 
@@ -77,7 +77,7 @@ private def draw (state : Linger.Selector.Picker.State) (snapshot : Linger.Selec
           frame := frame ++ "\x1b[0m" ++ style
           activeStyle := style
         for raw in text.toList do
-          let c := if Linger.Selector.Input.printable raw then raw else '?'
+          let c := if Input.printable raw then raw else '?'
           let cells := Linger.Terminal.Vt.charWidth c
           if used + cells > width then
             clipped := true
@@ -119,7 +119,7 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
     let mut snapshot : Linger.Selector.Picker.Snapshot := {}
     let mut statuses : Std.HashMap String Linger.Display.Status.Status := {}
     let mut loaded := false
-    let mut decoder := Linger.Selector.Input.init
+    let mut decoder := Input.init
     let mut lastInput ← monotonicMs
     let mut nextListing := 0
     let mut full := true
@@ -152,11 +152,11 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
           if !bytes.isEmpty then
             lastInput ← monotonicMs
           for byte in bytes do
-            let (next, emitted) := Linger.Selector.Input.feed decoder byte
+            let (next, emitted) := Input.feed decoder byte
             decoder := next
             keys := keys ++ (emitted.filterMap Linger.Selector.Key.ofInput).toArray
-      else if Linger.Selector.Input.pending decoder && (← monotonicMs) - lastInput ≥ 150 then
-        let (next, emitted) := Linger.Selector.Input.flush decoder
+      else if Input.pending decoder && (← monotonicMs) - lastInput ≥ 150 then
+        let (next, emitted) := Input.flush decoder
         decoder := next
         keys := (emitted.filterMap Linger.Selector.Key.ofInput).toArray
       for key in keys do

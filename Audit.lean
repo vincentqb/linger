@@ -9,7 +9,7 @@ the program, so a new component joins the program only once it is listed. The pa
 `packages/` are trusted here: each has its own challenge and audit. -/
 public meta def main : List String → IO Unit :=
   SoftwareChallenge.Audit.run
-    { trusted := #[`Init, `Std, `Lean, `SoftwareChallenge, `Fuzzy]
+    { trusted := #[`Init, `Std, `Lean, `SoftwareChallenge, `Fuzzy, `Input]
       layers :=
         #[(`Linger, .tooling), (`Main, .shell), (`Theorems, .tooling), (`Verify, .tooling),
           (`Linger.App, .core), (`Linger.Display, .core), (`Linger.Import, .core),

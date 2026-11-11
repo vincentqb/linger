@@ -9,7 +9,7 @@ import all Linger.App.Proofs.Commands
 import all Linger.Os.Proofs.Env
 import all Linger.Os.Proofs.Wait
 import all Fuzzy.Proofs
-import all Linger.Selector.Proofs.Input
+import all Input.Proofs
 import all Linger.Display.Proofs.Listing
 import all Linger.Display.Proofs.View
 import all Linger.Target.Proofs.Name

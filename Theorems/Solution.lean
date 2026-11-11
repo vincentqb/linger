@@ -6,7 +6,6 @@ public import Linger.Display.Listing
 public import Linger.Display.Status
 public import Linger.Display.View
 public import Linger.Import.Resurrect
-public import Linger.Selector.Input
 public import Linger.Selector.Picker
 public import Linger.Display.Title
 public import Linger.Os.Env
@@ -31,7 +30,6 @@ import all Linger.Display.Proofs.Listing
 import all Linger.Display.Proofs.Status
 import all Linger.Display.Proofs.View
 import all Linger.Import.Proofs.Resurrect
-import all Linger.Selector.Proofs.Input
 import all Linger.Selector.Proofs.Picker
 import all Linger.Display.Proofs.Title
 import all Linger.Os.Proofs.Env
@@ -2096,23 +2094,5 @@ theorem matchCount_push_rejects_length :
             (fun (s : Selector.Picker.State) => s.query.length) s := by
   intro h
   exact absurd (h { candidates := [] } _ 'a' rfl) (by simp)
-
-theorem paste_only_text (state : Selector.Input.State) (byte : UInt8)
-    (pasting : state.paste = true) :
-    ∀ key ∈ (Selector.Input.feed state byte).2, ∃ c, key = .text c := fun key member =>
-  Selector.Input.feed_paste_only_text state byte key pasting member
-
-theorem paste_only_text_rejects_enter :
-    ¬∀ (state : Selector.Input.State) (byte : UInt8),
-        state.paste = true →
-          ∀
-            key ∈
-              ((fun (state : Selector.Input.State) (_ : UInt8) =>
-                    (state, [Selector.Input.Key.enter]))
-                  state byte).2,
-            ∃ c, key = .text c := by
-  intro h
-  obtain ⟨c, same⟩ := h { paste := true } 0 rfl .enter (by simp)
-  cases same
 
 end Linger

@@ -199,17 +199,26 @@ awk '
     exit failed
   }' c/shim.c >&2 || fail "fork child call boundary changed"
 # The only external Lean dependency is the Lean Software Challenge audit, pinned to a commit;
-# the others are this checkout's own packages, by path.
-! code_grep '^[[:space:]]*require ' 'lakefile.lean' \
-  | grep -v -e 'require software_challenge from git$' -e 'require fuzzy from "packages/fuzzy"$' \
-  | grep -q . \
-  || fail "external Lean dependency in lakefile.lean"
+# the others are this checkout's own packages, each required by path from packages/<name>.
+checkout_packages="$(git ls-files 'packages/*/lakefile.lean' | awk -F/ '{ print $2 }' | sort -u)"
+[ -n "$checkout_packages" ] || fail "no package under packages/"
+[ "$(code_grep '^[[:space:]]*require ' 'lakefile.lean' | sed 's/^[^:]*:[0-9]*:[[:space:]]*//' | sort)" \
+    = "$( { printf 'require software_challenge from git\n'
+            for p in $checkout_packages; do printf 'require %s from "packages/%s"\n' "$p" "$p"; done; } \
+          | sort)" ] \
+  || fail "lakefile.lean may require only the audit, from git, and each package under packages/, by path"
 lake_packages="$(tr -d ' \n' < lake-manifest.json | grep -o '"packages":\[[^]]*\]')"
-[ "$(printf '%s' "$lake_packages" | grep -o '"name":"[^"]*"' | tr '\n' ' ')" = '"name":"fuzzy" "name":"software_challenge" ' ] \
+[ "$(printf '%s' "$lake_packages" | grep -o '"name":"[^"]*"' | sort | tr '\n' ' ')" \
+    = "$( { printf '"name":"software_challenge"\n'
+            for p in $checkout_packages; do printf '"name":"%s"\n' "$p"; done; } | sort | tr '\n' ' ')" ] \
   && printf '%s' "$lake_packages" | grep -q '"url":"https://github.com/vincentqb/lean-software-challenge"' \
   && printf '%s' "$lake_packages" | grep -qE '"inputRev":"[0-9a-f]{40}"' \
-  && printf '%s' "$lake_packages" | grep -q '"type":"path","scope":"","name":"fuzzy","manifestFile":"lake-manifest.json","inherited":false,"dir":"packages/fuzzy"' \
   || fail "lake-manifest may list only software_challenge, pinned to a commit, and this checkout's packages"
+for p in $checkout_packages; do
+  printf '%s' "$lake_packages" \
+    | grep -qF "\"type\":\"path\",\"scope\":\"\",\"name\":\"$p\",\"manifestFile\":\"lake-manifest.json\",\"inherited\":false,\"dir\":\"packages/$p\"" \
+    || fail "lake-manifest.json must take package $p by path from packages/$p"
+done
 for manifest in packages/*/lake-manifest.json; do
   pkg_packages="$(tr -d ' \n' < "$manifest" | grep -o '"packages":\[[^]]*\]')"
   [ "$(printf '%s' "$pkg_packages" | grep -o '"rev":"[0-9a-f]*"')" = "$(printf '%s' "$lake_packages" | grep -o '"rev":"[0-9a-f]*"')" ] \
@@ -324,8 +333,6 @@ library_roots LingerVt '#[`Linger.Terminal.Mediation, `Linger.Terminal.Title, `L
   'leanOptions := implementationOptions'
 library_roots LingerVtTheorems '#[`Linger.Terminal.Proofs.Mediation, `Linger.Terminal.Proofs.Title, `Linger.Terminal.Proofs.Replay]' \
   'leanOptions := implementationOptions'
-library_roots LingerInput '#[`Linger.Selector.Input]' 'leanOptions := implementationOptions'
-library_roots LingerInputTheorems '#[`Linger.Selector.Proofs.Input]' 'leanOptions := implementationOptions'
 [ "$(library_decl Linger)" = "lean_lib Linger where leanOptions := implementationOptions " ] \
   || fail "the Linger library lost implementationOptions: $(library_decl Linger)"
 [ "$(library_decl Suites)" = "lean_lib Suites where globs := #[.submodules \`Linger.Session.Suites, .one \`Linger.Os.Suites.Wait] leanOptions := implementationOptions " ] \
@@ -334,7 +341,9 @@ library_roots LingerInputTheorems '#[`Linger.Selector.Proofs.Input]' 'leanOption
   || fail "implementationOptions no longer enables linter.missingDocs"
 # Each package under packages/ builds with linger's options and its own audit, and shares the
 # checkout's packages, so its code meets the same bar and building it alone fetches nothing.
-for pkg in packages/fuzzy; do
+for p in $checkout_packages; do
+  pkg="packages/$p"
+  grep -qx "package $p where" "$pkg/lakefile.lean" || fail "$pkg/lakefile.lean does not declare package $p"
   for opt in '⟨`autoImplicit, false⟩' '⟨`relaxedAutoImplicit, false⟩' '⟨`warningAsError, true⟩' \
       '⟨`linter.extra.unreachableTactic, true⟩' '⟨`linter.redundantVisibility, true⟩' \
       '⟨`linter.extra.unnecessarySeqFocus, true⟩' 'packagesDir := "../../.lake/packages"' \
@@ -398,17 +407,17 @@ module_imports Linger/Terminal/Proofs/Vt.lean 'Linger/Terminal/Proofs/Vt/*' Ling
 # stays in Core, Runtime or the OS boundary.
 import_closure Linger/Import/Spec.lean ''
 import_closure Linger/Import/Resurrect.lean 'public import Linger.Import.Spec;import Linger.Target.Name;import Linger.Display.Status;public import Linger.Terminal.Vt;public import Linger.Session.Spec;'
-import_closure Linger/Selector/Key.lean 'public import Linger.Selector.Spec;public import Linger.Selector.Spec.Input;'
+import_closure Linger/Selector/Key.lean 'public import Linger.Selector.Spec;public import Input.Spec;'
 import_closure Linger/Selector/Spec.lean ''
 import_closure packages/fuzzy/Fuzzy.lean 'public import Fuzzy.Spec;'
 import_closure packages/fuzzy/Fuzzy/Spec.lean ''
-import_closure Linger/Selector/Picker.lean 'import Linger.Selector.Input;public import Linger.Selector.Spec;import Fuzzy;import Linger.Target.Name;import Linger.Display.Listing;public import Linger.Display.Spec;import Linger.Display.Status;import Linger.Target.Remote;import Linger.Terminal.Vt;import Linger.Display.View;'
+import_closure Linger/Selector/Picker.lean 'import Input;public import Linger.Selector.Spec;import Fuzzy;import Linger.Target.Name;import Linger.Display.Listing;public import Linger.Display.Spec;import Linger.Display.Status;import Linger.Target.Remote;import Linger.Terminal.Vt;import Linger.Display.View;'
 import_closure Linger/Display/View.lean 'public import Linger.Display.Spec;import Linger.Display.Status;'
 import_closure Linger/Display/Spec.lean ''
 import_closure Linger/Display/Status.lean 'public import Linger.Display.Spec;'
-import_closure Linger/Selector/Input.lean 'public import Linger.Selector.Spec.Input;'
-import_closure Linger/Selector/Spec/Input.lean ''
-import_closure Linger/Selector/Proofs/Input.lean 'public import Linger.Selector.Input;import all Linger.Selector.Input;'
+import_closure packages/input/Input.lean 'public import Input.Spec;'
+import_closure packages/input/Input/Spec.lean ''
+import_closure packages/input/Input/Proofs.lean 'public import Input;import all Input;'
 import_closure Linger/App/Entry.lean 'public import Linger.App.Spec;'
 import_closure Linger/App/Spec.lean ''
 import_closure Linger/Target/Name.lean 'import Linger.Target.Spec;'
@@ -430,7 +439,7 @@ shell_all="$(module_imports '*.lean' | awk -F: "$IMPORT_AWK"'
 import_closure Linger/Os/Shell/Command.lean 'import Linger.Os.Shell;'
 import_closure Linger/Import/Shell.lean 'import Linger.Import.Resurrect;import Linger.Session.Checkpoint;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Session.Shell.Paths;import Linger.Session.Shell.Resume;import Linger.Session.Shell.Inventory;import Linger.Os.Shell.Command;import Linger.Target.Remote;import Linger.Selector.Shell;import Std.Async.System;'
 import_closure Linger/Selector/Shell.lean \
-  'public import Linger.Selector.Picker;import Linger.Os.Shell;import Linger.Target.Remote;import Linger.Terminal.Title;import Linger.Os.Shell.Command;import Linger.Display.View;import Std.Data.HashMap.Basic;import Linger.Display.Status;import Linger.Selector.Key;import Linger.Selector.Input;'
+  'public import Linger.Selector.Picker;import Linger.Os.Shell;import Linger.Target.Remote;import Linger.Terminal.Title;import Linger.Os.Shell.Command;import Linger.Display.View;import Std.Data.HashMap.Basic;import Linger.Display.Status;import Linger.Selector.Key;import Input;'
 import_closure Main.lean \
   'import Linger.App.Shell;import Linger.App.Entry;import Linger.Selector.Shell;import Linger.Import.Shell;'
 # `lean_lib Linger` builds the umbrella's closure, so this list is what `./lake build`
@@ -544,7 +553,8 @@ challenge_imports_bad="$(module_imports Challenge.lean | awk -F: "$IMPORT_AWK"'
 [ -z "$challenge_imports_bad" ] || {
   printf '%s\n' "$challenge_imports_bad" >&2
   fail "Challenge.lean imports only Spec modules, publicly"; }
-spec_imports_bad="$(module_imports 'Linger/*/Spec.lean' 'Linger/*/Spec/*.lean' | awk -F: "$IMPORT_AWK"'
+# One pathspec for a component's Spec.lean and any module under its Spec/: git's * crosses /.
+spec_imports_bad="$(module_imports 'Linger/*/Spec*.lean' | awk -F: "$IMPORT_AWK"'
   { if ($3 ~ /import[[:space:]]+all[[:space:]]/ || (import_mod($3) !~ /^Linger[.][A-Z][A-Za-z]*[.]Spec([.][A-Z][A-Za-z]*)?$/ \
         && import_mod($3) != "SoftwareChallenge.Commands"))
       print "  " $0 }')"
@@ -703,7 +713,7 @@ for claim in matches_iff_sublist align_isSome_iff_matches visible_order parseLis
     || fail "selector contract disappeared: $claim"
 done
 for claim in feed_storage_bound feed_text_valid feed_paste_only_text feed_control flush_no_enter; do
-  code_grep "^(private )?theorem $claim " Linger/Selector/Proofs/Input.lean >/dev/null \
+  code_grep "^(private )?theorem $claim " packages/input/Input/Proofs.lean >/dev/null \
     || fail "input contract disappeared: $claim"
 done
 for claim in ofInput_control_iff feed_byte_bindings feed_paste_no_commands feed_ctrl_r flush_no_accept; do
@@ -714,7 +724,7 @@ for tie in \
   'let listed ← IO[.]ofExcept [(]Linger[.]Selector[.]Picker[.]parseSnapshot result[.]stdout[)]' \
   'let incoming := if full then listed else listed[.]withRemote lastFull' \
   'let mut state := Linger[.]Selector[.]Picker[.]init [[]] [(]!savedTmux && !readOnly[)]' \
-  'let mut decoder := Linger[.]Selector[.]Input[.]init' \
+  'let mut decoder := Input[.]init' \
   'let fds := #[[]stdinFd[]]' \
   'let events := #[[]POLLIN[]]' \
   'let ready ← poll fds events 50' \
@@ -734,9 +744,9 @@ picker_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Selector/Shell.lean)"
 # Preserve byte order and consume both decoder results through the proved
 # application binding before dispatch.
 for tie in \
-  'for byte in bytes do let [(]next, emitted[)] := Linger[.]Selector[.]Input[.]feed decoder byte decoder := next keys := keys [+][+] [(]emitted[.]filterMap Linger[.]Selector[.]Key[.]ofInput[)][.]toArray else if Linger[.]Selector[.]Input[.]pending decoder && [(]← monotonicMs[)] - lastInput ≥ 150 then let [(]next, emitted[)] := Linger[.]Selector[.]Input[.]flush decoder decoder := next keys := [(]emitted[.]filterMap Linger[.]Selector[.]Key[.]ofInput[)][.]toArray for key in keys do' \
+  'for byte in bytes do let [(]next, emitted[)] := Input[.]feed decoder byte decoder := next keys := keys [+][+] [(]emitted[.]filterMap Linger[.]Selector[.]Key[.]ofInput[)][.]toArray else if Input[.]pending decoder && [(]← monotonicMs[)] - lastInput ≥ 150 then let [(]next, emitted[)] := Input[.]flush decoder decoder := next keys := [(]emitted[.]filterMap Linger[.]Selector[.]Key[.]ofInput[)][.]toArray for key in keys do' \
   'let lines := Linger[.]Selector[.]Picker[.]frameLines state snapshot statusOf loaded withColor savedTmux rows[.]toNat let mut frame :=' \
-  'let mut frame := "\\x1b[[]0m\\x1b[[]H\\x1b[[]2J" let mut first := true for line in lines do if !first then frame := frame [+][+] "\\r\\n" first := false let mut used := 0 let mut clipped := false let mut activeStyle := "" for [(]text, style[)] in line do if clipped then break if style != activeStyle then frame := frame [+][+] "\\x1b[[]0m" [+][+] style activeStyle := style for raw in text[.]toList do let c := if Linger[.]Selector[.]Input[.]printable raw then raw else '"'"'[?]'"'"' let cells := Linger[.]Terminal[.]Vt[.]charWidth c if used [+] cells > width then clipped := true break frame := frame[.]push c used := used [+] cells if !activeStyle[.]isEmpty then frame := frame [+][+] "\\x1b[[]0m" return frame' \
+  'let mut frame := "\\x1b[[]0m\\x1b[[]H\\x1b[[]2J" let mut first := true for line in lines do if !first then frame := frame [+][+] "\\r\\n" first := false let mut used := 0 let mut clipped := false let mut activeStyle := "" for [(]text, style[)] in line do if clipped then break if style != activeStyle then frame := frame [+][+] "\\x1b[[]0m" [+][+] style activeStyle := style for raw in text[.]toList do let c := if Input[.]printable raw then raw else '"'"'[?]'"'"' let cells := Linger[.]Terminal[.]Vt[.]charWidth c if used [+] cells > width then clipped := true break frame := frame[.]push c used := used [+] cells if !activeStyle[.]isEmpty then frame := frame [+][+] "\\x1b[[]0m" return frame' \
   'let incomingStatuses := statusesOf incoming let ordered := Linger[.]Display[.]View[.]sort [(]incomingStatuses[.]getD · [.]unknown[)] incoming[.]candidates let next := if loaded then Linger[.]Selector[.]Picker[.]refresh state ordered else [{] [(]Linger[.]Selector[.]Picker[.]init ordered state[.]allowCreate[)] with query := state[.]query [}] dirty := dirty [|][|] !loaded [|][|] next != state [|][|] incoming != snapshot state := next snapshot := incoming statuses := incomingStatuses loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
   'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let frame := draw state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor savedTmux current[.]1 current[.]2 if frame != lastFrame [|][|] current != size then writeAll stdoutFd frame[.]toUTF8 lastFrame := frame size := current dirty := false let ready ← poll fds events 50' \
   'for key in keys do if !loaded && key == [.]accept then continue match Linger[.]Selector[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target snapshot [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Linger[.]Os[.]Shell[.]Command[.]poll pending then' \

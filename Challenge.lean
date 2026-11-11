@@ -5,7 +5,6 @@ public import Linger.Display.Spec
 public import Linger.Import.Spec
 public import Linger.Os.Spec
 public import Linger.Selector.Spec
-public import Linger.Selector.Spec.Input
 public import Linger.Session.Spec
 public import Linger.Target.Spec
 public import Linger.Terminal.Spec
@@ -466,11 +465,6 @@ def Linger.Session.Buf.owedLen : Buf.Buf → Nat := sorry
 def Linger.Session.Buf.writeFrom : Buf.Buf → ByteArray := sorry
 
 /-! ### Selector and import -/
-
-/-- Decode one input byte for the selector: its next state, and the keys the byte completes. -/
-@[expose]
-def Linger.Selector.Input.feed :
-    Selector.Input.State → UInt8 → Selector.Input.State × List Selector.Input.Key := sorry
 
 /-- How many listed rows the selector's query matches. -/
 @[expose]
@@ -2372,24 +2366,6 @@ theorem matchCount_push_rejects_length :
         typed = { s with query := s.query.push c } →
           (fun (s : Selector.Picker.State) => s.query.length) typed ≤
             (fun (s : Selector.Picker.State) => s.query.length) s := by
-  sorry
-
-/-- While a paste is in progress, the selector receives only text: no pasted byte acts as Enter,
-Escape, a cursor key or Backspace. -/
-theorem paste_only_text (state : Selector.Input.State) (byte : UInt8)
-    (pasting : state.paste = true) :
-    ∀ key ∈ (Selector.Input.feed state byte).2, ∃ c, key = .text c := by sorry
-
-/-- `paste_only_text` rejects an input decoder that turns any byte into Enter. -/
-theorem paste_only_text_rejects_enter :
-    ¬∀ (state : Selector.Input.State) (byte : UInt8),
-        state.paste = true →
-          ∀
-            key ∈
-              ((fun (state : Selector.Input.State) (_ : UInt8) =>
-                    (state, [Selector.Input.Key.enter]))
-                  state byte).2,
-            ∃ c, key = .text c := by
   sorry
 
 end Linger

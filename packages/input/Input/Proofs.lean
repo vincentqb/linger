@@ -1,7 +1,7 @@
 module
 
-public import Linger.Selector.Input
-import all Linger.Selector.Input
+public import Input
+import all Input
 
 public section
 
@@ -13,7 +13,7 @@ theorems characterize that boundary and prove the subsequent control filter.
 No claim is made about terminal IO, poll timing or a pasted end marker's origin.
 -/
 
-namespace Linger.Selector.Input
+namespace Input
 
 private theorem stored_bound (mode : Mode) : (stored mode).size ≤ 3 := by
   cases mode <;> simp [stored]
@@ -196,6 +196,29 @@ theorem feed_special (byte : UInt8) (key : Key)
   rcases h with h | h | h | h | h
   all_goals rcases h with ⟨rfl, rfl⟩; rfl
 
+/-- At idle, every byte has its physical meaning before any application binds it: Backspace,
+Tab, Enter, another control byte or printable ASCII text. Escape and the lead byte of a longer
+scalar wait for the bytes after them, and any other byte is dropped. -/
+theorem feed_init_keys (byte : UInt8) :
+    (feed init byte).2 =
+      match byte with
+      | 8 | 127 => [.backspace]
+      | 9 => [.tab]
+      | 10 | 13 => [.enter]
+      | 27 => []
+      | _ =>
+        if byte < 32 then [.control byte]
+        else if byte < 127 then [.text (Char.ofUInt8 byte)] else [] := by
+  simp only [feed, init, step, idle]
+  repeat'
+    (first
+      | rfl
+      | split)
+  all_goals
+    simp_all [deliver, printable, UInt8.le_iff_toNat_le, UInt8.lt_iff_toNat_lt, Char.ofUInt8]
+  all_goals try simp_all [Option.filter]
+  all_goals omega
+
 /-- Every other C0 byte is reported unchanged, including unbound controls.
 Paste suppresses these events without changing decoder state. -/
 theorem feed_control (paste : Bool) (byte : UInt8) (hbyte : byte < 32)
@@ -312,4 +335,4 @@ theorem flush_no_enter (state : State) : .enter ∉ (flush state).2 := by
 theorem flush_idempotent (state : State) : flush (flush state).1 = ((flush state).1, []) := by
   simp [flush]
 
-end Linger.Selector.Input
+end Input

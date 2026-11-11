@@ -1,0 +1,12 @@
+{
+  "challenge_module": "InputChallenge",
+  "solution_module": "Input.Solution",
+  "theorem_names": [
+    "Input.paste_only_text",
+    "Input.paste_only_text_rejects_enter"
+  ],
+  "definition_names": [
+    "Input.feed"
+  ],
+  "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"]
+}

@@ -13,6 +13,9 @@ require software_challenge from git
 /-- The fuzzy matcher, a package of its own with its own challenge and audit. -/
 require fuzzy from "packages/fuzzy"
 
+/-- The terminal key decoder, a package of its own with its own challenge and audit. -/
+require input from "packages/input"
+
 /-- Options for every library but `Verify`: Lake builds a module with the options of one library
 that contains it, and these libraries overlap, so they share a single set. With the package's
 `warningAsError`, a public declaration without a docstring fails the build. -/
@@ -33,16 +36,6 @@ lean_lib LingerVtTheorems where
   roots :=
   #[`Linger.Terminal.Proofs.Mediation, `Linger.Terminal.Proofs.Title,
     `Linger.Terminal.Proofs.Replay]
-  leanOptions := implementationOptions
-
-/-- Bounded terminal-key decoding, independent of any application's bindings. -/
-lean_lib LingerInput where
-  roots := #[`Linger.Selector.Input]
-  leanOptions := implementationOptions
-
-/-- Decoder contracts build without the picker action adapter or session code. -/
-lean_lib LingerInputTheorems where
-  roots := #[`Linger.Selector.Proofs.Input]
   leanOptions := implementationOptions
 
 /-- The native OS boundary, compiled with the clang selected by `./lake`. -/

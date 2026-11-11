@@ -1,7 +1,7 @@
 module
 
 public import Linger.Selector.Spec
-public import Linger.Selector.Spec.Input
+public import Input.Spec
 
 public section
 

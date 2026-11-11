@@ -172,9 +172,7 @@
     "Linger.hidden_adds_up",
     "Linger.hidden_adds_up_rejects_short",
     "Linger.matchCount_push",
-    "Linger.matchCount_push_rejects_length",
-    "Linger.paste_only_text",
-    "Linger.paste_only_text_rejects_enter"
+    "Linger.matchCount_push_rejects_length"
   ],
   "definition_names": [
     "Linger.App.Entry.route",
@@ -266,7 +264,6 @@
     "Linger.Session.Buf.bufAdvance",
     "Linger.Session.Buf.owedLen",
     "Linger.Session.Buf.writeFrom",
-    "Linger.Selector.Input.feed",
     "Linger.Selector.Picker.matchCount",
     "Linger.Selector.Picker.step",
     "Linger.Import.Resurrect.plan",

@@ -56,8 +56,8 @@ in the foreground, as the verifier.
 - `Linger/Session.lean` and `Linger/Session/`: the session machine, its effect `Driver`,
   `Wire` format, `Buf` queues and `Checkpoint`s; `Shell/` holds the daemon, the attach
   client, checkpoint files and state paths.
-- `Linger/Selector/`: interactive selection: bounded key `Input`, `Key` bindings and the
-  `Picker`, which ranks names with the `fuzzy` package; `Shell.lean` runs the picker on a
+- `Linger/Selector/`: interactive selection: `Key` bindings of the `input` package's keys and
+  the `Picker`, which ranks names with the `fuzzy` package; `Shell.lean` runs the picker on a
   terminal.
 - `Linger/Import/`: importing tmux-resurrect saves: the `Resurrect` policy, and `Shell.lean`
   runs it.
@@ -72,8 +72,8 @@ in the foreground, as the verifier.
   coverage census; `Verify/`: the verifier's harness, runner and own suites.
 - `packages/`: Lake packages linger requires by path, each with its own `Challenge`, solution,
   `comparator.json` and audit, which linger's audit trusts: `fuzzy`, the fuzzy matcher (module
-  and namespace `Fuzzy`). Build one alone with `../../lake build` in its directory; it shares
-  linger's `.lake/packages`.
+  and namespace `Fuzzy`), and `input`, the bounded terminal key decoder (`Input`). Build one
+  alone with `../../lake build` in its directory; it shares linger's `.lake/packages`.
 - `scripts/`: build and verification orchestration.
 
 Components depend downward only: `Os`, `Target` and `Terminal`; then `Display`; then `Session`

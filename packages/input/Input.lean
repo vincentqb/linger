@@ -1,6 +1,6 @@
 module
 
-public import Linger.Selector.Spec.Input
+public import Input.Spec
 
 public section
 
@@ -11,7 +11,7 @@ recognizer, and UTF-8 prefixes retain at most three bytes. Completed scalars use
 Lean's UTF-8 validator on at most four bytes. Paste suppression belongs to the
 outer state so a timeout or malformed sequence cannot turn it off. -/
 
-namespace Linger.Selector.Input
+namespace Input
 
 /-- The idle state outside paste. -/
 def init : State := {}
@@ -129,4 +129,4 @@ sequences are discarded; a timeout cannot disable paste suppression. -/
 def flush (state : State) : State × List Key :=
   ({ paste := state.paste }, if state.mode = .escape ∧ state.paste = false then [.escape] else [])
 
-end Linger.Selector.Input
+end Input

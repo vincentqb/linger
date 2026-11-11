@@ -2,12 +2,13 @@ module
 
 public section
 
-/-! # What selector input headlines are stated in
+/-! # What the input decoder's headlines are stated in
 
-The physical input events the selector reads, and the decoder's state between bytes. The selector's
-own actions are in `Linger.Selector.Spec`, which the input decoder does not import. -/
+The physical input events a terminal application reads, and the decoder's state between bytes.
+Which action an event requests is the application's own binding, which the decoder does not
+know. -/
 
-namespace Linger.Selector.Input
+namespace Input
 
 /-- Physical input events. C0 bytes without a dedicated key retain their byte
 identity; consumers decide which of them have an application binding. -/
@@ -90,4 +91,4 @@ structure State where
   mode : Mode := .idle
   deriving BEq, Repr, DecidableEq
 
-end Linger.Selector.Input
+end Input

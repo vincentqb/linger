@@ -1,14 +1,14 @@
 module
 
-import Linger.Selector.Proofs.Input
+import Input.Proofs
 
 /-! Ordinary imports expose physical input events and the incremental API.
 Evaluation fixtures are separate so implementation imports cannot hide a
-missing public declaration or reintroduce application actions. -/
+missing public declaration. -/
 
-namespace Linger.Selector.Tests.InputApi
+namespace Input.Tests.Api
 
-open Linger.Selector.Input
+open Input
 
 example : Key := .text '界'
 
@@ -42,12 +42,4 @@ example (state : State) (byte : UInt8) (key : Key) (hpaste : state.paste = true)
 
 example (state : State) : .enter ∉ (flush state).2 := flush_no_enter state
 
-/-- Unknown identifier `Linger.Selector.Key` -/
-#guard_msgs (error, substring := true) in
-#check Linger.Selector.Key
-
-/-- Unknown identifier `Linger.Selector.Picker.State` -/
-#guard_msgs (error, substring := true) in
-#check Linger.Selector.Picker.State
-
-end Linger.Selector.Tests.InputApi
+end Input.Tests.Api

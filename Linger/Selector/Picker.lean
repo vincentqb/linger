@@ -1,6 +1,6 @@
 module
 
-import Linger.Selector.Input
+import Input
 public import Linger.Selector.Spec
 import Fuzzy
 import Linger.Target.Name
@@ -205,7 +205,7 @@ row. No selectable row stays editable. Effects remain the caller's job. -/
 def step (s : State) (key : Linger.Selector.Key) : Outcome :=
   match key with
   | .text char =>
-    if Linger.Selector.Input.printable char && s.query.length < maxQueryLength then
+    if Input.printable char && s.query.length < maxQueryLength then
       .stay
         { s with
           query := s.query.push char, cursor := 0 }

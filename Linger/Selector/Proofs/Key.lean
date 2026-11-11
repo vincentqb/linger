@@ -1,8 +1,7 @@
 module
 
 import all Linger.Selector.Key
-import all Linger.Selector.Input
-import Linger.Selector.Proofs.Input
+import Input.Proofs
 
 /-! The selector's bindings are checked against concrete byte defaults.
 The generic decoder owns recognition and paste suppression; this adapter owns
@@ -59,15 +58,12 @@ theorem feed_byte_bindings (byte : UInt8) :
       | 13 | 10 => [.accept]
       | 3 | 4 => [.cancel]
       | _ => if 32 ≤ byte ∧ byte < 127 then [.text (Char.ofUInt8 byte)] else [] := by
-  simp only [Input.feed, Input.init, Input.step, Input.idle]
+  rw [Input.feed_init_keys]
   repeat'
     (first
       | rfl
       | split)
-  all_goals
-    simp_all [Input.deliver, Input.printable, ofInput, UInt8.le_iff_toNat_le, UInt8.lt_iff_toNat_lt,
-      Char.ofUInt8]
-  all_goals try simp_all [Option.filter, ofInput]
+  all_goals simp_all [ofInput, UInt8.le_iff_toNat_le, UInt8.lt_iff_toNat_lt]
   all_goals omega
 
 /-- The original control-byte shortcuts remain selector policy. -/
@@ -79,10 +75,12 @@ theorem feed_controls (byte : UInt8) (key : Linger.Selector.Key)
     (Input.feed Input.init byte).2.filterMap ofInput = [key] := by
   simp only [List.mem_cons, List.not_mem_nil, or_false, Prod.mk.injEq] at h
   rcases h with h | h | h | h | h | h | h | h | h | h
-  all_goals rcases h with ⟨rfl, rfl⟩; rfl
+  all_goals rcases h with ⟨rfl, rfl⟩; rw [feed_byte_bindings]; rfl
 
 /-- Automatic listing refresh has no manual keyboard action. -/
-theorem feed_ctrl_r : (Input.feed Input.init 18).2.filterMap ofInput = [] := by rfl
+theorem feed_ctrl_r : (Input.feed Input.init 18).2.filterMap ofInput = [] := by
+  rw [feed_byte_bindings]
+  decide
 
 theorem feed_ascii (paste : Bool) (byte : UInt8) (h : 32 ≤ byte ∧ byte < 127) :
     (Input.feed { paste } byte).2.filterMap ofInput = [.text (Char.ofUInt8 byte)] := by
@@ -115,8 +113,16 @@ theorem feed_paste_no_commands (state : Input.State) (byte : UInt8) (hpaste : st
 theorem flush_binding (state : Input.State) :
     (Input.flush state).2.filterMap ofInput =
       if state.mode = .escape ∧ state.paste = false then [.cancel] else [] := by
-  simp only [Input.flush]
-  split <;> simp [ofInput]
+  split
+  · rename_i lone
+    rw [(Input.flush_escape state).mpr lone]
+    rfl
+  · rename_i other
+    have empty : (Input.flush state).2 = [] :=
+      List.eq_nil_iff_forall_not_mem.mpr fun key member =>
+        other ⟨(Input.flush_emits state key member).2.1, (Input.flush_emits state key member).2.2⟩
+    rw [empty]
+    rfl
 
 theorem flush_emits (state : Input.State) (key : Linger.Selector.Key)
     (h : key ∈ (Input.flush state).2.filterMap ofInput) :

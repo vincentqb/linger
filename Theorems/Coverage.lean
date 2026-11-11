@@ -25,7 +25,8 @@ import all Linger.Import.Proofs.Resurrect
 import all Fuzzy.Proofs
 import all Fuzzy.Solution
 import all Linger.Selector.Proofs.Picker
-import all Linger.Selector.Proofs.Input
+import all Input.Proofs
+import all Input.Solution
 import all Linger.Selector.Proofs.Key
 import all Linger.App.Proofs.Entry
 import all Linger.App.Proofs.Commands
@@ -58,9 +59,9 @@ namespace Theorems.Coverage
 
 open Lean Elab Command
 
-/-- The packages under `packages/`, each of whose top module (`Fuzzy`) and `Spec` modules are
-pure code, and whose `Proofs` and `Solution` modules are proofs. -/
-public meta def packageRoots : List String := ["Fuzzy"]
+/-- The packages under `packages/`, each of whose top module (`Fuzzy`, `Input`) and `Spec`
+modules are pure code, and whose `Proofs` and `Solution` modules are proofs. -/
+public meta def packageRoots : List String := ["Fuzzy", "Input"]
 
 /-- A module of pure code: a component's top module (`Linger.Session`), each component's
 top-level modules other than its boundary and shell, the modules under its `Spec`, and a
