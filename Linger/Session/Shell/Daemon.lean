@@ -95,20 +95,18 @@ when its own buffer fills (`IMAXBEL`). One frame is one read of the keyboard, so
 no UTF-8 sequence or escape is split. -/
 def ptyInCap : Nat := outbufCap
 
-/-- Writes of one kind that the daemon does off its loop: at most one runs, on a thread of its
-own, and a later one replaces any that waits for it. So a slow disk holds up no answer and no
-output, and writes are coalesced and never queue. -/
-structure Offloop where
-  /-- The write running on its own thread, if any. -/
-  running : Option (Task (Except IO.Error Unit)) := none
-  /-- The latest write asked for while one ran; it runs when that one ends. -/
-  waiting : Option (IO Unit) := none
+/-- Writes of one kind that the daemon does off its loop (`Session.Offloop`): at most one runs, on
+a thread of its own, and a later one replaces any that waits for it (`Session.Offloop.ask`). So a
+slow disk holds up no answer and no output, and writes are coalesced and never queue. -/
+abbrev Offloop : Type := Linger.Session.Offloop (Task (Except IO.Error Unit)) (IO Unit)
 
 /-- Run `write` on its own thread now, or after the running write in place of any that waits. -/
 def Offloop.ask (w : Offloop) (write : IO Unit) : IO Offloop := do
-  if w.running.isSome then
-    return { w with waiting := some write }
-  return { running := some (← IO.asTask write Task.Priority.dedicated) }
+  match Linger.Session.Offloop.ask w write with
+  | (w, none) =>
+    return w
+  | (w, some write) =>
+    return { w with running := some (← IO.asTask write Task.Priority.dedicated) }
 
 /-- How the running write ended, once it has, or after waiting for it with `block`; the write
 that waited for it then starts. `none` while it runs, or when none does. -/

@@ -48,6 +48,12 @@ waits the most a poll can, and the daemon then looks again. -/
 def pollTimeout (now : Nat) (deadlines : List Nat) : Int32 :=
   (deadlines.min?.map fun due => Int32.ofNat (min (due - now) 2147483647)).getD (-1)
 
+/-- What a daemon does with a write of one kind it asks for off its loop: while one runs, the new
+write waits in place of any that waited, so writes never queue and the latest state is the one
+that reaches the disk; otherwise it starts now, as the write this returns. -/
+def Offloop.ask {R W : Type} (o : Offloop R W) (w : W) : Offloop R W × Option W :=
+  if o.running.isSome then ({ o with waiting := some w }, none) else (o, some w)
+
 /-- Maximum encoded info answer, shared by the producer and the CLI accumulator. -/
 def infoReplyCap : Nat := 1048576
 

@@ -3015,6 +3015,50 @@ theorem pollTimeout_eq (now : Nat) (deadlines : List Nat) :
 theorem boot_roster (vt : Vt.Vt) (labels metaKv : List (String × String)) :
     (State.boot vt labels metaKv).roster = [] := rfl
 
+/-- While a write runs, a write asked for waits, in place of any that waited. -/
+theorem run_ask_running {R W : Type} (start : W → R) (o : Offloop R W) (w : W)
+    (h : o.running.isSome = true) :
+    Offloop.run Offloop.ask start o w = { o with waiting := some w } := by
+  simp [Offloop.run, Offloop.ask, h]
+
+/-- While a write runs, the writes asked for leave it running and the last of them waiting. -/
+theorem foldl_ask_running {R W : Type} (start : W → R) (o : Offloop R W)
+    (h : o.running.isSome = true) (ws : List W) :
+    (ws.foldl (Offloop.run Offloop.ask start) o).running = o.running ∧
+      (ws.foldl (Offloop.run Offloop.ask start) o).waiting =
+        ws.getLast?.orElse fun _ => o.waiting := by
+  induction ws generalizing o with
+  | nil => simp
+  | cons w ws ih =>
+    simp only [List.foldl_cons]
+    rw [run_ask_running start o w h]
+    have rest := ih { o with waiting := some w } h
+    refine ⟨rest.1, ?_⟩
+    rw [rest.2]
+    cases ws with
+    | nil => simp
+    | cons x xs => simp [List.getLast?_cons]
+
+/-- **Off-loop writes never queue**: of the writes a daemon asks for while none ends, the first
+runs and only the last waits. -/
+theorem offloop_coalesces {R W : Type} (start : W → R) (ws : List W) :
+    (ws.foldl (Offloop.run Offloop.ask start) {}).running = ws.head?.map start ∧
+      (ws.foldl (Offloop.run Offloop.ask start) {}).waiting =
+        if ws.length ≤ 1 then none else ws.getLast? := by
+  cases ws with
+  | nil => simp
+  | cons w ws =>
+    simp only [List.foldl_cons]
+    have first : Offloop.run Offloop.ask start {} w = { running := some (start w) } := by
+      simp [Offloop.run, Offloop.ask]
+    rw [first]
+    have rest := foldl_ask_running start { running := some (start w) } rfl ws
+    refine ⟨by simpa using rest.1, ?_⟩
+    rw [rest.2]
+    cases ws with
+    | nil => simp
+    | cons x xs => simp [List.getLast?_cons]
+
 /-- **Output reaches only its audience**: every effect of a chunk of program output is a write to
 the program, of the replies its queries ask, or an output frame of at most `outputChunk` bytes,
 64 KiB, to a client attached to the session. -/

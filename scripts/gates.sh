@@ -1119,6 +1119,11 @@ for tie in \
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "a session's processes end other than by Session.ending: $tie"
 done
+# A daemon's checkpoint saves and record writes start on a thread of their own, as
+# `Session.Offloop.ask` decides (`offloop_coalesces`): while one runs, a later one waits in place
+# of any that waited, so a slow disk holds up no answer and writes never queue.
+printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def Offloop[.]ask [(]w : Offloop[)] [(]write : IO Unit[)] : IO Offloop := do match Linger[.]Session[.]Offloop[.]ask w write with [|] [(]w, none[)] => return w [|] [(]w, some write[)] => return [{] w with running := some [(]← IO[.]asTask write Task[.]Priority[.]dedicated[)] [}]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "an off-loop write starts other than as Session.Offloop.ask decides, on a thread of its own"
 # A resume runs in its saved directory, else in a nonempty HOME, else nowhere
 # (resumeDir_absent): the daemon reads HOME for it into Env.resumeDir, and the resume suite
 # runs it with HOME unset and empty.
@@ -1161,7 +1166,6 @@ code_grep '^private def executeEffect [(]st : State[)] [(]rt : Rt[)] : [(]eff : 
   || fail "effect interpreter must implement the driver's dependent reply type"
 for tie in \
   '[|] [.]checkpoint => do return [(][{] rt with saves := ← rt[.]saves[.]ask [(]rt[.]saveCkpt st[)] [}], false[)]' \
-  'def Offloop[.]ask [(]w : Offloop[)] [(]write : IO Unit[)] : IO Offloop := do if w[.]running[.]isSome then return [{] w with waiting := some write [}] return [{] running := some [(]← IO[.]asTask write Task[.]Priority[.]dedicated[)] [}]' \
   '[|] some write => return [(][{] running := some [(]← IO[.]asTask write Task[.]Priority[.]dedicated[)] [}], some ended[)]' \
   'let seen := rt[.]st[.]seen if rt[.]published == some seen then return rt let records ← rt[.]records[.]ask [(]rt[.]saveRecord [(][.]running [(]some seen[)][)][)]' \
   'rt ← flushPty rt if !rt[.]exiting then rt ← publish rt latest[.]set rt'; do

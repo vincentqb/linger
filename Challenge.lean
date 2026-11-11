@@ -309,6 +309,11 @@ milliseconds; `-1` waits for an event however long that takes. -/
 @[expose]
 def Linger.Session.pollTimeout : Nat → List Nat → Int32 := sorry
 
+/-- What a daemon does with a write it asks for off its loop: the off-loop writes after it, and the
+write to start now, if any. -/
+@[expose]
+def Linger.Session.Offloop.ask {R W : Type} : Offloop R W → W → Offloop R W × Option W := sorry
+
 /-- The session's transition: the state after one event, and the effects it asks the runtime
 for, in order. -/
 @[expose]
@@ -2078,9 +2083,10 @@ theorem step_output_audience_rejects_stranger :
 /-! ## 10. Graceful under load
 
 A command waits for its daemon's answer a bounded time, and what it answers when that time runs
-out is still true. Not claimed yet: that work a request needs never waits on optional work or on
-another session, that every other wait is bounded and says what it missed, and that optional work
-is skipped or coalesced. The robust and resume suites test it. -/
+out is still true. A daemon saves its checkpoint and writes its end record off its loop, on a
+thread of its own (`scripts/gates.sh`), so a slow disk holds up no answer and no output, and the
+writes it asks for while one runs coalesce into the last. Not claimed yet: that every other wait
+is bounded and says what it missed, which the robust, resume and status suites measure. -/
 
 /-- A request's answer is true, even when its wait runs out: `start` and `resume` race the daemon
 they started for the request's ticket, whoever takes it decides, and so the command answers that
@@ -2105,6 +2111,24 @@ theorem start_answer_true_rejects_proceed :
         Start.Reachable (fun _ => true) Start.answer r →
           (r.answer = some .started → r.runs = true) ∧
             (r.answer = some .notStarted → r.runs = false) := by
+  sorry
+
+/-- Off-loop writes never queue: of the writes of one kind a daemon asks for while none ends, the
+first runs and only the last waits, to run when the first ends, so every write between them is
+skipped, its state superseded by the last one's. -/
+theorem offloop_coalesces {R W : Type} (start : W → R) (ws : List W) :
+    (ws.foldl (Offloop.run Offloop.ask start) {}).running = ws.head?.map start ∧
+      (ws.foldl (Offloop.run Offloop.ask start) {}).waiting =
+        if ws.length ≤ 1 then none else ws.getLast? := by
+  sorry
+
+/-- `offloop_coalesces` rejects a daemon that starts every write it asks for at once. -/
+theorem offloop_coalesces_rejects_eager :
+    ¬∀ {R W : Type} (start : W → R) (ws : List W),
+        (ws.foldl (Offloop.run (fun (o : Offloop R W) (w : W) => (o, some w)) start) {}).running =
+            ws.head?.map start ∧
+          (ws.foldl (Offloop.run (fun (o : Offloop R W) (w : W) => (o, some w)) start) {}).waiting =
+            if ws.length ≤ 1 then none else ws.getLast? := by
   sorry
 
 /-! ## The status rule

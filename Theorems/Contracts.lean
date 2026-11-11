@@ -288,6 +288,12 @@ example (s : Session.State) (chunk : List UInt8) :
             ∃ payload, eff = .send c.id (.output payload) ∧ payload.length ≤ 65536 := by
   with_reducible exact Session.step_ptyOut_audience s chunk
 
+example {R W : Type} (start : W → R) (ws : List W) :
+    (ws.foldl (Session.Offloop.run Session.Offloop.ask start) {}).running = ws.head?.map start ∧
+      (ws.foldl (Session.Offloop.run Session.Offloop.ask start) {}).waiting =
+        if ws.length ≤ 1 then none else ws.getLast? := by
+  with_reducible exact Session.offloop_coalesces start ws
+
 -- Focus reports
 example (s : Session.State) (c : Session.Client) (cols rows : UInt32) (hc : s.client? c.id = some c)
     (h : c.attached = false) (hsize : (cols != 0 && rows != 0) = true)

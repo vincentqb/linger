@@ -1847,6 +1847,21 @@ theorem start_answer_true_rejects_proceed :
   have ran := Start.Reachable.step taken (.daemonDecides _ rfl rfl true)
   exact absurd ((h _ ran).2 (by simp [Start.answer_command])) (by decide)
 
+theorem offloop_coalesces {R W : Type} (start : W → R) (ws : List W) :
+    (ws.foldl (Offloop.run Offloop.ask start) {}).running = ws.head?.map start ∧
+      (ws.foldl (Offloop.run Offloop.ask start) {}).waiting =
+        if ws.length ≤ 1 then none else ws.getLast? := Session.offloop_coalesces start ws
+
+theorem offloop_coalesces_rejects_eager :
+    ¬∀ {R W : Type} (start : W → R) (ws : List W),
+        (ws.foldl (Offloop.run (fun (o : Offloop R W) (w : W) => (o, some w)) start) {}).running =
+            ws.head?.map start ∧
+          (ws.foldl (Offloop.run (fun (o : Offloop R W) (w : W) => (o, some w)) start) {}).waiting =
+            if ws.length ≤ 1 then none else ws.getLast? := by
+  intro h
+  have first := (@h Nat Nat id [0, 1]).1
+  simp [Offloop.run] at first
+
 theorem classify_iff (o : Status.Obs) (s : Status.Status) : Status.classify o = s ↔ Status.Is s o :=
   Status.classify_iff o s
 

@@ -371,6 +371,24 @@ end Linger.Session
 
 namespace Linger.Session
 
+/-- Writes of one kind a daemon does off its loop, so that a slow disk holds up no answer and no
+output: the one running, on a thread of its own, and the latest one asked for while it ran, which
+runs when it ends, in place of any asked for before it. -/
+structure Offloop (R W : Type) where
+  /-- The write running. -/
+  running : Option R := none
+  /-- The latest write asked for while one ran. -/
+  waiting : Option W := none
+
+/-- What a daemon's off-loop writes become once it asks for `w`: its decision `ask` says whether
+`w` waits or which write starts now, and `start` runs a write on a thread of its own. -/
+@[expose]
+def Offloop.run {R W : Type} (ask : Offloop R W → W → Offloop R W × Option W) (start : W → R)
+    (o : Offloop R W) (w : W) : Offloop R W :=
+  match ask o w with
+  | (o, none) => o
+  | (o, some w) => { o with running := some (start w) }
+
 /-- The file system keeps what linger saves as a name's end record whole: once linger saved
 `bytes`, writing them to a temporary file and renaming that over the record, a reader reads
 exactly `bytes` until linger saves or removes the record again. A reader that sees part of a
