@@ -674,8 +674,8 @@ example :
 
 /-! #### The fit is mandatory, not hygiene
 
-`Vt.resize` re-fits the grid and leaves `sb` alone, so a resized session's ring
-rows are the *old* width. `fitRow` is what makes the replayed rows the session's
+`Vt.resize` re-fits the grid but not the history, so a resized session's ring
+rows are the *old* width, and the rows a shrink moves into it are too. `fitRow` is what makes the replayed rows the session's
 width, and `rowOk_fitRow` is unconditional — which is what keeps every hypothesis
 about the ring out of the screen theorems. -/
 

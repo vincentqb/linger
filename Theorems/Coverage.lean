@@ -3,6 +3,7 @@ module
 import all Linger.Session.Proofs.Buf
 import all Linger.Session.Proofs.Wire
 import all Linger.Terminal.Proofs.Vt
+import all Linger.Terminal.Proofs.Vt.History
 import all Linger.Terminal.Proofs.Mediation
 import all Linger.Terminal.Proofs.Title
 import all Linger.Session.Proofs.Session

@@ -510,7 +510,8 @@ what the session shows. That the receiver then keeps showing it as output contin
 conjectured (`KeepsShowing`), for a repaint taken between control sequences and characters. The
 program reads exactly the input linger accepted for it, in order, when the kernel delivers what
 linger writes (`Pty.Delivers`); linger accepts each frame a client that may type sends, whole,
-or refuses it whole when the program's queue is full. -/
+or refuses it whole when the program's queue is full. A terminal's history only gains rows at its
+end, unless output may ask to erase it (`Vt.mayErase`, the shape of `CSI 3 J`). -/
 
 /-- Streaming the repaint of a terminal a session can hold ends, and a receiver of the same size
 that parses it ends with the session's dimensions and every row of its screen. -/
@@ -689,6 +690,46 @@ theorem replay_history_rejects_silence :
               ∃ bytes,
                 Replay.Emits (fun _ _ => none) budget (Replay.start v) bytes ∧
                   (w.feed bytes).scrollback = (Render.sbRows v).toList := by
+  sorry
+
+/-- A terminal's history is the record of the rows that left the top of its main screen, oldest
+first, and only a request to erase it removes any. Output fed to a terminal a session can hold,
+between control sequences and characters, keeps its history unless it may ask to erase it
+(`Vt.mayErase`, the shape of `CSI 3 J`): the history is then the newest `Vt.sbCap` rows of the old
+one followed by the rows added. A resize keeps it too, adding, on the main screen, the screen's
+rows above the new height. -/
+theorem history_grows (v : Vt.Vt)
+    (hv :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) v) :
+    (∀ bytes : List UInt8,
+        v.atBoundary = true →
+          Vt.mayErase bytes = false →
+          ∃ added, (v.feed bytes).scrollback = Vt.newest Vt.sbCap (v.scrollback ++ added)) ∧
+      ∀ cols rows : Nat,
+        ∃ added,
+          (v.resize cols rows).scrollback = Vt.newest Vt.sbCap (v.scrollback ++ added) ∧
+            ((Vt.stick v).alt = false →
+              added = (List.range (v.rowCount - (v.resize cols rows).rowCount)).map v.getRow) := by
+  sorry
+
+/-- `history_grows` rejects a terminal that loses its history to output. -/
+theorem history_grows_rejects_lost :
+    ¬∀ (v : Vt.Vt),
+        Vt.Live Vt.Vt.init (fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) Vt.Vt.resize
+            Vt.Vt.quiesce (Checkpoint.Decoded Checkpoint.loadBytes) v →
+          (∀ bytes : List UInt8,
+              v.atBoundary = true →
+                Vt.mayErase bytes = false →
+                ∃ added,
+                  ((fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) v bytes).scrollback =
+                    Vt.newest Vt.sbCap (v.scrollback ++ added)) ∧
+            ∀ cols rows : Nat,
+              ∃ added,
+                (v.resize cols rows).scrollback = Vt.newest Vt.sbCap (v.scrollback ++ added) ∧
+                  ((Vt.stick v).alt = false →
+                    added =
+                      (List.range (v.rowCount - (v.resize cols rows).rowCount)).map v.getRow) := by
   sorry
 
 /-- Outside origin mode, streaming the repaint of a terminal a session can hold ends, and a

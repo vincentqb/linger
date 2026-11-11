@@ -27,6 +27,7 @@ import all Linger.Session.Proofs.Session
 import all Linger.Display.Proofs.Status
 import all Linger.Display.Proofs.Title
 import all Linger.Terminal.Proofs.Vt
+import all Linger.Terminal.Proofs.Vt.History
 import all Linger.Terminal.Proofs.Vt.Renderable
 import all Linger.Terminal.Proofs.Vt.State
 import all Linger.Session.Proofs.Wire
@@ -215,6 +216,25 @@ example {v : Vt.Vt} (bytes : List UInt8) (h : Vt.Good v) : Vt.Good (v.feed bytes
 
 example {v : Vt.Vt} (h : Vt.Renderable v) (bytes : List UInt8) : Vt.Renderable (v.feed bytes) := by
   with_reducible exact Vt.renderable_feed h bytes
+
+example {v : Vt.Vt} (h : Vt.Good v) (hb : v.atBoundary = true) (bytes : List UInt8)
+    (he : Vt.mayErase bytes = false) :
+    ∃ added : List Vt.Row,
+      (v.feed bytes).scrollback = Vt.newest Vt.sbCap (v.scrollback ++ added) := by
+  with_reducible exact Vt.history_feed h hb bytes he
+
+example {v : Vt.Vt} (h : Vt.Good v) (hr : Vt.Renderable v) (cols rows : Nat) :
+    ∃ added : List Vt.Row,
+      (v.resize cols rows).scrollback = Vt.newest Vt.sbCap (v.scrollback ++ added) ∧
+        (v.inAlt = false →
+          added = (List.range (v.rowCount - (v.resize cols rows).rowCount)).map v.getRow) := by
+  with_reducible exact Vt.history_resize h hr cols rows
+
+example {v : Vt.Vt} (hb : v.atBoundary = true) :
+    (v.feed [0x1B, 0x5B, 0x33, 0x4A]).scrollback = [] := by with_reducible exact Vt.history_erase hb
+
+example {v : Vt.Vt} (hb : v.atBoundary = true) :
+    (v.feed [0x1B, 0x63]).scrollback = v.scrollback := by with_reducible exact Vt.history_reset hb
 
 -- Terminal controls
 example {v : Vt.Vt} (hu : v.u8need = 0) (hosc : ∀ acc e, v.pstate ≠ .osc acc e)

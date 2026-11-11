@@ -5,8 +5,9 @@ public section
 /-! # What terminal headlines are stated in
 
 The values a terminal shows (colours, pens, cells, rows, modes and the screen settings a
-repaint keeps), the bytes it is fed, and two predicates over the emulator's operations, which
-they take as parameters. Bodies are exposed: each definition here is its own specification.
+repaint keeps), the bytes it is fed, the rows a history keeps and the output that may ask to
+erase it, and two predicates over the emulator's operations, which they take as parameters.
+Bodies are exposed: each definition here is its own specification.
 
 `Live` is the least set of states containing a fresh emulator and closed under what a live
 session does to one: feed pty bytes, resize on attach, forget partial parser state (what a
@@ -98,6 +99,42 @@ structure Modes where
 /-- Clamp a requested dimension to [1, 1000]. -/
 @[expose]
 def clampDim (n : Nat) : Nat := min (max n 1) 1000
+
+/-- The newest `n` entries of a list kept oldest first, as a history that keeps `n` rows holds
+them. -/
+@[expose]
+def newest {α : Type} (n : Nat) (l : List α) : List α := l.drop (l.length - n)
+
+/-- Where a scan of output for a request to erase history stands: outside one, or after a `[`
+and bytes below `@` (0x40) or DEL, having seen a `3` among them or not. -/
+inductive EraseScan where
+  /-- No `[` begins a possible request. -/
+  | outside
+  /-- After a `[` and bytes below `@` or DEL, among which a `3` when `three` holds. -/
+  | inside (three : Bool)
+  deriving DecidableEq
+
+/-- The scan after one more byte: a `[` begins a possible request, and any byte but one below `@`
+or DEL ends it. -/
+@[expose]
+def EraseScan.next (scan : EraseScan) (b : UInt8) : EraseScan :=
+  if b = 0x5B then .inside false
+  else
+    match scan with
+    | .inside three => if b < 0x40 ∨ b = 0x7F then .inside (three || b == 0x33) else .outside
+    | .outside => .outside
+
+/-- Whether output, scanned from `scan`, may ask to erase history: a `J` comes after a `[` and
+bytes below `@` or DEL among which a `3`. -/
+@[expose]
+def EraseScan.finds (scan : EraseScan) : List UInt8 → Bool
+  | [] => false
+  | b :: bs => decide (scan = .inside true ∧ b = 0x4A) || (scan.next b).finds bs
+
+/-- Whether output may ask a terminal to erase its history: it holds a `[`, then bytes below `@`
+(0x40) or DEL among which a `3`, then `J`, the shape of the erase request `CSI 3 J`. -/
+@[expose]
+def mayErase (bytes : List UInt8) : Bool := EraseScan.outside.finds bytes
 
 /-- The receiver fields a repaint establishes and then must not disturb: the screen height,
 the scroll region, the character sets, the shift state and the screen selection. -/

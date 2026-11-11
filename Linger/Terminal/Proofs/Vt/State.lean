@@ -272,9 +272,22 @@ theorem ring_push_le {r : Ring} (row : Row) (h : r.size ≤ sbCap) : (r.push row
   unfold Ring.size at h ⊢
   unfold Ring.push
   split
-  · simp only [Array.size_push]
-    omega
+  · split
+    · simp only [Array.size_push]
+      omega
+    · have : r.toList.length = r.data.size := by
+        simp only [Ring.toList, List.length_append, List.length_drop, List.length_take,
+          Array.length_toList]
+        omega
+      simp only [Array.size_push, List.size_toArray, this]
+      omega
   · simpa [Array.size_setIfInBounds] using h
+
+theorem ring_pushAll_le {r : Ring} (rows : List Row) (h : r.size ≤ sbCap) :
+    (rows.foldl Ring.push r).size ≤ sbCap := by
+  induction rows generalizing r with
+  | nil => exact h
+  | cons row rows ih => exact ih (ring_push_le row h)
 
 theorem csiPush_le (s : CsiState) (sub : Bool) (hp : s.params.size ≤ 16) :
     (csiPush s sub).params.size ≤ 16 := by
@@ -801,11 +814,8 @@ theorem stepEsc {v : Vt} (b : UInt8) (h : Good v) : Good (v.stepEsc b) := by
             curX := h.savX, curY := h.savY }
       | -- HTS: tabs + ground
         exact { set_ground h with }
-      | -- RIS: fresh screen, scrollback conditionally carried
-        ( dsimp only
-          split
-          · exact set_sb _ h.sbLe (good_init v.cols v.rows)
-          · exact set_sb _ (by simp [Ring.size]) (good_init v.cols v.rows))
+      | -- RIS: fresh screen, its history carried
+        exact set_sb _ h.sbLe (good_init v.cols v.rows)
       | ( repeat' split
           all_goals
             with_reducible
@@ -903,7 +913,9 @@ theorem feed {v : Vt} (bytes : List UInt8) (h : Good v) : Good (v.feed bytes) :=
 /-- Resize lands Good regardless of requested dimensions. -/
 theorem resize {v : Vt} (cols rows : Nat) (h : Good v) : Good (v.resize cols rows) := by
   unfold Vt.resize
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?altCur, ?_, ?_, h.sbLe, h.u8Le, h.csiLe, h.oscLe⟩
+  refine
+    ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?altCur, ?_, ?_, ring_pushAll_le _ h.sbLe, h.u8Le, h.csiLe,
+      h.oscLe⟩
   case altCur =>
     intro g c p heq
     simp only at heq

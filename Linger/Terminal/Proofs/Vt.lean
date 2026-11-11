@@ -635,11 +635,12 @@ The receiver's ring is empty when `restore` starts pushing (`ED 3`) and the push
 capped by `sbTake`, so the wrap branch is unreachable on the replay path. These are the
 three facts that let a push be read as an append. -/
 
-/-- Below the cap a push is an append, and the oldest index does not move. -/
-theorem ring_push_data {r : Ring} (row : Row) (h : r.data.size < sbCap) :
+/-- Below the cap a push into a ring stored oldest first is an append, and the oldest index does
+not move. -/
+theorem ring_push_data {r : Ring} (row : Row) (h : r.data.size < sbCap) (h0 : r.start = 0) :
     (r.push row).data = r.data.push row ∧ (r.push row).start = r.start := by
   unfold Ring.push
-  rw [ite_eq_left h]
+  rw [ite_eq_left h, ite_eq_left h0]
   exact ⟨rfl, rfl⟩
 
 /-- A ring that never wrapped reads back as its own array, oldest first. -/
@@ -1594,8 +1595,8 @@ theorem init_observed (cols rows : Nat) :
   simp [Vt.getRow, Vt.init, blankRow, Cell.erased, Array.getD, hy]
 
 /-- A resize sets the clamped size, keeps the cursor within it, resets the scroll region to the
-whole screen, and keeps the history, modes, pen, title, character sets, screen selection and
-parser state. -/
+whole screen, and keeps the modes, pen, title, character sets, screen selection and parser
+state. What it does to the history is `history_resize`'s. -/
 theorem resize_observed (v : Vt) (cols rows : Nat) :
     (v.resize cols rows).colCount = clampDim cols ∧
       (v.resize cols rows).rowCount = clampDim rows ∧
@@ -1604,12 +1605,11 @@ theorem resize_observed (v : Vt) (cols rows : Nat) :
       stick (v.resize cols rows) =
         { stick v with
           rows := clampDim rows, top := 0, bot := clampDim rows - 1 } ∧
-      (v.resize cols rows).scrollback = v.scrollback ∧
       (v.resize cols rows).getModes = v.getModes ∧
       (v.resize cols rows).getPen = v.getPen ∧
       (v.resize cols rows).windowTitle = v.windowTitle ∧
       (v.resize cols rows).atBoundary = v.atBoundary := by
-  refine ⟨rfl, rfl, rfl, ?_, rfl, rfl, rfl, rfl, rfl⟩
+  refine ⟨rfl, rfl, rfl, ?_, rfl, rfl, rfl, rfl⟩
   simp only [stick, Vt.resize, Option.isSome_map]
 
 /-- Forgetting partial parser state puts the parser at a boundary and keeps everything the

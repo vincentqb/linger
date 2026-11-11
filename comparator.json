@@ -12,6 +12,8 @@
     "Linger.input_exact_rejects_lost",
     "Linger.replay_history",
     "Linger.replay_history_rejects_silence",
+    "Linger.history_grows",
+    "Linger.history_grows_rejects_lost",
     "Linger.replay_cursor",
     "Linger.replay_cursor_rejects_silence",
     "Linger.replay_pen",

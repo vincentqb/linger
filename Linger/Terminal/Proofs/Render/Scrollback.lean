@@ -843,7 +843,7 @@ theorem painted_crlf_push {cols rows : Nat} {L B : List Row} {off D Y : Nat} {p 
     omega
   have hcap : u.sb.data.size < sbCap := by
     rw [hsize]; omega
-  obtain ⟨hpd, hps⟩ := ring_push_data (r := u.sb) (u.getRow 0) hcap
+  obtain ⟨hpd, hps⟩ := ring_push_data (r := u.sb) (u.getRow 0) hcap hP.sbStart
   refine
     ⟨⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, by omega, hylt, ?_, ?_, by
         omega⟩,

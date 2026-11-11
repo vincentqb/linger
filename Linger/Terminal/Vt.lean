@@ -246,17 +246,24 @@ structure Ring where
 /-- Maximum number of rows the scrollback ring retains. -/
 def sbCap : Nat := 10000
 
-/-- Append a row, overwriting the oldest once the ring holds `sbCap` rows. -/
-private def Ring.push (r : Ring) (row : Row) : Ring :=
-  if r.data.size < sbCap then { r with data := r.data.push row }
-  else { data := r.data.setIfInBounds r.start row, start := (r.start + 1) % sbCap }
-
-/-- Number of rows retained. -/
-private def Ring.size (r : Ring) : Nat := r.data.size
-
 /-- Oldest-first. -/
 def Ring.toList (r : Ring) : List Row :=
   (r.data.toList.drop r.start) ++ (r.data.toList.take r.start)
+
+/-- Append a row, overwriting the oldest once the ring holds `sbCap` rows. A ring loaded with its
+oldest row elsewhere than at index 0 while it is not full is first stored oldest first, and a
+full one whose `start` is past its rows reads, as `toList` does, from index 0, so every ring
+`toList` reads keeps that order when a row is added. -/
+private def Ring.push (r : Ring) (row : Row) : Ring :=
+  if r.data.size < sbCap then
+    if r.start = 0 then { r with data := r.data.push row }
+    else { data := r.toList.toArray.push row, start := 0 }
+  else
+    let start := if r.start < r.data.size then r.start else 0
+    { data := r.data.setIfInBounds start row, start := (start + 1) % sbCap }
+
+/-- Number of rows retained. -/
+private def Ring.size (r : Ring) : Nat := r.data.size
 
 /-! ## Parser state -/
 
@@ -953,7 +960,7 @@ private def Vt.eraseScreen (v : Vt) (mode : Nat) : Vt :=
   | 1 =>
     let v := v.eraseLine 1
     (List.range v.cursor.y).foldl (fun v' y => v'.eraseRowSpan y 0 v'.cols) v
-  | 3 => -- clear including scrollback
+  | 3 => -- clear including scrollback: the one request that erases history
     let v := (List.range v.rows).foldl (fun v' y => v'.eraseRowSpan y 0 v'.cols) v
     { v with sb := {} }
   | _ => (List.range v.rows).foldl (fun v' y => v'.eraseRowSpan y 0 v'.cols) v
@@ -1107,7 +1114,9 @@ private def resizeRow (row : Row) (cols : Nat) (p : Pen) : Row :=
     ((Array.range cols).map (fun i => if i < row.size then row.getD i default else Cell.erased p))
 
 /-- Resize to clamped dimensions without reflow: keep the bottom rows, truncate or pad
-cells, and reset the scroll region and tab ruler. -/
+cells, and reset the scroll region and tab ruler. A shrink moves the main screen's top rows,
+which leave it, into history, oldest first and as they were; an alternate screen's leave
+nothing. -/
 def Vt.resize (v : Vt) (cols rows : Nat) : Vt :=
   let c := clampDim cols
   let r := clampDim rows
@@ -1119,8 +1128,13 @@ def Vt.resize (v : Vt) (cols rows : Nat) : Vt :=
       (fun j =>
         let src := if g.size ≥ r then g.size - r + j else j
         if src < g.size then resizeRow (g.getD src #[]) c {} else blankRow c {})
+  let main :=
+    match v.altGrid with
+    | some (g, _, _) => g
+    | none => v.grid
   { v with
     cols := c, rows := r, grid := fit v.grid,
+    sb := (main.toList.take (main.size - r)).foldl Ring.push v.sb,
     altGrid :=
       v.altGrid.map
         (fun (g, cur, pen) =>
@@ -1346,9 +1360,9 @@ private def Vt.stepEsc (v : Vt) (b : UInt8) : Vt :=
       tabs := v.tabs.setIfInBounds v.cursor.x true, -- H HTS
       pstate := .ground }
   | 0x4D => { v.reverseIndex with pstate := .ground } -- M RI
-  | 0x63 => -- c RIS
+  | 0x63 => -- c RIS: resets the screen and its modes, and keeps the history
     let fresh := Vt.init v.cols v.rows
-    { fresh with sb := if v.altGrid.isNone then v.sb else ({} : Ring) }
+    { fresh with sb := v.sb }
   | 0x3D =>
     { v with
       modes := { v.modes with appKeypad := true }, pstate := .ground }

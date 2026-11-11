@@ -390,13 +390,6 @@ theorem onMsg_detachAll (s : State) (c : Client) (control : (c.attached && !c.si
           [.send c.id .done]) := by
   simp [onMsg, control]
 
-/-- Attach only resizes: the scrollback — the session's history — is
-untouched by any attach/detach cycle (observer or not). -/
-theorem onMsg_attach_sb (s : State) (c : Client) (cols rows : UInt32) :
-    (onMsg s c (.attach cols rows)).1.vt.sb = s.vt.sb := by
-  unfold onMsg
-  grind [Vt.Vt.resize]
-
 /-- **A same-size reattach leaves the emulator untouched.** `Vt.resize` resets the
 scroll region and tab ruler (`top`/`bot`/`tabs`) unconditionally, so resizing at an
 unchanged size wiped a child's `DECSTBM` and custom tab stops from the model — and

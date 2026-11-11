@@ -2240,7 +2240,7 @@ theorem renderable_stepEsc {v : Vt} (h : Renderable v) (b : UInt8) :
     | exact renderable_congr (renderable_reverseIndex h) rfl rfl rfl rfl
     | -- RIS: a fresh screen of the same dimensions
       (dsimp only
-       split <;> exact renderable_congr (renderable_init v.cols v.rows) rfl rfl rfl rfl)
+       exact renderable_congr (renderable_init v.cols v.rows) rfl rfl rfl rfl)
     | (repeat' split
        all_goals exact renderable_congr h rfl rfl rfl rfl)
 

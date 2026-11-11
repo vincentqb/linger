@@ -50,6 +50,7 @@ public import Linger.Session.Wire
 public import Linger.Session.Start
 import all Linger.Terminal.Vt
 import all Linger.Terminal.Proofs.Vt
+import all Linger.Terminal.Proofs.Vt.History
 import all Linger.Terminal.Proofs.Vt.Renderable
 import all Linger.Terminal.Proofs.Render.Grid
 import all Linger.Terminal.Proofs.Render.History
@@ -296,6 +297,52 @@ theorem replay_history_rejects_silence :
   | done =>
     rw [Render.sbRows_observed] at history
     exact absurd (congrArg List.length history) (by decide +kernel)
+
+theorem history_grows (v : Vt.Vt)
+    (hv :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) v) :
+    (∀ bytes : List UInt8,
+        v.atBoundary = true →
+          Vt.mayErase bytes = false →
+          ∃ added, (v.feed bytes).scrollback = Vt.newest Vt.sbCap (v.scrollback ++ added)) ∧
+      ∀ cols rows : Nat,
+        ∃ added,
+          (v.resize cols rows).scrollback = Vt.newest Vt.sbCap (v.scrollback ++ added) ∧
+            ((Vt.stick v).alt = false →
+              added = (List.range (v.rowCount - (v.resize cols rows).rowCount)).map v.getRow) := by
+  have live := Checkpoint.live_of_decoded hv
+  have good := Vt.good_of_liveReachable live
+  exact
+    ⟨fun bytes hb he => Vt.history_feed good hb bytes he, fun cols rows =>
+      Vt.history_resize good (Vt.renderable_of_liveReachable live) cols rows⟩
+
+theorem history_grows_rejects_lost :
+    ¬∀ (v : Vt.Vt),
+        Vt.Live Vt.Vt.init (fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) Vt.Vt.resize
+            Vt.Vt.quiesce (Checkpoint.Decoded Checkpoint.loadBytes) v →
+          (∀ bytes : List UInt8,
+              v.atBoundary = true →
+                Vt.mayErase bytes = false →
+                ∃ added,
+                  ((fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) v bytes).scrollback =
+                    Vt.newest Vt.sbCap (v.scrollback ++ added)) ∧
+            ∀ cols rows : Nat,
+              ∃ added,
+                (v.resize cols rows).scrollback = Vt.newest Vt.sbCap (v.scrollback ++ added) ∧
+                  ((Vt.stick v).alt = false →
+                    added =
+                      (List.range (v.rowCount - (v.resize cols rows).rowCount)).map v.getRow) := by
+  intro h
+  -- A shrink from two rows to one leaves one row of history, which the lost output drops.
+  obtain ⟨added, history⟩ :=
+    (h ((Vt.Vt.init 1 2).resize 1 1) (.resize (.init 1 2) 1 1)).1 [] (by decide +kernel) rfl
+  have lengths := congrArg List.length history
+  have none : (Vt.Vt.init 1 1).scrollback.length = 0 := by decide +kernel
+  have one : ((Vt.Vt.init 1 2).resize 1 1).scrollback.length = 1 := by decide +kernel
+  have cap : Vt.sbCap = 10000 := rfl
+  simp only [Vt.newest, List.length_drop, List.length_append, none, one, cap] at lengths
+  omega
 
 theorem replay_cursor (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
     (hv :
