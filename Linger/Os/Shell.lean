@@ -1,6 +1,7 @@
 module
 
 import all Linger.Os.Boundary
+import Linger.Os.Wait
 import Std.Async.System
 
 public section
@@ -319,6 +320,22 @@ def gethostname : IO String := do
 /-- CLOCK_MONOTONIC in ms — checkpoint cadence, poll deadlines. Lean
 core's `IO.monoMsNow` supplies natural-number milliseconds directly. -/
 def monotonicMs : IO Nat := IO.monoMsNow
+
+/-- Sleep before a wait's next look, as `Linger.Os.Wait.next` decides for a wait with `deadline`
+on the monotonic clock: at least 1 ms and at most `step`, never past the deadline. `false`,
+without sleeping, once the deadline has passed, when the wait has missed what it waited for.
+Every bounded wait sleeps through this (`scripts/gates.sh`). -/
+def nap (deadline step : Nat) : IO Bool := do
+  match Linger.Os.Wait.next deadline step (← monotonicMs) with
+  | none =>
+    return false
+  | some ms =>
+    IO.sleep ms.toUInt32
+    return true
+
+/-- Sleep `ms` between the looks of a wait with no deadline. Only the waits named at its uses
+take it (`scripts/gates.sh`), each on something that ends without waiting itself. -/
+def pause (ms : Nat) : IO Unit := IO.sleep ms.toUInt32
 
 /-- Unix epoch seconds — `created` timestamps in listings. -/
 def realtimeS : IO UInt64 := do

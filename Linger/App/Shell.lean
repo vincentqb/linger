@@ -174,8 +174,8 @@ private inductive Waited where
 /-- The report a daemon this command began writes, looked for every 10 ms while that daemon lives.
 Once `startWaitMs` has passed, the command takes the request's ticket, and the daemon then starts
 nothing; when the daemon took it first, the command waits on while the daemon lives, since what
-it does after its commit point never waits. A daemon that ended gets one last look, since it may
-have reported just before. -/
+it does after its commit point never waits: one of the waits with no deadline (`pause`). A daemon
+that ended gets one last look, since it may have reported just before. -/
 private def awaitReport (pid : UInt32) (report : String) : IO Waited := do
   let deadline := (← monotonicMs) + startWaitMs
   let mut bounded := true
@@ -186,11 +186,13 @@ private def awaitReport (pid : UInt32) (report : String) : IO Waited := do
       if let some told← takeReport report then
         return .told told
       return if ← takeTicket report then .took false else .silent
-    if bounded && (← monotonicMs) ≥ deadline then
-      if ← takeTicket report then
-        return .took true
-      bounded := false
-    IO.sleep 10
+    if bounded then
+      unless ← nap deadline 10 do
+        if ← takeTicket report then
+          return .took true
+        bounded := false
+    else
+      pause 10
   return .silent
 
 /-- Make the ticket of the request at `report`, then begin its daemon with `args`; a daemon that
@@ -399,10 +401,9 @@ private def connectUpsert (name : String) (cmd : List String) : IO UInt32 := do
     let pid ← spawnDaemon name cwd cmd
     let start ← monotonicMs
     let mut fdOpt : Option UInt32 := none
-    while
-      fdOpt.isNone && (← monotonicMs) < start + socketWaitCapMs &&
-        ((← monotonicMs) < start + socketWaitFloorMs || (← alive pid)) do
-      IO.sleep 30
+    while fdOpt.isNone && ((← monotonicMs) < start + socketWaitFloorMs || (← alive pid)) do
+      unless ← nap (start + socketWaitCapMs) 30 do
+        break
       fdOpt ← Client.connect name
     match fdOpt with
     | some fd =>
@@ -545,7 +546,8 @@ private def listRemotes (hosts : Array String) : IO (Option (Array String)) := d
           running := running.push (index, pending)
       jobs.set running
       if !running.isEmpty then
-        IO.sleep 5
+        unless ← nap deadline 5 do
+          break
     return some outputs
   finally
     for (_, pending) in ← jobs.get do
@@ -857,10 +859,9 @@ private def cmdWait (deadline : Option Nat) (name : String) : IO UInt32 := do
       | .recorded (some outcome) =>
         return ← reportEnding name (.outcome outcome)
       | .held why =>
-        if (← monotonicMs) ≥ heldUntil then
+        unless ← nap heldUntil 20 do
           IO.eprintln s!"linger: no answer for '{name}': {why}"
           return 125
-        IO.sleep 20
     if let some limit := deadline then
       if (← monotonicMs) ≥ limit then
         IO.eprintln s!"linger: timed out waiting for '{name}'"
@@ -954,10 +955,9 @@ private def cmdKill (name : String) : IO UInt32 := do
           pure false
       if released then
         return 0
-      if (← monotonicMs) ≥ deadline then
+      unless ← nap deadline 20 do
         IO.eprintln s!"linger: session '{name}' has not ended"
         return 1
-      IO.sleep 20
   | none =>
     match ← discardSaved name with
     | .ok true =>

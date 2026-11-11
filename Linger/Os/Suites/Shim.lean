@@ -1,6 +1,7 @@
 module
 
 import Linger.Os.Shell
+import Linger.Os.Suites.Wait
 
 /-! # lingertest — IO smoke tests for the Posix shim
 
@@ -545,6 +546,7 @@ public def main (args : List String) : IO UInt32 := do
   testCStringInputs
   testWinsizeBounds
   testDeepCwd
+  testWaits check
   let n ← failed.get
   IO.println (if n == 0 then "ALL PASS" else s!"{n} FAILURES")
   return n.toUInt32

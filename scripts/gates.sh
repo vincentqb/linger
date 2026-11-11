@@ -319,7 +319,7 @@ library_roots LingerInputTheorems '#[`Linger.Selector.Proofs.Input]' 'leanOption
 library_roots LingerFuzzy '#[`Linger.Selector.Fuzzy]' 'leanOptions := implementationOptions'
 [ "$(library_decl Linger)" = "lean_lib Linger where leanOptions := implementationOptions " ] \
   || fail "the Linger library lost implementationOptions: $(library_decl Linger)"
-[ "$(library_decl Suites)" = "lean_lib Suites where globs := #[.submodules \`Linger.Session.Suites] leanOptions := implementationOptions " ] \
+[ "$(library_decl Suites)" = "lean_lib Suites where globs := #[.submodules \`Linger.Session.Suites, .one \`Linger.Os.Suites.Wait] leanOptions := implementationOptions " ] \
   || fail "the Suites library lost its globs or implementationOptions: $(library_decl Suites)"
 [ "$(git grep -c 'def implementationOptions : Array LeanOption := #\[⟨`linter.missingDocs, true⟩\]$' -- lakefile.lean)" = lakefile.lean:1 ] \
   || fail "implementationOptions no longer enables linter.missingDocs"
@@ -638,7 +638,8 @@ done
 # its lookup spelling: readSave resolves the current symlink target each time.
 for tie in \
   'Command[.]start "tmux" #[[]"show-options", "-gqv", "@resurrect-dir"[]]' \
-  'let deadline := [(]← Linger[.]Os[.]Shell[.]monotonicMs[)] [+] 1000 while [(]← Linger[.]Os[.]Shell[.]monotonicMs[)] < deadline do' \
+  'let deadline := [(]← Linger[.]Os[.]Shell[.]monotonicMs[)] [+] 1000 repeat' \
+  'unless ← Linger[.]Os[.]Shell[.]nap deadline 10 do break throw [(]IO[.]userError "tmux configuration query timed out; pass a save file explicitly"[)]' \
   'finally Command[.]stop pending' \
   'match file with [|] some path => pure path [|] none => if let some dir[[:space:]]*← configuredDirectory then' \
   'let path := System[.]FilePath[.]mk path return if path[.]isAbsolute then path else origin / path' \
@@ -737,7 +738,7 @@ for tie in \
   'let chunk ← handle[.]read 4096 if chunk[.]isEmpty then break if !exceeded && bytes[.]size [+] chunk[.]size ≤ limit then bytes := bytes [+][+] chunk else exceeded := true' \
   'if exceeded then throw [(]IO[.]userError s!"command output exceeds [{]limit[}] bytes"[)] let some text := String[.]fromUTF8[?] bytes [|] throw [(]IO[.]userError "command output is not UTF-8"[)] return text' \
   'def poll [(]pending : IO[.]Ref [(]Option Job[)][)] : IO [(]Option IO[.]Process[.]Output[)] := do if let some job[[:space:]]*← pending[.]get then if [(]← IO[.]hasFinished job[.]stdout[)] && [(]← IO[.]hasFinished job[.]stderr[)] then if let some exitCode[[:space:]]*← job[.]child[.]tryWait then pending[.]set none let stdout ← IO[.]ofExcept [(]← IO[.]wait job[.]stdout[)] let stderr ← IO[.]ofExcept [(]← IO[.]wait job[.]stderr[)] return some [{] exitCode, stdout, stderr [}] return none' \
-  'if let some job[[:space:]]*← pending[.]get then pending[.]set none try try try if graceMs > 0 then Linger[.]Os[.]Shell[.]kill job[.]child[.]pid 15 let deadline := [(]← Linger[.]Os[.]Shell[.]monotonicMs[)] [+] graceMs while [(]← Linger[.]Os[.]Shell[.]monotonicMs[)] < deadline do if [(]← IO[.]hasFinished job[.]stdout[)] && [(]← IO[.]hasFinished job[.]stderr[)] then break IO[.]sleep 5 finally retireGroup job finally discard job[.]child[.]wait finally discard <[|] IO[.]wait job[.]stdout discard <[|] IO[.]wait job[.]stderr' \
+  'if let some job[[:space:]]*← pending[.]get then pending[.]set none try try try if graceMs > 0 then Linger[.]Os[.]Shell[.]kill job[.]child[.]pid 15 let deadline := [(]← Linger[.]Os[.]Shell[.]monotonicMs[)] [+] graceMs repeat if [(]← IO[.]hasFinished job[.]stdout[)] && [(]← IO[.]hasFinished job[.]stderr[)] then break unless ← Linger[.]Os[.]Shell[.]nap deadline 5 do break finally retireGroup job finally discard job[.]child[.]wait finally discard <[|] IO[.]wait job[.]stdout discard <[|] IO[.]wait job[.]stderr' \
   'private def retireGroup [(]job : Job[)] : IO Unit := do try job[.]child[.]kill catch err => match err with [|] [.]permissionDenied [.][.] [|] [.]noSuchThing [.][.] => Linger[.]Os[.]Shell[.]kill job[.]child[.]pid 9 [|] _ => throw err'; do
   printf '%s\n' "$command_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "owned command lost its process or pipe lifetime contract: $tie"
@@ -1126,6 +1127,22 @@ done
 # of any that waited, so a slow disk holds up no answer and writes never queue.
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def Offloop[.]ask [(]w : Offloop[)] [(]write : IO Unit[)] : IO Offloop := do match Linger[.]Session[.]Offloop[.]ask w write with [|] [(]w, none[)] => return w [|] [(]w, some write[)] => return [{] w with running := some [(]← IO[.]asTask write Task[.]Priority[.]dedicated[)] [}]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "an off-loop write starts other than as Session.Offloop.ask decides, on a thread of its own"
+# Every wait sleeps through `Os.Shell.nap`, as `Os.Wait.next` decides (`wait_ends`, over the world
+# claim `Wait.Lasts`, which the shim suite exercises): at least 1 ms and at most its step, never
+# past its deadline, and `false` once that has passed, when the wait reports what it missed. The
+# one wait with no deadline that sleeps, `start` or `resume` waiting on a daemon that took the
+# request's ticket, sleeps through `Os.Shell.pause`. No timer task stands in for a deadline.
+sleeps="$(code_grep '(^|[^A-Za-z0-9_.])IO[.]sleep([^A-Za-z0-9_]|$)' 'Linger/*.lean' Main.lean \
+  | grep -v -e '^Linger/[^/]*/Proofs/' -e '^Linger/[^/]*/Tests/' -e '^Linger/[^/]*/Suites/' \
+  | cut -d: -f1 | sort | uniq -c | awk '{ printf "%s:%s ", $2, $1 }')"
+[ "$sleeps" = "Linger/Os/Shell.lean:2 " ] \
+  || fail "a wait sleeps outside Os.Shell.nap and Os.Shell.pause: $sleeps"
+code_grep '^[[:space:]]+match Linger[.]Os[.]Wait[.]next deadline step [(]← monotonicMs[)] with$' \
+  Linger/Os/Shell.lean >/dev/null \
+  || fail "Os.Shell.nap sleeps other than as Os.Wait.next decides"
+[ "$(code_count '(^|[^A-Za-z0-9_.])pause [0-9]' 'Linger/*.lean')" -eq 1 ] \
+  && code_grep '^[[:space:]]+pause 10$' Linger/App/Shell.lean >/dev/null \
+  || fail "a wait with no deadline sleeps other than where start and resume wait on their daemon"
 # A resume runs in its saved directory, else in a nonempty HOME, else nowhere
 # (resumeDir_absent): the daemon reads HOME for it into Env.resumeDir, and the resume suite
 # runs it with HOME unset and empty.
@@ -1302,7 +1319,7 @@ for tie in \
   'private def takeTicket [(]report : String[)] : IO Bool := do try IO[.]FS[.]removeFile [(]ticketPath report[)] return true catch _ => return false' \
   'let take : IO Bool := do if let some held← took[.]get then return held let held ← takeTicket report took[.]set [(]some held[)] return held let tell [(]r : Linger[.]Session[.]Start[.]Report[)] : IO Unit := do if ← take then writeReport report r return [{] take, tell [}]' \
   'IO[.]FS[.]withFile [(]ticketPath report[)] [.]writeNew fun _ => pure [(][)] try spawnDetached [(]← IO[.]appPath[)][.]toString ⟨args⟩ log catch err => discard <[|] takeTicket report throw err' \
-  'if bounded && [(]← monotonicMs[)] ≥ deadline then if ← takeTicket report then return [.]took true bounded := false IO[.]sleep 10' \
+  'if bounded then unless ← nap deadline 10 do if ← takeTicket report then return [.]took true bounded := false else pause 10' \
   'match Linger[.]Session[.]Start[.]answer [(]waited matches [.]took _[)] [(]waited matches [.]told [(]some [.]started[)][)], waited with [|] [.]started, _ => return 0 [|] [.]notStarted,' \
   'let runs := waited matches [.]told [(]some [.]started[)] [|][|] waited matches [.]told [(]some [.]running[)] match Linger[.]Session[.]Start[.]answer [(]waited matches [.]took _[)] runs, waited with [|] [.]started, [.]told [(]some [.]started[)] => do sayMoved name return 0 [|] [.]started, _ => return 0 [|] [.]notStarted,' \
   'let pid ← beginRequest report log [(][[]"__start", report, name, cwd[]] [+][+] argv[)] startStatus name log [(]← awaitReport pid report[)]' \
@@ -1576,8 +1593,8 @@ code_grep '^sentinel_dir="[$]socket_root/linger-verify-sentinel-[$][$]"$' script
 # `./lake build suites` is the only build of the suites suites, under Verify/ and each component's
 # Suites/, and it builds only the import closure of Verify/Main.lean, the suites root: a module
 # outside it is never built, and none of its suites can run. Walk that closure forwards
-# over the import lines; each suite module but Coverage and lingertest's root, the shim
-# smoke test, must be in it.
+# over the import lines; each suite module but Coverage, lingertest's root, the shim
+# smoke test, and the wait checks it runs, must be in it.
 suite_unreached="$(module_imports Verify/Main.lean 'Verify/*' 'Linger/*/Suites/*' \
 | awk -F: -v files="$(git ls-files 'Verify/*.lean' 'Linger/*/Suites/*.lean' | tr '\n' ' ')" "$IMPORT_AWK"'
   { mod = import_mod($3); gsub(/[.]/, "/", mod)
@@ -1591,7 +1608,7 @@ suite_unreached="$(module_imports Verify/Main.lean 'Verify/*' 'Linger/*/Suites/*
     k = split(files, F, " ")
     for (j = 1; j <= k; j++)
       if (F[j] != "Verify/Coverage.lean" && F[j] != "Linger/Os/Suites/Shim.lean" &&
-          !(F[j] in reached)) printf "%s ", F[j] }')"
+          F[j] != "Linger/Os/Suites/Wait.lean" && !(F[j] in reached)) printf "%s ", F[j] }')"
 [ -z "$suite_unreached" ] \
   || fail "outside the import closure of Verify/Main.lean, so './lake build suites' never elaborates them: ${suite_unreached% }"
 # Every registered suite but the opt-in remote-live runs in the verifier: Verify.Main.suites
@@ -1843,45 +1860,52 @@ ed_n="$(code_count '(^|[^[:alnum:]_.])drain(Str)?[[:space:]]+[^[:space:]]+[[:spa
 
 # The program's timers, each with what bounds it. Work follows events: a wakeup no event paid
 # for belongs only on this list, and every wait on it is bounded and says what it missed, so a
-# loaded host slows linger down without hanging it. A new sleep or poll joins the list with its
-# bound, or waits on an event instead.
-#   App/Shell: a started daemon's report, every 10 ms for at most startWaitMs (30 s); a spawned
+# loaded host slows linger down without hanging it. A new sleep, nap or poll joins the list with
+# its bound, or waits on an event instead. Every bounded wait naps as `Os.Wait.next` decides
+# (`wait_ends`); the one sleep with no deadline is `pause`, named below.
+#   App/Shell: a started daemon's report, every 10 ms for at most startWaitMs (30 s), then, once
+#     the daemon took the request's ticket, every 10 ms while it lives (`pause`); a spawned
 #     daemon's socket, every 30 ms for socketWaitFloorMs (3 s), then while that daemon lives,
 #     up to socketWaitCapMs (30 s); remote listings, every 5 ms for at most
 #     remoteQueryTimeoutMs (3 s); `send -` wakes only for input, replies and closes; `wait`
 #     and `kill` look at a held name every 20 ms for at most heldNameMs (8 s).
 #   Import/Shell: tmux's configuration and a pane archive, every 10 ms for at most 1 s and 5 s.
+#   Os/Shell: `nap` and `pause`, the only sleeps.
 #   Os/Shell/Command: a stopped command's output, every 5 ms for its grace period.
 #   Selector/Shell: the picker, every 50 ms while it is open, for keys, the escape deadline and
 #     a listing each second.
 #   Session/Shell/Client: a one-shot reply, until replySilenceMs (10 s) of silence; a saved view
 #     and an attach, every 200 ms for a resize, and an attach's title sample once a second.
-#   Session/Shell/Daemon: a write waiting on the disk says so after a second; the loop, until an
-#     event or a deadline; the final drain, at most drainTimeoutMs (3 s); stopping a program, in
-#     10 ms steps for at most 2 s, and the rest of its session, in 50 ms steps for at most 2 s;
-#     a held startup claim, every 10 ms for at most claimWaitMs (1 s).
+#   Session/Shell/Daemon: a write waiting on the disk says so after a second, looking every
+#     10 ms; the loop, until an event or a deadline; the final drain, at most drainTimeoutMs
+#     (3 s); stopping a program, in 10 ms steps for at most 2 s, and the rest of its session, in
+#     50 ms steps for at most 2 s; a held startup claim, every 10 ms for at most claimWaitMs (1 s).
 #   Session/Shell/Inventory: an info reply, until the request's deadline.
-timers="$(code_grep '(IO[.]sleep [^[:space:]]|← poll [^[:space:]])' 'Linger/*.lean' \
+timers="$(code_grep '(IO[.]sleep [^[:space:]]|← poll [^[:space:]]|(^|[[:space:].])nap [^[:space:]]|(^|[[:space:]])pause [0-9])' 'Linger/*.lean' \
     ':!Linger/*/Suites/*' ':!Linger/*/Proofs/*' ':!Linger/*/Tests/*' \
   | sed -E 's/^([^:]+):[0-9]+:[[:space:]]*/\1: /')"
-expected_timers='Linger/App/Shell.lean: IO.sleep 10
-Linger/App/Shell.lean: IO.sleep 30
-Linger/App/Shell.lean: IO.sleep 5
+expected_timers='Linger/App/Shell.lean: unless ← nap deadline 10 do
+Linger/App/Shell.lean: pause 10
+Linger/App/Shell.lean: unless ← nap (start + socketWaitCapMs) 30 do
+Linger/App/Shell.lean: unless ← nap deadline 5 do
 Linger/App/Shell.lean: let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] (-1)
-Linger/App/Shell.lean: IO.sleep 20
-Linger/App/Shell.lean: IO.sleep 20
-Linger/Import/Shell.lean: IO.sleep 10
-Linger/Import/Shell.lean: IO.sleep 10
-Linger/Os/Shell/Command.lean: IO.sleep 5
+Linger/App/Shell.lean: unless ← nap heldUntil 20 do
+Linger/App/Shell.lean: unless ← nap deadline 20 do
+Linger/Import/Shell.lean: unless ← Linger.Os.Shell.nap deadline 10 do
+Linger/Import/Shell.lean: unless ← Linger.Os.Shell.nap deadline 10 do
+Linger/Os/Shell.lean: def nap (deadline step : Nat) : IO Bool := do
+Linger/Os/Shell.lean: IO.sleep ms.toUInt32
+Linger/Os/Shell.lean: def pause (ms : Nat) : IO Unit := IO.sleep ms.toUInt32
+Linger/Os/Shell/Command.lean: unless ← Linger.Os.Shell.nap deadline 5 do
 Linger/Selector/Shell.lean: let ready ← poll fds events 50
 Linger/Session/Shell/Client.lean: let revs ← poll #[fd] #[POLLIN] silenceMs
 Linger/Session/Shell/Client.lean: let ready ← poll fds events 200
 Linger/Session/Shell/Client.lean: let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] 200
-Linger/Session/Shell/Daemon.lean: let timer ← IO.asTask (IO.sleep 1000) Task.Priority.dedicated
+Linger/Session/Shell/Daemon.lean: unless ← nap tellAt 10 do
 Linger/Session/Shell/Daemon.lean: let revs ← poll fds evts timeout
 Linger/Session/Shell/Daemon.lean: let revs ← poll fds (Array.replicate fds.size POLLOUT) (Int32.ofNat (min 100 (deadline - now)))
-Linger/Session/Shell/Daemon.lean: IO.sleep step.toUInt32
-Linger/Session/Shell/Daemon.lean: IO.sleep 10
+Linger/Session/Shell/Daemon.lean: unless ← nap deadline step do
+Linger/Session/Shell/Daemon.lean: nap deadline 10
 Linger/Session/Shell/Inventory.lean: let revs ← poll #[fd] #[POLLIN] (Int32.ofNat (min 100 remaining))'
 [ "$timers" = "$expected_timers" ] \
   || fail "the program's timers changed; name each here with its bound, or wait on an event instead:

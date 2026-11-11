@@ -211,8 +211,8 @@ shim_out="$logs/shim.out"
   || { tail -25 "$shim_out"; fail "lingertest"; }
 tail -1 "$shim_out" | grep -q '^ALL PASS$' || fail "lingertest"
 shim_n="$(grep -c '^PASS ' "$shim_out")"
-[ "$shim_n" -eq 66 ] \
-  || fail "lingertest ran $shim_n checks (expected exactly 66)"
+[ "$shim_n" -eq 69 ] \
+  || fail "lingertest ran $shim_n checks (expected exactly 69)"
 
 # Keep one real session in another state directory through every suite. A suite
 # may clean up its own Env, never the user's process namespace. State directories hold

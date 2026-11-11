@@ -80,9 +80,10 @@ lean_lib Tests where
     .submodules `Linger.Target.Tests, .submodules `Linger.Terminal.Tests]
   leanOptions := implementationOptions
 
-/-- The session suites, built by default so the audit sees which claims they exercise. -/
+/-- The session suites, and the shim's wait checks that `lingertest` runs, built by default so the
+audit sees which claims they exercise. -/
 @[default_target] lean_lib Suites where
-  globs := #[.submodules `Linger.Session.Suites]
+  globs := #[.submodules `Linger.Session.Suites, .one `Linger.Os.Suites.Wait]
   leanOptions := implementationOptions
 
 /-- Executable suites: `./lake exe suites <suite>`. -/

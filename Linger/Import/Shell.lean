@@ -126,13 +126,14 @@ private def configuredDirectory : IO (Option String) := do
         throw error
     pending.set (some job)
     let deadline := (← Linger.Os.Shell.monotonicMs) + 1000
-    while (← Linger.Os.Shell.monotonicMs) < deadline do
+    repeat
       if let some output← Command.poll pending then
         if output.exitCode != 0 then
           return none
         let dir := (output.stdout.dropSuffix "\n").toString
         return if dir.isEmpty then none else some dir
-      IO.sleep 10
+      unless ← Linger.Os.Shell.nap deadline 10 do
+        break
     throw (IO.userError "tmux configuration query timed out; pass a save file explicitly")
   finally
     Command.stop pending
@@ -219,12 +220,13 @@ private def archiveOutput (args : Array String) (limit : Nat) : IO String := do
   try
     pending.set (some (← Command.startLimited "tar" args limit))
     let deadline := (← Linger.Os.Shell.monotonicMs) + 5000
-    while (← Linger.Os.Shell.monotonicMs) < deadline do
+    repeat
       if let some output← Command.poll pending then
         unless output.exitCode == 0 do
           throw (IO.userError s!"could not read pane capture archive: {output.stderr}")
         return output.stdout
-      IO.sleep 10
+      unless ← Linger.Os.Shell.nap deadline 10 do
+        break
     throw (IO.userError "pane capture archive timed out")
   finally
     Command.stop pending

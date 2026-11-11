@@ -225,18 +225,23 @@ def Rt.closeConn (rt : Rt) (fd : UInt32) : IO Rt := do
   return { rt with conns := rt.conns.filter (·.fd != fd) }
 
 /-- Wait for the running write and the one waiting for it, and give how each ended: no other can
-start meanwhile. A write the disk holds up longer than a second says so once, naming `what`. -/
+start meanwhile. A write the disk holds up longer than a second says so once, naming `what`, and
+is then waited for however long the disk takes: one of the waits with no deadline. -/
 def Offloop.finish (w : Offloop) (what : String) : IO (List (Except IO.Error Unit)) := do
   let mut w := w
   let mut ended : List (Except IO.Error Unit) := []
   let mut told := false
   for _ in [0:2] do
     let some task := w.running | break
-    unless told || (← IO.hasFinished task) do
-      let timer ← IO.asTask (IO.sleep 1000) Task.Priority.dedicated
-      unless ← IO.waitAny [task.map (fun _ => true), timer.map (fun _ => false)] do
-        report s!"linger: waiting for {what} to reach the disk"
-        told := true
+    unless told do
+      let tellAt := (← monotonicMs) + 1000
+      repeat
+        if ← IO.hasFinished task then
+          break
+        unless ← nap tellAt 10 do
+          report s!"linger: waiting for {what} to reach the disk"
+          told := true
+          break
     let (next, result) ← w.collect true
     w := next
     ended := ended ++ result.toList
@@ -711,10 +716,12 @@ def drainConns (rt : Rt) : IO Rt := do
 
 /-- Whether `done` holds within `ms` milliseconds, asked every `step`. -/
 private def within (ms step : Nat) (done : IO Bool) : IO Bool := do
-  for _ in List.range (ms / step) do
+  let deadline := (← monotonicMs) + ms
+  repeat
     if ← done then
       return true
-    IO.sleep step.toUInt32
+    unless ← nap deadline step do
+      break
   done
 
 /-- How the program ended, ending it first if it still runs: each signal of `Session.ending`, to
@@ -778,8 +785,7 @@ private def claimRetry (name sockPath : String) (deadline : Nat) (reported : IO.
   unless ← reported.get do
     reported.set true
     report (claimWaitLine name)
-  IO.sleep 10
-  return true
+  nap deadline 10
 
 /-- How a daemon keeps its name's end record: `Linger.Session.Shell.Record`, or nothing in a suite
 that serves without one. -/

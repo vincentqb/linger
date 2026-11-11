@@ -7,6 +7,7 @@ import all Linger.Session.Proofs.Driver
 import all Linger.App.Proofs.Entry
 import all Linger.App.Proofs.Commands
 import all Linger.Os.Proofs.Env
+import all Linger.Os.Proofs.Wait
 import all Linger.Selector.Proofs.Fuzzy
 import all Linger.Selector.Proofs.Input
 import all Linger.Display.Proofs.Listing
@@ -313,6 +314,18 @@ example {R W : Type} (start : W → R) (ws : List W) :
       (ws.foldl (Session.Offloop.run Session.Offloop.ask start) {}).waiting =
         if ws.length ≤ 1 then none else ws.getLast? := by
   with_reducible exact Session.offloop_coalesces start ws
+
+example (deadline step now : Nat) : Os.Wait.next deadline step now = none ↔ deadline ≤ now := by
+  with_reducible exact Os.Wait.next_eq_none_iff deadline step now
+
+example {deadline step now ms : Nat} (h : Os.Wait.next deadline step now = some ms) :
+    0 < ms ∧ ms ≤ max step 1 ∧ now + ms ≤ deadline := by with_reducible exact Os.Wait.next_some h
+
+example {after : Nat → Nat → Nat} (lasts : Os.Wait.Lasts after) (deadline step : Nat) :
+    ∀ now,
+      ∃ looks,
+        looks ≤ deadline - now + 1 ∧ Os.Wait.Ends (Os.Wait.next deadline step) after now looks := by
+  with_reducible exact Os.Wait.ends_within lasts deadline step
 
 -- Focus reports
 example (s : Session.State) (c : Session.Client) (cols rows : UInt32) (hc : s.client? c.id = some c)

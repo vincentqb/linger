@@ -3,6 +3,7 @@ module
 public import Linger.App.Spec
 public import Linger.Display.Spec
 public import Linger.Import.Spec
+public import Linger.Os.Spec
 public import Linger.Selector.Spec
 public import Linger.Selector.Spec.Fuzzy
 public import Linger.Selector.Spec.Input
@@ -131,6 +132,11 @@ def Linger.Os.Env.detachEnabled : Bool → Option String → Bool := sorry
 directory. -/
 @[expose]
 def Linger.Os.Env.resumeDir : Option String → String → Bool → Option String := sorry
+
+/-- How long a wait with a deadline on the monotonic clock sleeps before its next look, asked at
+a given time, or `none` once the deadline has passed. -/
+@[expose]
+def Linger.Os.Wait.next : (deadline step now : Nat) → Option Nat := sorry
 
 /-! ### Terminal -/
 
@@ -2125,8 +2131,13 @@ theorem step_output_audience_rejects_stranger :
 A command waits for its daemon's answer a bounded time, and what it answers when that time runs
 out is still true. A daemon saves its checkpoint and writes its end record off its loop, on a
 thread of its own (`scripts/gates.sh`), so a slow disk holds up no answer and no output, and the
-writes it asks for while one runs coalesce into the last. Not claimed yet: that every other wait
-is bounded and says what it missed, which the robust, resume and status suites measure. -/
+writes it asks for while one runs coalesce into the last. Every wait sleeps as `Os.Wait.next`
+decides (`scripts/gates.sh`), so it gives up once its deadline has passed and then reports what
+it missed: `start` that its daemon did not answer, `ls` a remote host as `?`, `wait --timeout`
+124. Not claimed: the waits with no deadline, each on something that ends without waiting
+itself, or on purpose: `wait` without `--timeout`, an idle daemon's poll, `start` or `resume`
+once their daemon took the request's ticket, and a daemon's last disk write, which it reports
+after a second. How long a wait takes under load the robust, resume and status suites measure. -/
 
 /-- A request's answer is true, even when its wait runs out: `start` and `resume` race the daemon
 they started for the request's ticket, whoever takes it decides, and so the command answers that
@@ -2169,6 +2180,38 @@ theorem offloop_coalesces_rejects_eager :
             ws.head?.map start ∧
           (ws.foldl (Offloop.run (fun (o : Offloop R W) (w : W) => (o, some w)) start) {}).waiting =
             if ws.length ≤ 1 then none else ws.getLast? := by
+  sorry
+
+/-- Every wait ends: it gives up exactly once its deadline has passed, and between looks sleeps at
+least 1 ms and at most its step, never past its deadline; so when each sleep lasts at least as
+long as asked (`Os.Wait.Lasts`), a wait from `now` gives up after at most `deadline - now + 1`
+looks. -/
+theorem wait_ends (after : Nat → Nat → Nat) (lasts : Os.Wait.Lasts after) (deadline step : Nat) :
+    (∀ now, Os.Wait.next deadline step now = none ↔ deadline ≤ now) ∧
+      (∀ now ms,
+        Os.Wait.next deadline step now = some ms → 0 < ms ∧ ms ≤ max step 1 ∧ now + ms ≤ deadline) ∧
+      ∀ now,
+        ∃ looks,
+          looks ≤ deadline - now + 1 ∧
+            Os.Wait.Ends (Os.Wait.next deadline step) after now looks := by
+  sorry
+
+/-- `wait_ends` rejects a wait that never gives up. -/
+theorem wait_ends_rejects_endless :
+    ¬∀ (after : Nat → Nat → Nat),
+        Os.Wait.Lasts after →
+          ∀ (deadline step : Nat),
+            (∀ now,
+                (fun (_ _ _ : Nat) => (some 1 : Option Nat)) deadline step now = none ↔
+                  deadline ≤ now) ∧
+              (∀ now ms,
+                (fun (_ _ _ : Nat) => (some 1 : Option Nat)) deadline step now = some ms →
+                  0 < ms ∧ ms ≤ max step 1 ∧ now + ms ≤ deadline) ∧
+              ∀ now,
+                ∃ looks,
+                  looks ≤ deadline - now + 1 ∧
+                    Os.Wait.Ends ((fun (_ _ _ : Nat) => (some 1 : Option Nat)) deadline step) after
+                      now looks := by
   sorry
 
 /-! ## The status rule
