@@ -102,16 +102,31 @@ shake_modules="$(git ls-files 'Theorems/*.lean' 'Linger/*/Proofs/*.lean' | sed '
 ./lake shake --keep-implied Linger Main $shake_modules > "$logs/shake.log" 2>&1 \
   && [ ! -s "$logs/shake.log" ] \
   || { cat "$logs/shake.log"; fail "lake shake suggests import changes"; }
+# The generated C of the program's modules, linger's and each package's, named from the
+# tracked sources: a module that moved leaves its old C file in .lake, which must not answer
+# for it. A component's or package's Proofs, Tests, Suites and Solution are not program code,
+# nor is a package's challenge or audit.
+program_c="$(
+  git ls-files 'Main.lean' 'Linger.lean' 'Linger/*.lean' \
+    | awk -F/ 'NF <= 3 || (NF == 4 && $3 == "Shell")' \
+    | sed 's#^#.lake/build/ir/#; s#[.]lean$#.c#'
+  git ls-files 'packages/*.lean' | awk -F/ '
+    { root = toupper(substr($2, 1, 1)) substr($2, 2); rel = substr($0, length($1 "/" $2 "/") + 1)
+      n = split(rel, part, "/")
+      if (rel == root ".lean" || (n == 2 && part[1] == root && part[2] !~ /^(Proofs|Tests|Solution)[.]lean$/) \
+          || (n == 3 && part[1] == root && part[2] == "Shell")) {
+        sub(/[.]lean$/, ".c", rel); print $1 "/" $2 "/.lake/build/ir/" rel } }')"
+[ -n "$program_c" ] || fail "no generated C named for the program's modules"
 # The initializer of a module that uses the Lean package calls lean_initialize
 # instead of lean_initialize_runtime_module, which starts the whole Lean frontend in
 # every linger process; none may. grep exits 1 only when it read every file and
 # found no such call.
 lean_init=0
-grep -l '^lean_initialize();$' .lake/build/ir/Main.c .lake/build/ir/Linger/*.c \
-    .lake/build/ir/Linger/*/*.c .lake/build/ir/Linger/*/Shell/*.c || lean_init=$?
+# shellcheck disable=SC2086  # one path per word
+grep -l '^lean_initialize();$' $program_c || lean_init=$?
 [ "$lean_init" -ne 0 ] \
-  || fail "a linger module uses the Lean package; every process would initialize the whole Lean frontend"
-[ "$lean_init" -eq 1 ] || fail "could not read the generated C of Main and Linger/"
+  || fail "a program module uses the Lean package; every process would initialize the whole Lean frontend"
+[ "$lean_init" -eq 1 ] || fail "could not read the generated C of every program module"
 
 say "1b. generated Lean / C shim ABI"
 # Compile declarations emitted by THIS pinned Lean together with the shim.
@@ -148,13 +163,14 @@ rm -r "$abi_dir"
 trap - EXIT HUP TERM
 # A lost `@[csimp]` leaves every caller on the specification and passes every proof, so
 # check the generated C: each fast twin is still called, outside its own boxed wrapper.
-# Private mangling keeps the suffix, so the module-local feedMsgsTR is matched too.
-for twin in Linger_Session_feedMsgsTR Linger_Terminal_Vt_Row_mendFast \
-  Linger_Terminal_Render_rowAnsiLinear; do
+# Private mangling keeps the suffix, so the module-local feedMsgsTR is matched too. A symbol
+# is `lp_<package>_<name>`, whichever package compiled it.
+for twin in Linger_Session_feedMsgsTR Terminal_Vt_Row_mendFast Terminal_Render_rowAnsiLinear; do
+  # shellcheck disable=SC2086  # one path per word
   awk -v twin="$twin" '
     /^(LEAN_EXPORT|static) .*[)][{]$/ { fn = $0 }
-    $0 ~ ("= lp_linger_[[:alnum:]_]*" twin "[(]") && fn !~ (twin "___boxed[(]") { n++ }
-    END { exit !n }' .lake/build/ir/Linger/*.c .lake/build/ir/Linger/*/*.c \
+    $0 ~ ("= lp_[[:alnum:]]+_[[:alnum:]_]*" twin "[(]") && fn !~ (twin "___boxed[(]") { n++ }
+    END { exit !n }' $program_c \
     || fail "compiled code no longer calls $twin: its @[csimp] replacement is gone"
 done
 
