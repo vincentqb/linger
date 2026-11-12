@@ -6,26 +6,28 @@ import all Terminal.Proofs.Render.Modes
 
 -- Module-private by default: `Vt`'s fields are sealed (see `packages/terminal/Terminal/Proofs/Vt/State.lean`).
 
-/-! # §Restore / A5 inbound — the sticky bundle, and the cursor
+/-! # The sticky bundle, and the cursor
 
 `SMap` and `Vt.stick`: the scroll region, both charset designations, the shift
 state and which screen is current — the restored fields whose proof cannot step
-over the repaint — plus the receiver-quantified cursor claim. Split out of
-`packages/terminal/Terminal/Proofs/Render.lean`. -/
+over the repaint, which `restore` installs (`restore_sticky_any`, behind `replay_sticky`
+in `packages/terminal/TerminalChallenge.lean`) and the hand-back resets
+(`leave_canonical_all`) — plus the receiver-quantified cursor claim. -/
 
 namespace Terminal.Render
 
 open Terminal.Vt
 
-/-! ## §Restore / A5 inbound, the sticky fields: region, charsets, screen
+/-! ## The sticky fields, restored: region, charsets, screen
 
 The last group of restored fields, and the one whose emitters are *not* all in the
 tail: the scroll region is set before the title, and the screen switch is set in
 the middle of the repaint. So unlike the modes and the pen, these claims cannot
 step over `gridAnsi` — they have to prove the repaint does not disturb them.
 
-That is what `Vt.stick` buys. It is one bundled projection (`packages/terminal/Terminal/Proofs/Vt.lean`
-§Restore) rather than four `org_`-style families, so `print` and `csiDispatch` —
+That is what `Vt.stick` buys. It is one bundled projection (the sticky receiver state
+of `packages/terminal/Terminal/Proofs/Vt.lean`) rather than four `org_`-style families,
+so `print` and `csiDispatch` —
 the two operations frames could not cover — are paid for once. Here it gets the
 stream layer: `SMap`, the `Quiet` shape with `Modes.origin` replaced by the
 bundle, and no `u8need` side condition anywhere (an `ESC` drops a half-decoded
@@ -730,15 +732,13 @@ the chain below starts from an unknown sticky value rather than from `stick w`. 
 theorem rows_st_lead (w : Vt) : (w.feed (escSeq 0x5C)).rows = w.rows :=
   congrArg (·.2) (dims_feed_ne_ris (escSeq 0x5C) (by decide))
 
-/-- **A5 inbound, the sticky fields.** For any receiver of the session's height,
+/-- **The sticky fields, restored.** For any receiver of the session's height,
 `restore` installs the session's scroll region, both charset designations, the
 shift state and which screen is current — the last group of restored fields, and
 the only one whose proof cannot step over the repaint (the region is set before
 the title, and the screen switch in the middle of the paint).
 
-Two hypotheses, both the analog of `restore_modes_any`'s mouse allowlist: a `Vt`
-does not only come from `setMode`, so `Checkpoint.load` can hand us a region no
-emulator would produce.
+Two hypotheses, on the session's region:
 
 * `hlt : v.top < v.bot` together with `hbot : v.bot < v.rows` is the region
   `DECSTBM` will **accept**. The excluded case is a one-row region: `CSI t ; t r` is
@@ -746,10 +746,10 @@ emulator would produce.
   nothing to claim.
 * `hfits : v.rows < 65535` keeps `DECSTBM`'s parameters off the parser's clamp.
 
-The last two are what `Good v` would give (`botLt`, `rowsLe`), but they are taken
-directly: `Good` also asserts things about the cursor, the saved slot, the
-scrollback and the CSI accumulator that this proof never reads, and a hypothesis a
-proof does not use makes the theorem weaker than it is. -/
+`Good v` gives `hbot` and `hfits` (`botLt`, `rowsLe`), and `hlt` for a session two rows
+or more tall (`region`), but they are taken directly: `Good` also asserts things about
+the cursor, the saved slot, the scrollback and the CSI accumulator that this proof never
+reads, and a hypothesis a proof does not use makes the theorem weaker than it is. -/
 theorem restore_sticky_placed (v w : Vt) (hrows : w.rows = v.rows) (hlt : v.top < v.bot)
     (hbot : v.bot < v.rows) (hfits : v.rows < 65535) :
     stick (w.feed (restoreBody v ++ cursorAnsi v)) = stick v := by
@@ -894,7 +894,7 @@ theorem restore_sticky_any (v w : Vt) (hrows : w.rows = v.rows) (hlt : v.top < v
     stick_cursorPendingAnsi v _ (restore_placed_grounds v w)
       (restore_sticky_placed v w hrows hlt hbot hfits)
 
-/-! ### Step 2's second half — `u8need`, for any receiver
+/-! ### The decoder, `u8need`, for any receiver
 
 `restore_grounds` gave the parser state for any receiver; this gives the decoder.
 It needs no ladder at all, and the reason is worth stating: `restore` **ends** with
@@ -908,19 +908,19 @@ theorem restore_u8_zero (v w : Vt) : (w.feed (restore v)).u8need = 0 := by
   apply u8_zero_after_cursorPendingAnsi
   rw [feed_append]; exact u8_zero_after_cursorAnsi v _
 
-/-- **§Replay's parser half, receiver-quantified** — Step 2's exit for `restore`. Any
-receiver in any parser state, mid-escape or mid-OSC or holding a half-decoded
-character, is left `ground` with nothing pending. -/
+/-- **The restore stream's parser half, receiver-quantified.** Any receiver in any
+parser state, mid-escape or mid-OSC or holding a half-decoded character, is left
+`ground` with nothing pending. -/
 theorem restore_quiesced_any (v w : Vt) :
     (w.feed (restore v)).pstate = .ground ∧ (w.feed (restore v)).u8need = 0 :=
   ⟨restore_grounds v w, restore_u8_zero v w⟩
 
-/-- **The first of `restore_grid_of_paint`'s three hypotheses, discharged for any
-receiver.** The clear-and-paint prefix leaves the parser in `ground`: the prologue
-grounds `w` whatever state it was in (`prologue_grounds`, Step 2's first half) and
-the three constructs after it are each `Ends`.
+/-- **`restore_grid_of_paint`'s parser hypothesis, for any receiver.** The
+clear-and-paint prefix leaves the parser in `ground`: the prologue grounds `w`
+whatever state it was in (`prologue_grounds`) and the three constructs after it are
+each `Ends`.
 
-The `u8need` one is *not* free the same way, and the asymmetry is worth naming: the
+Its `u8need` hypothesis is *not* free the same way, and the asymmetry is worth naming: the
 whole stream ends in a `CSI … H`, whose final byte cannot leave a character
 half-decoded (`restore_u8_zero`), but this **prefix** ends in glyph bytes. So that
 hypothesis belongs with the cell induction, where the UTF-8 completeness of what
@@ -939,7 +939,7 @@ theorem paint_grounds (v w : Vt) :
         (ends_screensAnsi v))
       _ (prologue_grounds v w)
 
-/-! ### A5 outbound, the same fields — `leave_canonical`'s other half
+/-! ### The hand-back, the same fields — `leave_canonical`'s other half
 
 The hand-back also resets the scroll region, both charsets, the shift state, the
 alt-screen flag and the pen, not just the modes. With `SMap` in hand they cost one
@@ -997,13 +997,13 @@ theorem pen_penSgr_of_ground {v : Vt} (p : Pen) (hg : v.pstate = .ground) :
       feed_esc_of_abort v (penSgr p).tail,
     penSgr_feed p ((ps_abortUtf8 _ _).trans hg) (un_abortUtf8_esc v)]
 
-/-- **A5 outbound, in full.** For any receiver at least two rows tall, the
+/-- **The hand-back, in full.** For any receiver at least two rows tall, the
 hand-back leaves the parser `ground`, the modes at the default record, the scroll
 region whole, both charsets ASCII with G0 shifted in, the main screen current, and
 the pen reset and window title empty. Two rows is the one exclusion, and it is
-the same one as inbound: `DECSTBM` refuses a one-row region here and on every real
-terminal, so there is nothing to establish. The title and parser-boundary claims
-also hold without that height premise (`leave_boundary_title`). -/
+the same one the restore makes (`restore_sticky_any`): `DECSTBM` refuses a one-row
+region here and on every real terminal, so there is nothing to establish. The title and
+parser-boundary claims also hold without that height premise (`leave_boundary_title`). -/
 theorem leave_canonical_all (w : Vt) (h2 : 2 ≤ w.rows) :
     (w.feed leaveAnsi).pstate = .ground ∧
       (w.feed leaveAnsi).modes = ({} : Modes) ∧
@@ -1122,17 +1122,17 @@ theorem leave_canonical_all (w : Vt) (h2 : 2 ≤ w.rows) :
     rw [feed_append]; exact pen_penSgr_of_ground _ l18.1
   exact ⟨leave_grounds w, leave_modes w, l20.2, hpen, (leave_boundary_title w).2.2⟩
 
-/-! ## §Replay stage 3d — the two byte→cursor bridges the paint needs
+/-! ## The two byte→cursor bridges the paint needs
 
 `cup_feed_eq` says a two-argument `CUP` is `moveTo`. The repaint uses two *other*
-addressing forms and neither had a bridge, so the row induction could not say where it
-was writing:
+addressing forms, and the row induction needs a bridge for each to say where it is
+writing:
 
 * `gridAnsi` homes with a bare `CSI H` — both arguments defaulted — which is what
   establishes column 0, row 0 for the first cell (`home_feed_eq`, in `Grid.lean`);
 * `rowAnsi`'s wide-with-marks branch parks the cursor with `CHA` (`CSI n G`), twice,
-  because a mark on a wide glyph must land between the glyph and its shadow (§Replay
-  fix 8) and no relative move can express that.
+  because a mark on a wide glyph must land between the glyph and its shadow and no
+  relative move can express that.
 
 Both are the same walk as `cup_feed_eq`, one parameter shorter. -/
 
@@ -1203,8 +1203,8 @@ a cursor that is *not* wrap-pending.
 The `min` is not decoration. The branch's *trailing* `CHA` addresses the column after
 the pair, and for a pair that ends at the margin that column does not exist — so it
 clamps, and the row exits with the cursor on the last column and wrap-pending
-**clear**. An in-range-only statement would have left that case unprovable rather than
-false, which is the shape of hypothesis this spec exists to remove. -/
+**clear**. An in-range-only statement would leave that case unprovable rather than
+false. -/
 theorem cha_places_cursor {v : Vt} (n : Nat) (hg : v.pstate = .ground) (hu : v.u8need = 0)
     (hn : 0 < n) (hlt : n < 65535) :
     (v.feed (csiNum n 0x47)).cursor.x = min (n - 1) (v.cols - 1) ∧
@@ -1213,7 +1213,7 @@ theorem cha_places_cursor {v : Vt} (n : Nat) (hg : v.pstate = .ground) (hu : v.u
   rw [cha_feed_eq n hg hu hn hlt]
   exact ⟨rfl, rfl, rfl⟩
 
-/-! ## §Replay — the cursor, for any receiver
+/-! ## The cursor, for any receiver
 
 The claim is about the stream's **final** `CUP`, which addresses absolutely, so it needs
 facts about the state `restoreBody` leaves rather than a fresh receiver: the parser is
@@ -1297,7 +1297,7 @@ theorem restoreBody_origin (v w : Vt) (ho : v.modes.origin = false) :
     feed_append w (escSeq 0x5C), feed_append (w.feed (escSeq 0x5C)), feed_append]
   exact (hq _ g3 (by rw [m3])).2
 
-/-- **§Replay (cursor), receiver-quantified.** The final `CUP` lands where the session
+/-- **The cursor, receiver-quantified.** The final `CUP` lands where the session
 had it in *any* client's emulator of the session's size, not only a fresh one. -/
 theorem restore_cursor_placed_any (v w : Vt) (hgood : Good v) (hgw : Good w)
     (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) (ho : v.modes.origin = false) :

@@ -14,8 +14,8 @@ public section
 
 /-! # Linger.Session.Suites.Attach — attach, detach, reattach, mirror, wait, hand-back, scrollback
 
-Ported from `tests/attach_test.py`, the largest suite: the core session lifecycle
-plus the two things a client owes the user's terminal on the way in and out.
+The core session lifecycle plus the two things a client owes the user's terminal on
+the way in and out.
 
 The hand-back is compared against the emitter, not a copy of it: every expected
 sequence is `Render.modeSet` / `csiNum` / `csiPlain` / `escSeq` / `escCharset` of
@@ -406,8 +406,8 @@ def run : IO UInt32 :=
     expect (st1 ≥ 0) "detach: client exited on ctrl-backslash"
     c1.bye (sendDetach := false) -- fd and any zombie only; the client already left
     expect (has (← e.out #["list"]) "demo") "detach: session still listed"
-    -- 3. background output while detached reaches the emulator (§Detach: a session
-    -- with zero clients still advances)
+    -- 3. background output while detached reaches the emulator: a session with zero
+    -- clients still advances
     let _ ← e.cli #["send", "demo", "echo while-detached-$((40+2))\n"]
     expect
         (←
@@ -755,14 +755,12 @@ def run : IO UInt32 :=
           s!"LINGER_NO_DETACH_KEY={value}: input still reaches the session"
       e.killAll #[name]
       nd.bye (sendDetach := false)
-    -- 11. the scrollback reaches the client's own scrollback
-    --     (specs/archive/scrollback-fidelity.md). `restore` used to repaint the screen and
-    --     drop everything above it. It now paints the session's ring first and
-    --     scrolls it off, so the reattach burst carries lines that are no longer on
-    --     the screen at all — and the client's wheel-scroll, search and selection
-    --     find them. The `ED 3` that stops a second attach stacking a second copy is
-    --     emitted AFTER the `ED 2` (the order ncurses `clear(1)` sends), because
-    --     `restoreBody` already clears before `screensAnsi`.
+    -- 11. the scrollback reaches the client's own scrollback. `restore` paints the
+    --     session's ring first and scrolls it off, so the reattach burst carries lines
+    --     that are no longer on the screen at all — and the client's wheel-scroll,
+    --     search and selection find them. The `ED 3` that stops a second attach
+    --     stacking a second copy is emitted AFTER the `ED 2` (the order ncurses
+    --     `clear(1)` sends), because `restoreBody` already clears before `screensAnsi`.
     let s1 ← e.spawn #["attach", "sb"] cols rows
     let _ ← waitFor 4000 (return (← e.info "sb" "clients") == some "1")
     let _ ← drain s1.fd 300

@@ -10,35 +10,39 @@ import all Terminal.Render
 import all Terminal.Proofs.Mediation
 import all Terminal.Proofs.Render
 import all Linger.Session.Proofs.Wire
--- `Linger.Session.Proofs.Checkpoint` is here for one claim: `Checkpoint.load_live`, which makes
--- `LiveVt` provable for a *resumed* daemon (§Resume at the daemon, below).
+-- `Linger.Session.Proofs.Checkpoint` is here for the decoder's door: `Checkpoint.load_live` and
+-- `Checkpoint.loadBytes_live` make `LiveVt` provable for a *resumed* daemon (the section
+-- "Resume at the daemon", below), and `Checkpoint.loadBytes_saveBytes_live` gives a resumed
+-- session's checkpoint round trip (`run_resume_load_save`).
 import all Linger.Session.Proofs.Checkpoint
 public import Linger.Session.Spec
 
-/-! # §Detach / §Bound(session) — the daemon state machine theorems
+/-! # The daemon state machine theorems
 
-**Friend module** (lean-modules Step 5): `import all Linger.Session` is
-what lets these statements name `State`'s sealed bookkeeping fields —
-`clients`, the `outSeq`/`lookSeq` pair, `scan`, `dirty` — which every plain
-importer, the daemon included, can no longer read, poke or forge. No blanket
+**Friend module**: `import all Linger.Session` is
+what lets these statements name `State`'s private bookkeeping fields — the
+`outSeq`/`lookSeq` pair, `dirty` — and its private helpers, which no plain
+importer, the daemon included, can reach; a plain importer reads `clients` and `scan` but
+can never poke or forge a state. No blanket
 `public section`, for the Buf-friend reasons: statements naming private fields
 cannot be public, `Linger/Session/Proofs/Driver.lean` and `Theorems/Solution.lean` import
 them with `import all`, and module-private is what keeps the `:= rfl`
 proofs elaborating in the private scope.
 
 Proved here:
-* §Detach — sessions outlive clients. A session with zero clients still
+* Sessions outlive clients. A session with zero clients still
   advances (output is never gated on attachment); a client detaching
   (or `detach-all`) cannot change the screen; attach touches only the
   dimensions, never the scrollback.
-* §Bound — the session layer adds four bounded components on top of
+* The session bounds — the session layer adds four bounded components on top of
   Vt's: the client list (≤ `maxClients`), the label table
-  (≤ `maxLabels`), a wire decoder per client (≤ Wire's cap, never
+  (≤ `maxLabels`), a wire decoder per client (≤ the decoder's cap, never
   errored — a malformed peer is closed, not buffered) and the terminal
   scanner (`Bounded.scanOk`). `step` preserves all four against any
-  event stream.
-* §Frame, machine half — an `unknown` wire message is refused with an
-  error reply and produces no state change.
+  event stream; `Bounded` is the `Bounds` that `run_total_safe` (`Challenge.lean`, part 5)
+  states.
+* An `unknown` wire message is refused with an error reply and produces no state change
+  (`onMsg_unknown`; `step_unknown_refused`, part 5).
 -/
 
 namespace Linger.Session
@@ -49,7 +53,7 @@ open Terminal.Replay (Plan)
 
 attribute [local grind] controlResize resizeOwned resize State.setClient
 
-/-! ## §Frame (machine half) and other exact-shape facts -/
+/-! ## Unknown messages and other exact-shape facts -/
 
 /-- A message this version does not know is a request it cannot serve: the session refuses it
 and changes nothing. -/
@@ -162,14 +166,12 @@ theorem infoMsgs_no_resize (id : Nat) (bs : List UInt8) (cols rows : UInt32) :
   unfold infoMsgs
   split <;> simp
 
-/-! ## Label removal (pin-the-gaps item 3)
+/-! ## Label removal
 
-`.labelSet` was pinned four ways — the cap (`onMsg_labels_le`), the round trip
+`.labelSet` is pinned four ways — the cap (`onMsg_labels_le`), the round trip
 (`Linger/Session/Tests/Session.lean`), the forged-record channel (`infoText_records`) and the
-boot cap. Its two *removal* siblings were pinned nowhere at all: no theorem, no
-fixture, no pty assertion, covered only by the generic cap and by
-`Wire.decode_encode_chunked`'s ∀-over-`Msg` codec claim. Both arms are unconditional, so
-both take the exact-shape treatment `onMsg_screen` gets. -/
+boot cap. Its two *removal* siblings are pinned here. For a writable connection both arms are
+unconditional, so both take the exact-shape treatment `onMsg_screen` gets. -/
 
 /-- **`linger unset <key>` removes exactly the named key.** The exact shape: the
 key is the payload through `labelText` (invalid bytes → `""`, which matches no key
@@ -215,7 +217,7 @@ theorem onMsg_labelClear (s : State) (c : Client) (control : c.mode = .writable)
 theorem onMsg_labelClear_empty (s : State) (c : Client) (control : c.mode = .writable) :
     (onMsg s c .labelClear).1.labels = [] := by rw [onMsg_labelClear s c control]
 
-/-! ## §Detach -/
+/-! ## Detach: sessions outlive their clients -/
 
 /-- Last-attacher detection uses the old roster; dirty state is saved exactly
 once even when the bytes handler removes a malformed peer immediately, after any focus report
@@ -540,7 +542,7 @@ theorem conclude_last (s : State) (ending : Ending) (keep : Bool) :
   rw [conclude_effects]
   simp
 
-/-- **`detach-all`'s whole purpose, as an equation** (pin-the-gaps item 2). The
+/-- **`detach-all`'s whole purpose, as an equation.** The
 verb changes no state at all, so everything it promises lives in the effect
 list: one `.close` per *attached* client — the filter is the claim, since a
 control connection (`linger send`, `linger info`) must survive a detach-all it
@@ -557,11 +559,10 @@ theorem onMsg_detachAll (s : State) (c : Client) (control : c.mode = .writable) 
 
 /-- **A same-size reattach leaves the emulator untouched.** `Vt.resize` resets the
 scroll region and tab ruler (`top`/`bot`/`tabs`) unconditionally, so resizing at an
-unchanged size wiped a child's `DECSTBM` and custom tab stops from the model — and
-the kernel sends no `SIGWINCH` at an unchanged winsize, so the child never re-emits
-them. The attach handler now resizes only on a genuine change, and this is why it is
-safe: the whole `vt`, region and ruler included, is preserved (restore-conformance
-Step 0 ledger 1). -/
+unchanged size would wipe a child's `DECSTBM` and custom tab stops from the model — and
+the kernel sends no `SIGWINCH` at an unchanged winsize, so the child would never re-emit
+them. The attach handler resizes only on a genuine change, and this is why it is
+safe: the whole `vt`, region and ruler included, is preserved. -/
 theorem onMsg_attach_same_size_vt (s : State) (c : Client) (mode : Mode) (cols rows : UInt32)
     (hc : s.vt.cols = cols.toNat) (hr : s.vt.rows = rows.toNat) :
     (onMsg s c (.attach mode cols rows)).1.vt = s.vt := by
@@ -612,7 +613,7 @@ theorem onMsg_input_readonly (s : State) (c : Client) (bs : List UInt8) (h : c.m
   unfold onMsg
   simp [h]
 
-/-! ## §Bound(session) -/
+/-! ## The session bounds -/
 
 /-- The composite session bound. `Linger.Session.Bounds` (`Linger/Session/Spec.lean`) states
 it through the state's observations; `bounded_iff_bounds` relates the two. -/
@@ -965,7 +966,7 @@ theorem feedMsgs_bounded (id : Nat) (msgs : List Msg) (acc : State × List (Effe
   feedMsgs_preserves id msgs acc
     (fun _ _ m hc hs => onMsg_bounded m (hs.decOk _ (client?_mem hc)) hs) h
 
-/-- §Bound at the daemon level: no event stream can grow the client
+/-- The bounds at the daemon level: no event stream can grow the client
 list, label table, client decoders, or terminal scanner past their caps. -/
 theorem step_bounded (s : State) (ev : Event) (h : Bounded s) : Bounded (step s ev).1 := by
   obtain ⟨hcl, hlb, hdec, hscan⟩ := h
@@ -1072,18 +1073,18 @@ theorem step_vt_preserves {P : Vt.Vt → Prop}
   · exact h
 
 open Terminal.Vt (Good) in
-/-- §Total end-to-end: the screen state a daemon holds stays Good
+/-- End to end: the screen state a daemon holds stays Good
 whatever events arrive — adversarial clients and pty output included. -/
 theorem step_vt_good (s : State) (ev : Event) (h : Good s.vt) : Good (step s ev).1.vt :=
   step_vt_preserves (fun _ cols rows hv => Terminal.Vt.Good.resize cols rows hv)
     (fun _ bytes hv => Terminal.Vt.Good.feed bytes hv) s ev h
 
-/-! ## §Unread — the output counter
+/-! ## The unread counter
 
 `unseen` is "output arrived while nobody was watching", and it is a property
 of the **session**: `lookSeq` catches up on attach, on every output that
 happens while somebody is attached, and on a capture (`.screen` — a capture is
-a look, agent-cli Decision 1), so a one-off connection from a stranger creates
+a look), so a one-off connection from a stranger creates
 no per-client state. A counter rather than a timestamp because it is
 determined by the event list alone.
 
@@ -1107,7 +1108,7 @@ theorem unseen_ptyOut (s : State) (chunk : List UInt8) (h : s.lookSeq ≤ s.outS
   simp only [unseen, step]
   grind
 
-/-- **A capture is a look** (agent-cli Decision 1). The exact shape: the reply
+/-- **A capture is a look.** The exact shape: the reply
 is `Render.screenText` — the grid, never the ring — chunked and closed with
 `.done`, and the ONLY state changes are the read mark catching up and the read's
 answer being recorded. An exact equation, so any smuggled side effect (a vt
@@ -1164,7 +1165,7 @@ theorem step_lookSeq_le (s : State) (ev : Event) (h : s.lookSeq ≤ s.outSeq) :
     | (apply feedMsgs_lookSeq_le; exact h)
     | (dsimp only; omega)
 
-/-- **§Unread over the daemon's whole life**: no event trace of any length —
+/-- **The unread counter over the daemon's whole life**: no event trace of any length —
 adversarial clients, captures, attaches, hostile pty bytes, any interleaving —
 makes the read mark overtake the output counter. `behind = outSeq - lookSeq`
 is therefore a real count forever (a fresh daemon starts at `0 ≤ 0`), and the
@@ -1175,7 +1176,7 @@ theorem run_lookSeq_le (s : State) (evs : List Event) (h : s.lookSeq ≤ s.outSe
   run_preserves s evs (P := fun s => s.lookSeq ≤ s.outSeq)
     (fun s ev _ hs => step_lookSeq_le s ev hs) h
 
-/-! ## §Isolate — one client cannot reach another client's state
+/-! ## Isolation — one client cannot reach another client's state
 
 The concurrency question, at the layer where it is answerable. The
 daemon is single-threaded: `poll` reports several ready fds, the
@@ -1184,11 +1185,11 @@ them — so there are no data races by construction. What remains is
 *interleaving*, and the hazard is cross-talk: could bytes from client A
 corrupt client B's frame boundaries, or rewrite B's record?
 
-§Isolate says no: `.bytes id` touches only client `id`'s record. Every
+It cannot: `.bytes id` touches only client `id`'s record. Every
 other client's decoder — mid-frame or not — is bit-identical
-afterwards, whatever bytes arrive and however they were chunked (§Chunk
-supplies the per-connection half: any split of A's stream yields the
-same messages in the same order).
+afterwards, whatever bytes arrive and however they were chunked (the wire's
+re-chunking invariance, `Wire.Decoder.feed_append`, supplies the per-connection half: any
+split of A's stream yields the same messages in the same order).
 -/
 
 theorem client?_id {s : State} {id : Nat} {c : Client} (h : s.client? id = some c) : c.id = id := by
@@ -1248,10 +1249,10 @@ theorem feedMsgs_other (id : Nat) (msgs : List Msg) (acc : State × List (Effect
         rw [client?_id hc]; exact h)]
   exact hs
 
-/-- §Isolate: bytes from one client cannot alter another client's
+/-- Isolation: bytes from one client cannot alter another client's
 record — including its wire decoder, so a peer stuck mid-frame stays
 mid-frame and resumes correctly on its next chunk. Daemon-level
-concurrency safety is this, plus §Chunk (per-connection ordering),
+concurrency safety is this, plus re-chunking invariance (per-connection ordering),
 plus single-threadedness. -/
 theorem step_bytes_isolates (s : State) (id : Nat) (chunk : List UInt8) {other : Nat}
     (h : other ≠ id) : (step s (.bytes id chunk)).1.client? other = s.client? other := by
@@ -1309,13 +1310,14 @@ def WF (s : State) : Prop := Bounded s ∧ Terminal.Vt.Good s.vt
 theorem step_wf (s : State) (ev : Event) (h : WF s) : WF (step s ev).1 :=
   ⟨step_bounded s ev h.1, step_vt_good s ev h.2⟩
 
-/-- §Bound + §Total over the daemon's whole life: no event trace of any
+/-- The bounds and the screen invariant over the daemon's whole life: no event trace of any
 length — adversarial clients, hostile pty bytes, any interleaving — can
 break the bounds or the screen invariant. -/
 theorem run_wf (s : State) (evs : List Event) (h : WF s) : WF (run s evs).1 :=
   run_preserves s evs (fun s ev _ hs => step_wf s ev hs) h
 
-/-- §Isolate over a whole trace: one client's entire byte stream,
+/-- Isolation over a whole trace, as the headline of this name (`Challenge.lean`, part 2)
+states it over `Session.trace`: one client's entire byte stream,
 however chunked, leaves every other client's record — decoder included
 — bit-identical. -/
 theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8)) {other : Nat}
@@ -1326,7 +1328,7 @@ theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8)) {
   rw [step_bytes_isolates t id chunk h]
   exact ht
 
-/-! ## §Renderable lifted to the daemon's whole life
+/-! ## Renderability lifted to the daemon's whole life
 
 The emulator-level invariant is only useful if the *daemon's* terminal satisfies
 it, for any event trace. A session does exactly three things to its `Vt`: feeds
@@ -1365,7 +1367,7 @@ satisfies the hypothesis, so the statement above is not conditional in practice.
 theorem liveVt_boot (cols rows : Nat) (ls mk : List (String × String)) :
     LiveVt (State.boot (Vt.Vt.init cols rows) ls mk) := Live.init cols rows
 
-/-! ## §Resume at the daemon — the other door into `State.boot`
+/-! ## Resume at the daemon — the other door into `State.boot`
 
 `liveVt_boot` covers a *fresh* boot. `Linger/Session/Shell/Daemon.lean` has a second
 source for the `vt0` it boots with:
@@ -1374,12 +1376,12 @@ source for the `vt0` it boots with:
 let vt0 := Linger.Session.bootVt (restore.map (·.1))
 ```
 
-where `restore` is `Runtime.Resume.loadCkpt`'s result — `ck.vt` for a
+where `restore` is what the daemon recovered, as `Linger.App.Recovery.decide` answers from the
+name's checkpoint file — `ck.vt` for a
 `Checkpoint.loadBytes bytes = some ck`, which `Checkpoint.loadBytes_eq` turns into
-`Checkpoint.load bytes.data.toList = some ck`. Until the `ofDecoded` rung there was no way to
-say `LiveVt` of that half, so a resumed session's `Renderable` had to be assembled
-by the reader out of `renderable_feed`/`renderable_resize` one operation at a time.
-The claims below close that, and the shape to mirror is `boot_wf`/`run_boot_wf`
+`Checkpoint.load bytes.data.toList = some ck`. The decoder's `ofDecoded` rung says `LiveVt`
+of that half (`Checkpoint.loadBytes_live`), and the claims below carry it through the
+daemon's life. The shape to mirror is `boot_wf`/`run_boot_wf`
 in the next section: a door lemma per source, one hypothesised whole-life claim, and
 then the hypothesis-free form over the term the daemon actually computes. -/
 
@@ -1397,11 +1399,12 @@ theorem liveVt_boot_of_load {l : List UInt8} {c : Checkpoint.Ckpt Vt.Vt}
 let vt0 := Linger.Session.bootVt (restore.map (·.1))
 ```
 
-with `restore` from `Runtime.Resume.loadCkpt`, whose `some` case is `(ck.vt, …)` for a
-`Checkpoint.loadBytes bytes = some ck`; it is `none` for a missing file or for bytes that do
-not decode (torn write, foreign tag, corrupt payload), and an existing file that cannot be
-read throws before the boot. So this is that expression with the `IO` peeled off, and `b`
-ranges over every byte string that could be on disk.
+with `restore` from the daemon's recovery (`Linger.App.Recovery.decide`), whose `some` case is
+`(ck.vt, …)` for a `Checkpoint.loadBytes bytes = some ck`; it is `none` for a missing file when a
+new session may start, bytes that do not decode (torn write, foreign tag, corrupt payload) start
+nothing, and an existing file that cannot be read throws before the boot. So this is that
+expression with the `IO` peeled off, and `b` ranges over every byte string that could be on
+disk; for bytes that do not decode it is the fresh screen, though the daemon then boots none.
 
 **Named rather than inlined**, for the reason `Vt.decodedOk` and `stripMagic` are named:
 the two claims below repeat it six times between them and would be unreadable spelled out.
@@ -1420,7 +1423,7 @@ theorem liveReachableVt_resumeVt (b : ByteArray) :
   · exact Live.init 80 24
   · exact Checkpoint.loadBytes_live hl
 
-/-- **§Renderable over the daemon's whole life, from either door.** The `LiveVt` analogue
+/-- **A live terminal over the daemon's whole life, from either door.** The `LiveVt` analogue
 of `run_boot_wf`: whatever a session has been through — adversarial clients, hostile pty
 bytes, resizes, any interleaving — its terminal is still one a live session can hold,
 whether it booted fresh (`liveVt_boot`) or resumed (`liveVt_boot_of_load`). -/
@@ -1428,15 +1431,14 @@ theorem run_boot_vt_live (vt : Vt.Vt) (labels metaKv : List (String × String)) 
     (h : Terminal.Vt.LiveReachableVt vt) :
     LiveVt (run (State.boot vt labels metaKv) evs).1 := run_vt_live _ _ h
 
-/-- **The A2 anchor for the screen, made structural.** Every state the daemon can *possess*
+/-- **The screen's shape, made structural.** Every state the daemon can *possess*
 — every state reachable from any boot, which by the `State` seal is all of them — has a
 grid `Render.restore` can express and a tab ruler the width of it.
 
-Stated as one theorem rather than a chain because the chain is what a reader was previously
-left to assemble, and the resumed half of it did not exist: `run_vt_renderable` needed
-`LiveVt s`, and nothing supplied that for a decoded `vt0`. `TabsOk` rides along because it
-is the second hypothesis `Render.restore_tabs_any` and `Resume.resume_tabs` ask for and
-`Renderable` does not carry. -/
+Stated as one theorem rather than as a chain for a reader to assemble: `run_vt_renderable`
+needs `LiveVt s`, which for a decoded `vt0` comes from the resume door. `TabsOk` rides along
+because it is the second hypothesis `Render.restore_tabs_any` and `Resume.resume_tabs` ask
+for and `Renderable` does not carry. -/
 theorem run_boot_vt_shape (vt : Vt.Vt) (labels metaKv : List (String × String)) (evs : List Event)
     (h : Terminal.Vt.LiveReachableVt vt) :
     Renderable (run (State.boot vt labels metaKv) evs).1.vt ∧
@@ -1451,18 +1453,18 @@ checkpoint — and `resumeVt b` is `Daemon.lean`'s `vt0`. Both doors are the two
 can repaint, and every ruler is the width of its screen", quantified over every byte string
 that could be on disk and every event trace.
 
-Unprovable before the `ofDecoded` rung: the `some` branch had no `LiveVt`. -/
+The `some` branch rests on the `ofDecoded` rung, its only `LiveVt` witness. -/
 theorem run_resume_vt_shape (b : ByteArray) (labels metaKv : List (String × String))
     (evs : List Event) :
     Renderable (run (State.boot (resumeVt b) labels metaKv) evs).1.vt ∧
       Terminal.Vt.TabsOk (run (State.boot (resumeVt b) labels metaKv) evs).1.vt :=
   run_boot_vt_shape _ labels metaKv evs (liveReachableVt_resumeVt b)
 
-/-- **A1 across a *second* reboot.** The checkpoint a resumed session writes loads back
-exactly, for any bytes it was resumed from and any trace it then ran. `load_save_live`'s
-three hypotheses are discharged in one step by the same reachability, which is the point:
-reboot-resume is idempotent rather than one-shot, and before the rung this could only be
-said of a session that had never been resumed.
+/-- **The checkpoint round trip across a *second* reboot.** The checkpoint a resumed session
+writes loads back exactly, for any bytes it was resumed from and any trace it then ran.
+`Checkpoint.load_save`'s three hypotheses are discharged in one step by the same reachability
+(`Checkpoint.loadBytes_saveBytes_live`), which is the point: reboot-resume is idempotent
+rather than one-shot.
 
 The `.quiesce` on the right is content, not decoration — the round trip is exact *modulo*
 the parser state a checkpoint deliberately forgets (`Checkpoint.wVt`). A poll boundary
@@ -1479,15 +1481,15 @@ theorem run_resume_load_save (b : ByteArray) (labels metaKv : List (String × St
   Checkpoint.loadBytes_saveBytes_live _
     (run_boot_vt_live _ labels metaKv evs (liveReachableVt_resumeVt b))
 
-/-! ## §Bound at the door — boot is well-formed, so every daemon state is
+/-! ## The bounds at the door — boot is well-formed, so every daemon state is
 
-With the constructor private (lean-modules Step 5), `State.boot` is the only
+With the constructor private, `State.boot` is the only
 way a `State` comes to exist outside this module's friends, and `step` the
 only way forward — so `boot_wf ∘ run_wf` stops being "the invariant holds if
 the runtime starts politely" and covers every state the daemon can possess.
-The labels conjunct is what `boot`'s `take` buys: before it, a corrupt
-checkpoint's label list booted straight past `maxLabels` and `Bounded` was
-simply false of a resumed daemon (the gap that sized this step). The `Good vt`
+The labels conjunct is what `boot`'s `take` buys: without it, a corrupt
+checkpoint's label list would boot straight past `maxLabels` and `Bounded` would
+be false of a resumed daemon. The `Good vt`
 hypothesis is honest: a fresh boot has `Good (Vt.init …)`, and the resume
 path's decoded emulator carries it from the checkpoint theorems' side. -/
 
@@ -1495,7 +1497,7 @@ theorem boot_wf (vt : Vt.Vt) (labels metaKv : List (String × String)) (h : Term
     WF (State.boot vt labels metaKv) :=
   ⟨⟨Nat.zero_le _, List.length_take_le _ _, nofun, trivial⟩, h⟩
 
-/-- **The A2 anchor made structural**: every state reachable from any boot —
+/-- **Well-formedness made structural**: every state reachable from any boot —
 which, by the seal, is every state the daemon can possess — is well-formed,
 whatever the trace: adversarial clients, hostile pty bytes, forged
 checkpoints' label lists, any interleaving. -/
@@ -1582,9 +1584,9 @@ theorem onMsg_labels_changed_dirty (s : State) (c : Client) (m : Msg)
   unfold onMsg at *
   grind
 
-/-! ## §Size — a control resize never overrides an attached client that sizes the session
+/-! ## Size ownership — a control resize never overrides an attached client that sizes it
 
-`linger resize` (agent-cli Decision 3) lets an agent size a *detached* session
+`linger resize` lets an agent size a *detached* session
 so wrap is deterministic before a capture. The size-owner rule extends rather than
 bends: an attached client that sizes the session always wins, and the refusal is loud — an
 agent must not believe a size it never got. -/
@@ -2032,28 +2034,23 @@ theorem step_bytes_one_reply (s : State) (id : Nat) (chunk : List UInt8) :
       · exact Or.inl h
       · exact Or.inr ⟨c, t, c', m, hfind, hm, ht, ha⟩
 
-/-! ## §Row / §Status integrity — a listing record cannot be forged
+/-! ## Listing integrity — a listing record cannot be forged
 
 `Status.name_clean` proves the *status* column carries neither framing byte, which is
 what lets the porcelain be tab-separated with no escaping pass. This is the same
-promise for every **other** column — and it was false until 2026-08-17.
+promise for every **other** column.
 
-`infoText` framed its records with a `String` interpolation, so a label value
-containing a newline forged an extra record: `.labelSet` applies no filter and
-`linger set` passes the value through, so `linger set s x=$'a\nstatus\tlive'` put a
-`status`/`state` pair into the listing that `Status.classify`'s consumers would read as
-the session's state. Recorded as Step 0 ledger item 2 in
-`specs/archive/restore-conformance.md`; fixed at the **emit site**, which is why the claims
+`.labelSet` applies no filter and `linger set` passes a value through, so a label value
+containing a newline, as `linger set s x=$'a\nstatus\tlive'` sets, would otherwise forge an
+extra record: a `status`/`state` pair in the listing that `Status.classify`'s consumers would
+read as the session's state. The guard is at the **emit site**, which is why the claims
 below need no hypothesis about where a field came from.
 
-The fix is also what makes them provable at all: the old shape ended in
-`String.toUTF8`, and a `String` does not reduce in the kernel — the same argument
-`packages/terminal/Terminal/Render.lean`'s header makes, and the same reason `Render.history` was the
-last byte stream to acquire a proof rather than merely a *bound*: it too was assembled
-through `String` until `rowText` was rebuilt on `List UInt8`, which is what earned it
-`history_framing`/`history_lines`. `Verify/Coverage.lean` classifies emitted streams.
-`infoText` now builds
-`List UInt8` directly for the same reason. -/
+`infoText` builds `List UInt8` directly, which is what makes them provable at all: a
+`String` does not reduce in the kernel — the argument
+`packages/terminal/Terminal/Render.lean`'s header makes, and the reason `Render.history`'s
+`rowText` is built on `List UInt8`, which earns it `history_framing`/`history_lines`.
+`Verify/Coverage.lean` classifies emitted streams. -/
 
 /-- Scrubbed glyph bytes are ≥ 0x20, so neither framing byte can come out of a key or
 a value. `Render.utf8s` maps a C0 control — tab and newline included — to U+FFFD. -/
@@ -2142,17 +2139,17 @@ theorem infoText_records (s : State) :
   unfold infoText
   exact ⟨count_frame (infoFields s) 0x0A (Or.inr rfl), count_frame (infoFields s) 0x09 (Or.inl rfl)⟩
 
-/-! ## §Chunk at the session layer — what a client receives is what was sent
+/-! ## Chunking at the session layer — what a client receives is what was sent
 
-A3 says the *transport* is invisible: any re-chunking of an encoded stream decodes to
-exactly that stream. The session does its own framing on top of that — `outputMsgs`
-splits a payload into ≤ 64 KiB `output` frames — and that framing had no claim at all.
-`chunksOf`, the function that does it, appeared in `Theorems/` exactly once, in a
-comment; it is the same blindness in the old coverage gate that let `infoText` pass.
+The wire's round trip composed with re-chunking invariance (`decode_encode_chunked`) says the
+*transport* is invisible:
+any re-chunking of an encoded stream decodes to exactly that stream. The session does its own
+framing on top of that — `outputMsgs` splits a payload into ≤ 64 KiB `output` frames, with
+`chunksOf`.
 
 Two claims, and they are the two properties the runtime depends on: the split loses
-nothing (so a reattaching client's repaint is complete) and no frame exceeds the cap
-(so `Wire`'s §Bound well-formedness holds of what the daemon actually sends). -/
+nothing (so program output, a capture and a history export arrive whole) and no frame exceeds
+the cap (so `Msg.WF` holds of what the daemon actually sends). -/
 
 theorem chunksOf_flatten {α : Type} (n : Nat) (l : List α) : (chunksOf n l).flatten = l := by
   induction l using chunksOf.induct n with
@@ -2225,7 +2222,7 @@ theorem outputMsgs_faithful (id : Nat) (bs : List UInt8) :
   exact chunksOf_flatten outputChunk bs
 
 /-- **…and no frame exceeds the cap**, which is what makes every `output` message the
-daemon sends well-formed by `Wire`'s §Bound measure. -/
+daemon sends well-formed by `Msg.WF`'s payload bound. -/
 theorem outputMsgs_bounded (id : Nat) (bs : List UInt8) :
     ∀
       c ∈

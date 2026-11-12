@@ -6,9 +6,9 @@ import all Linger.Display.Status
 import all Terminal.Proofs.Render
 import all Linger.Display.Proofs.Status
 
-/-! # §Row — a list row's identity is its socket filename, not the reply
+/-! # A list row's identity is its socket filename, not the reply
 
-The tension: the `info` reply is data from another process (a local
+The `info` reply is data from another process (a local
 daemon, or — via porcelain — a remote host's `linger`), so it is not
 trusted to name itself. `rowFields` derives the row's `name` from the
 socket filename alone; these two theorems say the reply can neither
@@ -30,11 +30,11 @@ theorem rowFields_reply_excluded (socketName v : String) (info : List (String ×
     (⟨"name", v⟩ : String × String) ∉ (rowFields socketName info).tail := by
   simp [rowFields, List.mem_filter]
 
-/-! ## §Row extends to the status column
+/-! ## Row identity extends to the status column
 
-The identity half of §Row says a reply cannot rename a row. These say it
-cannot lie about the row's *health* either: the two facts that decide whether
-a row is trustworthy at all come from the caller, never from the reply.
+Row identity says a reply cannot rename a row. These say it
+cannot lie about the row's *health* either: where a row came from, a socket, an end record or
+a peer, comes from the caller as its `Row`, never from the reply.
 -/
 
 open Linger.Display.Status (Status)
@@ -46,8 +46,8 @@ theorem rowStatus_unanswered (info : List (String × String)) (h : answered info
     rowStatus (.live info) = Status.unknown := by
   simp [rowStatus, Linger.Display.Status.classify, h]
 
-/-- No socket but a loadable checkpoint is `resumable`, whatever the reply
-contained (there is no daemon to have sent one). -/
+/-- No socket, but a checkpoint whose end record does not say how its program ended, is
+`resumable`, whatever the reply contained (there is no daemon to have sent one). -/
 theorem rowStatus_resumable : rowStatus .stale = Status.resumable := rfl
 
 /-- **An ended session is a result**: a saved row whose end record says its program ended shows
@@ -70,7 +70,7 @@ theorem rowStatus_published (fresh unseen : Bool) (info : List (String × String
   simp [rowStatus, answered, flag, hans, hexit, hfresh, hunseen]
 
 /-- An empty reply is not an answer, so a busy daemon lists as `unknown`
-rather than as a healthy idle session. This is the §Row property applied to
+rather than as a healthy idle session. This is row identity applied to
 health: the row still carries its real name, and is honestly marked as one we
 could not read. -/
 theorem answered_nil : answered [] = false := rfl

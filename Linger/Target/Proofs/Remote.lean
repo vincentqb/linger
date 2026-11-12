@@ -7,14 +7,16 @@ import Linger.Target.Proofs.Name
 
 public section
 
-/-! # §Remote — trusting a remote listing without trusting the remote
+/-! # Trusting a remote listing without trusting the remote
 
 `parse` is total by construction (`filterMap` over `splitOnP`-split
 lines — no partiality to prove). The load-bearing theorems: every name
-in the result is `Valid` (§Name carries through, so remote data cannot
+in the result is `Valid` (name validation carries through, so remote data cannot
 build a path outside the socket dir or smuggle bytes into ssh argv),
 and display fields are scrubbed of control characters (nothing a
 remote returns can inject escape sequences into the local listing).
+The later sections prove what the headlines `command_exact`, `targetArgs_targetOperands` and
+`checkHosts_ok_iff` (`Challenge.lean`, part 3) rest on.
 -/
 
 namespace Linger.Target.Remote

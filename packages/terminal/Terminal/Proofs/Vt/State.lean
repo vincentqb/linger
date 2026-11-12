@@ -2,24 +2,23 @@ module
 
 import all Terminal.Vt
 
--- No `public section`, and that is forced by the `Vt` seal
--- (`specs/archive/vt-toolkit.md` Step 1). `import all` grants *access* to a private
--- field, but a **public** declaration's type may still not mention one — so
+-- No `public section`, and that is forced by the `Vt` seal. `import all` grants *access* to a
+-- private field, but a **public** declaration's type may still not mention one — so
 -- `structure Good` and every theorem stating `v.cols`/`v.cursor`/… must be
 -- module-private. Default visibility in a `module` file is exactly that, so the
 -- fix is the absence of one line rather than `private` on a hundred. Consumers
 -- reach in with `import all Terminal.Proofs.Vt`, as `packages/terminal/Terminal/Proofs/Render/Ends.lean` does.
 
-/-! # §Total / §Chunk / §Bound — the emulator theorems
+/-! # The emulator theorems: re-chunking, bounds and a sane screen
 
 The three emulator guarantees:
-* §Chunk — `feed` is invariant under re-chunking (definitional, from
+* Re-chunking — `feed` is invariant under re-chunking (definitional, from
   `feed = foldl step`, but stated so a rewrite cannot silently lose it).
-* §Bound — no field of `Vt` grows with input
+* Bounds — no field of `Vt` grows with input
   volume. Scrollback ≤ `sbCap`, OSC accumulator ≤ 2048, CSI params
   ≤ 16, UTF-8 pending ≤ 3 — preserved by `step` for ANY byte, hence by
   `feed` for ANY byte stream.
-* §Total — `step` preserves the structural sanity of the screen: grid
+* A sane screen — `step` preserves the structural sanity of the screen: grid
   dimensions don't change, and the cursor (plus every stashed cursor)
   stays strictly inside them. Together with "no `partial def` in a pure
   module" (checked by grep in scripts/gates.sh), this establishes pure totality
@@ -79,9 +78,10 @@ theorem stepEscInter_final (v : Vt) (i b : UInt8) (hlo : 0x30 ≤ b) (hhi : b �
         else { v with pstate := .ground } := by
   simp [Vt.stepEscInter, hlo, hhi]
 
-/-- Everything §Total and §Bound need, as one induction hypothesis, and what a repaint needs
-to reproduce a state: under origin mode the cursor is inside the scroll region, wrap is
-pending only at the right margin, and the region is the whole screen or spans two rows. -/
+/-- The screen's structural sanity and every bound, as one induction hypothesis, and what a
+repaint needs to reproduce a state: under origin mode the cursor is inside the scroll region,
+wrap is pending only at the right margin, and the region is the whole screen or spans two
+rows. -/
 structure Good (v : Vt) : Prop where
   colsPos : 1 ≤ v.cols
   rowsPos : 1 ≤ v.rows
@@ -185,9 +185,9 @@ if `Vt.ofDecoded` returns a `Vt` at all then that `Vt` is `Good`: the dimensions
 `[1,1000]`, both cursors and every stashed cursor are inside the screen, the scroll
 region is non-empty and on-screen, and the scrollback is within `sbCap`.
 
-This is the claim `specs/archive/vt-toolkit.md` Step 2 exists for. Before it, `rVt` built a
-`Vt` field-by-field, so `cols := 0` — a state no `init`/`resize`/`feed` path can reach,
-and one the emulator's own theorems are all false of — was one hostile byte away. -/
+Without the check, a decoder that built a `Vt` field by field would be one hostile byte
+away from `cols := 0` — a state no `init`/`resize`/`feed` path can reach, and one the
+emulator's own theorems are all false of. -/
 theorem ofDecoded_good {cols rows : Nat} {grid : Array Row} {cursor : Cursor} {pen : Pen}
     {modes : Modes} {top bot : Nat} {tabs : Array Bool} {sb : Ring}
     {altGrid : Option (Array Row × Saved)} {saved : Saved} {title : String}
@@ -211,11 +211,12 @@ theorem ofDecoded_good {cols rows : Nat} {grid : Array Row} {cursor : Cursor} {p
   · exact absurd h (by simp)
 
 /-! **The other half of the door's claim — "nothing good is rejected" — is
-`ofDecoded_of_good`, and it is NOT here.** It lives in §The decoder's door, part two,
-below, because after R2 the door also decides `Renderable`, so the statement names a
-predicate nothing this early in the file can mention. `ofDecoded_good` above would be
-satisfied by a constructor that returned `none` always; that is what the other half
-rules out, so read them as a pair even though the file cannot state them as one. -/
+`ofDecoded_of_good`, and it is NOT here.** It lives in "The decoder's door, part two", in
+`packages/terminal/Terminal/Proofs/Vt/Renderable.lean`, because the door also decides
+`Renderable`, so the statement names a predicate this file cannot mention.
+`ofDecoded_good` above would be satisfied by a constructor that returned `none` always;
+that is what the other half rules out, so read them as a pair even though the file cannot
+state them as one. -/
 
 /-- **Junk dimensions are refused, not clamped**, and this is the concrete shape of
 that: `cols = 0` is the canonical corrupt value — no live session can hold it, `Good`
@@ -227,8 +228,8 @@ decoded rows at their own width, producing a state that is `Good` and not `Rende
 — and `Renderable` is what every `Render.restore` theorem needs. Establishing it by
 clamping means rebuilding the grid, i.e. `Vt.resize`, which the resume path refuses
 because it resets the scroll region and the tab ruler. Rejecting needs no new
-behaviour: `load` is already `Option`-valued, and its `none` already means "start
-fresh". -/
+behaviour: `load` is already `Option`-valued, and a checkpoint it refuses is kept and
+never resumed. -/
 theorem ofDecoded_none_of_cols_zero {rows : Nat} {grid : Array Row} {cursor : Cursor} {pen : Pen}
     {modes : Modes} {top bot : Nat} {tabs : Array Bool} {sb : Ring}
     {altGrid : Option (Array Row × Saved)} {saved : Saved} {title : String}
@@ -833,7 +834,7 @@ theorem csiFinish {v : Vt} (s : CsiState) (final : UInt8) (h : Good v) :
   unfold Vt.csiFinish
   exact set_ground (csiDispatch _ _ h)
 
-/-! ## Parser-state setters within their §Bound caps -/
+/-! ## Parser-state setters within their caps -/
 
 theorem set_pstate_csi {v : Vt} (s : CsiState) (hp : s.params.size ≤ 16) (h : Good v) :
     Good { v with pstate := .csi s } := by
@@ -988,11 +989,11 @@ theorem stepStr {v : Vt} (e : Bool) (b : UInt8) (h : Good v) : Good (v.stepStr e
     · exact set_pstate_str _ h
     · exact set_pstate_str _ h
 
-/-! ## §Total + §Bound, one byte and a whole stream -/
+/-! ## A sane screen and the bounds, one byte and a whole stream -/
 
 /-- `step` preserves the composite invariant for ANY byte: the cursor
 and every stashed cursor stay in bounds, and no buffer exceeds its cap.
-This is the §Bound theorem at the emulator layer. -/
+This is the bounds theorem at the emulator layer. -/
 theorem step {v : Vt} (b : UInt8) (h : Good v) : Good (v.step b) := by
   unfold Vt.step Vt.abortUtf8
   dsimp only
@@ -1022,8 +1023,8 @@ theorem step {v : Vt} (b : UInt8) (h : Good v) : Good (v.step b) := by
         | exact stepStr _ _ h
 
 /-- The stream form: any byte stream, fed to a Good `Vt`, leaves it
-Good. With `Vt.init`'s `good_init` this covers every state the daemon
-can ever hold. -/
+Good. With `good_init`, `resize` below, quiescing and the decoder's door this covers
+every state the daemon can ever hold (`good_of_liveReachable`). -/
 theorem feed {v : Vt} (bytes : List UInt8) (h : Good v) : Good (v.feed bytes) :=
   good_foldl (fun _ b hh => step b hh) bytes h
 
@@ -1063,7 +1064,7 @@ end Terminal.Vt.Good
 
 namespace Terminal.Vt
 
-/-! ## §Chunk — re-chunking invariance, definitional by design -/
+/-! ## Re-chunking invariance, definitional by design -/
 
 theorem feed_nil (v : Vt) : v.feed [] = v := rfl
 
@@ -1105,10 +1106,9 @@ Why this beats the two alternatives:
 
 What frames do **not** buy, and this is the honest limit: a frame says
 what an operation leaves alone, never what the written fields *become*.
-Grid fidelity (§Replay stage 3d — the replayed cells equal the saved
-cells) needs the positive specification, which is real content, not
-bookkeeping. Frames retire the sprawl; they do not shorten the road to
-3d.
+Grid fidelity (the replayed cells equal the saved cells, `replay_grid`) needs
+the positive specification, which is real content, not bookkeeping. Frames
+retire the sprawl; they do not prove the fidelity.
 
 The leaf frames also supply the step hypothesis for `frame_grid_foldl`:
 an exact frame is itself an invariant, preserved by overwriting the grid.
@@ -1551,9 +1551,9 @@ the sequence states it opens) may change `pstate`. That is obvious by
 inspection of the code — no printing or cursor operation mentions
 `pstate` — but "obvious by inspection" is what these lemmas replace.
 
-They are the missing rung under §Replay stage 3b
-(`packages/terminal/Terminal/Proofs/Render.lean`): a restore stream's grid repaint is a long run
-of printable bytes, and the theorem that a restore leaves the parser
+They are a rung under the replay's parser half
+(`packages/terminal/Terminal/Proofs/Render/Ends.lean`): a restore stream's grid repaint is a
+long run of printable bytes, and the theorem that a restore leaves the parser
 quiesced needs each of them to be parser-neutral.
 
 Leaf frames and `off_print` supply the printing path's invariance;
@@ -1631,7 +1631,7 @@ theorem step_of_str {v : Vt} {e : Bool} (b : UInt8) (hg : v.pstate = .str e) :
     v.step b = (v.abortUtf8 b).stepStr e b := by
   unfold Vt.step; dsimp only; rw [ps_abortUtf8, hg]
 
-/-- §Replay's rung: from `ground`, any byte other than ESC leaves the
+/-- A rung of the replay's parser half: from `ground`, any byte other than ESC leaves the
 parser in `ground`. (`u8need` may change — a UTF-8 lead byte — which is
 why `Ends` tracks it separately.) -/
 theorem ps_stepGround (v : Vt) (b : UInt8) (hb : b ≠ 0x1B) :

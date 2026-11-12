@@ -6,23 +6,21 @@ import all Terminal.Proofs.Render.Grid
 
 -- Module-private by default: `Vt`'s fields are sealed (see `packages/terminal/Terminal/Proofs/Vt/State.lean`).
 
-/-! # §Replay, the tab ruler
+/-! # The tab ruler, restored
 
 The tab-ruler ladder, built on the projection-preservation support in
-`Terminal.Proofs.Render.Keeps`: `restore_tabs_any`.
-Split out of `packages/terminal/Terminal/Proofs/Render.lean`. -/
+`Terminal.Proofs.Render.Keeps`: `restore_tabs_any`. -/
 
 namespace Terminal.Render
 
 open Terminal.Vt
 
-/-! ## §Replay, the tab ruler — `restore_tabs_any`
+/-! ## The tab ruler — `restore_tabs_any`
 
-The last restored field whose claim was carried by fixtures alone (with the window
-title and the DECSC slot). The *fix* landed earlier — `tabsAnsi` emits the ruler
-unconditionally, because a client is not a reset terminal and nothing else in a
-restore stream clears a tab stop — and this is the theorem that fix made provable:
-as the code stood before it, `restore_tabs_any` would have been **false**.
+`tabsAnsi` emits the ruler unconditionally, because a client is not a reset terminal and
+nothing else in a restore stream clears a tab stop; a `tabsAnsi` that skipped the default
+ruler would make `restore_tabs_any` **false**. No theorem covers the window title, the DECSC
+slot, the alternate screen's stash or the wrap-pending flag; fixtures check them.
 
 `tabs` is an `Array Bool` of size `cols`, not a scalar, so it does not fold into
 `stick`; the shape is therefore array equality via size-and-pointwise (`Array.ext`,
@@ -466,7 +464,7 @@ theorem restore_tabs_split (v : Vt) :
   unfold restore restoreBody tabsAnsi
   simp only [List.append_assoc]
 
-/-- **A5 inbound, the tab ruler.** For any receiver of the session's width, `restore`
+/-- **Restore installs the tab ruler.** For any receiver of the session's width, `restore`
 installs the session's tab ruler.
 
 `Good w` is what `dims_feed` needs of the receiver (the paint contains the byte
@@ -475,8 +473,9 @@ installs the session's tab ruler.
 — must stay off the parser's 65535 clamp, and `Good.colsLe` caps `w.cols` at 1000,
 which `hcols` transports to `v.cols`. `hvtabs` is the one hypothesis on the session
 that `Good`/`Renderable` do not already give: a ruler longer than `cols` could hold a
-stop no `range cols` walk would ever emit, and `Checkpoint.load` is total on arbitrary
-bytes, so it is asked for rather than assumed. -/
+stop no `range cols` walk would ever emit, so it is asked for rather than assumed. Every
+live terminal has it (`tabsOk_of_liveReachable`), and linger's checkpoint decoder checks it
+(`load_tabsOk`). -/
 theorem restore_tabs_any (v w : Vt) (hgood : Good w) (hcols : w.cols = v.cols)
     (hvtabs : v.tabs.size = v.cols) : (w.feed (restore v)).tabs = v.tabs := by
   have hub : v.cols < 65535 := by

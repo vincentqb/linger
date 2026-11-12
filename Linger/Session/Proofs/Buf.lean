@@ -3,12 +3,12 @@ module
 import all Linger.Session.Buf
 import Linger.Session.Spec
 
-/-! # §Bound, the runtime half — the daemon's byte queues, proved
+/-! # The runtime half of the bounds — the daemon's byte queues, proved
 
 This file is the tree's first **friend module**: `import all Linger.Session.Buf`
 is what lets these statements and proofs see a representation that is sealed to
 every plain importer (`Buf.bytes` is `private`; the runtime cannot read, write,
-or forge it — specs/archive/lean-modules.md Step 2). There is deliberately no blanket
+or forge it). There is deliberately no blanket
 `public section` here: these theorems are leaves — `Theorems/Solution.lean` proves headlines
 from them (`input_exact`, Challenge.lean part 1, and `reachableIn_bound` and
 `reachableOut_bound`, part 6), and nothing else uses them as lemmas — and being CHECKED at
@@ -16,9 +16,8 @@ build is their whole job, so module-private is their honest visibility. It also 
 proofs elaborate where the sealed definitions still reduce.
 
 `Session.run_wf` bounds the *machine*: no event trace grows a client roster, a
-label store or the screen. One layer below, the daemon's two byte queues were
-bounded only by code review. These are their bounds, turned into theorems about
-`Linger.Session.Buf`.
+label store or the screen. One layer below are the daemon's two byte queues, and these are
+their bounds, as theorems about `Linger.Session.Buf`.
 
 **What is proved here is the arithmetic, not the daemon.** The runtime shells are
 `IO`; no theorem can see that it calls these functions rather than open-coding the
@@ -38,9 +37,9 @@ is decoration.
 **Why several proofs are one word.** They are short because the representation was
 chosen to make them short: the queue holds exactly what it owes, so "advancing
 drops the first `n` bytes in order" and "the writer is handed the debt" are the same
-statement twice. The write-cursor shape needed an `off ≤ bytes.size` invariant that
-no type enforced and every content proof had to assume — `AGENTS.md`'s rule to design
-code for provability says to move the definition, so the definition moved.
+statement twice. A write-cursor shape would need an `off ≤ bytes.size` invariant that
+no type enforces and every content proof would have to assume — `AGENTS.md`'s rule to design
+code for provability says to move the definition instead.
 `bufSize_eq_owedLen` is where that shows up as a claim.
 -/
 
@@ -60,9 +59,8 @@ theorem owedLen_empty : owedLen Buf.empty = 0 := rfl
 
 /-- **Nothing written is retained.** Memory footprint *is* the debt — an equation,
 not a bound, because an inequality would also hold of a queue that kept its whole
-history. This is the property the write-cursor shape could only promise and the
-partial-drain regression violated; here it is structural, so re-introducing the
-regression means changing the type. -/
+history. This is the property a write-cursor shape could only promise; here it is
+structural, so a queue that retained written bytes would need a different type. -/
 theorem bufSize_eq_owedLen (b : Buf) : bufSize b = owedLen b := rfl
 
 /-! ## Advancing over written bytes -/
@@ -141,15 +139,14 @@ theorem followingCap_iff {cap frame front debt : Nat} (hf : frame ≤ cap) (hp :
   unfold followingCap
   omega
 
-/-! ## §Bound over the queue's whole life
+/-! ## The bounds over the queue's whole life
 
 The per-step bounds above compose into lifetime invariants of the reachability
 predicates (`Linger/Session/Buf.lean`), and the composition is only meaningful
 because the representation is sealed: every `Buf` a plain importer can possess
 is `empty` moved forward by the API, so "reachable" is not a subset of the
-runtime's states — it IS them. Pre-seal these theorems would have been true of
-a predicate that described nothing (the forge escape); that is why they were
-not written until specs/archive/lean-modules.md Step 2 landed. -/
+runtime's states — it IS them. Without the seal these theorems would be true of
+a predicate that described nothing, since an importer could forge a `Buf`. -/
 
 /-- **The pty-input queue is bounded for the daemon's whole life**: any
 interleaving of capped offers and flush advances, from boot, stays within the

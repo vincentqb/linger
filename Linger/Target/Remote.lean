@@ -12,11 +12,10 @@ remote hosts by running `ssh <host> linger ls --porcelain` and parsing
 stdout here. A session verb on a `name@host` target runs on that host as the encoded command
 line `command` builds, which the remote entry decodes (`decode`).
 
-§Remote: the parser is total (any bytes → some rows,
-never ⊥), garbage-tolerant (a malformed line or record is dropped, not
-fatal), and §Name carries through — every name in the result is
-validated without rewriting, so a hostile remote cannot inject a path or control bytes
-into the local listing or the ssh argv.
+The parser is total (any bytes → some rows, never ⊥), garbage-tolerant (a malformed line or
+record is dropped, not fatal), and every name in the result is validated without rewriting
+(`parse_names_valid`), so a hostile remote cannot inject a path or control bytes into the local
+listing or the ssh argv.
 
 Format (one record per session, blank-line separated):
 ```

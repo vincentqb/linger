@@ -6,18 +6,17 @@ import all Terminal.Proofs.Render.Ends
 
 -- Module-private by default: `Vt`'s fields are sealed (see `packages/terminal/Terminal/Proofs/Vt/State.lean`).
 
-/-! # §Replay stage 3c — the numbers survive the round trip
+/-! # The numbers survive the round trip
 
 `Quiet` and the digit bridge: what the emitted decimal parameters mean by the time
 the parser has accumulated them, and that DECOM stays off through every stage of a
-restore stream. Split out of `packages/terminal/Terminal/Proofs/Render.lean`; see that façade for the ladder
-as a whole. -/
+restore stream. `packages/terminal/Terminal/Proofs/Render.lean` lists the ladder as a whole. -/
 
 namespace Terminal.Render
 
 open Terminal.Vt
 
-/-! ## §Replay stage 3c — the numbers survive the round trip
+/-! ## The numbers survive the round trip
 
 Everything numeric in a restore stream (cursor positions, the scroll
 region, mode numbers, colour components) is emitted by `digits` and read
@@ -98,7 +97,7 @@ theorem csi_digits_feed :
     rw [hrest]
     simp [accDigits]
 
-/-- §Replay 3c: the parameter the parser accumulates from `digits n` is
+/-- The parameter the parser accumulates from `digits n` is
 `n` (clamped) — the emitter and the parser are inverse on numbers. The
 `inter`/`ignore`/`priv` facts come along because `csi_digits_feed` returns
 a record *update*: a digit run touches nothing else. -/
@@ -214,7 +213,7 @@ theorem frame_csi_digits_feed :
       (frame_csi_digits_feed xs hx (fun b hb => h b (by simp [hb]))).trans
         (frame_csi_digit_step x hg (h x (by simp)).1 (h x (by simp)).2)
 
-/-! ### §Replay: DECOM stays off through a whole restore stream
+/-! ### DECOM stays off through a whole restore stream
 
 The rung the restore-level cursor claim needs: a session with DECOM off
 must replay with DECOM off, or the final `CUP` would be read

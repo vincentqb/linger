@@ -8,12 +8,12 @@ public section
 
 /-! # Linger.Display.Listing — a `list` row's identity
 
-§Row, the headline `rowFields_name` (Challenge.lean, part 2): a listed session's *identity* is
+The headline `rowFields_name` (`Challenge.lean`, part 2): a listed session's *identity* is
 a function of its socket filename alone, never of the `info` reply the daemon returns. A
 daemon too busy to answer within the poll window still lists under its
 real name; and — because that same row set is the porcelain a remote
 `-r` parses — a peer cannot rename or blank another session's row by
-crafting a reply. `Cli.cmdList` builds every local row through
+crafting a reply. `Inventory.localRows` builds every local row through
 `rowFields`, so the property is *proved* (Linger/Display/Proofs/Listing.lean) rather
 than asserted at the call site.
 -/
@@ -31,9 +31,9 @@ def rowFields (socketName : String) (info : List (String × String)) : List (Str
 
 `Status.classify` needs observations from two sources: the daemon reports
 `unseen`/`fresh`/`exit` in its `info` reply, and the caller supplies what only
-it can know — whether a socket is there, whether the daemon answered, and
-whether a checkpoint loads. Splitting it this way is what makes the §Row
-property extend to the status column: an absent or partial reply cannot make a
+it can know, as the `Row` it passes — whether a socket accepted the connection and, for a
+session without one, what its name's end record says. Splitting it this way is what makes
+row identity extend to the status column: an absent or partial reply cannot make a
 row look healthier than it is, because `daemonUp` comes from the caller and
 `known` requires the `pid` or `cmd` field every real reply carries.
 -/

@@ -7,8 +7,6 @@ public section
 
 /-! # Linger.Terminal.Suites.Mediation — the bounded terminal mediator, with 0, 1 and 2 clients
 
-Ported from `tests/terminal_query_test.py`.
-
 The probe is an ordinary foreground pty program, not a shell detector. It puts its
 tty in raw mode, emits one query, and records exactly what it reads back. The same
 probe runs with zero, one and two presentation clients, which is what makes the
@@ -34,11 +32,10 @@ WHAT IS DERIVED, AND WHAT CANNOT BE:
   emitter performing its own filtering. The CR/LF check is deliberately NOT
   derived: it is about the bytes that actually reached the child, which is exactly
   the half `feed_replies_noNl` cannot see;
-* the stable child profile's `TERM_PROGRAM_VERSION` is derived: `Daemon.serve` and
-  this check both read `Mediation.versionNumber`. `TERM=xterm-256color` and
-  `TERM_PROGRAM=linger` could NOT be tied to anything. They are literals inside
-  `Daemon.serve`'s `spawnPty` call, not exported values, so a Lean-side tie would
-  restate the constants rather than derive them. -/
+* the stable child profile's `TERM_PROGRAM_VERSION` is derived: `Start.environment`,
+  the environment `Daemon.serve` starts the program with, and this check both read
+  `Mediation.versionNumber`. `TERM=xterm-256color` and `TERM_PROGRAM=linger` are
+  literals here, as the headline `start_runs` (`Challenge.lean`, part 4) states them. -/
 
 namespace Linger.Terminal.Suites.Mediation
 
@@ -180,9 +177,9 @@ def runCase (e : Env) (index clients : Nat) (inheritedTerm : Option String)
   let result := (caseDir / "result").toString
   let ready := (caseDir / "ready").toString
   let trigger := (caseDir / "trigger").toString
-  -- The DAEMON's environment, which the child inherits and the mediator must
-  -- override. In `("TERM", inheritedTerm)`, `some v` sets it and `none` REMOVES
-  -- it, which is what case 0 needs.
+  -- The DAEMON's environment, which the child inherits but for the variables
+  -- `Start.environment` sets. In `("TERM", inheritedTerm)`, `some v` sets it and `none`
+  -- REMOVES it, which is what case 0 needs.
   let mut env :=
     e.procEnv ++
       #[("TERM_PROGRAM", some "inherited-program"), ("TERM_PROGRAM_VERSION", some "9.9.9"),
@@ -262,8 +259,8 @@ def run : IO UInt32 :=
       -- equality, not "contains": a duplicate reply is the failure this is for
       expect (data.reply == da1Expected)
           s!"DA1 progresses with {clients} client(s), exactly one reply"
-      -- `TERM` and `TERM_PROGRAM` are literals, because `Daemon.serve`'s profile array
-      -- is not an exported value; the version is derived. See the module docstring
+      -- `TERM` and `TERM_PROGRAM` are literals, as `start_runs` states them; the version
+      -- is derived. See the module docstring
       expect
           (data.term == some "xterm-256color" && data.termProgram == some "linger" &&
             data.termVersion == some Terminal.Mediation.versionNumber)

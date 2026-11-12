@@ -15,43 +15,39 @@ invariants. This umbrella combines them into reachability and boundary guarantee
 
 namespace Terminal.Vt
 
-/-! ### §LiveReachable — the states a running session can actually hold
+/-! ### The states a running session can actually hold
 
-`LiveReachableVt` (`packages/terminal/Terminal/Spec.lean`) is the predicate a replay theorem may
-assume: the least set containing a fresh emulator and closed under the things a live
-session does to one — feed pty bytes, resize on attach, forget partial parser state (what a
-checkpoint save/load does), **and come off disk through the decoder's door**.
+`LiveReachableVt` — `Live` (`packages/terminal/Terminal/Spec.lean`) over this emulator's
+operations — is the predicate a replay theorem may assume: the least set containing a fresh
+emulator and closed under the things a live session does to one — feed pty bytes, resize on
+attach, forget partial parser state (what a checkpoint save/load does), **and come off disk
+through the decoder's door**.
 
-**The fifth rung arrived after finding R2** (SCRATCHPAD.md), and the earlier prose
-here — "fidelity is claimed for these and not for an arbitrary decoded checkpoint,
-which no theorem can vouch for" — was true when the door only decided `Good`. It is
-not any more: `Vt.ofDecoded` now decides `Renderable` and the ruler as well, so
-`ofDecoded_good`/`ofDecoded_renderable`/`ofDecoded_tabsOk` vouch for exactly the
-three components the relation supplies, and `ofDecoded_u8Ok` for the fourth because
-the door *fixes* `u8need := 0` and `u8acc := 0`.
+The fifth rung is safe to add because `Vt.ofDecoded` decides `Renderable` and the ruler as
+well as `Good`: `ofDecoded_good`/`ofDecoded_renderable`/`ofDecoded_tabsOk` vouch
+for the three components the door decides, and `ofDecoded_u8Ok` and `ofDecoded_csiOk` for the
+parser state it resets: it *fixes* `u8need := 0` and `u8acc := 0` and starts the parser in
+ground.
 
 The premise is the door's own conclusion (`Vt.Decodable`: `Vt.ofDecoded` of the state's
 own record returns it) and that is
-load-bearing rather than stylistic. Step 3 measured a rung premised on `Good v`
-**unsound**: `Good` implies neither the grid's shape nor a zeroed UTF-8
-accumulator, so that rung broke `renderable_of_liveReachable` and
-`u8Ok_of_liveReachable` — the two lemmas the relation exists to supply. Do not
-re-derive that; the error texts are in the Step 3 record.
+load-bearing rather than stylistic. A rung premised on `Good v` is too weak: `Good`
+implies neither the grid's shape nor a zeroed UTF-8 accumulator, so that rung breaks
+`renderable_of_liveReachable` and `u8Ok_of_liveReachable` — the two lemmas the relation
+exists to supply (`ofDecoded_u8Ok` quotes the error).
 
-What the rung widens, deliberately: all four `*_of_liveReachable` lemmas now speak
-of decoded states too, so every `Render.restore_*_reachable` theorem — whose
-statements are unchanged — covers a receiver or a subject that came off disk, and
-`Session.LiveVt` becomes provable for a **resumed** daemon
+What the rung widens, deliberately: every `*_of_liveReachable` lemma speaks
+of decoded states too, so every `Render.restore_*_reachable` theorem covers a receiver or
+a subject that came off disk, and `Session.LiveVt` is provable for a **resumed** daemon
 (`Session.liveVt_boot_of_load`, via `Checkpoint.load_live`). That last one is why
-the rung was added at all: without it the resumed session's shape invariant travels
+the rung exists at all: without it the resumed session's shape invariant travels
 through `renderable_feed`/`renderable_resize` one operation at a time instead of
 through one daemon-level theorem.
 
 What it does **not** widen: nothing here says a ring row is the screen's width.
 `Vt.resize` leaves the scrollback at its old width by design, so
-`Render.restore_sb_exact`'s `hrok` is immovable by any amount of reachability — Step
-3's measurement, and the reason the decoder deliberately does not validate the ring
-either. -/
+`Render.restore_sb_exact`'s `hrok` is immovable by any amount of reachability, which is
+also why the decoder deliberately does not validate the ring. -/
 
 /-- **Every state the decoder's door returns is `Decodable`**: decoding its own record again
 returns it, so the resume rung admits exactly the door's outputs. -/
@@ -78,7 +74,7 @@ on the grid, and cannot be satisfied vacuously by excluding awkward states.
 
 The `ofDecoded` arm is what widens this from "every state a fresh boot reaches" to
 "every state the daemon can hold, resumed sessions included", and it is the arm a
-`Good`-premised rung could not have closed (§LiveReachable's docstring). -/
+`Good`-premised rung could not have closed (the section's note above says why). -/
 theorem renderable_of_liveReachable {v : Vt} (h : LiveReachableVt v) : Renderable v := by
   induction h with
   | init c r => exact renderable_init c r
@@ -153,8 +149,8 @@ is nothing on disk to check — which makes `U8Ok` immediate at the door.
 
 This is also the component that makes the premise's shape matter. `Good` bounds `u8need`
 and says nothing whatever about `u8acc`, so a rung premised on `Good v` cannot reach this
-claim; Step 3 measured exactly that failure (`invalid ▸ notation, argument hg.u8Le has type
-v.u8need ≤ 3, equality expected`). -/
+claim: the attempt fails with `invalid ▸ notation, argument hg.u8Le has type
+v.u8need ≤ 3, equality expected`. -/
 theorem ofDecoded_u8Ok {cols rows : Nat} {grid : Array Row} {cursor : Cursor} {pen : Pen}
     {modes : Modes} {top bot : Nat} {tabs : Array Bool} {sb : Ring}
     {altGrid : Option (Array Row × Saved)} {saved : Saved} {title : String}
@@ -181,19 +177,19 @@ theorem u8Ok_of_liveReachable {v : Vt} (h : LiveReachableVt v) : U8Ok v := by
     intro _; rfl
   | ofDecoded hd => exact ofDecoded_u8Ok hd
 
-/-- **…and the ruler, which is `specs/archive/vt-toolkit.md` Step 3's harvest.** The ruler
+/-- **…and the ruler.** The ruler
 premise of `Render.restore_tabs_any` — `v.tabs.size = v.cols` — is a fact about every
 state a live session can hold, so a caller with reachability discharges it here. Neither `Good` nor
 `Renderable` implies it (the first bounds the dimensions, the second speaks of the
-grid), which is why it needed the §Ruler layer of its own rather than a clause on
-one of them.
+grid), which is why it has a layer of its own (the ruler section of
+`packages/terminal/Terminal/Proofs/Vt/Parser.lean`) rather than a clause on one of them.
 
 Note the two rungs that could have broken it and do not: `resize` reinstalls
 `defaultTabs` at the new width, and the `feed` rung covers `TBC 3`, which replaces
 the whole array — the invariant is *re-established* there rather than preserved,
 which is the shape `tabsOk_csiDispatch` records. The `ofDecoded` rung is a third
-that could have: before finding R2 the door accepted a ruler of any length at all,
-and `ofDecoded_tabsOk` is exactly the claim that closed it. -/
+that could, were the door to accept a ruler of any length; `ofDecoded_tabsOk` is the
+claim that it does not. -/
 theorem tabsOk_of_liveReachable {v : Vt} (h : LiveReachableVt v) : TabsOk v := by
   induction h with
   | init c r => exact tabsOk_init c r
@@ -428,7 +424,7 @@ theorem csiPush_omitted_of_liveReachable {v : Vt} (h : LiveReachableVt v) {s : C
   rw [csiPush_of_lt s sub hs]
   simp only [(csiOk_of_liveReachable h s hp).emptyCur hh, Nat.zero_min]
 
-/-! ## §Restore — the sticky receiver state, as one bundled projection
+/-! ## The sticky receiver state, as one bundled projection
 
 This layer supplies `Render.restore`'s receiver-quantified value
 claims: the state the stream **establishes and must then leave alone** outside
@@ -500,9 +496,9 @@ theorem lineFeed_interior (v : Vt) (hy : v.cursor.y < v.bot) (hlt : v.bot < v.ro
 /-! ### The positive scroll specification
 
 The frames above say what `scrollUpIn` leaves **alone**. These say what it **writes** —
-the gap §Total names in its own words ("a frame says what an operation leaves alone,
-never what the written fields *become*"), closed for the one operation the scrollback
-story rests on.
+the gap that the note on frames in `packages/terminal/Terminal/Proofs/Vt/State.lean` names in its
+own words ("a frame says what an operation leaves alone, never what the written fields
+*become*"), closed for the one operation the scrollback story rests on.
 
 The fold is tractable for exactly one reason: it reads `v.getRow`, never the accumulator
 it is building (`packages/terminal/Terminal/Vt.lean`, `Vt.scrollUpIn`), so the writes are independent and
@@ -620,7 +616,7 @@ theorem scrollUpIn_sb_push (v : Vt) (bot : Nat) (hbot : bot = v.rows - 1)
         simp [hbot, halt])]
 
 /-- **A line feed at the region bottom scrolls**: `lineFeed_interior`'s twin, and the
-bridge Step 3's `crlf_scroll_step` composes with the two theorems above. -/
+bridge `crlf_scroll_step` composes with the two theorems above. -/
 theorem lineFeed_scroll (v : Vt) (hy : v.cursor.y = v.bot) :
     v.lineFeed = v.clearPending.scrollUp := by
   unfold Vt.lineFeed
@@ -798,8 +794,8 @@ theorem cursor_print_wide_fits {v : Vt} {ch : Char} (hpc : v.printChar ch = ch)
     hcur]
 
 /-- The pair that ends exactly at the margin: the shadow occupies the last column, so
-the advance clamps and arms wrap-pending — the state the spec's negative result says
-is load-bearing. -/
+the advance clamps and arms wrap-pending — the state no absolute cursor move can
+express. -/
 theorem cursor_print_wide_margin {v : Vt} {ch : Char} (hpc : v.printChar ch = ch)
     (hw : charWidth ch = 2) (hins : v.modes.insert = false) (hpend : v.cursor.pending = false)
     (hfit : v.cursor.x + 1 < v.cols) (hmar : v.cols ≤ v.cursor.x + 2) :
@@ -1181,11 +1177,10 @@ theorem stick_step_so {v : Vt} (hg : v.pstate = .ground) :
 
 /-! ## The clamp and the two tables, said out loud
 
-Three pure-core values the tree *used* everywhere and *stated* nowhere: every proof that
-needed them re-derived them inline, which is why the old source scanner counted
-them as unclaimed. The clamp's own range (`clampDim_range`, `clampDim_eq_self_iff`) is
+Three pure-core values the tree uses everywhere, stated here once so that no proof
+re-derives them inline. The clamp's own range (`clampDim_range`, `clampDim_eq_self_iff`) is
 stated beside `Good` in `packages/terminal/Terminal/Proofs/Vt/State.lean`; each theorem
-below is the postcondition its callers were already assuming. -/
+below is the postcondition its callers assume. -/
 
 /-- **`Vt.init` applies the clamp, and the grid it builds is the clamped height.** -/
 theorem init_shape (cols rows : Nat) :
@@ -1572,7 +1567,7 @@ theorem observe_dims (v : Vt) (bytes : List UInt8) (h : Good v) :
 
 The observations the headline theorems read: on a fresh terminal, after a resize and after
 forgetting partial parser state, in general; and after a few short inputs to a fresh terminal,
-which `Challenge.lean` states so that its claims cannot hold of parts that do nothing. -/
+which a terminal that ignored its input would fail. -/
 
 /-- A fresh terminal has the clamped size, blank rows, the cursor at the top left, default
 modes and pen, no history, the whole screen as its scroll region, ASCII character sets with G0

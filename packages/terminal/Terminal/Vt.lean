@@ -7,24 +7,25 @@ public section
 /-! # Terminal.Vt — restore-grade terminal emulation, pure
 
 The daemon feeds every pty byte here (a passive observer: clients get
-the raw bytes; this state exists so a *re*-attaching client can be shown
-what it missed, and so `linger capture --history` can dump it).
+the program's output as `Terminal.Mediation` releases it; this state exists so a
+*re*-attaching client can be shown what it missed, and so `linger capture --history`
+can dump it).
 
 Design for the theorems:
-* §Total — everything is one byte-at-a-time `step : Vt → UInt8 → Vt`
+* Totality — everything is one byte-at-a-time `step : Vt → UInt8 → Vt`
   built from total operations (`getD`/`setIfInBounds`/`modify`/`min`/clamps);
   `feed = List.foldl step` — no `partial`, no panic path.
-* §Chunk — `feed` over a `foldl` is chunking-invariant by
+* Re-chunking — `feed` over a `foldl` is chunking-invariant by
   `List.foldl_append`, definitionally.
-* §Bound — every unbounded-looking thing has a structural cap: parser
+* Bounds — every unbounded-looking thing has a structural cap: parser
   params (≤ 16, each ≤ 65535), OSC accumulator (≤ 2048 bytes), UTF-8
   pending (≤ 3), scrollback ring (≤ `sbCap`), grid (rows·cols from
   resize, clamped to 1000). Nothing grows with uptime.
 
 Deliberate simplifications (restore-grade, not vt520-certified), each
 chosen because linger delegates live rendering to the real terminal:
-* no reply channel in this model: `Terminal` handles the owned query
-  profile and supplies replies to the child.
+* no reply channel in this model: `Terminal.Mediation` handles the owned
+  query profile and supplies replies to the child.
 * resize truncates/pads rather than reflowing.
 * OSC 8 hyperlinks, sixel, kitty graphics: skipped as strings, not
   stored.
@@ -44,7 +45,7 @@ private def Cell.erased (p : Pen) : Cell :=
 
 Three classes: combining/zero-width (0), East-Asian wide + emoji (2),
 everything else (1). Ranges cover what real TUI apps emit; a wrong
-width here mis-aligns a restore but can never crash anything (§Total
+width here mis-aligns a restore but can never crash anything (totality
 does not depend on this table). -/
 
 /-- Is the codepoint zero-width: a combining mark, variation selector, ZWSP, ZWNJ, ZWJ or BOM? -/
@@ -88,8 +89,9 @@ substitutes U+FFFD on emit, so the replayed screen would differ from the live
 one — and such a codepoint is reachable: an overlong UTF-8 sequence decodes to
 a C0 or, as `0xC1 0xBF`, to DEL. Substituting **on store** is what
 makes every stored cell repaintable, so `Renderable` is an invariant rather
-than a hypothesis (the same move as fix 11). `Render.safeChar` stays as the
-emit-side guard, which still has work to do for a decoded checkpoint. -/
+than a hypothesis (the same move as `Vt.printPut`'s blank for a wide glyph with no room
+for its shadow). `Render.safeChar` stays as the emit-side guard, which still has work to
+do for a decoded checkpoint. -/
 def printableChar (c : Char) : Char := if c.toNat < 0x20 || c.toNat == 0x7F then '\uFFFD' else c
 
 /-! ## Rows and the scrollback ring -/
@@ -109,7 +111,8 @@ def Row.at (row : Row) (x : Nat) : Cell := row.getD x default
 /-- Is the cell at `x` half of a wide pair whose other half is gone? A
 width-2 base with no shadow on its right, or a shadow with no base on its
 left. Out-of-range reads are width 1, so a base in the final column counts
-as broken — fix 11's rule, stated once instead of per operation. -/
+as broken — the rule `Vt.printPut` applies to a wide glyph there, stated once instead of
+per operation. -/
 @[inline]
 private def Row.halfPair (row : Row) (x : Nat) : Bool :=
   let c := row.at x
@@ -132,8 +135,8 @@ a lone width-0 shadow paints nothing while still occupying a column, so the
 rest of the row lands one column off. A shadow carrying content of its own is
 equally inexpressible, since the painter emits the base and nothing else.
 Rather than adding side conditions to the replay theorem, the emulator does not
-reach those shapes (fix 11's principle, generalized from printing to every row
-mutation).
+reach those shapes (the principle `Vt.printPut` applies to printing, generalized to every
+row mutation).
 
 One pass is enough, in any order: a blank never creates a new half pair.
 `mendAt` blanks a column only when its partner is *already* absent — a shadow
@@ -232,9 +235,9 @@ theorem Row.mend_eq_mendFast : @Row.mend = @Row.mendFast := by
     rw [List.range_succ, List.foldl_append, ih, Nat.fold_succ]
     simp [Row.mendAt_eq_mendAtFast]
 
-/-- Scrollback: a ring over an array. `data.size ≤ cap` is §Bound's
-structural invariant — `push` either grows toward the cap or overwrites
-in place; nothing else writes. -/
+/-- Scrollback: a ring over an array. `data.size ≤ sbCap` is its structural
+bound — `push` either grows toward the cap or overwrites in place; nothing else
+adds a row. -/
 structure Ring where
   /-- The retained rows, in storage order. -/
   data : Array Row := #[]
@@ -342,20 +345,19 @@ for the same reason: with a public constructor an importer could hold a `Vt` wit
 what a client can actually have and would prove nothing about the rest. The seal
 is what turns those predicates from decoration into guarantees.
 
-The friend set is `import all Terminal.Vt`: `Render`/`Terminal`/`Replay` (the rest
-of the toolkit), `Theorems/**`, each component's `Proofs/**` and `Tests/**`,
-and `Checkpoint` — the last **permanently**,
-for `wVt`'s field reads and the one validating door below; its reason is written at
-that file's import. The compiler accepts `import all` from any module, so
-`scripts/gates.sh` enforces that list; a reader without the import fails to build.
+The friend set is `import all Terminal.Vt`: `Render`/`Mediation`/`Replay` (the toolkit
+modules built on this one, except `Title`, which reads only the public surface), `Theorems/**`,
+the package's `Solution.lean`, each component's `Proofs/**` and `Tests/**`, and `Checkpoint` —
+the last **permanently**, for `wVt`'s field reads and the one validating door below; its
+reason is written at that file's import. The compiler accepts `import all` from any module,
+so `scripts/gates.sh` enforces that list; a reader without the import fails to build.
 Break-verified from a runtime module (a read, a `{ v with … }`, a `Vt.mk`, a bare `⟨…⟩`
-and `(default : Vt)` each refuse, against a `v.colCount` control that compiles); see
-SCRATCHPAD.md.
+and `(default : Vt)` each refuse, against a `v.colCount` control that compiles).
 
 ## Every door, and why the list is prose and not a theorem
 
-`specs/archive/vt-toolkit.md` Step 3. The toolkit has two ways a `Vt` comes into
-existence and one public family of ways it changes:
+The toolkit has two ways a `Vt` comes into existence and one public family of ways it
+changes:
 
 * `Vt.init` — the fresh session. `Good`, `Renderable` and `TabsOk` all hold of it
   (`Vt.good_init`, `Vt.renderable_init`, `Vt.tabsOk_init`).
@@ -379,39 +381,38 @@ existence and one public family of ways it changes:
 `atBoundary`, `getModes`, `getPen`, `scrollback` and `stick` form the public read-only surface.
 
 There is deliberately **no `Inhabited Vt`**, and its absence is part of this list rather
-than an oversight: `deriving Inhabited` produced `cols = 0, rows = 0, grid = #[]`, which
-`(default : Vt)` handed to *any* importer with no `import all` and no forge — provably not
-`Good` and provably not `LiveReachableVt`. It was a third public door, it admitted a state
-the emulator cannot reach, and the Step 1 break-verify did not think to try it. `Repr` is
-absent too, as explained below; nothing in the tree needed a canonical inhabitant (two
-proof-scratch sites used `default` as an arbitrary carrier and now say `Vt.init 1 1`).
+than an oversight: `deriving Inhabited` would produce `cols = 0, rows = 0, grid = #[]`,
+which `(default : Vt)` would hand to *any* importer with no `import all` and no forge —
+provably not `Good` and provably not `LiveReachableVt`. It would be a third public door,
+admitting a state the emulator cannot reach. `Repr` is absent too, as explained below;
+nothing in the tree needs a canonical inhabitant, and a statement that wants an arbitrary
+carrier says `Vt.init 1 1`.
 
 **Why this is prose.** `∀ v : Vt, Good v` is not provable and would not mean what it looks
 like if it were: this module and its friends can `cases v` and name any twenty field values
 they like, so the proposition is false *inside* the seal and the seal is not a statement
 about propositions. It is a statement about which modules the compiler will accept — the
-same species as `SHIM_CAP` and the `LingerVt` closure grep, and, per that spec's non-goals,
+same species as `SHIM_CAP` and the toolkit's import-closure gate in `scripts/gates.sh` — and
 a theorem shaped like it would be decoration. What the theorems can and do say is the list
 above: every door establishes the invariants and every transformer preserves them, so any
 *program* holding a `Vt` holds one of those. Extending the friend set, or adding a door,
 is what breaks the claim — and only a reader can see that, which is why the list is here
 and not in a `Prop`.
 
-**What the door establishes, after R2.** `Vt.decodedOk` decides `Good`'s content and
+**What the door establishes.** `Vt.decodedOk` decides `Good`'s content and
 `Vt.decodedRenderable` decides `Renderable`'s two clauses plus the ruler's length, so a
 decoded checkpoint is `Good`, `Renderable` and `TabsOk` — `Linger/Session/Proofs/Resume.lean`'s
-`resume_grid`/`resume_sb`/`resume_tabs` are now reachable from an arbitrary byte string
-(`resume_grid_of_load` and its two siblings) and not only stated. Before that the check
-was never passed the grid at all, and the consequence was observable rather than
-theoretical: see the shape-half section below, and finding R2 in SCRATCHPAD.md.
+`resume_grid`/`resume_sb`/`resume_tabs` are reachable from an arbitrary byte string
+(`resume_grid_of_load` and its two siblings) and not only stated. The shape-half section
+below says what a check that never saw the grid would let through.
 
 The price is a mirror, paid deliberately: `ofDecoded_of_good` is the same predicate seen
 from the other side, so `Checkpoint.rt_vt` → `load_save` → `load_save_exact` carry
 `Renderable` and `TabsOk` hypotheses, and so do `resume_quiesced_any` and
 `resume_cursor_any`, the `resume_*` claims that never read the grid. Every live session
 satisfies them (`renderable_of_liveReachable`, `tabsOk_of_liveReachable`), each claim says
-so in its own docstring, and correctness beat hypothesis-count: the old unconditional
-statements were *also* true of a screen the emitter cannot reproduce.
+so in its own docstring, and correctness beats hypothesis-count: the door refuses a screen
+the emitter cannot reproduce, so the round trip is false without them.
 
 **Still unreachable from disk:** `Render.restore_sb_exact`'s
 `hrok : ∀ r ∈ v.sb.toList, RowOk v.cols r`, and it is unprovable from reachability rather
@@ -463,7 +464,7 @@ def Vt.init (cols rows : Nat) : Vt :=
 /-! ## The read-only window
 
 `Vt.init` is the door in; these are the window out, for consumers *outside* the
-toolkit (`Render`/`Terminal`/`Replay` are friends and read the fields directly). They exist
+toolkit (`Render`/`Mediation`/`Replay` are friends and read the fields directly). They exist
 because the seal blocks reads as well as writes, and `Linger/Session.lean` —
 the daemon's session model, a client of the emulator and not part of it — needs
 geometry, cursor and the alt-screen flag to answer `linger info` and to decide
@@ -513,13 +514,12 @@ def stick (v : Vt) : Sticky :=
 
 `Vt.init` is the door for a *fresh* session; this is the door for a *restored* one,
 and it is the only other way a `Vt` comes into existence. It exists because
-`Linger/Session/Checkpoint.lean` used to build one field-by-field out of decoded bytes
-(`specs/archive/vt-toolkit.md` Step 2): every length in that format is an arbitrary-precision
-`Nat`, so a corrupt or hostile file could name `cols := 0`, a cursor outside the
-screen, or a scroll region inverted — states no `init`/`resize`/`feed` path can
-produce, and states `Good` is false of. The seal stopped an *importer* forging one;
-it did nothing about the file on disk, which is the input an attacker actually
-controls.
+`Linger/Session/Checkpoint.lean` builds one out of decoded bytes, and every length in that
+format is an arbitrary-precision `Nat`, so a corrupt or hostile file can name `cols := 0`,
+a cursor outside the screen, or a scroll region inverted — states no
+`init`/`resize`/`feed` path can produce, and states `Good` is false of. The seal stops an
+*importer* forging one; it does nothing about the file on disk, which is the input an
+attacker actually controls.
 
 **Validate, not clamp**, and the reason is the grid. Clamping `cols` to `[1,1000]`
 would satisfy `Good` while leaving `grid`'s rows at their decoded width, so the
@@ -538,10 +538,10 @@ admitting every `Good` state — including unreachable ones — which is a wider
 the forge it replaces.
 
 The check is in **named stages** rather than a conjunction inside the `if` — the
-AGENTS.md "restructure for provability" rule, and it was measured: with the guard
+AGENTS.md rule to design code for provability, and it was measured: with the guard
 inline, `split at h` in `ofDecoded_good` picks the `match altGrid` nested in the
 *condition* instead of the `if`, and the proof falls apart with `hg` bound to nothing
-useful. Naming it gives `split` one splittable term. Two stages now, `decodedOk` and
+useful. Naming it gives `split` one splittable term. Two stages, `decodedOk` and
 `decodedRenderable`, for the same reason one level down. -/
 
 /-- Screen geometry, cursors and the scroll region — `Good`'s decidable content, and
@@ -573,12 +573,12 @@ private def Vt.decodedOk (cols rows : Nat) (cursor : Cursor) (origin : Bool) (to
 
 `decodedOk` above is `Good`'s content, and `Good` says nothing whatever about the grid:
 not its row count, not a row's width, not the shape of the stashed alt screen, not what
-a cell holds. That was an **observable** defect and not merely a missing hypothesis
-(SCRATCHPAD.md, "the adversarial audit of the seal", finding R2): one flipped byte of a
-real 4×2 checkpoint — the `rows` byte, 2 → 3 — decoded to a state that is `Good`, is not
-`Renderable`, and whose replay is not the screen it was made from, refuting the
-conclusion of `Linger/Session/Proofs/Resume.lean`'s `resume_grid` for a state that came off disk. The
-grid's length is written as its own `rNat`, so nothing tied it to `rows`.
+a cell holds. Checking `decodedOk` alone would be an **observable** defect and not merely a
+missing hypothesis: one flipped byte of a real 4×2 checkpoint — the `rows` byte, 2 → 3 —
+would decode to a state that is `Good`, is not `Renderable`, and whose replay is not the screen
+it was made from, refuting the conclusion of `Linger/Session/Proofs/Resume.lean`'s
+`resume_grid` for a state that came off disk. The grid's length is written as its own
+`rNat`, so nothing but this half ties it to `rows`.
 
 The deciders below are `Renderable`'s two clauses plus the tab ruler's length, in
 `Bool`. Each is a **named stage** with its own `iff` claim in `packages/terminal/Terminal/Proofs/Vt/Renderable.lean`
@@ -588,7 +588,7 @@ and this is a ladder rather than one flat conjunction.
 
 **What is deliberately NOT checked: the scrollback ring's rows.** `Vt.resize` reinstalls
 the grid and the ruler at the new width and leaves the ring rows at their old one (no
-reflow — measured in the Step 3 record), so a live session that has ever been resized
+reflow), so a live session that has ever been resized
 holds ring rows wider than `cols`. Checking them would refuse a checkpoint every
 reachable state can produce. `Render.restore_sb_exact`'s `hrok` therefore stays
 unreachable from disk, which is a named gap rather than an oversight.
@@ -597,7 +597,7 @@ unreachable from disk, which is a named gap rather than an oversight.
 walks the grid and the stashed grid once — 1920 cell checks at 80×24, 2·10⁶ at the
 1000×1000 cap — but `Checkpoint.rRow` already materialises every one of those cells through
 `expand`, so the walk is a second pass over data the parser just built. Timed both ways on
-the same interpreter (`load` of a filled checkpoint, before the change and after): 80×24
+the same interpreter (`load` of a filled checkpoint, without the second stage and with it): 80×24
 187 vs 189 ms per 20 loads, 200×50 601 vs 603 ms per 10, 1000×1000 30.5 vs 31.0 s per 1 —
 i.e. inside the noise, and the 1000×1000 figure is the *parse* being slow, not the
 validation. Loads happen once per resume. -/
@@ -616,8 +616,8 @@ most eight zero-width emittable marks. The `Bool` half of `CellOk` (`decodedCell
 A `width = 0` cell is exempt from the width equation because a shadow carries a blank
 base (`Cell.shadow`); what ties a shadow to its wide neighbour is `decodedPairOk`. This
 clause is the one an attacker reaches most cheaply — `Checkpoint.rCell` reads `base` as
-any valid `Char`, `marks` as any list and `width` as any `Nat`, so a cell holding
-`'\x0A'` at width 7 was accepted. -/
+any valid `Char`, `marks` as any list and `width` as any `Nat`, so without this clause a
+cell holding `'\x0A'` at width 7 would be accepted. -/
 private def Vt.decodedCellOk (c : Cell) : Bool :=
   Vt.decodedCharOk c.base && (c.width == 0 || charWidth c.base == c.width) && c.marks.length ≤ 8 &&
     c.marks.all (fun m => charWidth m == 0 && Vt.decodedCharOk m)
@@ -653,7 +653,7 @@ private def Vt.decodedGridOk (cols rows : Nat) (g : Array Row) : Bool :=
     (List.range rows).all (fun y => Vt.decodedRowOk cols (g.getD y (blankRow cols {})))
 
 /-- The whole shape half: the live screen, the tab ruler's length, and the stashed alt
-screen — whose grid was checked *nowhere* before this, only its cursor. The `Bool` half
+screen — whose cursor `decodedOk` checks and whose grid only this does. The `Bool` half
 of `Renderable` ∧ `TabsOk` (`decodedRenderable_iff`). -/
 private def Vt.decodedRenderable (cols rows : Nat) (grid : Array Row) (tabs : Array Bool)
     (altGrid : Option (Array Row × Saved)) : Bool :=
@@ -815,7 +815,7 @@ private def prevTabStop (tabs : Array Bool) : Nat → Nat
 
 private def Vt.backTab (v : Vt) : Vt :=
   -- the found stop is < cursor.x < cols already; the clamp makes the
-  -- bound local so §Total doesn't need an invariant
+  -- bound local so preserving `Good` needs no invariant
   { v with
     cursor :=
       { v.cursor with
@@ -894,18 +894,18 @@ private def Vt.printShift (v : Vt) (w : Nat) : Vt :=
 
 /-- Write the glyph (and its shadow cell if wide). Grid only.
 
-A wide glyph with no room for its shadow stores a **blank** instead (fix 11).
+A wide glyph with no room for its shadow stores a **blank** instead.
 Reachable whenever autowrap is off — `printWideWrap` only pre-wraps when wrap
-is on — and previously it left a width-2 cell in the final column with no
-shadow, which `Render.rowAnsi` cannot express: on replay the glyph wraps to
-the next row and the joining CRLF scrolls the whole grid. Half a glyph is not
+is on — and storing the glyph would leave a width-2 cell in the final column with no
+shadow, which `Render.rowAnsi` cannot express: on replay the glyph would wrap to
+the next row and the joining CRLF would scroll the whole grid. Half a glyph is not
 displayable either, so a blank is what a terminal shows.
 
 The write can equally orphan the *other* half of a pair it partly overwrote: a
 narrow glyph over a wide base leaves that base's shadow behind, and any glyph
 over a shadow leaves its base behind. Both are reachable by ordinary
-redrawing over CJK text — no `ICH`/`DCH` needed, which is what the two pinned
-deep fuzz seeds turned out to be — so the columns beside every print are mended.
+redrawing over CJK text — no `ICH`/`DCH` needed, as deep fuzz seeds 24 and 139
+(`failingDeep`) show — so the columns beside every print are mended.
 Keeping the grid free of shapes the painter cannot express is what makes
 `Renderable` an invariant rather than a hypothesis. -/
 private def Vt.printPut (v : Vt) (ch : Char) (w : Nat) : Vt :=
@@ -943,12 +943,12 @@ private def Vt.printChar (v : Vt) (ch : Char) : Char :=
 /-- A combining mark attaches to the cell before the cursor — and to a wide
 glyph's **base**, never to its shadow.
 
-Capped at 8: an adversarial mark stream must not grow a cell (§Bound).
+Capped at 8: an adversarial mark stream must not grow a cell.
 
 The shadow redirect is what lets a mark on the final column round-trip. A
 shadow is a blank continuation cell that a repaint re-creates from its base, so
 `Render.rowAnsi` cannot carry marks parked there, `Render.rowText` skips them
-outright (they never appeared in `linger capture --history`), and at the right margin the
+outright (so `linger capture --history` would never show them), and at the right margin the
 cursor sits on the shadow with wrap pending — the one position no absolute
 cursor move can address.
 
@@ -1149,8 +1149,7 @@ private def Vt.leaveAlt (v : Vt) (restoreCursor : Bool) : Vt :=
 half. Built as a map over the target columns rather than `extract`/`++` so the
 result's width and cell contents are one step from the definition — the proofs
 (`rowOk_resizeRow`) would otherwise be index arithmetic over two array shapes.
-Semantics are unchanged: column `i` keeps its cell when the old row had one, and
-is a blank otherwise. -/
+Column `i` keeps its cell when the old row had one, and is a blank otherwise. -/
 private def resizeRow (row : Row) (cols : Nat) (p : Pen) : Row :=
   Row.mend
     ((Array.range cols).map (fun i => if i < row.size then row.getD i default else Cell.erased p))
@@ -1189,7 +1188,7 @@ def Vt.resize (v : Vt) (cols rows : Nat) : Vt :=
       { v.cursor with
         x := min v.cursor.x (c - 1), y := min v.cursor.y (r - 1), pending := false },
     -- the saved cursor must shrink too, or DECRC after a
-    -- shrink restores an out-of-bounds position (§Total)
+    -- shrink restores an out-of-bounds position, which `Good` forbids
     saved :=
       { v.saved with
         cur :=
@@ -1360,7 +1359,7 @@ private def Vt.stepGround (v : Vt) (b : UInt8) : Vt :=
             -- continuation byte
             if v.u8need == 0 then v -- orphan: drop
             else
-              -- clamp keeps §Bound trivial; valid sequences never reach it
+              -- the clamp keeps the accumulator's bound trivial; valid sequences never reach it
               let acc := min (v.u8acc * 64 + (b.toNat - 0x80)) 2097151
               if v.u8need == 1 then
                 Vt.acceptChar
@@ -1465,7 +1464,7 @@ private def Vt.stepOsc (v : Vt) (acc : Array UInt8) (esc : Bool) (b : UInt8) : V
     else
       if b == 0x1B then { v with pstate := .osc acc true }
       else
-        if acc.size ≥ 2048 then { v with pstate := .osc acc false } -- §Bound: stop growing
+        if acc.size ≥ 2048 then { v with pstate := .osc acc false } -- at the cap: stop growing
         else { v with pstate := .osc (acc.push b) false }
 
 /-- Inside DCS/SOS/PM/APC: skip to ST. -/
@@ -1482,7 +1481,7 @@ private def Vt.abortUtf8 (v : Vt) (b : UInt8) : Vt :=
       u8need := 0, u8acc := 0 }
   else v
 
-/-- The single-byte step — §Total's subject. -/
+/-- The single-byte step, the emulator's one transition: `feed` folds it. -/
 def Vt.step (v : Vt) (b : UInt8) : Vt :=
   let v := v.abortUtf8 b
   match v.pstate with
@@ -1493,7 +1492,7 @@ def Vt.step (v : Vt) (b : UInt8) : Vt :=
   | .osc acc esc => v.stepOsc acc esc b
   | .str esc => v.stepStr esc b
 
-/-- Feed a chunk. §Chunk holds definitionally: `List.foldl_append`. -/
+/-- Feed a chunk. Re-chunking invariance holds definitionally: `List.foldl_append`. -/
 def Vt.feed (v : Vt) (bytes : List UInt8) : Vt := bytes.foldl Vt.step v
 
 /-- Observe output with the same parser while discarding history after every byte.

@@ -7,9 +7,9 @@ public section
 
 /-! # Linger.Target.Suites.RemoteLive — the remote path against a REAL second machine
 
-Ported from `tests/remote_live_test.py`. Unlike `Linger.Target.Suites.Remote` — which puts a fake
-`ssh` on `PATH`, is hermetic, and is in the gate — this needs an actual reachable
-host running a real `linger`, so it is **deliberately not in `scripts/verify.sh`**:
+Unlike `Linger.Target.Suites.Remote` — which puts a fake `ssh` on `PATH`, is hermetic,
+and is in the gate — this needs an actual reachable host running a real `linger`, so it
+is **deliberately not in `scripts/verify.sh`**:
 
     LINGER_REMOTE=<host> ./lake exe suites remote-live
 
@@ -52,7 +52,8 @@ def run : IO UInt32 := do
       let (_, out, _) ← e.cliEnv noAgent #["-r", host]
       expect (has out s!"alpha@{host}") s!"remote alpha@{host} listed over real ssh"
       expect (has out s!"beta@{host}") s!"remote beta@{host} listed over real ssh"
-      -- `attach alpha@HOST` execs `ssh -t HOST linger attach alpha` → real remote shell
+      -- `attach alpha@HOST` runs `ssh -t -- HOST` with the command line `Remote.command`
+      -- encodes for `attach alpha` → real remote shell
       let c ← e.spawnEnv #["SSH_AUTH_SOCK="] #["attach", s!"alpha@{host}"] 110 30
       IO.sleep 3000
       let _ ← drain c.fd 2000
@@ -64,7 +65,7 @@ def run : IO UInt32 := do
       IO.sleep 1500
       c.bye (sendDetach := false)
       -- …and it must still be there. Parsed through `Remote.parse`, the reader
-      -- `Cli.cmdList` uses, rather than substring-matching the porcelain.
+      -- `cmdList` in `Linger.App.Shell` uses, rather than substring-matching the porcelain.
       let ssh ←
         IO.Process.output
             { cmd := "ssh",

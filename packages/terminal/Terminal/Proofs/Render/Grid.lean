@@ -7,24 +7,24 @@ import all Terminal.Proofs.Render.PendingWrap
 
 -- Module-private by default: `Vt`'s fields are sealed (see `packages/terminal/Terminal/Proofs/Vt/State.lean`).
 
-/-! # Step 4 — the grid
+/-! # The grid
 
-`OffRow` (a row's paint leaves the other rows alone), the `joinCRLF` row walk
-(`Walking`, `paint_rows`), `gridAnsi_writes_grid`, the prologue's canonical entry
-state, and the composition to `restore_grid_any` on both screens. Split out of
-`packages/terminal/Terminal/Proofs/Render.lean`. -/
+`OffRow` (a row's paint leaves the other rows alone), the row fold assembled
+(`rowAnsi_writes_row`), the `joinCRLF` row walk (`Walking`, `paint_rows`),
+`gridAnsi_writes_grid`, the prologue's canonical entry state, and the composition to
+`restore_grid_any` on both screens. -/
 
 namespace Terminal.Render
 
 open Terminal.Vt
 
-/-! ## Step 4 — the grid
+/-! ## The grid
 
-Step 3 proved a row. A grid is not a list of independent rows: the walk's invariant is
-"the rows below `y` are already painted", so each later row's paint must leave them
-alone — and `Matches`, a statement about **one** row, cannot say that. `OffRow` is the
-missing half, and it is the cross-row catastrophe `RowOk` was guarding against stated
-positively. -/
+`Terminal.Proofs.Render.Row` proves a row's paint one cell at a time. A grid is not a list of
+independent rows: the walk's invariant is "the rows below `y` are already painted", so each
+later row's paint must leave them alone — and `Matches`, a statement about **one** row, cannot
+say that. `OffRow` is the missing half, and it is the cross-row catastrophe `RowOk` was guarding
+against stated positively. -/
 
 /-- **What a row's paint owes the grid walk**: it changes no cell outside row `y`, resizes
 no row, and changes neither dimension. Composable by `trans`, which is the whole point —
@@ -696,7 +696,7 @@ theorem paint_range {cols : Nat} {g : Row} {Y : Nat} (hrow : RowOk cols g) (hcb 
 that matches `g` on nothing yet (frontier 0), with `startPen` in effect, paints the whole
 row: the receiver ends matching `g` at every column, with `rowAnsi`'s returned pen in
 effect so a grid can thread it into the next row. `pending` is left existential — it depends
-on the last cell's shape (§ Step 3 constraint 3) and the joining `CR` discards it. -/
+on the last cell's shape and the joining `CR` discards it. -/
 theorem rowAnsi_writes_row {w : Vt} {g : Row} {startPen : Pen} {Y : Nat} (hrow : RowOk w.cols g)
     (hcb : w.cols < 65533) (hpos : 0 < w.cols)
     (hm : Matches w { x := 0, y := Y, pen := startPen, pending := false } g 0) :
@@ -1723,7 +1723,7 @@ theorem restore_grid_of_paint (v w : Vt) (hgood : Good w) (hren : Renderable w)
     hf.2.2.2.2.2.2.1.trans (hc.2.2.trans (hf.2.2.1.trans hgrid))
   simpa only [restore_split, u, a, c, feed_append] using he
 
-/-! ### `restore_grid_any` — Definition-of-done item 5
+/-! ### `restore_grid_any` — the grid, restored into any client
 
 The composition. `screensAnsi` has two branches; on the main screen it is exactly
 `gridAnsi v.grid`, so `paint_entry` + `gridAnsi_writes_grid` + `restore_grid_of_paint` close
@@ -2070,7 +2070,7 @@ theorem screens_paint (v w : Vt) (hgood : Good w) (hren : Renderable w) (hcols :
   | some (mainGrid, ms) =>
     exact screens_paint_alt v w hgood hren hcols hrows hua hun halt hpos hub hvren
 
-/-- **The grid, restored into any client — both screens (Definition-of-done item 5).** The
+/-- **The grid, restored into any client — both screens.** The
 screens are painted by `screens_paint`; the tail after them leaves the grid alone.
 
 Every hypothesis here is one the claim genuinely needs: the paint's column bounds are derived
@@ -2111,7 +2111,7 @@ theorem feed_restore_zeroed (v w : Vt) (hok : U8Ok w) :
 they hold of every state a terminal can reach by being fed bytes, which is every client there
 is (`good_of_liveReachable`, `renderable_of_liveReachable`, `u8Ok_of_liveReachable`). What is
 left in the statement is matching dimensions, on **both** screens, main and alt. The receiver's
-`u8need` is not a hypothesis (section above). -/
+`u8need` is not a hypothesis (section above). `replay_grid` rests on it. -/
 theorem restore_grid_reachable (v w : Vt) (hw : LiveReachableVt w) (hv : LiveReachableVt v)
     (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) : (w.feed (restore v)).grid = v.grid := by
   rw [feed_restore_zeroed v w (u8Ok_of_liveReachable hw)]

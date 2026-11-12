@@ -6,14 +6,16 @@ import all Terminal.Proofs.Render.Tabs
 
 -- Module-private by default: `Vt`'s fields are sealed (see `packages/terminal/Terminal/Proofs/Vt/State.lean`).
 
-/-! # §Replay — the scrollback stage
+/-! # The scrollback stage
 
 What `Render.scrollbackAnsi` sends is built from three pieces, and this file
 proves the two that are about *rows* rather than about the receiver's state: the
 fit (`cellFit`/`fitRow` produce rows a repaint can reproduce, with **no**
 hypothesis, which is what keeps the ring out of the screen theorems' statements)
 and the budget (`sbTake`/`sbRows` never count past `sbReplayBytes`, and what they
-keep is a contiguous newest run).
+keep is a contiguous newest run). It then shows that the rest of `restore` leaves the ring
+the stage built alone, and assembles the history claim for any receiver (`restore_sb_any`,
+`restore_sb_reachable`), which `replay_history` rests on.
 
 The receiver-state piece — `scrollback_entry`, that feeding the stage preserves
 every conjunct the screen paint needs — is in `packages/terminal/Terminal/Proofs/Render/Grid.lean` beside
@@ -178,7 +180,7 @@ theorem gridAnsi_len_le_cost (grid : Array Row) (hne : grid.toList ≠ []) :
 
 /-! ## The fit — reproducible rows with no hypothesis
 
-This is what buys Definition-of-done item 4: because `rowOk_fitRow` is
+Because `rowOk_fitRow` is
 unconditional, no theorem about the *screen* ever needs a hypothesis about
 `v.sb`. A bare `Vt.resizeRow` here would have carried
 `∀ x, CellOk (row.at x)` — a hypothesis the ring is exactly the place that cannot
@@ -338,7 +340,7 @@ theorem sbRows_toList_eq (v : Vt) (hall : (sbRows v).size = v.sb.size)
       unfold sbRows; simp,
     hmap, ← List.map_reverse, List.reverse_reverse, hid]
 
-/-! ## Step 3 — the ring frames for restore's control sequences
+/-! ## The ring frames for restore's control sequences
 
 The mirror of `packages/terminal/Terminal/Proofs/Render/Tabs.lean`'s ruler tail, at `π := (·.sb)`. The `Fixes`/
 `PsBlind` layer there is already field-generic, so most of this is a projection rename
@@ -619,7 +621,7 @@ theorem fixes_sb_prologueAnsi (v : Vt) : Fixes (fun v : Vt => v.sb) (prologueAns
   exact (fixes_sb_escSeq 0x5C (by decide)).append (fixes_sb_modeSet 1049 false)
 
 /-- **The whole clear-and-paint prefix keeps the ring** — the prefix `ascii_paint_prefix`
-quotes, which is what lets Step 4 walk past it in one rewrite. -/
+quotes, which is what lets `restore_sb_keeps_of_empty` walk past it in one rewrite. -/
 theorem fixes_sb_paint_prefix (v : Vt) :
     Fixes (fun v : Vt => v.sb) (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A) :=
   ((fixes_sb_prologueAnsi v).append
@@ -1148,7 +1150,7 @@ theorem push_walk (v w : Vt) (hw : Good w) (hren : Renderable w) (hcols : w.cols
       (fun i hi => rowOk_mem_sbRows v _ (List.getElem_mem hi)),
     ring_toList_of_start_zero hstart]
 
-/-! ### Step 4 — the composition: the receiver's ring IS the session's replayed history
+/-! ### The composition: the receiver's ring IS the session's replayed history
 
 `push_walk` ends the walk, and three things stand between it and a claim about the bytes
 `restore` actually sends. The `ED 3` in front of it has to be crossed *carrying*
@@ -1369,7 +1371,7 @@ theorem restore_sb_stage (v w : Vt) (hgood : Good w) (hren : Renderable w) (hgv 
     scrollback_sb (Good.feed _ hgood) (renderable_feed hren _) hgv e1 e2 e3 e4 e5 e6 e7 e8 e9 e10
       e11 e12 e15 hne
 
-/-! ### Step 4 — and nothing after the stage touches what it built
+/-! ### Nothing after the stage touches what it built
 
 The full tail combines control-sequence frames with the saved and active
 existing-cell reprints. `restore_grid_of_paint` carries the canonical paint
@@ -1424,7 +1426,8 @@ theorem restore_sb_of_paint (v w : Vt) (hgood : Good w) (hren : Renderable w)
 `scrollbackAnsi` — one or two screen paints, the alt switch, the region, the ruler, the DECSC
 slot, the title, the modes, the charsets, the pen and the final cursor address — leaves the
 receiver's scrollback exactly as the history stage left it. With `push_walk` this is the whole
-of §Restore for the ring: the walk says what goes in, and this says nothing else touches it.
+of what `restore` does to the ring: the walk says what goes in, and this says nothing else
+touches it.
 
 `Renderable v` is the load-bearing hypothesis: its `.1` pins `v.grid.size = v.rows`, and a
 target taller than the receiver keeps emitting separators past the last row, each of which
@@ -1442,7 +1445,7 @@ theorem restore_sb_of_stage (v w : Vt) (hgood : Good w) (hren : Renderable w)
     screens_paint v w hgood hren hcols hrows hua hun hvren
   exact restore_sb_of_paint v w hgood hren hcols hrows hua hun hps hn hsb hgrid hins hwrap
 
-/-! ### Step 4 — the claim, and the two branches the guarded `ED 3` forces -/
+/-! ### The claim, and the two branches the guarded `ED 3` forces -/
 
 /-- **The history, restored into any client.** Feeding `restore v` to any `Good`/`Renderable`
 receiver of the session's dimensions leaves its scrollback holding exactly the session's

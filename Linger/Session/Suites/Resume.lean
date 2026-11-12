@@ -10,8 +10,6 @@ public section
 
 /-! # Linger.Session.Suites.Resume — reboot-resume: checkpoint, crash, restore
 
-Ported from `tests/resume_test.py`.
-
 Checkpoint on last detach, daemon SIGKILLed (simulated crash/reboot), session
 listed as resumable, attach restores the old screen and labels and starts a fresh
 shell in the saved cwd. The resumable row is compared as a `Status`, not as a

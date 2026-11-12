@@ -4,22 +4,20 @@ import all Linger.Session.Checkpoint
 import all Terminal.Vt
 -- `Terminal.Proofs.Vt` for `Good`, and for the three claims about the decoder's door
 -- (`ofDecoded_good`, `ofDecoded_of_good`, `ofDecoded_none_of_cols_zero`) — the codec's
--- theorems are stated in terms of it now that `rVt` validates rather than forges
--- (`specs/archive/vt-toolkit.md` Step 2). `import all` because those declarations are
+-- theorems are stated in terms of it, since `rVt` validates through `Vt.ofDecoded` rather
+-- than forging a `Vt`. `import all` because those declarations are
 -- module-private, as the `Vt` seal forces.
 import all Terminal.Proofs.Vt
 
--- Converted from a legacy (non-`module`) file by the `Vt` seal
--- (`specs/archive/vt-toolkit.md` Step 1). Legacy files make every declaration public, and
--- a public statement may not mention a private field — `load_save_exact` mentions
--- three (`pstate`, `u8need`, `u8acc`) and `cases vt` needs the constructor. As a
--- `module` with no `public section`, the declarations are module-private and both
--- are allowed. `Linger/Session/Proofs/Resume.lean` reaches in with `import all`.
+-- A `module` with no `public section`, so every declaration here is module-private, as it
+-- must be: a public statement may not mention a private field, `load_save_exact` mentions
+-- three (`pstate`, `u8need`, `u8acc`), and `cases vt` needs the constructor.
+-- `Linger/Session/Proofs/Resume.lean` reaches in with `import all`.
 
-/-! # §Restore — the reboot-resume codec theorems
+/-! # The reboot-resume codec theorems
 
 The headlines `loadBytes_saveBytes_live` and `loadBytes_resave` (Challenge.lean, part 7) rest
-on the theorems of those names below, the byte-array forms (§What the runtime calls) of
+on the theorems of those names below, the byte-array forms (see "What the runtime calls") of
 `load_save_live` and `load_resave`. A
 checkpoint round-trips modulo `Vt.quiesce`; the round trip is exact when the parser is
 already quiescent (`load_save_exact`), as every decoded checkpoint's is, since the codec
@@ -34,9 +32,8 @@ proves that the earlier resource guards preserve the complete decoder's result.
 
 **The `Vt` round trip is not.** `rVt` hands its decoded fields to
 `Vt.ofDecoded`, which returns `none` unless they describe a `Good` **and** `Renderable`
-state with a ruler the width of the screen (`specs/archive/vt-toolkit.md` Step 2 for the first,
-finding R2 for the other two), so `rt_vt` and everything above it carries those three
-hypotheses — satisfied by every live session (`load_save_live`), and false of exactly the
+state with a ruler the width of the screen, so `rt_vt` and everything above it carries those
+three hypotheses — satisfied by every live session (`load_save_live`), and false of exactly the
 records the validation exists to refuse. The two directions are `rVt_good`/`rVt_shape` and
 `load_good`/`load_renderable`/`load_tabsOk` (nothing bad is ever decoded, for **any** byte
 string) and `load_save_none_of_cols_zero` (the canonical junk record is refused rather than
@@ -525,16 +522,16 @@ theorem rVt_fieldsV1 (v : Vt) (rest : List UInt8) :
 /-- The Vt round trip: exact modulo the deliberately-forgotten parser
 state, for any state the emulator can actually be in.
 
-`Good` is the hypothesis the smart constructor introduced, and it is not a weakening of
+`Good` is the smart constructor's hypothesis, and it is not a weakening of
 the format: `good_init` and `good_of_liveReachable` say every live session satisfies it,
-and a state that does not is precisely one a checkpoint must not restore. The old
-unconditional statement was true of `cols := 0`, which is the bug.
+and a state that does not is precisely one a checkpoint must not restore. An
+unconditional statement would be true of `cols := 0`, which is the bug.
 
-**`hren` and `htabs` arrived with finding R2** (SCRATCHPAD.md), for the same reason and by
-the same mirror: the door now also refuses a record whose grid is not the shape its
-dimensions claim, so the round trip is conditional on the *input* being that shape. Same
-answer to "is this a weakening" — the unconditional statement was true of a screen
-`Render.restore` cannot repaint, which is what `resume_grid` was refuted at. Every live
+**`hren` and `htabs`** are there for the same reason and by the same mirror: the door also
+refuses a record whose grid is not the shape its dimensions claim, or whose ruler is not the
+screen's width, so the round trip is conditional on the *input* being that shape. Same
+answer to "is this a weakening" — an unconditional statement would cover a screen
+`Render.restore` cannot repaint, for which `resume_grid`'s conclusion is false. Every live
 session satisfies all three (`good_of_liveReachable`, `renderable_of_liveReachable`,
 `tabsOk_of_liveReachable`), so `load_save_live` below is the honest reading of the cost. -/
 theorem rt_vt (v : Vt) (h : Good v) (hren : Renderable v) (htabs : TabsOk v) (rest : List UInt8) :
@@ -636,41 +633,42 @@ wrote" — from an arbitrary `List UInt8`, which is what a checkpoint file is: t
 attacker-controlled input the `Vt` seal could not reach. If `rVt` yields a `Vt`, that
 `Vt` is `Good`.
 
-This is the theorem the step is for, and it is the one that makes every
+This is the theorem that makes every
 `Good`-hypothesised claim in `packages/terminal/Terminal/Proofs/Render/*` and `Linger/Session/Proofs/Resume.lean` reachable
 from the resume path rather than merely stated. -/
 theorem rVt_good {legacy : Bool} {l : List UInt8} {v : Vt} {rest : List UInt8}
     (h : rVt legacy l = some (v, rest)) : Good v := good_of_liveReachable (rVt_accepted h).1
 
-/-- **…and nothing the emitter cannot repaint, either — finding R2.** The other half of
+/-- **…and nothing the emitter cannot repaint, either.** The other half of
 "nothing bad is ever decoded", from an arbitrary `List UInt8`: if `rVt` yields a `Vt`, that
 `Vt`'s grid has exactly `rows` rows of exactly `cols` cells, every cell holds an emittable
 base of the width it claims, every wide glyph keeps its shadow, the stashed alt screen is
 the same shape, and the tab ruler is the width of the screen.
 
-`Good` implied none of that — `decodedOk` was never passed the grid — and the gap was
-observable: a real checkpoint with its `rows` byte flipped decoded to a screen whose replay
-is not the screen it came from. Both properties follow from the accepted state in
-`rVt_accepted`, and are projected by `load_renderable` and `load_tabsOk` below. -/
+`Good` implies none of that — `decodedOk` is never passed the grid — and the gap is
+observable: checked for `Good` alone, a real checkpoint with its `rows` byte flipped decodes to
+a screen whose replay is not the screen it came from. Both properties follow from the accepted
+state in `rVt_accepted`, and are projected by `load_renderable` and `load_tabsOk` below. -/
 theorem rVt_shape {legacy : Bool} {l : List UInt8} {v : Vt} {rest : List UInt8}
     (h : rVt legacy l = some (v, rest)) : Renderable v ∧ TabsOk v := by
   have hlive := (rVt_accepted h).1
   exact ⟨renderable_of_liveReachable hlive, tabsOk_of_liveReachable hlive⟩
 
 /-- **…and it is a state a live session can hold** — the third and strongest reading of
-"nothing bad is ever decoded", from an arbitrary `List UInt8`. Not merely `Good` (Step 2),
-not merely `Good ∧ Renderable ∧ TabsOk` (finding R2): a member of the *closure* the replay
+"nothing bad is ever decoded", from an arbitrary `List UInt8`. Not merely `Good`,
+not merely `Good ∧ Renderable ∧ TabsOk`: a member of the *closure* the replay
 theorems are stated over, so a decoded screen is admissible wherever a fed-and-resized one
 is.
 
 This is `LiveReachableVt`'s `ofDecoded` rung reached through the readers, and it is the
-claim the rung exists for. Before it, `Linger/Session/Proofs/Session.lean` could lift the shape
-invariant to the daemon only for a session booted from `Vt.init`; `load_live` below carries
-it to the resume path, where `Session.liveVt_boot_of_load` closes the gap in one step.
+claim the rung exists for: `load_live` below carries it to the resume path, where
+`Session.liveVt_boot_of_load` lifts the shape invariant to a resumed daemon in one step, as
+`Linger/Session/Proofs/Session.lean` does for a session booted from `Vt.init`.
 
-The rung is sound only because the *door* decides all four components — R2 is what made
-this provable, and a rung premised on `Good v` instead was measured unsound (§LiveReachable
-in `packages/terminal/Terminal/Proofs/Vt.lean`). -/
+The rung is sound only because the *door* establishes every component the relation supplies;
+a rung premised on `Good v` instead would be unsound, since `Good` implies neither the grid's
+shape nor a zeroed UTF-8 accumulator (the section "The states a running session can actually
+hold" of `packages/terminal/Terminal/Proofs/Vt.lean`). -/
 theorem rVt_live {legacy : Bool} {l : List UInt8} {v : Vt} {rest : List UInt8}
     (h : rVt legacy l = some (v, rest)) : LiveReachableVt v := (rVt_accepted h).1
 
@@ -704,11 +702,11 @@ before `spawnPty` cannot change a loaded screen's dimensions. -/
 theorem load_good {l : List UInt8} {c : Ckpt Vt.Vt} (h : load l = some c) : Good c.vt :=
   good_of_liveReachable (load_accepted h).1
 
-/-- **The top-level shape claim, for any byte string — finding R2's payoff.** A checkpoint
+/-- **The top-level shape claim, for any byte string.** A checkpoint
 that loads at all loads to a screen the emitter can reproduce and a ruler the width of that
 screen. One destructuring of `load`, projected by the two claims below.
 
-This is what makes the §Replay theorems reachable from the *resume path* rather than merely
+This is what makes the replay theorems reachable from the *resume path* rather than merely
 stated over a hypothesis: `Linger/Session/Proofs/Resume.lean`'s `resume_grid_of_load` /
 `resume_tabs_of_load` / `resume_sb_of_load` need no hypothesis at all beyond
 `load l = some c`, where their `save`-side twins must ask for `Renderable` because their
@@ -720,14 +718,14 @@ theorem load_shape {l : List UInt8} {c : Ckpt Vt.Vt} (h : load l = some c) :
 
 /-- **The twin of `load_good`**: every byte string `load` accepts decodes to a `Renderable`
 screen. Named as its own claim because that is the property `Render.restore`'s theorems ask
-for, and because before R2 it was false — refutably, from one flipped byte of a real
-checkpoint. -/
+for, and because a decoder that checked only `Good` would break it — refutably, from one
+flipped byte of a real checkpoint. -/
 theorem load_renderable {l : List UInt8} {c : Ckpt Vt.Vt} (h : load l = some c) : Renderable c.vt :=
   (load_shape h).1
 
 /-- …and the ruler, which `Renderable` does not carry (`Render.restore_tabs_any`'s
-`hvtabs`, `Resume.resume_tabs`'s). Before R2 a checkpoint could name a ruler of any length
-at all. -/
+`hvtabs`, `Resume.resume_tabs`'s): a checkpoint that loads names a ruler the width of its
+screen, never one of another length. -/
 theorem load_tabsOk {l : List UInt8} {c : Ckpt Vt.Vt} (h : load l = some c) : TabsOk c.vt :=
   (load_shape h).2
 
@@ -737,15 +735,15 @@ together — those three are its projections (`good_of_liveReachable` and siblin
 additionally puts the decoded screen inside the closure every `Render.restore_*_reachable`
 theorem quantifies over.
 
-The one-line consequence worth naming: `Linger/Session/Proofs/Session.lean`'s `LiveVt` is now provable
+The one-line consequence worth naming: `Linger/Session/Proofs/Session.lean`'s `LiveVt` is provable
 for a **resumed** daemon (`Session.liveVt_boot_of_load`), so `Session.run_vt_renderable` and
-the shape claims beneath it stop being about fresh boots only. That is the whole reason the
-`ofDecoded` rung was added; this theorem is the bridge.
+the shape claims beneath it are not about fresh boots only. That is the whole reason for the
+`ofDecoded` rung; this theorem is the bridge.
 
-`load_save_live` below still asks for `LiveReachableVt c.vt` rather than `load l = some c`
+`load_save_live` below asks for `LiveReachableVt c.vt` rather than `load l = some c`
 on purpose: its subject is `save`'s **input**, the state the daemon holds, which reaches
-the decoder only through `load_save`'s own conclusion (the circularity SCRATCHPAD.md
-measured). `load_live` is the tool for the other direction — `load`'s output. -/
+the decoder only through `load_save`'s own conclusion, so assuming that it loads would be
+circular. `load_live` is the tool for the other direction — `load`'s output. -/
 theorem load_live {l : List UInt8} {c : Ckpt Vt.Vt} (h : load l = some c) : LiveReachableVt c.vt :=
   (load_accepted h).1
 
@@ -763,14 +761,14 @@ theorem load_save_append (c : Ckpt Vt.Vt) (h : Good c.vt) (hren : Renderable c.v
     Option.bind_some]
   cases rest <;> rfl
 
-/-- §Restore, top level: a checkpoint written by `save` loads back to
+/-- The checkpoint round trip, top level: a checkpoint written by `save` loads back to
 exactly what was saved, with parser state quiesced. A live source can be
 mid-escape or mid-character even between poll rounds. `load_good` and
 `load_renderable` establish the shape of every accepted record; they do not
 require a canonical encoding or put a resource bound on decoding rejected bytes.
 
 Three hypotheses, all of them the decoder's acceptance seen from this side (`rt_vt`):
-`Good` since Step 2, `Renderable` and `TabsOk` since R2. `load_save_live` below is the same
+`Good`, `Renderable` and `TabsOk`. `load_save_live` below is the same
 claim with all three discharged from reachability, which is the answer to "what does this
 cost a real session". -/
 theorem load_save (c : Ckpt Vt.Vt) (h : Good c.vt) (hren : Renderable c.vt) (htabs : TabsOk c.vt) :
@@ -779,8 +777,8 @@ theorem load_save (c : Ckpt Vt.Vt) (h : Good c.vt) (hren : Renderable c.vt) (hta
 
 /-- **What the three hypotheses cost a real session: nothing.** Every state a live session
 can hold is `LiveReachableVt`, and that discharges `Good`, `Renderable` and `TabsOk` at
-once. Stated because R2 added two binders to `load_save` and a reader is entitled to see,
-in one place, that the checkpoint every daemon writes still loads — the alternative is
+once. Stated because `load_save` takes three hypotheses and a reader is entitled to see,
+in one place, that the checkpoint every daemon writes loads — the alternative is
 three lemma names in a docstring and a reader taking them on trust. -/
 theorem load_save_live (c : Ckpt Vt.Vt) (h : LiveReachableVt c.vt) :
     load (save c) = some { c with vt := c.vt.quiesce } :=
@@ -819,11 +817,8 @@ of a checkpoint another program reads before trusting the rest, and because a wr
 constant here is invisible to the round trip (`load_save` would still hold of a `save`
 that wrote any tag `stripMagic` accepted).
 
-The pre-rename `"LZMX"` reader was removed on 2026-08-19, one commit after it landed:
-it existed to migrate files written before the rename, `save` had already been writing
-`"LNGR"` for a commit, and there were no old-tag checkpoints left on disk to orphan.
-Anyone who needs to read one can check out `e1ac562`, where the reader and its two
-theorems (`load_legacy_save`, `save_no_legacy`) are green — that is the escape hatch,
+`load` reads no record with `"LZMX"`, the tag from before the rename. Anyone who needs to
+read one can check out `e1ac562`, where that reader and its two theorems (`load_legacy_save`, `save_no_legacy`) are green — that is the escape hatch,
 and it is cheaper than carrying a branch for a file nobody has. -/
 theorem save_tag (c : Ckpt Vt.Vt) : (save c).take 5 = magic := by simp [save, magic]
 
@@ -840,8 +835,7 @@ theorem load_save_exact (c : Ckpt Vt.Vt) (hg : Good c.vt) (hren : Renderable c.v
     cases vt
     simp_all [Vt.quiesce]
 
-/-- **Junk dimensions are refused, not clamped** — the behaviour change of
-`specs/archive/vt-toolkit.md` Step 2, stated at the top level rather than only fixtured.
+/-- **Junk dimensions are refused, not clamped**, stated at the top level rather than only fixtured.
 `cols = 0` is the canonical corrupt value: no live session can hold it, `Good` is false
 of it, and a decoder that accepted it would hand `Render.restore` a screen every one of
 its theorems is vacuous at.

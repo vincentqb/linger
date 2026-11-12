@@ -768,7 +768,7 @@ private def cmdList (porcelain : Bool) (remotes : List String) : IO Answer := do
       -- a remote row is built from what the peer's porcelain says about identity
       -- and liveness. It also emits `clients` and `label.*`; those are dropped
       -- rather than rendered, so a remote row's label and watcher columns are
-      -- blank whatever the peer reports — see SCRATCHPAD 2026-09-15.
+      -- blank whatever the peer reports.
       rows :=
         rows ++
           [[("name", s!"{row.name}@{host}"), ("cmd", row.cmd),
@@ -909,7 +909,7 @@ private def cmdRead (name : String) (m : Msg) (render : Terminal.Vt.Vt → List 
 /-- `send <name> -`: stdin to the session's pty, byte-exact, each read (≤ 64 KiB) in the
 frames `Wire.inputFrames` cuts, each within the decoder's cap (`inputFrames_exact`). The agent's
 raw input path — Enter, ^C, ESC, arrow sequences, exact whitespace: everything argv
-cannot carry (agent-cli Decision 5). Poll-then-read so EOF (`read` = `none`)
+cannot carry. Poll-then-read so EOF (`read` = `none`)
 is distinguished from would-block (`some #[]`, looped past) without spinning;
 no timeout on purpose — a slow producer feeding a pipe is legitimate, and every event the loop
 answers, input, a reply or either side closing, wakes the poll. Stdin EOF

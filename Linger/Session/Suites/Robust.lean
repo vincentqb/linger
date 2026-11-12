@@ -555,9 +555,10 @@ def run : IO UInt32 :=
     signalByName dpid "CONT"
     -- the leading glyph is the status column: a daemon that did not answer within
     -- the reply window is reported as unknown (`Status.icon .unknown`), which is the
-    -- designed state for it — so this pins §Row *and* that a busy row is not shown
-    -- as healthy. Compared against the core's own rendering of that row rather than
-    -- against a copy of it: `Cli.cmdList` writes `terminalListing withColor rows`
+    -- designed state for it — so this pins that a row is named by its socket
+    -- (`rowFields_name`) *and* that a busy row is not shown as healthy. Compared
+    -- against the core's own rendering of that row rather than against a copy of it:
+    -- `cmdList` in `Linger.App.Shell` writes `terminalListing withColor` of its rows
     -- straight to stdout, without color into this pipe, and for a socket that
     -- connected but sent nothing back the row is `rowFields name []` plus
     -- `state=live` and `rowStatus (.live [])`.

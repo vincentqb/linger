@@ -202,7 +202,7 @@ def maxPayload : Nat := 262144
 
 /-- The message vocabulary. Payload-carrying constructors keep raw
 bytes; numeric fields are encoded LE at the payload layer. `unknown`
-makes the decoder total (§Frame): a tag from a newer peer is data. -/
+makes the decoder total: a tag from a newer peer is data. -/
 inductive Msg where
   /-- client → daemon: bytes for the pty (keystrokes, pastes). -/
   | input (bytes : List UInt8)
@@ -248,7 +248,7 @@ inductive Msg where
   /-- daemon → client: this signal stopped the daemon, which saved the session before its
   program ended; no status follows, since the program has none to report. -/
   | saved (signal : UInt8)
-  /-- any tag this version does not know: skipped, never fatal (§Frame). -/
+  /-- any tag this version does not know: skipped, never fatal. -/
   | unknown (tag : UInt8) (payload : List UInt8)
   deriving Repr, DecidableEq, Inhabited
 

@@ -144,8 +144,8 @@ code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(
   || fail "packages/os/Os/Boundary.lean declares a public binding: keep it private and wrap it in packages/os/Os/Shell.lean"
 # `unsafe` and `@[implemented_by]` — the Lean-side twin of the `@[extern` gate just
 # above, and the only route that makes the theorems false OF THE SHIPPED BINARY rather
-# than of some value inside it (SCRATCHPAD.md, "the adversarial audit of the seal",
-# finding R4). Re-measured here, in `packages/terminal/Terminal/Proofs/Render/Ends.lean`, on v4.34.0-rc2:
+# than of some value inside it. Measured here, in
+# `packages/terminal/Terminal/Proofs/Render/Ends.lean`, on v4.34.0-rc2:
 #
 #   unsafe def launderImpl (_v : Vt) : Vt := unsafeCast (0 : Nat)
 #   @[implemented_by launderImpl] def launder (v : Vt) : Vt := v
@@ -168,21 +168,19 @@ code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(
 #
 # `unsafe` is matched as "not preceded by an identifier character", which catches the
 # keyword AND every `unsafe*` name in one alternative (`unsafeCast`, `unsafeIO`,
-# `unsafeBaseIO`, `unsafePerformIO`, …) instead of the single name the audit happened to
-# use. `implemented_by` is unanchored for the same reason: `@[implemented_by f]` and
+# `unsafeBaseIO`, `unsafePerformIO`, …) instead of the single name the exhibit above
+# uses. `implemented_by` is unanchored for the same reason: `@[implemented_by f]` and
 # `attribute [implemented_by f] g` both set it.
 #
-# DECLINED: adding `opaque`. Measured rather than deferred to the earlier decision —
-# most `opaque` hits over tracked `.lean` are actual `@[extern` declarations in
-# `packages/os/Os/Boundary.lean`, so the gate could only ever read "opaque outside the boundary".
-# What that would catch is not a forge: with no `@[extern]` and no
-# `@[implemented_by]` the compiler emits no value at all, so `opaque x : Vt` is a
-# liveness hazard, not an implementation that disagrees with the model (the R5 family,
-# which the spec bounds as compile-time prose). The remaining uses are mostly the English
-# word in unbackticked prose, which `code_grep` keeps, so the helper does not make it
-# cheaper either.
+# DECLINED: adding `opaque`. Measured: most `opaque` hits over tracked `.lean` are
+# actual `@[extern` declarations in `packages/os/Os/Boundary.lean`, so the gate could
+# only ever read "opaque outside the boundary". What that would catch is not a forge:
+# with no `@[extern]` and no `@[implemented_by]` the compiler emits no value at all, so
+# `opaque x : Vt` is a liveness hazard, not an implementation that disagrees with the
+# model. The remaining uses are mostly the English word in unbackticked prose, which
+# `code_grep` keeps, so the helper does not make it cheaper either.
 ! code_grep '(^|[^[:alnum:]_])(unsafe|implemented_by)' '*.lean' \
-  || fail "unsafe / @[implemented_by] in Lean — the compiled program may then disagree with every theorem about it (R4; see the comment on this gate)"
+  || fail "unsafe / @[implemented_by] in Lean — the compiled program may then disagree with every theorem about it (see the comment on this gate)"
 [ "$(git ls-files '*.c' '*.h')" = packages/os/c/shim.c ] || fail "more than one C file"
 # The shim returns -errno and errno numbers differ by platform: 918c671's
 # `r == -111` meant ECONNREFUSED only on Linux.
@@ -257,23 +255,20 @@ for default_target in $default_targets; do
     || fail "scripts/verify.sh does not build the default target $default_target"
 done
 
-# The vt-toolkit's import closure (`specs/archive/vt-toolkit.md` Step 4). The toolkit is
+# The terminal toolkit's import closure. The toolkit is
 # packages/terminal/Terminal/{Spec,Vt,Render,Mediation,Title,Replay}.lean, and the claim worth having is
-# that its closure contains NOTHING else -- no Posix, no Runtime, no Checkpoint, no Session.
-# `lean_lib LingerVt` in lakefile.lean is the positive half: it elaborates the
-# closure. It cannot be the whole claim, because Lake resolves imports through one
-# package-wide LEAN_PATH, so a lib with restricted `roots` compiles an out-of-set
-# module happily -- `import Os.Shell` in Mediation.lean builds under
-# `./lake build LingerVt` without a murmur. Measured, twice, not assumed. A
-# build-level failure needs a sub-package with its own srcDir and a path `require`,
-# and the two gates immediately above forbid every `require` but the audit's. So this grep is the half
-# that bites: the same species of oracle as SHIM_CAP below, evadeable by
-# deliberately editing the list, not by reverting a fix.
+# that its closure contains NOTHING else -- no `Os`, no `Linger` module, no checkpoint, no session.
+# The package's own build is the positive half: it elaborates the closure, and its lakefile
+# requires only the audit. It cannot be the whole claim, because `lean_lib Terminal` builds
+# every module under `Terminal`: the build cannot tell an import of a proof or a test from
+# an import of one of the six. So this grep is the half that bites: the same species of
+# oracle as SHIM_CAP below, evadeable by deliberately editing the list, not by reverting
+# a fix.
 #
 # EXACT SETS, not a denylist of names to fear: a closure gate that only knows the
 # imports someone thought of is not a closure gate. And exact means it also fires
 # when an import GOES, which is right -- the list below is the recorded header, so
-# Step 2/3 taking a friend import out is a reviewable edit here rather than a
+# taking a friend import out is a reviewable edit here rather than a
 # silent one. Vt imports only the Terminal spec, which imports nothing; Render imports Vt;
 # Mediation, Title and Replay import Render. The `import all Terminal.Vt` lines grant
 # access within the sealed toolkit; Title reads only the public surface. Because the spec is a
@@ -415,8 +410,8 @@ module_imports packages/terminal/Terminal/Proofs/Vt.lean 'packages/terminal/Term
 
 # Entry and manager policies have explicit, small import closures. Main
 # composes their executors with the session backend. The session library never
-# imports them, even through an intermediate module: every library import
-# stays in Core, Runtime or the OS boundary.
+# imports them, even through an intermediate module: every library import stays in
+# the closure that the check after `Linger.lean`'s list below declares.
 import_closure Linger/Import/Spec.lean ''
 import_closure Linger/Import/Resurrect.lean 'public import Linger.Import.Spec;import Linger.Target.Name;import Linger.Display.Status;public import Terminal.Vt;public import Linger.Session.Spec;'
 import_closure Linger/Selector/Key.lean 'public import Linger.Selector.Spec;public import Input.Spec;'
@@ -860,19 +855,18 @@ awk '
 ' Linger/Session/Shell/Client.lean \
   || fail "repeated application titles no longer trigger reassertion"
 
-# The `Vt` friend set — who may forge a `Vt` (SCRATCHPAD.md, "the adversarial audit of
-# the seal", finding R1). `import all M` grants M's OWN all-access set, including
-# whatever M has all-access to, so **`import all` TRANSITS** and
+# The `Vt` friend set — who may forge a `Vt`. `import all M` grants M's OWN all-access
+# set, including whatever M has all-access to, so **`import all` TRANSITS** and
 # `git grep -l 'import all Terminal.Vt'` is NOT an enumeration of the friend set.
 # Measured in the real position, not a scratch file: one added
 # `import all Terminal.Render` in `Linger/Session/Shell/Client.lean` plus a five-field
 # `{ cols := 0, rows := 0, grid := #[], … }` gives `./lake build linger` exit 0 AND
 # `sh scripts/gates.sh` exit 0. Two hops is the same: `import all Linger.Display.Proofs.Listing` from
 # a file holding neither `import all Terminal.Vt` nor `import all Terminal.Render`
-# compiles the identical forge. That is the Step 4 situation exactly — the compiler
-# consents, so a grep is the only possible oracle — except that until now no grep
-# existed, which made joining the friend set cost one line that nothing objected to, and
-# made `private` on 20 fields worth one line of anyone's diff.
+# compiles the identical forge. As with the toolkit's import closure above, the compiler
+# consents, so a grep is the only possible oracle: without one, joining the friend set
+# would cost one line that nothing objected to, and `private` on 20 fields would be worth
+# one line of anyone's diff.
 #
 # CLOSURE, not edges. Transit follows `import all` edges ONLY (measured:
 # `import all Linger.Session` — a plain `public import`er of `Vt` — does not
@@ -899,9 +893,8 @@ awk '
 #
 # EXACT means both directions, as with the toolkit lists above: a recorded friend
 # that stops reaching `Vt` fails too, so a future step taking a friend import out is a
-# reviewable edit here rather than a silent one. No cardinality number is recorded — the
-# Step 4 record killed the job-count ratchet because cardinality is blind to identity,
-# and that argument transfers whole.
+# reviewable edit here rather than a silent one. No cardinality number is recorded: a
+# count is blind to identity, so it would pass one friend swapped for another.
 #
 # The regex is deliberately LOOSER than column 0, because `  import all Foo` (leading
 # spaces) and `meta import all Foo` both compile — measured, along with the two that do
@@ -957,8 +950,7 @@ code_grep "$VT_ALL_RE" '*.lean' \
 # shim-size ratchet: the C trust boundary must not grow silently. This
 # number only ever goes DOWN without discussion; raising it is a
 # deliberate, reviewable act — the checkpoint for "does this genuinely
-# need a syscall wrapper, or does Lean core already have it?" (see the
-# C-vs-Rust and shrink-the-shim notes in SCRATCHPAD.md).
+# need a syscall wrapper, or does Lean core already have it?".
 SHIM_CAP=24
 shim_n="$(code_count 'LEAN_EXPORT' 'packages/os/c/shim.c')"
 [ "$shim_n" -le "$SHIM_CAP" ] \
@@ -974,9 +966,9 @@ shim_n="$(code_count 'LEAN_EXPORT' 'packages/os/c/shim.c')"
 # be a theorem, so it is a gate, in the same spirit as SHIM_CAP above: evadeable
 # by deliberately writing something new, not by reverting a fix.
 # On the commit before Buf landed these three found 5 hits (Conn.out, Rt.ptyIn,
-# Cli.queryInfo's accumulator, and two .extract compactions). Each used to spell its
-# regex twice — once to test, once to print the hits — and `code_grep` prints them, so
-# the duplicate is gone: two copies of a pattern is two things to keep in step.
+# the CLI's info-reply accumulator, and two .extract compactions). `code_grep` prints
+# the hits, so each regex is spelled once: two copies of a pattern is two things to
+# keep in step.
 ! code_grep '^[[:space:]]+[a-zA-Z_]+ : ByteArray' 'Linger/App/Shell.lean' 'packages/os/Os/Shell/Command.lean' 'Linger/Session/Shell/*' \
   || fail "a ByteArray field in a runtime shell (use Linger.Session.Buf, which is proved)"
 ! code_grep 'mut [a-zA-Z_]+ : ByteArray' 'Linger/App/Shell.lean' 'packages/os/Os/Shell/Command.lean' 'Linger/Session/Shell/*' \
@@ -1417,7 +1409,7 @@ code_grep "^[[:space:]]+rt ← pump rt' [(]events [+][+] [[][.]tick now[]][)]$" 
 code_grep '^[[:space:]]+let vt0 := Linger[.]Session[.]bootVt [(]restore[.]map [(]·[.]1[)][)]$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "Daemon.serve no longer boots from Session.bootVt, which resume_restores covers"
 
-# Read-only attachment's client-side guards (pin-the-gaps item 1). Read-only
+# Read-only attachment's client-side guards. Read-only
 # is enforced DAEMON-side: the attach carries the mode, `onMsg .attach` records it
 # whatever the size, and `onMsg .input`/`onMsg .resize` then drop a watcher's
 # keystrokes and never let it size the session (`onMsg_input_readonly`). So these
@@ -1441,7 +1433,7 @@ printf '%s\n' "$client_code" | CG_RE='(^|[[:space:]])let detachEnabled := Linger
 code_grep '^[[:space:]]+let [(]out, detach[)] := splitDetach bs detachEnabled$' Linger/Session/Shell/Client.lean >/dev/null \
   || fail "attach no longer splits input with its detach policy"
 
-# The checkpoint decoder must not grow its forge back (`specs/archive/vt-toolkit.md` Step 2).
+# The checkpoint decoder must not grow its forge back.
 # `Linger/Session/Checkpoint.lean` keeps a PERMANENT `import all Terminal.Vt`: `wVt` reads
 # 17 sealed fields, and dropping the import would force `Vt.ofDecoded` to be public — a
 # second public door admitting any `Good` state, for every module forever, which is a
@@ -1467,7 +1459,7 @@ FORGE='(^|[^`[:alnum:]_])(cols|rows|grid|bot|tabs|pstate|u8need|u8acc) *:='
   || fail "a Vt field is assigned in Linger/Session/Checkpoint.lean — the decoder forge is back; go through Vt.ofDecoded, which validates"
 
 # Extensional reader theorems cannot distinguish reject-before-expansion from
-# expand-then-reject. The latter passed every semantic check in the audit, and
+# expand-then-reject. The latter passed every semantic check, and
 # generated C confirmed that it allocated first. Pin these short guarded bodies
 # and rVtB's prefix through its first row read, for the byte-array readers the
 # runtime decodes with (`loadBytes_eq` is extensional); the list readers are private
@@ -1681,7 +1673,7 @@ role_bad="$(git ls-files -- Linger.lean 'Linger/*.lean' \
 
 # Every declaration name cited in backticks must resolve to a declaration, in every tracked
 # `.lean` file, comments included. This is gated rather than reviewed because reviewing it
-# produced a FALSE CLEAN: the one-off check run in step 8 grepped each name with
+# produced a FALSE CLEAN: a one-off check grepped each name with
 # `git grep -w`, which matches prose and comments, so `scrollbackAnsi_le`, which a document
 # and two code comments named and nothing then declared, satisfied it. A doc that promises a
 # theorem is unfalsifiable until something looks for the declaration, so this looks for
@@ -1742,14 +1734,13 @@ emitter_claims="$(awk '
     exit bad }' >&2 \
   || fail "a cited declaration does not exist — repoint the citation, or list a claim stated as absent in cite_absent"
 
-# The CI matrix. macOS came off the per-push path on 2026-09-15 for a cost reason
-# measured in SCRATCHPAD.md — not repeated here, because that figure was copied into
-# seven files and had already started to rot — but the decision reaches the matrix
-# through a `fromJSON` job output, and actionlint does NOT
-# check it — verified by mistyping it deliberately, which actionlint accepted. Two
-# ways that goes wrong silently: someone simplifies the matrix to ubuntu only and
-# macOS is never checked again, or drops the schedule and it never runs. Neither is
-# a Lean property, so this is the same species of oracle as SHIM_CAP.
+# The CI matrix. macOS runs only when `scripts/ci-runners.sh` asks for it, for the cost
+# reason that script states, and the decision reaches the matrix through a `fromJSON`
+# job output, which actionlint does NOT check — verified by mistyping it deliberately,
+# which actionlint accepted. Two ways that goes wrong silently: someone simplifies the
+# matrix to ubuntu only and macOS is never checked again, or drops the schedule and it
+# never runs. Neither is a Lean property, so this is the same species of oracle as
+# SHIM_CAP.
 ci_yml='.github/workflows/ci.yml'
 # The runtime tie, and the load-bearing one: `Verify/Ci.lean` tests
 # `scripts/ci-runners.sh`, and no Lean can see whether the workflow actually CALLS it.

@@ -6,17 +6,16 @@ import all Terminal.Proofs.Render.Sticky
 
 -- Module-private by default: `Vt`'s fields are sealed (see `packages/terminal/Terminal/Proofs/Vt/State.lean`).
 
-/-! # §Row integrity for `linger capture --history` — a cell cannot inject a line break
+/-! # Row integrity for `linger capture --history` — a cell cannot inject a line break
 
 `history`'s framing: every byte is a line terminator or printable content, and the
-newline count is the row count, so a cell's contents cannot forge a line. Split out
-of `packages/terminal/Terminal/Proofs/Render.lean`. -/
+newline count is the row count, so a cell's contents cannot forge a line. -/
 
 namespace Terminal.Render
 
 open Terminal.Vt
 
-/-! ## §Row integrity for `linger capture --history` — a cell cannot inject a line break
+/-! ## Row integrity for `linger capture --history` — a cell cannot inject a line break
 
 `rowText` builds `List UInt8` rather than `String`, so both claims reduce in the kernel.
 

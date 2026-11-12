@@ -23,8 +23,8 @@ def screen (cols rows : Nat) (s : String) : Vt := feedStr (Vt.init cols rows) s
 
 def plain (row : Row) : String := (String.fromUTF8? ⟨(rowText row).toArray⟩).getD ""
 
-/-- `rowText` builds bytes now (it was the last emitter assembled through `String`,
-which is what made `linger capture --history` unprovable — see `Render.history_lines`). The
+/-- `rowText` builds bytes rather than a `String`, which does not reduce in the kernel, so
+`linger capture --history`'s framing is provable (`Render.history_lines`). The
 fixtures still read better against string literals, so the decode lives here in the
 harness rather than in the production path. -/
 def rowStr (v : Vt) (y : Nat) : String := plain (v.getRow y)
@@ -205,10 +205,10 @@ example :
       true := by
   native_decide
 
-/-! ### The width tables, behaviourally (pin-the-gaps item 4)
+/-! ### The width tables, behaviourally
 
-`packages/terminal/Terminal/Proofs/Vt.lean` pins `isWide`/`isZeroWidth` at every clause edge as closed
-`decide` propositions. These pin the **composite** — `charWidth`, which is what
+`packages/terminal/Terminal/Proofs/Vt/Renderable.lean` pins `isWide`/`isZeroWidth` at every clause
+edge as closed `decide` propositions. These pin the **composite** — `charWidth`, which is what
 the emulator, `CellOk` and the row painter actually call — at the boundaries
 where the naive expectation is wrong: at the two places the tables *touch*,
 "just outside a wide range" is width 0, not 1, and "just past a zero-width
@@ -324,7 +324,7 @@ example :
       true := by
   native_decide
 
-/-- UTF-8 split across feeds decodes identically (§Chunk in action). -/
+/-- UTF-8 split across feeds decodes identically (re-chunking invariance in action). -/
 example :
           (let bytes := "é".toUTF8.toList
            let v1 := (Vt.init 10 2).feed bytes
@@ -382,8 +382,8 @@ example :
       true := by
   native_decide
 
-/-- **A reachable client can be mid-character.** This is the fixture behind dropping
-`u8need = 0` from `Render.restore_grid_reachable`: being fed a UTF-8 lead byte is an
+/-- **A reachable client can be mid-character.** This fixture is why
+`Render.restore_grid_reachable` takes no `u8need = 0`: being fed a UTF-8 lead byte is an
 ordinary thing for a live terminal to have happened to it, so reachability does *not*
 supply that hypothesis — and the claim holds anyway, because `restore` opens with `ESC`
 and `abortUtf8` discards the pending sequence. -/
@@ -485,7 +485,7 @@ example :
   native_decide
 
 /-- Adversarial garbage: truncated CSI, orphan continuation bytes, junk
-ESC — the screen still takes the next printable. (§Total, concretely.) -/
+ESC — the screen still takes the next printable. (Totality, concretely.) -/
 example :
           (let v := screen 10 2 "\x1b[999;999;999\xFF\x80\x80\x1b]\x07\x1b[<>=?zok"
            (rowStr v 0).contains "ok") =
@@ -499,9 +499,9 @@ example :
       true := by
   native_decide
 
-/-- **`mend` is not the identity** (moved from `packages/terminal/Terminal/Proofs/Render/Keeps.lean` in
-lean-modules Step 5 — a module-file kernel `decide` cannot reduce a derived
-`DecidableEq` whose body is unexposed, and this check is an evaluation anyway):
+/-- **`mend` is not the identity** (a compiled check, not a proof: a module-file kernel
+`decide` cannot reduce a derived `DecidableEq` whose body is unexposed, and this check is
+an evaluation anyway):
 a lone width-2 base is repaired away, so `mend_of_pairOk`'s hypothesis is
 load-bearing rather than decorative. -/
 example :

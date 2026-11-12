@@ -284,7 +284,7 @@ static void exec_search(char **argv, char **shargv, char **envp, const char *pat
 /* SOCK_CLOEXEC and accept4 set the close-on-exec flag atomically where they
  * exist (Linux, FreeBSD). macOS has neither, so there the flag is set after
  * socket()/accept(), and a fork inside that window inherits the descriptor.
- * Cli.cmdList creates local query sockets in tasks while it starts ssh with
+ * `linger ls` creates local query sockets in tasks while it starts ssh with
  * IO.Process.spawn, which is fork plus execvp and closes no other
  * descriptors, so on macOS a socket created in that window can be inherited
  * by ssh until ssh exits. Not exported: no new syscall surface (SHIM_CAP). */

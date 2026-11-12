@@ -6,17 +6,17 @@ import all Terminal.Proofs.Render.Quiet
 
 -- Module-private by default: `Vt`'s fields are sealed (see `packages/terminal/Terminal/Proofs/Vt/State.lean`).
 
-/-! # §Replay stage 3d — the pen round trip, and one glyph placed
+/-! # The pen round trip, and one glyph placed
 
-The value half begins here: `applySgr` inverts `penSgr`'s encoding (semantic half),
-the accumulator delivers the numbers the encoder wrote (parser half), and one glyph
-lands in one cell. Split out of `packages/terminal/Terminal/Proofs/Render.lean`. -/
+The restore stream's value claims begin here: `applySgr` inverts `penSgr`'s encoding
+(semantic half), the accumulator delivers the numbers the encoder wrote (parser half), and
+one glyph lands in one cell. -/
 
 namespace Terminal.Render
 
 open Terminal.Vt
 
-/-! ## §Replay stage 3d — the painted cells come back
+/-! ## The painted cells come back
 
 The strategy that makes this tractable: reduce the byte stream to *emulator
 operations* first — one lemma per emitted construct saying "feeding these
@@ -238,8 +238,7 @@ theorem utf8_feed {v : Vt} (c : Char) (hc : 0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7
 
 /-- "Quiet" in the decoder's sense: ground parser, nothing half-decoded.
 Printing preserves it, which is what makes the run below an induction. -/
--- not `private`: the Row rung uses it too (it was private only because they
--- both used to live in one file).
+-- not `private`: the Row rung uses it too.
 theorem print_quiet {v : Vt} (c : Char) (hg : v.pstate = .ground) (hu : v.u8need = 0)
     (ha : v.u8acc = 0) :
     (v.print c).pstate = .ground ∧ (v.print c).u8need = 0 ∧ (v.print c).u8acc = 0 :=
@@ -265,9 +264,8 @@ theorem utf8s_feed :
     rfl
 
 /-- **A painted cell is a chain of prints**: its base glyph, then each of
-its combining marks. Where those land is `Vt.print`'s business — and
-§Replay fix 1 (a mark parked on a wide char's shadow cell) is exactly why
-the marks have to be replayed at all. -/
+its combining marks. Where those land is `Vt.print`'s business: `Vt.printMark` moves a
+mark aimed at a wide glyph's shadow onto the glyph. -/
 theorem cellText_feed {v : Vt} (c : Cell) (hg : v.pstate = .ground) (hu : v.u8need = 0)
     (ha : v.u8acc = 0) :
     v.feed (cellText c) =
@@ -313,7 +311,7 @@ Two shapes of proof, both driven by the guards in `applySgr`'s fold:
   computation instead of needing a disequality per rung.
 
 What is *not* here: that the parser's CSI accumulator delivers these
-numbers in the first place (step 1 of specs/archive/grid-fidelity.md). This half is
+numbers in the first place, which is the parser half below. This half is
 about `Vt.applySgr` alone.
 -/
 
@@ -609,7 +607,7 @@ theorem sgrOf_feed {v : Vt} (codes : List Nat) (hne : codes ≠ []) (hcap : code
   simp only [sgrParamsOf]
   rw [← hg]
 
-/-! ### Step 2 complete — a pen replays exactly -/
+/-! ### A pen replays exactly -/
 
 theorem penAttrCodes_ne_nil (p : Pen) : penAttrCodes p ≠ [] := by
   unfold penAttrCodes; simp
@@ -669,7 +667,7 @@ theorem sgrColorSeq_feed {v : Vt} (c : Color) (isFg : Bool) (hg : v.pstate = .gr
 /-- **A pen replays exactly.** Feeding the sequences `penSgr` emits to a
 quiet emulator sets its pen to `p` and changes nothing else — the parser
 half (`sgrOf_feed`) composed with the semantic half
-(`pen_codes_recover`). §Replay's pen fidelity, closed. -/
+(`pen_codes_recover`). The restore's pen claim, `restore_pen_any`, rests on it. -/
 theorem penSgr_feed {v : Vt} (p : Pen) (hg : v.pstate = .ground) (hu : v.u8need = 0) :
     v.feed (penSgr p) = { v with pen := p } := by
   -- each stage's starting state is the previous stage's result, so they are
@@ -688,7 +686,7 @@ theorem penSgr_feed {v : Vt} (p : Pen) (hg : v.pstate = .ground) (hu : v.u8need 
   rw [feed_append, feed_append, h1, h2, h3]
   exact congrArg (fun q => { v with pen := q }) (pen_codes_recover v.pen p)
 
-/-! ### Step 3 — one glyph, placed
+/-! ### One glyph, placed
 
 `print` is five stages; under the conditions a repaint actually runs in
 (insert mode off, no charset translation, no pending wrap) four of them are
@@ -699,8 +697,8 @@ Note the **grid-shape hypotheses**. `putCell` writes through
 `setIfInBounds`, so a row shorter than `cols` would swallow the write
 silently. Every reachable state satisfies `row.size = cols` and
 `grid.size = rows` — `Vt.init` builds them that way and `resize` re-fits —
-but `Good` does not say so, which is a gap in §Bound rather than in this
-proof. `Renderable` (step 1 of specs/archive/grid-fidelity.md) is where it belongs.
+but `Good` does not say so: `Renderable` does (`GridOk`), so here the shape
+is a hypothesis.
 -/
 
 /-- **One narrow glyph writes one cell.** `hpc` says the glyph is stored as
@@ -752,14 +750,14 @@ theorem print_wide {v : Vt} (ch : Char) (hpc : v.printChar ch = ch) (hw : charWi
   · show v.cursor.x + 1 < (v.getRow v.cursor.y).size
     rw [hrow]; exact hfit
 
-/-! ### §Replay stage 3c — the cursor lands where the session had it
+/-! ### The cursor lands where the session had it
 
 The `dims` layer: the repaint cannot resize the emulator out from under the cursor
 bounds. `restore_cursor_placed_any` composes it with `restoreBody_grounds` and
 `restoreBody_origin`, which leave the parser ground with DECOM off, so the final `CUP`
-(`cup_feed_eq`) reads its parameters as an absolute address. `origin = false` is the
-documented gap: under DECOM a region-relative address cannot reproduce a cursor parked
-outside the scroll region. -/
+(`cup_feed_eq`) reads its parameters as an absolute address. `origin = false` stays a
+hypothesis: under DECOM the final `CUP` is region-relative, and the proof covers only the
+absolute address. -/
 
 /-- A fresh emulator of the session's own size is `Good`, so `clampDim` is
 the identity on its dimensions. -/

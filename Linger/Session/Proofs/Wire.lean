@@ -3,12 +3,13 @@ module
 public import Linger.Session.Spec
 import all Linger.Session.Wire
 
-/-! # §Frame / §Chunk / §Bound — the wire protocol theorems
+/-! # The wire protocol theorems
 
-Proved here: §Frame (round-trip; unknown tags are data),
-§Chunk (re-chunking cannot change what a peer sees), §Bound (a decoder
+Proved here: the round trip (unknown tags are data), re-chunking
+invariance (re-chunking cannot change what a peer sees), and the decoder bound (a decoder
 holds at most `4 + maxPayload` bytes whatever a peer sends — the bound
-at the wire layer).
+at the wire layer). Composed, the first two give `decode_encode_chunked`, which
+`Challenge.lean` states in part 1.
 
 All statements are schema-level (∀ messages, ∀ chunkings), not
 fixtures: the codec is `List UInt8`-based precisely so these inductions
@@ -36,10 +37,10 @@ theorem readU32_writeU32_append (n : UInt32) (rest : List UInt8) :
 theorem readU32_writeU32 (n : UInt32) : readU32 (writeU32 n) = n := by
   simpa only [List.append_nil] using readU32_writeU32_append n []
 
-/-! ## Single-message round-trip (§Frame) -/
+/-! ## Single-message round-trip -/
 
 /-- An unassigned tag decodes to `unknown`, carrying its bytes forward untouched:
-the skip-don't-fail half of §Frame, naming the predicate that defines it. The retired tag 3
+the skip-don't-fail half of the round trip, naming the predicate that defines it. The retired tag 3
 is one: the attach of levels 1 and 2 reads as a message this version does not know. -/
 theorem decodeMsg_unknown_of_not_knownTag (t : UInt8) (p : List UInt8) (h : knownTag t = false) :
     decodeMsg t p = .unknown t p := by
@@ -99,7 +100,7 @@ theorem takeFrames_header (t b0 b1 b2 b3 : UInt8) (payload rest : List UInt8)
     hres]
 
 /-- A well-formed encoded frame peels off `takeFrames`, whatever
-follows it. The workhorse for §Frame and §Chunk alike. -/
+follows it. The workhorse for the round trip and re-chunking alike. -/
 theorem takeFrames_encode_prefix (m : Msg) (hm : m.WF) (rest : List UInt8) :
     takeFrames (encode m ++ rest) =
       ((takeFrames rest).1, (takeFrames rest).2.1, m :: (takeFrames rest).2.2) := by
@@ -127,7 +128,7 @@ theorem takeFrames_short (xs : List UInt8)
   case cons.cons.cons.cons.cons => exact (hno a b c d e tail rfl).elim
   all_goals simp [takeFrames]
 
-/-- §Frame, stream form: a sequence of well-formed messages decodes
+/-- The round trip, stream form: a sequence of well-formed messages decodes
 back to itself exactly, with nothing retained. -/
 theorem decode_encode_stream (ms : List Msg) (h : ∀ m ∈ ms, m.WF) :
     decode (ms.flatMap encode) = ({ buf := [], errored := false }, ms) := by
@@ -140,7 +141,7 @@ theorem decode_encode_stream (ms : List Msg) (h : ∀ m ∈ ms, m.WF) :
     simp only [List.flatMap_cons]
     rw [takeFrames_encode_prefix m hm, hms]
 
-/-! ## §Chunk — re-chunking invariance -/
+/-! ## Re-chunking invariance -/
 
 /-- Parsing a concatenation = parsing the first part, then parsing its
 leftover glued to the second part. Errors and messages both carry. -/
@@ -174,7 +175,7 @@ not kept around. (Also what makes `feed_append` hold through errors.) -/
 theorem takeFrames_errored_buf (bytes : List UInt8) (h : (takeFrames bytes).2.1 = true) :
     (takeFrames bytes).1 = [] := by fun_induction takeFrames bytes <;> simp_all
 
-/-- §Chunk at the decoder interface: feeding `a ++ b` is feeding `a`
+/-- Re-chunking invariance at the decoder interface: feeding `a ++ b` is feeding `a`
 then feeding `b` — same final state, same messages in order. No
 chunking of the byte stream can change what the peer sees. -/
 theorem Decoder.feed_append (d : Decoder) (a b : List UInt8) :
@@ -203,7 +204,7 @@ cannot make us buffer. -/
 theorem Decoder.feed_errored (d : Decoder) (chunk : List UInt8) (hd : d.errored) :
     d.feed chunk = (d, []) := by simp [Decoder.feed, hd]
 
-/-! ## §Bound — the decoder cannot be grown -/
+/-! ## The decoder bound — the decoder cannot be grown -/
 
 /-- Whatever bytes arrive, the parser's retained buffer stays under
 `5 + maxPayload` bytes: complete frames leave, a partial frame is by
@@ -223,7 +224,7 @@ theorem takeFrames_buf_le (bytes : List UInt8) : (takeFrames bytes).1.length ≤
     simp
     omega
 
-/-- §Bound at the decoder interface: after any feed to a live decoder,
+/-- The bound at the decoder interface: after any feed to a live decoder,
 the retained buffer is under `4 + maxPayload` bytes — regardless of the
 decoder's prior state or the chunk's size or content. -/
 theorem Decoder.feed_buf_le (d : Decoder) (chunk : List UInt8) (hd : ¬d.errored) :
@@ -233,7 +234,7 @@ theorem Decoder.feed_buf_le (d : Decoder) (chunk : List UInt8) (hd : ¬d.errored
   rw [hres] at h
   simpa [Decoder.feed, hd, hres] using h
 
-/-- §Bound, message side: no decoded message carries a payload above
+/-- The bound, message side: no decoded message carries a payload above
 `maxPayload` — the state machines downstream never see an unbounded
 allocation. -/
 theorem decodeMsg_payload_le (t : UInt8) (p : List UInt8) (hp : p.length ≤ maxPayload) :
@@ -268,7 +269,7 @@ theorem takeFrames_msgs_payload_le (bytes : List UInt8) :
     · exact ih m h
   | case4 => simp
 
-/-! ## §Stream — chunking is invisible (§Frame ∘ §Chunk, composed)
+/-! ## Chunking is invisible: the round trip and re-chunking invariance, composed
 
 The operational statement a reader actually wants, in one theorem:
 however the transport fragments a well-formed encoded stream, the
@@ -319,7 +320,7 @@ theorem Decoder.feedAll_flatten (d : Decoder) (chunks : List (List UInt8))
         d.feed ((c :: cs).flatten)
     rw [List.flatten_cons, Decoder.feed_append, ih _ hq']
 
-/-- §Stream: ANY well-formed message sequence, encoded and re-chunked
+/-- **Chunking is invisible.** ANY well-formed message sequence, encoded and re-chunked
 ARBITRARILY (per byte, per frame, any TCP segmentation), feeds back to
 exactly that sequence — same messages, same order, nothing retained,
 no error. -/
@@ -405,7 +406,7 @@ theorem inputFrames_exact (bytes : List UInt8) :
   simp only [inputChunk] at short
   omega
 
-/-! ## Protocol levels (§Level) -/
+/-! ## Protocol levels -/
 
 /-- **An attach goes only to a daemon at this version's level.** An older or a newer level, an
 answer with no level and no answer are each refused. -/

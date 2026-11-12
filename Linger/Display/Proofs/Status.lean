@@ -3,12 +3,13 @@ module
 -- The proofs unfold the status definitions, whose bodies only `import all` exposes.
 import all Linger.Display.Status
 
-/-! # §Status — the seven states partition the observation space
+/-! # The seven states partition the observation space
 
 A legend is a claim, and it can be wrong in three ways: two rows that differ
 could show the same glyph (not exclusive), a row could match no glyph (not
 covering), or a glyph could be unreachable (a lie in the legend). This file
-rules out all three.
+rules out all three. `classify_iff`, the first headline of the status rule in `Challenge.lean`,
+states the partition.
 
 The legend predicates `Is`, in `Linger/Display/Spec.lean`, are the states as *described in the
 legend*, written independently of `classify`'s cascade — that independence is the point. If

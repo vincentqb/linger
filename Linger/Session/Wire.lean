@@ -11,12 +11,16 @@ works on `List UInt8` so the theorems in `Linger/Session/Proofs/Wire.lean` are
 schema-level inductions, not fixtures; the runtime converts to/from
 `ByteArray` at the socket boundary only.
 
-Tensions carried here:
-* §Frame — round-trip, and unknown tags are *values*, not errors.
-* §Chunk — `Decoder.feed` is invariant under re-chunking.
-* §Bound — a decoder never holds more than `4 + maxPayload` bytes; an
+What the codec keeps:
+* The round trip — a well-formed message decodes as itself, and unknown tags are *values*,
+  not errors.
+* Re-chunking invariance — `Decoder.feed` is invariant under re-chunking; with the round
+  trip, re-chunked well-formed messages decode exactly (`decode_encode_chunked`,
+  `Challenge.lean` part 1).
+* The decoder bound — a decoder never holds more than `4 + maxPayload` bytes; an
   oversize frame flips it into a sticky error state instead of growing.
-* §Level — a client attaches only to a daemon that reports this version's protocol level.
+* Protocol levels — a client attaches only to a daemon that reports this version's protocol
+  level (`admits_level`, part 5).
 -/
 
 namespace Linger.Session.Wire
@@ -30,7 +34,7 @@ def writeU32 (n : UInt32) : List UInt8 :=
     UInt8.ofNat (v / 16777216 % 256)]
 
 /-- Total: missing bytes read as zero (a short structured payload is a
-peer bug; reading zeros beats crashing — §Frame totality). -/
+peer bug; reading zeros beats crashing, and keeps decoding total). -/
 private def readU32 (l : List UInt8) : UInt32 :=
   let b := fun i => (l[i]?.getD 0).toNat
   UInt32.ofNat (b 0 + 256 * (b 1 + 256 * (b 2 + 256 * b 3)))
@@ -155,7 +159,7 @@ private def decodeMsg (tag : UInt8) (p : List UInt8) : Msg :=
                                     if tag = 18 then decodeAttach p
                                     else if tag = 19 then .saved (p.headD 0) else .unknown tag p
 
-/-- A message the encoder may legally emit: payload within §Bound, and
+/-- A message the encoder may legally emit: payload within `maxPayload`, and
 `unknown` only for genuinely unassigned tags (an `unknown` wearing a
 known tag would decode as the known message — nothing may build one). -/
 def Msg.WF (m : Msg) : Prop :=
@@ -198,8 +202,8 @@ private def decode (bytes : List UInt8) : Decoder × List Msg := Decoder.feed {}
 
 /-- Feed many chunks in sequence, concatenating the decoded messages —
 the specification of the runtime's read loop (each poll round feeds one
-chunk). Structural recursion rather than a `foldl` so the §Stream
-induction steps through it directly. -/
+chunk). Structural recursion rather than a `foldl` so the induction of
+`Decoder.feedAll_flatten` steps through it directly. -/
 private def Decoder.feedAll (d : Decoder) : List (List UInt8) → Decoder × List Msg
   | [] => (d, [])
   | c :: cs =>
@@ -231,7 +235,7 @@ decoder's cap (`inputFrames_exact`): `send` sends its text and each read of its 
 this way. -/
 def inputFrames (bytes : List UInt8) : List Msg := (inputChunks bytes).map .input
 
-/-! ## Protocol levels (§Level)
+/-! ## Protocol levels
 
 A daemon's `info` answer reports the protocol level it speaks. An attach goes only to a daemon
 at this version's level, and refuses one of any earlier level: a daemon of level 1 or 2 refuses

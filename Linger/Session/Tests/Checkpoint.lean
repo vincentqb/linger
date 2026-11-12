@@ -16,8 +16,8 @@ open Terminal
 open Terminal.Vt
 
 /-- A run of N identical cells serializes to a small constant, not O(N):
-a blank 80-cell row is one run. This is why an empty screen dropped
-from 22.7 KiB to under 2. -/
+a blank 80-cell row is one run. This is why an empty screen takes
+under 2 KiB, where one stored cell by cell takes 22.7. -/
 example :
     (let blank : Row := blankRow 80 {}
      (wRow blank).length < 20) =
@@ -170,7 +170,7 @@ example :
 
 /-! ### The corrupt record
 
-`specs/archive/vt-toolkit.md` Step 2. `rVt` hands its seventeen decoded values to
+`rVt` hands its seventeen decoded values to
 `Vt.ofDecoded`, which returns `none` unless they describe a `Good` screen, so a hostile
 file cannot put `cols := 0` — or a cursor off the screen, or an inverted scroll region —
 into the emulator. `Linger/Session/Proofs/Checkpoint.lean`'s `load_good` states it for *any* byte
@@ -192,8 +192,8 @@ example :
   native_decide
 
 /-- One byte flipped so the record claims **zero columns** — a screen no
-`init`/`resize`/`feed` path can produce, and the state the decoder built without
-complaint before it validated `Good`. Refused. -/
+`init`/`resize`/`feed` path can produce, and the state a decoder that did not validate
+`Good` would build without complaint. Refused. -/
 example :
     (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "/tmp", labels := [("k", "v")] }
      let bytes := save c
@@ -239,27 +239,28 @@ example :
       true := by
   native_decide
 
-/-! ### The corrupt record, part two: the shape of the screen (finding R2)
+/-! ### The corrupt record, part two: the shape of the screen
 
-`Vt.decodedOk` decided `Good`'s content and was **never passed the grid**, so none of the
-clauses below were checked and a `Good ∧ ¬Renderable` state was one byte away. The audit
-recorded in SCRATCHPAD.md exhibited that from disk and refuted `resume_grid`'s conclusion at
-it. `Vt.decodedRenderable` is the second stage of the door;
+`Vt.decodedOk` decides `Good`'s content and is **never passed the grid**, so with it alone
+none of the clauses below would be checked, and a `Good ∧ ¬Renderable` state would be one
+flipped byte of a real checkpoint away, refuting `resume_grid`'s conclusion at it.
+`Vt.decodedRenderable` is the second stage of the door;
 `Linger/Session/Proofs/Checkpoint.lean`'s `load_renderable`/`load_tabsOk` state its guarantee for *any*
-byte string, `packages/terminal/Terminal/Proofs/Vt.lean`'s `ofDecoded_none_of_rows_mismatch` states the refusal, and
+byte string, `packages/terminal/Terminal/Proofs/Vt/Renderable.lean`'s
+`ofDecoded_none_of_rows_mismatch` states the refusal, and
 these pin what the theorems do not: the byte offsets, and that the four sub-clauses are
 independently reachable.
 
 The control above still applies to all of them — a real checkpoint loads, so `isNone`
 passing is not `load` having become unconditionally `none`. -/
 
-/-- **The exhibited attack, at the byte level.** The `rows` byte of a real 4×2 checkpoint,
+/-- **The one-byte attack.** The `rows` byte of a real 4×2 checkpoint,
 2 → 3. Every clause `decodedOk` checks still holds (`bot = 1 < 3`, cursor at the origin), the
-grid's own length is a separate `rNat` further along the record, and the result was a screen
-whose replay is not the screen it came from. Refused.
+grid's own length is a separate `rNat` further along the record, and a decoder that checked
+only those clauses would return a screen whose replay is not the screen it came from. Refused.
 
-This is the fixture the audit's `#eval` produced `false` for on the pre-change decoder, so it
-is the one to run first against any weakening of the guard. -/
+A decoder that checks only `decodedOk` fails this fixture, so it is the one to run first
+against any weakening of the guard. -/
 example :
     (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "/tmp", labels := [("k", "v")] }
      let bytes := save c
@@ -289,8 +290,8 @@ example :
   native_decide
 
 /-- A **cell** the emitter cannot reproduce: base `'\x0A'` at width 7. `rCell` reads `base`
-as any valid `Char`, `marks` as any list and `width` as any `Nat`, so this was accepted —
-`Render.safeChar` would substitute U+FFFD on emit and the replayed screen would differ from
+as any valid `Char`, `marks` as any list and `width` as any `Nat`, so only the door refuses
+it — `Render.safeChar` would substitute U+FFFD on emit and the replayed screen would differ from
 the one on disk. Both halves of `CellOk` are wrong here at once, which is the point: a
 control codepoint *and* a width no `charWidth` returns. -/
 example :
@@ -311,7 +312,7 @@ example :
       true := by
   native_decide
 
-/-- The **stashed alt screen**, whose grid was checked *nowhere* before this — `decodedOk`
+/-- The **stashed alt screen**, whose grid only `decodedRenderable` checks — `decodedOk`
 looks at the stashed cursor and stops there. A session in the alt screen carries the main
 screen in `altGrid`, and `Render.screens_paint_alt` paints it, so a bad one is the same
 defect one indirection away. -/

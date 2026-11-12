@@ -5,9 +5,9 @@ import all Terminal.Vt
 import all Terminal.Render
 meta import Terminal.Render
 
-/-! # §Replay round-trip tests — restore fidelity, executable form
+/-! # Replay round-trip tests — restore fidelity, executable form
 
-The target theorem (specs/archive/grid-fidelity.md):
+The target theorem:
 
     (Vt.init v.cols v.rows).feed (Render.restore v) ≃ v
 
@@ -23,7 +23,7 @@ namespace Terminal.Render.Tests
 
 open Terminal.Vt
 
-/-- The §Replay equivalence. Compared: grid, cursor position, pen,
+/-- The replay equivalence. Compared: grid, cursor position, pen,
 scroll region, modes, title, tabs, charset, saved cursor/pen/origin mode, the alt
 stash, all three deferred-wrap flags, the **scrollback** (against `sbRows v`, the fitted and
 budget-trimmed history the emitter promises — not `v.sb`, since a
@@ -154,21 +154,21 @@ reproduces. `Vt.print` redirects there, so the emitter has one case instead of
 a documented inexpressible one. -/
 example : roundtrips (screen 12 3 "漢\u0301x") = true := by native_decide
 
-/-- Spec fix 2: charset state — G0 designated line-drawing (glyphs land
+/-- Charset state — G0 designated line-drawing (glyphs land
 translated), G1 designated + SO active at detach time. -/
 example : roundtrips (screen 12 3 "\x1b(0lqk\x1b(B ab\x1b)0\x0e") = true := by native_decide
 
-/-- Spec fix 3: DECSC-saved cursor + pen must survive, or DECRC after
+/-- The DECSC-saved cursor + pen must survive, or DECRC after
 reattach jumps to 0,0 with the wrong pen. -/
 example : roundtrips (screen 12 5 "\x1b[36m\x1b[3;7H\x1b7\x1b[0m\x1b[1;1Hz") = true := by
   native_decide
 
-/-- Spec fix 8 — the **parameter cap**. Seven attributes plus truecolour
+/-- The **parameter cap**. Seven attributes plus truecolour
 foreground *and* background, set by three separate SGRs the way a real
 application does. Replayed as one combined sequence that would be 18
 parameters, the parser sets `ignore` on the 17th and drops the lot: the
 pen came back entirely default, every attribute and both colours lost.
-Found by proving §Replay rather than by testing; `penSgr` now emits at
+Found by proving the replay rather than by testing; `penSgr` emits at
 most 8 parameters per sequence. -/
 example :
     roundtrips (screen 10 3 "\x1b[1;2;3;4;5;7;9m\x1b[38;2;10;20;30m\x1b[48;2;40;50;60mX") =
@@ -181,7 +181,7 @@ passed even before the fix. Kept as the boundary case. -/
 example : roundtrips (screen 10 3 "\x1b[1;2;3;4;5;7;9m\x1b[38;5;123m\x1b[48;5;200mY") = true := by
   native_decide
 
-/-- Spec fix 8 — a combining mark on a **wide** cell's own position, not on
+/-- A combining mark on a **wide** cell's own position, not on
 its shadow. Reachable: print 漢 (cursor lands past the shadow), step back
 with `CSI 2 G`, print the mark — `print` attaches at `cursor.x - 1`, the
 wide cell itself. `rowAnsi` emitted base-then-marks, and the 2-column
@@ -279,7 +279,7 @@ example :
 /-- Resize truncating a row through the middle of a wide pair. -/
 example : roundtrips ((screen 6 2 "ab\u6f22cd").resize 4 2) = true := by native_decide
 
-/-- Spec fix 9 — the **stashed main pen leaked into the alt repaint**.
+/-- The **stashed main pen leaked into the alt repaint**.
 `screensAnsi` sets the stashed pen just before `?1049h` so the switch stashes
 the right one; that left the terminal carrying it, and `gridAnsi`'s fold
 assumes the *default* pen is in effect, emitting no SGR for a leading run of
@@ -302,7 +302,7 @@ example :
       true := by
   native_decide
 
-/-- Spec fixes 4+5: DECOM origin mode (with a region) and IRM insert
+/-- DECOM origin mode (with a region) and IRM insert
 mode; the final cursor address is region-relative under DECOM. -/
 example : roundtrips (screen 10 6 "\x1b[2;4r\x1b[?6h\x1b[4h\x1b[2;2H") = true := by native_decide
 
@@ -314,11 +314,11 @@ example :
       true := by
   native_decide
 
-/-- Spec fix 6: custom tab stops (TBC 3 then HTS at columns 6 and 10). -/
+/-- Custom tab stops (TBC 3 then HTS at columns 6 and 10). -/
 example : roundtrips (screen 20 3 "\x1b[3g\x1b[1;6H\x1bH\x1b[1;10H\x1bH\x1b[1;1H") = true := by
   native_decide
 
-/-- Spec fix 7: alt screen — the stashed main cursor/pen (what ?1049l
+/-- The alt screen — the stashed main cursor/pen (what ?1049l
 will restore) and the `saved` slot must both survive; paint-then-switch
 alone stashes wherever the main repaint happened to end. -/
 example :
@@ -604,8 +604,8 @@ example :
 
 example : roundtripsFrom (dirtySb 6 2) scrolled = true := by native_decide
 
-/-- Into a pristine client too, and into one caught mid-OSC — the push now sits
-*inside* the byte range a swallowed stream would eat (`cd7c17b`), so this is not a
+/-- Into a pristine client too, and into one caught mid-OSC — the push sits
+*inside* the byte range a swallowed stream would eat, so this is not a
 duplicate of the fixture above. -/
 example : roundtrips scrolled = true := by native_decide
 
@@ -835,15 +835,15 @@ example :
       true := by
   native_decide
 
-/-- The empty guard is load-bearing (`broadcast_empty`, one module over): with no
-history the stage is fourteen mode bytes and nothing else — no `ED 3`, no paint, no
+/-- The empty guard is load-bearing, like the session's `broadcast` guard (`broadcast_empty`):
+with no history the stage is fourteen mode bytes and nothing else — no `ED 3`, no paint, no
 flush. -/
 example :
     ((scrollbackAnsi (screen 80 24 "hi")).length == 14 && (sbRows (screen 80 24 "hi")).isEmpty) =
       true := by
   native_decide
 
-/-! ### The hand-back (§Handback, anchor A5's outbound half)
+/-! ### The hand-back
 
 The mirror image of everything above. `restore` establishes what the repaint needs in
 whatever terminal it is given; `leaveAnsi` gives that terminal back to the user's
@@ -892,7 +892,7 @@ inherits the application's terminal. This is `leave_grounds`'s non-vacuity — i
 `∀ w` really does range over receivers that would otherwise swallow the stream. -/
 example : sane 3 ((dirtyMidOsc 6 3).feed (leaveAnsi.drop 2)) = false := by native_decide
 
-/-! ## `screenText` — the capture stream, exact bytes (specs/archive/agent-cli.md) -/
+/-! ## `screenText` — the capture stream, exact bytes -/
 
 /-- The freeze: grid only, `rowText` per row (trailing blanks trimmed), one LF
 each — a 4×2 screen holding "ab" is literally `a b LF LF`. -/

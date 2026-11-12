@@ -2,7 +2,7 @@ module
 
 public import Terminal.Vt
 import Terminal.Render
--- `Vt`'s fields are `private` (the seal, `specs/archive/vt-toolkit.md` Step 1). Mediation
+-- `Vt`'s fields are `private` (the seal). Mediation
 -- is a toolkit module and reads cursor/mode state to answer owned queries,
 -- so it is a friend by construction, not an escape hatch.
 import all Terminal.Vt
@@ -89,8 +89,8 @@ requested name so the child knows *which* is unsupported. The echo is
 child's own input (`Session.step .ptyOut → .writePty`), and a request is
 child-controlled output — a `cat` of a hostile file, an ssh stream, a log
 tail. A raw payload could carry a CR and a shell command; on a cooked-mode
-tty the CR commits a line, so echoing it verbatim let untrusted output run
-a command (terminal-reply injection). A conforming request is hex, so the
+tty the CR commits a line, so echoing it verbatim would let untrusted output
+run a command (terminal-reply injection). A conforming request is hex, so the
 filter is the identity on it; a malformed one loses exactly the bytes that
 could terminate a line. `feed_replies_noNl` states the guarantee this
 buys: no reply linger ever writes to the child contains a line terminator. -/
@@ -260,8 +260,8 @@ structure Result where
   /-- Replies to owned requests, in order. -/
   replies : Bytes
 
--- No `deriving Repr`: it would need `Repr Vt`, which is the seal's read half
--- (`structure Vt`, the audit's R6). Nothing used the instance.
+-- No `deriving Repr`: it would need `Repr Vt`, which the seal withholds because it would
+-- publicly read every private field of `VtRec`. Nothing used the instance.
 
 /-- Feed child output byte-by-byte. Per-step output is prepended with a bounded
 left append (normally a singleton), so megabyte passthrough remains linear. -/

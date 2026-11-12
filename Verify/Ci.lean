@@ -8,10 +8,9 @@ public section
 /-! # Verify.Ci — runner selection and Lake build reuse
 
 `scripts/ci-runners.sh` decides the GitHub matrix, and its two failure modes are both
-silent and both expensive. Ask for macOS when nothing changed and a push bills several
+silent and both expensive. Ask for macOS when nothing changed and a run bills several
 times what it needs to; never ask for it and AGENTS.md's claim that the tree passes on
-macOS stops being checked by anything. The billing arithmetic is recorded in
-SCRATCHPAD.md.
+macOS stops being checked by anything.
 
 `scripts/gates.sh` greps the workflow for `fromJSON`, a `cron` and a
 `workflow_dispatch`, which catches their deletion. It cannot catch behaviour: a grep

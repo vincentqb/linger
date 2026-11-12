@@ -6,8 +6,6 @@ public section
 
 /-! # Linger.Display.Suites.Status — the status column, the unread mechanism end to end
 
-Ported from `tests/status_test.py`.
-
 `unseen` is a property of the SESSION — output arrived while nobody was watching —
 so the two transitions that matter are: attaching marks a session seen, and output
 while detached marks it unread again. Both go through the counter pair in
@@ -44,13 +42,48 @@ def summaryWindowMs : Nat := 250
 once per peer would take ten seconds. -/
 def stalledPeers : Nat := 40
 
+/-- How many summaries `checkDeadline` may ask for to see the responsive peer counted once: a
+loaded host can keep that peer, a process of its own, from answering within one window. -/
+def summaryRuns : Nat := 5
+
+/-- `summaryWithin` against fresh fake daemons at the sockets `names` in `waiting`'s state dir:
+`ready` answers, and the rest send a plausible partial reply and never finish it. A fake daemon
+ends after two conversations, so each summary gets its own, at the paths the previous ones left. -/
+private def summaryAmong (waiting : Env) (names : Array String) (ready : String) :
+    IO (Option UInt32 × Nat × String) := do
+  let self ← IO.appPath
+  for name in names do
+    for path in [s!"{waiting.dir}/{name}.sock", s!"{waiting.dir}/{name}.ready"] do
+      if ← System.FilePath.pathExists path then
+        IO.FS.removeFile path
+  let servers : Array (IO.Process.Child { stdout := .null, stderr := .null }) ←
+    names.mapM fun name =>
+        IO.Process.spawn
+          { cmd := self.toString,
+            args :=
+              #["--info-server", s!"{waiting.dir}/{name}.sock", s!"{waiting.dir}/{name}.ready",
+                if name == ready then "failed-info" else "timeout"],
+            stdout := .null, stderr := .null }
+  try
+    for name in names do
+      unless ← waitFor patienceMs (System.FilePath.pathExists s!"{waiting.dir}/{name}.ready") do
+        throw (IO.userError s!"status info server {name} did not become ready")
+    summaryWithin waiting
+  finally
+    for server in servers do
+      reapOrKill server 0
+
 /-- Stalled sockets precede a responsive peer and follow it. One sampling window covers the
 entire snapshot; incomplete and unqueried peers stay unknown. Four stalled peers are fake
 daemons that send a plausible partial reply and never finish it; the rest are listeners that
 never accept, whose connections the kernel queues. The responsive peer sorts after the four, so
 a summary that waited for each peer in turn would reach it only after a second, and would end
 only after `stalledPeers` reply windows, ten seconds. The bound is half that: no load makes
-waiting in turn quicker, and one shared window would have to stretch twentyfold to reach it. -/
+waiting in turn quicker, and one shared window would have to stretch twentyfold to reach it.
+The summary runs up to `summaryRuns` times, each against fresh fake daemons, until one counts
+the responsive peer, and every run must end within the bound. A summary that asked the peers one
+at a time within the shared window would count it in no run: each run's four stalled peers take
+the whole window first. -/
 def checkDeadline (e : Env) : IO Unit := do
   let waiting := { e with dir := s!"{e.dir}/waiting" }
   IO.FS.createDirAll waiting.dir
@@ -60,38 +93,35 @@ def checkDeadline (e : Env) : IO Unit := do
   let quiet :=
     (List.range (stalledPeers - unfinished.size)).toArray.map fun i =>
       s!"zzz-{if i < 10 then "0" else ""}{i}"
-  let self ← IO.appPath
   let listeners ← IO.mkRef (#[] : Array UInt32)
-  let servers : Array (IO.Process.Child { stdout := .null, stderr := .null }) ←
-    (unfinished.push ready).mapM fun name =>
-        IO.Process.spawn
-          { cmd := self.toString,
-            args :=
-              #["--info-server", s!"{waiting.dir}/{name}.sock", s!"{waiting.dir}/{name}.ready",
-                if name == ready then "failed-info" else "timeout"],
-            stdout := .null, stderr := .null }
   try
     for name in quiet do
       listeners.modify (·.push (← Os.Shell.unixListen s!"{waiting.dir}/{name}.sock"))
-    for name in unfinished.push ready do
-      unless ← waitFor patienceMs (System.FilePath.pathExists s!"{waiting.dir}/{name}.ready") do
-        throw (IO.userError s!"status info server {name} did not become ready")
-    let (code, elapsed, output) ← summaryWithin waiting
     let serialMs := stalledPeers * summaryWindowMs
-    expect (code == some 0 && elapsed < serialMs / 2)
-        s!"prompt shares one reply deadline across {stalledPeers} stalled peers ({elapsed} ms; \
-          one window per peer would take {serialMs} ms)"
-    expect
-        (output ==
-          s!"1{Linger.Display.Status.icon .exitedBad} {stalledPeers}{Linger.Display.Status.icon .unknown}\n")
-        s!"a responsive peer behind stalled peers completes within the shared deadline ({output.trimAscii})"
+    let counted :=
+      s!"1{Linger.Display.Status.icon .exitedBad} {stalledPeers}{Linger.Display.Status.icon .unknown}\n"
+    let mut shared := true
+    let mut slowest := 0
+    let mut outputs : Array String := #[]
+    for _ in List.range summaryRuns do
+      let (code, elapsed, output) ← summaryAmong waiting (unfinished.push ready) ready
+      shared := shared && code == some 0 && elapsed < serialMs / 2
+      slowest := max slowest elapsed
+      outputs := outputs.push output
+      if output == counted then
+        break
+    expect shared
+        s!"prompt shares one reply deadline across {stalledPeers} stalled peers (at most \
+          {slowest} ms in {outputs.size} runs; one window per peer would take {serialMs} ms)"
+    let seen := ", ".intercalate (outputs.toList.map fun output => s!"{output.trimAscii}")
+    expect (outputs.contains counted)
+        s!"a responsive peer behind stalled peers completes within the shared deadline in one of \
+          {outputs.size} runs ({seen})"
     let retained ←
       (unfinished.push ready ++ quiet).allM fun name =>
           System.FilePath.pathExists s!"{waiting.dir}/{name}.sock"
     expect retained "prompt leaves unanswered peers' sockets in place"
   finally
-    for server in servers do
-      reapOrKill server 0
     for listener in ← listeners.get do
       Os.Shell.close listener
 

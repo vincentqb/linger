@@ -13,15 +13,13 @@ public section
 
 /-! # Linger.Session.Suites.Agent — the agent verbs: see and drive a session one-shot
 
-Ported from `tests/agent_test.py`; the spec is `specs/archive/agent-cli.md`.
-
-Step 1: `linger info <name>` and the observability fields — geometry + cursor
-(what `capture` needs), `alt`, and `outseq` (the change cursor: "look again only
-when it moved"). Step 2: `linger capture <name>` — the screen as plain text, one
-line per row, and capturing marks the session seen. Step 3: `linger send <name> -`
-— stdin to the pty byte-exact. Step 4: `linger resize` — applies detached (down to
-the child's own winsize, via `stty size`), refused while a client is attached. All
-pinned against the rendered porcelain/bytes, end to end.
+`linger info <name>` and the observability fields — geometry + cursor (what `capture`
+needs), `alt`, and `outseq` (the change cursor: "look again only when it moved");
+`linger capture <name>` — the screen as plain text, one line per row, and capturing marks
+the session seen; `linger send <name> -` — stdin to the pty byte-exact; `linger resize` —
+applies detached (down to the child's own winsize, via `stty size`), refused while an
+attached client sizes the session. All pinned against the rendered porcelain/bytes, end to
+end.
 
 `alt` and `unseen` compare to `toString false` / `toString true`, because that is
 literally what `Session.infoFields` emits (`toString` of a `Bool`), and the default size
@@ -51,9 +49,9 @@ def outputThenPrompt (text line : String) : Bool :=
 primitive is needed: core spawns with `stdin := .piped`, `takeStdin`s the handle
 away from the `Child`, writes, flushes, and then drops it — and dropping the last
 reference is what closes the pipe. That close is load-bearing, not hygiene:
-`Cli.cmdSendStdin` has **no timeout on purpose** ("a slow producer feeding a pipe
-is legitimate"), so a sender that kept the handle open would hang here instead of
-failing.
+`cmdSendStdin` in `Linger.App.Shell` has **no timeout on purpose** ("a slow
+producer feeding a pipe is legitimate"), so a sender that kept the handle open
+would hang here instead of failing.
 
 `putStr` writes the payload's UTF-8, and every payload below is ASCII or a single
 C0 byte, so the pipe carries exactly those bytes. A payload that is not valid
@@ -563,7 +561,7 @@ def run : IO UInt32 :=
       checkInfo e mode (some why)
     checkInfo e "complete" none
     checkInfo e "empty" none
-    -- ── Step 1: info ──────────────────────────────────────────────────────────
+    -- ── info ──────────────────────────────────────────────────────────────────
     let _ ← e.typeIn "ag" #["true"] -- upsert a headless session (default shell)
     IO.sleep 1500
     let fresh := Linger.Session.bootVt none
@@ -604,7 +602,8 @@ def run : IO UInt32 :=
         "a daemon-rejected label exits 1 with its reason"
     let _ ← e.cli #["clear", "ag"]
     -- A malformed daemon response must also fail. The fake server is this suite
-    -- binary in a child mode, so the wire bytes and maxPayload come from Core.
+    -- binary in a child mode, so the wire bytes and `maxPayload` come from
+    -- `Linger.Session.Wire`.
     let badPath := s!"{e.dir}/malformed.sock"
     let badReady := s!"{e.dir}/malformed.ready"
     let self ← IO.appPath
@@ -618,7 +617,7 @@ def run : IO UInt32 :=
     let serverRc ← badServer.wait
     expect (serverRc == 0 && mrc == 1 && has merr "invalid response")
         "a malformed daemon response exits 1"
-    -- ── Step 2: capture ───────────────────────────────────────────────────────
+    -- ── capture ───────────────────────────────────────────────────────────────
     let _ ← e.typeIn "ag" #["echo", "CAPTURED-MARKER"]
     -- the command's own output line, then the prompt after it: the shell is idle
     -- again, so the capture below sees everything it printed. `--history` leaves
@@ -652,12 +651,11 @@ def run : IO UInt32 :=
     expect (cap2.length == rows + 1 && hist.length > cap2.length)
         "capture stays screen-sized while history grows"
     expect ((← e.cli #["capture", "nosuch"]).1 == 127) "capture on a missing session exits 127"
-    -- ── Step 3: send - (raw stdin) ────────────────────────────────────────────
+    -- ── send - (raw stdin) ────────────────────────────────────────────────────
     -- a full command line with its newline arrives verbatim and executes. The
     -- marker is asserted on the *expansion* (GOT-42), which the typed line does
     -- not contain — the tty echoes typed input onto the screen, so asserting on
-    -- the typed text would pass even if the newline was lost and nothing ran
-    -- (SCRATCHPAD 2026-08-19).
+    -- the typed text would pass even if the newline was lost and nothing ran.
     let src ← sendStdin e "ag" "echo \"GOT-$((40+2))\"\n"
     expect
         (src == 0 &&
@@ -709,7 +707,7 @@ def run : IO UInt32 :=
           in order ({bulkRc}, {(← readBulk).size} bytes{bulkWhy})"
     e.killAll #["bulk"]
     rawChecks e
-    -- ── Step 4: resize ────────────────────────────────────────────────────────
+    -- ── resize ────────────────────────────────────────────────────────────────
     let _ ← e.typeIn "rz" #["true"]
     let rzCols : UInt32 := 120
     let rzRows : UInt32 := 40

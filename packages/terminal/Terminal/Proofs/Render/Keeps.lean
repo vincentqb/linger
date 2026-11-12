@@ -6,17 +6,17 @@ import all Terminal.Proofs.Render.Pen
 
 -- Module-private by default: `Vt`'s fields are sealed (see `packages/terminal/Terminal/Proofs/Vt/State.lean`).
 
-/-! # §Replay stage 3d — everything after the repaint leaves the screen alone
+/-! # Everything after the repaint leaves the screen alone
 
-`Keeps`, the grid-preservation stream predicate, and one fact per construct the
-restore tail emits — so the paint is the only thing that writes cells. Split out
-of `packages/terminal/Terminal/Proofs/Render.lean`. -/
+`Fixes`, the stream predicate that preserves a projection, `Keeps`, its grid instance, and
+one fact per construct the restore tail emits — so the paint is the only thing that writes
+cells. -/
 
 namespace Terminal.Render
 
 open Terminal.Vt
 
-/-! ## §Replay stage 3d — everything after the repaint leaves the screen alone
+/-! ## Everything after the repaint leaves the screen alone
 
 `restore` paints the grid and then tells the terminal the rest: scroll region,
 tab ruler, DECSC slot, title, modes, charset, pen, and the final cursor address.

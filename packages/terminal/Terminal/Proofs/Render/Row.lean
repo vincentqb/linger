@@ -6,25 +6,24 @@ import all Terminal.Proofs.Render.History
 
 -- Module-private by default: `Vt`'s fields are sealed (see `packages/terminal/Terminal/Proofs/Vt/State.lean`).
 
-/-! # Step 3 — the row painter
+/-! # The row painter
 
 `PaintState` and `Matches` (the row induction's invariant), one step lemma per cell
-shape, the mark loop, and the fold that assembles them: `rowAnsi_writes_row`. Split
-out of `packages/terminal/Terminal/Proofs/Render.lean`. -/
+shape, the mark loop, and the facts about `rowSlot`'s fold that `rowAnsi_writes_row`, in
+`Terminal.Proofs.Render.Grid`, uses to assemble them. -/
 
 namespace Terminal.Render
 
 open Terminal.Vt
 
-/-! ## Step 3 — `PaintState` and `Matches`, the row induction's invariant
+/-! ## `PaintState` and `Matches`, the row induction's invariant
 
-The monolithic row induction is replaced by a named invariant, which is what makes the
+The row induction runs over a named invariant, which is what makes the
 exact claim affordable. `rowAnsi` already threads `(bytes, pen, x)`; what the invariant
 adds is the two things a receiver has that the emitter cannot see — wrap-`pending`, which
-the 2026-08-15 negative result proved load-bearing, and the decoder triple.
+is load-bearing because no absolute cursor move can express it, and the decoder triple.
 
-Design constraints, all recorded in `specs/archive/restore-conformance.md` before the proof and
-each a way the obvious statement would be wrong:
+Design constraints, each a way the obvious statement would be wrong:
 
 * the parser component is a **triple** (`pstate`, `u8need`, `u8acc`), not a pair —
   `cellText_feed` needs the third, and inside a wide-with-marks cell the stream goes
@@ -144,8 +143,8 @@ for a pair), so the row walk is a fold rather than a case analysis, and each
 re-establishes every field of the invariant the next rung reads.
 
 `hfit : k + 1 < w.cols` is the *interior* case. The final column is deliberately a
-separate rung: there the advance clamps and arms wrap-pending, which is the state the
-2026-08-15 negative result showed no absolute cursor move can express. -/
+separate rung: there the advance clamps and arms wrap-pending, which is the state no
+absolute cursor move can express. -/
 
 /-- **One narrow cell with no marks.** The write is the same in the interior and at the
 right margin; only the advance differs, and `hadv` says which one ran: in the interior the
@@ -554,7 +553,7 @@ theorem withMarks_keeps (g : Row) (k : Nat) (ms : List Char) (x : Nat) :
 
 /-- The truncated row is still one a repaint can reproduce.
 
-`hwid` is what the pair clause needs, and the spec named it before the proof: column
+`hwid` is what the pair clause needs: column
 `k` is a glyph — never a shadow — so it is not the second half of anything, and the
 only column whose *content* the pair rule constrains is a shadow. Its own shadow (if
 it has one) is untouched and still canonical, because `Cell.shadow` reads the pen and
@@ -1068,13 +1067,13 @@ theorem step_wide_margin_marks {w : Vt} {P : PaintState} {g : Row} {k : Nat} (hr
         x := w.cols - 1, pending := false }
       g (k + 2) := step_wide_marks_gen hrow hm hPx hpend hfit hcb hwid hpen (by omega)
 
-/-! ### The row fold assembled — `rowAnsi_writes_row`
+/-! ### The row fold's lemmas
 
-The rungs above are one cell (or one pair) each; this folds them over the row. Two
-structural facts about `rowSlot` come first: it only ever *appends* to the byte
-accumulator, and its pen/index evolution ignores the bytes already there. That lets the
-fold be peeled a cell at a time (or a pair at a time for a wide glyph) with the receiver
-threaded through. -/
+The rungs above are one cell (or one pair) each; `rowAnsi_writes_row`, in
+`Terminal.Proofs.Render.Grid`, folds them over the row. It rests on two structural facts
+about `rowSlot`: it only ever *appends* to the byte accumulator, and its pen/index evolution
+ignores the bytes already there. That lets the fold be peeled a cell at a time (or a pair at
+a time for a wide glyph) with the receiver threaded through. -/
 
 /-- `rowSlot` appends to the byte accumulator and its `(pen, index)` output ignores the
 bytes already accumulated. -/

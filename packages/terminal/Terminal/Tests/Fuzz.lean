@@ -4,14 +4,15 @@ module
 import all Terminal.Tests.Render
 meta import Terminal.Tests.Render
 
-/-! # §Replay fuzzing — the net for assumptions nobody wrote down
+/-! # Replay fuzzing — the net for assumptions nobody wrote down
 
 Every fidelity bug found by *proving* rather than by testing had the same
 shape: an emitter stage that is correct only under a precondition on the
 emulator state it is fed into, which some caller violated. Fixtures do not
 find those, because a fixture only explores the state a person thought to
 write down — and worse, a fixture can pass for the wrong reason (the
-pre-existing alt fixture masked fix 9 for exactly that reason).
+pre-existing alt fixture masked the stashed main pen leaking into the alt repaint
+for exactly that reason).
 
 So: splice random escape-sequence fragments, feed them, and check
 `roundtrips`. A failing seed is a bug with a reproducer attached. The
@@ -73,13 +74,14 @@ with `#eval genCase (nextRand (i * 7919 + 1)) 6`. -/
 example : failing 400 = [] := by native_decide
 
 /-- Longer cases, fewer of them: depth finds interactions that breadth does
-not (fix 9 needed a pen *and* an alt switch *and* a default-pen first cell).
+not (the alt repaint's pen leak needed a pen *and* an alt switch *and* a default-pen first
+cell).
 
 **The list is empty**, and pinned as empty so that any new failure breaks the
 build — the `SHIM_CAP` idiom. Reproduce a case with
 `#eval genCase (nextRand (i * 104729 + 17)) 14`.
 
-Three seeds have been here and are fixed. Seed 3 (fix 11) reached a width-2
+Three seeds have been here and are fixed. Seed 3 reached a width-2
 cell in the final column with `\x1b[?7l` and a wide glyph, no `ICH` involved,
 refuting the reasoning that had held `ICH`/`DCH` out of the corpus. Seeds 24
 and 139 turned out to be the same bug as each other and equally free of

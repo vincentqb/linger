@@ -15,8 +15,8 @@ separately checks bare help in every stream mode, explicit terminal selection an
 Selector acceptance chooses either an existing target or an explicit creation
 row (`Linger/Selector/Proofs/Picker.lean`).
 
-`Cli.cmdList` writes `terminalListing withColor rows` straight to stdout, without
-color when stdout is not a terminal, so `terminalListing false []` **is** the
+`cmdList` in `Linger.App.Shell` writes `terminalListing withColor` of its rows straight to
+stdout, without color when stdout is not a terminal, so `terminalListing false []` **is** the
 empty-state line and the suite cannot drift from its wording. -/
 
 namespace Linger.Display.Suites.Overview

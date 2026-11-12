@@ -6,10 +6,9 @@ import all Terminal.Proofs.Vt
 
 -- Module-private by default: `Vt`'s fields are sealed (see `packages/terminal/Terminal/Proofs/Vt/State.lean`).
 
-/-! # §Replay, stage 3b — a restore stream leaves the parser in ground
+/-! # A restore stream leaves the parser in ground
 
-The §Replay target (specs/archive/grid-fidelity.md; the parser half was closed
-in specs/archive/bigger-theorems.md) is
+The replay's target is
 `(Vt.init v.cols v.rows).feed (restore v) ≃ v`. This file proves the
 parser lemmas of that `≃`: each construct `restore` emits, fed from
 `.ground`, returns there. `restore_quiesced_any` (`packages/terminal/Terminal/Proofs/Render/Sticky.lean`)
@@ -198,7 +197,7 @@ The boundary is deliberate: only the *combinators* generalize, and `Keeps` is wh
 shows why. `Ends.text` and `Quiet.text` both say an ESC-free run is harmless, but
 the same statement for `Keeps` is **false** — printable bytes are exactly what
 writes cells. A shared instance ladder would have had to weaken to accommodate
-that, which is the trap the earlier sketch hit from the other direction
+that, and the same trap waits from the other direction
 (`modesAnsi`'s DECOM branch is hypothesis-free for `Ends` and hypothesis-bearing
 for `Quiet`). -/
 structure StreamPred (P : Bytes → Prop) : Prop where
@@ -439,8 +438,7 @@ theorem csi_open_step {v : Vt} (hg : v.pstate = .esc) :
   rfl
 
 /-- `UInt8` comparisons, in `Nat` where `omega` can see them. -/
--- not `private`: the Quiet rung uses it too (it was private only because the rungs
--- used to live in one file).
+-- not `private`: the Quiet rung uses it too.
 theorem u8_bounds {b : UInt8} {lo hi : UInt8} (h1 : lo ≤ b) (h2 : b ≤ hi) :
     lo.toNat ≤ b.toNat ∧ b.toNat ≤ hi.toNat :=
   ⟨UInt8.le_iff_toNat_le.mp h1, UInt8.le_iff_toNat_le.mp h2⟩
@@ -758,7 +756,7 @@ theorem osc_bel_step {v : Vt} {acc : Array UInt8} {e : Bool}
 theorem utf8s_no_esc_bel (cs : List Char) : ∀ b ∈ utf8s cs, b ≠ 0x1B ∧ b ≠ 0x07 := by
   intro b hb; have := utf8s_no_ctl cs b hb; grind
 
-/-- §Replay: an OSC 2 title sequence is `Ends`. -/
+/-- An OSC 2 title sequence is `Ends`. -/
 theorem ends_osc (payload : List Char) :
     Ends (escB ++ [0x5D, 0x32, 0x3B] ++ utf8s payload ++ [0x07]) := by
   have hshape : (escB ++ [0x5D, 0x32, 0x3B] ++ utf8s payload ++ [0x07] : Bytes)

@@ -1002,7 +1002,7 @@ theorem print_mark_pending_eq {v : Vt} {m : Char} (hpc : v.printChar m = m) (hw 
         exact fun h => hnw h.1)]
   rw [ite_eq_right (show ¬((v.getCell v.cursor.x v.cursor.y).marks.length ≥ 8) from by omega)]
 
-/-! ## §Renderable — the emulator only reaches grids a repaint can reproduce
+/-! ## The emulator only reaches grids a repaint can reproduce
 
 `Good` bounds the emulator; this bounds what it *stores*. `Render.restore`
 paints a grid by emitting one glyph per cell, so a cell it can reproduce must
@@ -1040,13 +1040,12 @@ theorem printableChar_emittable (c : Char) : Emittable (printableChar c) := by
 
 theorem emittable_space : Emittable ' ' := ⟨by decide, by decide⟩
 
-/-! ### The width tables (pin-the-gaps item 4)
+/-! ### The width tables
 
-`isZeroWidth` and `isWide` decide how many columns a glyph owns, and until this
-section they were named **nowhere in the repo** outside their own definitions and
-`charWidth` — the theorem statements that mention `charWidth` are generic over
-the tables, so a shifted range was invisible to the entire proof tree and to every
-fixture. `CellOk.width` above is what makes them load-bearing: it ties a stored
+`isZeroWidth` and `isWide` decide how many columns a glyph owns, and **no theorem outside
+this section names them** — the theorem statements that mention `charWidth` are generic over
+the tables, so without these pins a shifted range would be invisible to the entire proof
+tree and to every fixture. `CellOk.width` above is what makes them load-bearing: it ties a stored
 cell's `width` field to `charWidth c.base`, so a table edit silently redefines
 which grids are well-formed.
 
@@ -1307,13 +1306,14 @@ theorem gridOk_replicate (cols rows : Nat) (p : Pen) :
 theorem renderable_init (cols rows : Nat) : Renderable (Vt.init cols rows) :=
   ⟨gridOk_replicate _ _ _, fun _ _ h => nomatch h⟩
 
-/-! ### The decoder's door, part two — the shape half (finding R2)
+/-! ### The decoder's door, part two — the shape half
 
-`decodedOk_iff` above decides `Good`'s content, and `Good` says nothing about the grid.
-The audit recorded in SCRATCHPAD.md reached a `Good ∧ ¬Renderable` state **from disk**
-with one flipped byte of a real checkpoint and refuted `resume_grid`'s conclusion at it,
-which makes this an observable defect rather than a missing hypothesis. `Vt.decodedRenderable`
-(`packages/terminal/Terminal/Vt.lean`) is the second half of the door's check; these are its claims.
+`decodedOk_iff` (`packages/terminal/Terminal/Proofs/Vt/State.lean`) decides `Good`'s content,
+and `Good` says nothing about the grid: with that check alone, one flipped byte of a real
+checkpoint reaches a `Good ∧ ¬Renderable` state **from disk** at which `resume_grid`'s
+conclusion is false, which makes an unchecked grid shape an observable defect rather than a
+missing hypothesis. `Vt.decodedRenderable` (`packages/terminal/Terminal/Vt.lean`) is the second half
+of the door's check; these are its claims.
 
 They live here, apart from the door's other claims in `packages/terminal/Terminal/Proofs/Vt/State.lean`, for one
 reason: `Renderable` and its `GridOk`/`RowOk`/`CellOk`/`PairOk` ladder are defined just
@@ -1324,14 +1324,12 @@ and the `Prop` cannot drift apart at any level — the same discipline as `decod
 other side — the door's *non-rejection* — so it asks for `Renderable` and `TabsOk`, and
 everything above it inherits them: `Checkpoint.rt_vt` → `load_save` → `load_save_exact`,
 and the `resume_*` claims that never read the grid, `resume_quiesced_any` (through
-`load_save`) and `resume_cursor_any` (through `load_save_exact`). Every claim that gained
+`load_save`) and `resume_cursor_any` (through `load_save_exact`). Every claim that carries
 one says so in its own docstring, `renderable_of_liveReachable` and
 `tabsOk_of_liveReachable` discharge them for any live session, and the three claims
 that *do* read the grid (`resume_grid`, `resume_sb`, `resume_tabs`) each use one of the
-two for their replay half. That trade was declined once, on the ground that a
-hypothesis a proof does not use makes a theorem weaker than it is; the override is that
-the old unconditional statements were also true of a screen the emitter cannot
-reproduce, which is a defect and not a strength. -/
+two for their replay half. They are not decoration: the door refuses a screen the emitter
+cannot reproduce, so without them the round trip would be false. -/
 
 /-- Past its width a row reads default (width-1) cells, so no column out there is half of
 a wide pair. With `cellOk_default` this is what makes `decodedRowOk`'s finite scan decide
@@ -1446,10 +1444,9 @@ checkpoint file says, if `Vt.ofDecoded` returns a `Vt` at all then that `Vt` is
 an emittable base of the width it claims with at most eight zero-width marks, every wide
 glyph keeps its shadow — and the same of the stashed alt screen.
 
-This is the claim finding R2 exists for. Before it, the door never saw the grid, so a
-record whose `rows` byte disagreed with its grid's length decoded happily into a screen
-`Render.restore` cannot repaint. `Checkpoint.load_renderable` is the same claim on the
-real path, for *arbitrary bytes*. -/
+Without it, a record whose `rows` byte disagrees with its grid's length would decode into
+a screen `Render.restore` cannot repaint. `Checkpoint.load_renderable` is the same claim on
+the real path, for *arbitrary bytes*. -/
 theorem ofDecoded_renderable {cols rows : Nat} {grid : Array Row} {cursor : Cursor} {pen : Pen}
     {modes : Modes} {top bot : Nat} {tabs : Array Bool} {sb : Ring}
     {altGrid : Option (Array Row × Saved)} {saved : Saved} {title : String}
@@ -1496,11 +1493,12 @@ theorem ofDecoded_tabsOk {cols rows : Nat} {grid : Array Row} {cursor : Cursor} 
 the door unchanged, modulo the parser state a checkpoint deliberately forgets.
 
 Without this, `ofDecoded_good` and `ofDecoded_renderable` would both be satisfied by a
-constructor that returned `none` always, and §Restore would be a claim about a codec that
-never restores anything. It is also exactly what `Checkpoint.rt_vt` needs, which is why
-the round-trip theorem carries the same three hypotheses.
+constructor that returned `none` always, and every claim about a loaded checkpoint
+(`load_renderable`, `resume_grid_of_load`) would hold of a codec that never restores anything.
+It is also exactly what `Checkpoint.rt_vt` needs, which is why the round-trip theorem carries
+the same three hypotheses.
 
-**This is the mirror**, and the two added hypotheses are its whole cost: `hren` and
+**This is the mirror**, and the two hypotheses beyond `Good` are its whole cost: `hren` and
 `htabs` propagate from here to `rt_vt`, `load_save`, `load_save_exact` and the
 `resume_*` claims. They cannot be dropped in favour of deriving them at the door — that
 is what "validate, not clamp" means, and establishing `Renderable` from a bad record
@@ -1522,10 +1520,9 @@ theorem ofDecoded_of_good {v : Vt} (h : Good v) (hren : Renderable v) (htabs : T
   cases v
   rfl
 
-/-- **The exhibited attack, refused.** A record whose row count disagrees with its grid's
-length is exactly finding R2's one-flipped-byte checkpoint — the `rows` byte of a real 4×2
-record changed 2 → 3 — and it is `Good` for every clause `decodedOk` checks, which is why
-it used to load. Now it does not.
+/-- **A flipped row count, refused.** The shape half refuses every record whose row count
+disagrees with its grid's length, among them the one a flipped byte makes of a real 4×2 record,
+its `rows` byte changed 2 → 3, which passes every clause `decodedOk` checks.
 
 The twin of `ofDecoded_none_of_cols_zero`, and the more instructive of the two: `cols = 0`
 is refused by a dimension check anyone would think to write, and this one needed the
@@ -2274,9 +2271,10 @@ theorem renderable_stepStr {v : Vt} (h : Renderable v) (e : Bool) (b : UInt8) :
   repeat' split
   all_goals exact renderable_congr h rfl rfl rfl rfl
 
-/-- **§Renderable is preserved by every byte.** With `renderable_init` this
-covers every state the daemon can hold: the emulator never stores a grid the row
-painter cannot express, for any input at all. -/
+/-- **`Renderable` is preserved by every byte.** With `renderable_init`, resize, quiescing
+and the decoder's door this covers every state the daemon can hold
+(`renderable_of_liveReachable`): the emulator never stores a grid the row painter cannot
+express, for any input at all. -/
 theorem renderable_step {v : Vt} (h : Renderable v) (b : UInt8) : Renderable (v.step b) := by
   unfold Vt.step Vt.abortUtf8
   dsimp only

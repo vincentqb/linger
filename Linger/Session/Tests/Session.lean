@@ -12,10 +12,10 @@ Whole client conversations at the pure level: events in, effects out —
 no sockets involved. Frames are built with the real `Wire.encode`, so
 these also exercise the per-client decoder path the daemon runs.
 
-**Friend module** (lean-modules Step 5): the fixtures that rig rosters and
+**Friend module**: the fixtures that rig rosters and
 scanners directly (`{ s0 with clients := …, scan := … }`) are legitimate test
-scaffolding, and `import all Linger.Session` is what admits it now that
-the daemon itself cannot do the same. -/
+scaffolding, and `import all Linger.Session` is what admits it; the daemon
+itself cannot do the same. -/
 
 namespace Linger.Session.Tests
 
@@ -26,7 +26,7 @@ open Terminal.Replay (Plan)
 
 def s0 : State := { vt := Vt.Vt.init 20 5, metaKv := [("name", "t")] }
 
-/-- Run a list of events, collecting effects — the Core `run` (so every
+/-- Run a list of events, collecting effects — `Linger.Session.run` (so every
 scenario below concretely pins its state threading + effect order),
 with the test-friendly argument order. -/
 def run (evs : List Event) (s : State := s0) : State × List (Effect Plan) :=
@@ -52,7 +52,7 @@ example :
   native_decide
 
 /-- pty output reaches the emulator AND every attached client — but a
-detached session still advances (§Detach, executable form). -/
+detached session still advances (the detach theorems, executable form). -/
 example :
     (let (s1, effs1) := run [.connected 1, .bytes 1 (encode (.attach .writable 80 24)),
                              .ptyOut "hello".toUTF8.toList]
@@ -173,7 +173,7 @@ def infoReplies (effs : List (Effect Plan)) : List Msg :=
       | .send 1 m => some m
       | _ => none)
 
-/-- Two legal labels used to produce one illegal outgoing frame. The real
+/-- Two legal labels make an `info` reply longer than one frame may carry. The real
 wire decoder must accept the entire reply, including every byte of both labels. -/
 example :
     (let labels := largeInfoLabels 2
@@ -254,7 +254,7 @@ example :
       true := by
   native_decide
 
-/-! ### `detach-all` and label removal (pin-the-gaps items 2 and 3)
+/-! ### `detach-all` and label removal
 
 `onMsg_detachAll` / `onMsg_labelUnset` / `onMsg_labelClear` pin the effect lists
 as equations; these run the same three verbs through the real decoder so the
@@ -370,7 +370,7 @@ example :
       true := by
   native_decide
 
-/-! ### Agent observability fields (specs/archive/agent-cli.md Step 1)
+/-! ### Agent observability fields
 
 `info` carries what an agent needs to *see* the session: geometry + cursor
 (for `capture`), `alt` (a full-screen app is live), and `outseq` (the change
@@ -401,7 +401,7 @@ example :
       true := by
   native_decide
 
-/-! ### capture (specs/archive/agent-cli.md Step 2)
+/-! ### capture
 
 `.screen` replies with the grid — never the ring — and marks the session seen.
 The scenario forces the two apart: eight printed lines on a five-row screen
@@ -491,7 +491,7 @@ example :
       true := by
   native_decide
 
-/-- An unknown tag in a real frame is refused and changes nothing else (§Frame). -/
+/-- An unknown tag in a real frame is refused and changes nothing else. -/
 example :
     (let refused := run [.connected 1, .bytes 1 (encode (.unknown 99 [1, 2, 3]))]
      let base := run [.connected 1]
@@ -499,7 +499,7 @@ example :
        refused.1.clients.length == base.1.clients.length) = true := by
   native_decide
 
-/-- The 17th client is refused (§Bound: maxClients = 16). -/
+/-- The 17th client is refused (`maxClients` = 16). -/
 example :
     (let evs := (List.range 17).map Event.connected
      let (s, effs) := run evs
@@ -509,7 +509,7 @@ example :
       = true := by native_decide
 
 /-- A malformed frame (oversize length claim) gets the client dropped,
-not buffered (§Bound at the session layer). -/
+not buffered (the decoder bound at the session layer). -/
 example :
     (let (s, effs) := run [.connected 1, .bytes 1 [0, 1, 0, 4, 0]]
      s.clients.isEmpty && effs.contains (.close 1)) =
@@ -601,7 +601,7 @@ example :
 /-- A same-size reattach preserves the scroll region and tab ruler the child set:
 `Vt.resize` resets `top`/`bot`/`tabs`, so an unconditional resize on attach would
 wipe a child's `DECSTBM` and tab stops, and no `SIGWINCH` fires at an unchanged
-winsize to make it re-emit them (restore-conformance Step 0 ledger 1). -/
+winsize to make it re-emit them. -/
 example :
     (let dirty := "\x1b[2;4r\x1b[3g".toUTF8.toList  -- DECSTBM top=1 bot=3, clear all tabs
      let (s, _) := run [.connected 1, .bytes 1 (encode (.attach .writable 20 5)),
@@ -663,7 +663,7 @@ example :
       true := by
   native_decide
 
-/-! ### control resize (specs/archive/agent-cli.md Step 4)
+/-! ### control resize
 
 `linger resize` from a non-attached connection: applies to a detached
 session, is refused — loudly — while an attached client sizes it, and leaves the
@@ -744,7 +744,7 @@ example :
 
 /-- A same-size control resize is a `.done` no-op that preserves what
 `Vt.resize` would wipe: the child's scroll region and tab ruler (the attach
-guard's reason, applied to this path — restore-conformance Step 0 ledger 1). -/
+guard's reason, applied to this path). -/
 example :
     (let dirty := "\x1b[2;4r\x1b[3g".toUTF8.toList  -- DECSTBM 2..4, clear all tabs
      let (s, effs) := run [.ptyOut dirty,
@@ -783,24 +783,23 @@ example :
       true := by
   native_decide
 
-/-! ### §Row/§Status integrity — the forged listing record
+/-! ### Listing integrity — the forged listing record
 
-Step 0 ledger item 2 of `specs/archive/restore-conformance.md`, as a fixture. `infoText` frames
+The forged-record attack, as a fixture. `infoText` frames
 records as `k` TAB `v` LF, `.labelSet` applies no filter and `linger set` passes the
-value through — so a label value carrying a newline and a tab used to forge an **extra
+value through — so a label value carrying a newline and a tab would forge an **extra
 record**, including a `status`/`state` pair that `linger list` would then display as the
-session's state.
+session's state, if `infoText` let the framing bytes through.
 
-`infoText_records` proves it cannot happen now. -/
+`infoText_records` proves it cannot happen. -/
 
 def forged : State := { s0 with labels := [("x", "a\nstatus\tlive")] }
 
 /-- The injected controls are replaced by U+FFFD, not dropped. -/
 example : (infoText forged).any (· == 0xEF) = true := by native_decide
 
-/-- **Boot caps restored labels at `maxLabels`** — the Bounded-at-boot gap,
-closed at the door (lean-modules Step 5): `.labelSet` enforces the cap per
-message, and a forged checkpoint's 70-label list can no longer boot past it. -/
+/-- **Boot caps restored labels at `maxLabels`**, at the door: `.labelSet` enforces the cap
+per message, and a forged checkpoint's 70-label list cannot boot past it. -/
 example :
     (State.boot (Vt.Vt.init 20 5) ((List.range 70).map (fun i => (toString i, "v")))
           []).labels.length ==

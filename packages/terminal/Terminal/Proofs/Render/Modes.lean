@@ -8,12 +8,13 @@ import all Init.Data.String.Legacy
 
 -- Module-private by default: `Vt`'s fields are sealed (see `packages/terminal/Terminal/Proofs/Vt/State.lean`).
 
-/-! # §Handback / anchor A5 — the modes, both directions
+/-! # The modes, both directions: the hand-back and the restore
 
 The lead-in that grounds any receiver, the hand-back's canonical modes
 (`leave_canonical`), `MMap` (modes-from-ground with per-chunk transforms), and the
-inbound value claims for the modes and the pen. Split out of
-`packages/terminal/Terminal/Proofs/Render.lean`. -/
+value claims that `restore` installs the session's modes and pen in any receiver
+(`restore_modes_any` and `restore_pen_any`, behind `replay_modes` and `replay_pen` in
+`packages/terminal/TerminalChallenge.lean`). -/
 
 namespace Terminal.Render
 
@@ -21,10 +22,10 @@ open Terminal.Vt
 
 /-! ### The lead-in grounds any receiver
 
-`Ends`, `Quiet` and `Keeps` all assume the receiver starts in `ground`. That
-assumption is exactly the kind this spec exists to remove: a client left mid-OSC or
-mid-DCS swallows every byte until its terminator, so `restore` fed to one displayed
-nothing at all (SCRATCHPAD 2026-08-15).
+`Ends`, `Quiet` and `Keeps` all assume the receiver starts in `ground`, and a claim
+about every receiver cannot: a client left mid-OSC or mid-DCS swallows every byte until
+its terminator, so a restore stream fed to one without a lead-in would display nothing
+at all.
 
 `prologueAnsi` leads with `ESC \` for that reason, and these are the theorems saying
 it works — the `packages/terminal/Terminal/Tests/Render.lean` `midOsc`/`midDcs` cases in proof form, over *all*
@@ -187,15 +188,14 @@ theorem restore_grounds (v w : Vt) : (w.feed (restore v)).pstate = .ground := by
 
 /-! ### …and so does the hand-back
 
-`leaveAnsi` is A5's outbound half (§Handback): whatever the session's last program
-left behind, the detaching client returns the terminal to a state the next program
-can use. Its parser claim is `restore_grounds` with the same lead-in doing the same
-job — a program that died mid-OSC or mid-DCS would swallow the hand-back exactly as
-it swallowed the repaint before `cd7c17b` — and the same proof, one chunk longer.
+`leaveAnsi` is the hand-back: whatever the session's last program left behind, the
+detaching client returns the terminal to a state the next program can use. Its parser
+claim is `restore_grounds` with the same lead-in doing the same job — without it, a
+program that died mid-OSC or mid-DCS would swallow the hand-back as it would a repaint —
+and the same proof, one chunk longer.
 
-The *value* claims (each mode at its canonical setting, for every receiver) are
-`specs/archive/restore-conformance.md` Step 1, which the hand-back is the easiest
-instance of: no `ite`, no dependence on a `Vt`. -/
+Its *value* claims (each mode at its canonical setting, for every receiver) are the
+easiest value claims of all: the hand-back has no `ite` and no dependence on a `Vt`. -/
 
 /-- A parameterless CSI: the receiver's own defaults apply. -/
 theorem ends_csiPlain (final : UInt8) (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E) :
@@ -294,14 +294,13 @@ theorem leave_boundary_title (w : Vt) :
 UTF-8 decoder, screen or title. -/
 theorem leave_grounds (w : Vt) : (w.feed leaveAnsi).pstate = .ground := (leave_boundary_title w).1
 
-/-! ## §Handback / anchor A5 — the hand-back leaves the modes canonical
+/-! ## The hand-back leaves the modes canonical
 
 `leave_grounds` gave the parser half for any receiver; this gives the modes half.
 The machinery is a `Modes`-projection analog of `Keeps`: `modeSet_modes` exposes a
-private mode set as its `setMode` (the dispatch-exposing bridge the spec named),
-`MMap` composes per-chunk modes transforms from ground, and `leave_modes` folds the
-hand-back's chunks — each mode set absolutely, each non-mode chunk transparent — to
-the default record, for **any** receiver `w`. -/
+private mode set as its `setMode`, `MMap` composes per-chunk modes transforms from
+ground, and `leave_modes` folds the hand-back's chunks — each mode set absolutely, each
+non-mode chunk transparent — to the default record, for **any** receiver `w`. -/
 
 theorem modes_moveTo (v : Vt) (x y : Nat) : (v.moveTo x y).modes = v.modes := by rfl
 
@@ -591,10 +590,10 @@ theorem mmap_id_defaultTitleAnsi : MMap id defaultTitleAnsi := by
   rw [ite_eq_right (by simp [hu])]
   exact ⟨rfl, hu, rfl⟩
 
-/-- **The hand-back leaves the modes canonical, for any receiver** (anchor A5,
-outbound value half). `leaveAnsi`'s lead-in grounds `w`, then each mode chunk sets
-its field absolutely and the non-mode chunks leave modes alone, so the composite is
-the default record regardless of what the session left behind. -/
+/-- **The hand-back leaves the modes canonical, for any receiver.** `leaveAnsi`'s
+lead-in grounds `w`, then each mode chunk sets its field absolutely and the non-mode
+chunks leave modes alone, so the composite is the default record regardless of what
+the session left behind. -/
 theorem leave_modes (w : Vt) : (w.feed leaveAnsi).modes = ({} : Modes) := by
   -- after the `ESC \` lead-in and `?1049l` each mode chunk sets its field absolutely and every
   -- other chunk leaves the modes alone, so the composite transform is constant, whatever origin
@@ -626,14 +625,14 @@ theorem leave_modes (w : Vt) : (w.feed leaveAnsi).modes = ({} : Modes) := by
                                             mmap_id_defaultTitleAnsi))))))))))))))))))
         _ hlg hlu).2.2
 
-/-- **A5, outbound.** The hand-back returns the parser to ground with nothing
-half-decoded and the modes to the default, for any receiver — the value companion
-to `leave_grounds`. -/
+/-- **The hand-back, parser and modes.** The hand-back returns the parser to ground
+and the modes to the default, for any receiver — the value companion to
+`leave_grounds`. -/
 theorem leave_canonical (w : Vt) :
     (w.feed leaveAnsi).pstate = .ground ∧ (w.feed leaveAnsi).modes = ({} : Modes) :=
   ⟨leave_grounds w, leave_modes w⟩
 
-/-! ## §Handback / anchor A5 — inbound: restore installs the session's modes
+/-! ## Restore installs the session's modes
 
 The mirror of `leave_modes`. `restore`'s prologue grounds any receiver; the chunks
 up to the title only need to leave the parser in `ground` (the `Ends` ladder, no
@@ -933,7 +932,7 @@ theorem mmap_modesAnsi (v : Vt)
   intro m
   refine Modes.ext ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ <;> (rcases hmouse with h | h | h | h <;> simp [h])
 
-/-! ### The inbound value claim (A5 inbound) -/
+/-! ### The value claim for the modes -/
 
 theorem restore_modes_placed (v w : Vt)
     (hmouse :
@@ -975,10 +974,11 @@ theorem restore_modes_any (v w : Vt)
   · rw [feed_append]; exact u8_zero_after_cursorAnsi v _
   · exact restore_modes_placed v w hmouse
 
-/-! ### A5 inbound, continued: the pen (a non-modes restored field)
+/-! ### Restore installs the pen too (a restored field outside the modes)
 
-`restore` installs the session's pen into any receiver — the first non-modes field
-lifted from the `dirty`-receiver fixtures to a theorem. `penSgr_feed` sets the pen;
+`restore` installs the session's pen into any receiver, which the `dirty`-receiver
+fixtures of `packages/terminal/Terminal/Tests/Render.lean` check by example.
+`penSgr_feed` sets the pen;
 `fixes_csiNum2` at the pen projection shows the trailing `cursorAnsi` (a
 `CUP`/`moveTo`) preserves it. -/
 
@@ -1001,7 +1001,7 @@ theorem un_modesAnsi (v : Vt) (g : Vt) : (g.feed (modesAnsi v)).u8need = 0 := by
   rw [feed_append]
   exact u8_zero_after_csi (digits 4) _ (paramBytes_digits 4) (by cases v.modes.insert <;> decide) _
 
-/-- **A5 inbound, the pen.** `restore` installs the session's pen into any receiver:
+/-- **The pen, restored.** `restore` installs the session's pen into any receiver:
 the body ends `… charsetAnsi ++ penSgr v.pen`, `penSgr_feed` sets the pen to exactly
 `v.pen` from the grounded prefix, and the trailing `cursorAnsi` (a `CUP`, i.e.
 `moveTo`) preserves it. -/

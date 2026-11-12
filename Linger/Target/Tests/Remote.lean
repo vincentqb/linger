@@ -68,8 +68,8 @@ healthy name leaves a name it does not recognise, not the name scrubbing would l
 example : ((parse "name\tw\nstatus\tid\x01le\n").map (·.status) == ["id\x01le"]) = true := by
   native_decide
 
-/-- Trailing newline vs none: same records either way (§Chunk-ish
-robustness at the line level). -/
+/-- Trailing newline vs none: same records either way (robustness to where the
+peer's output ends, at the line level). -/
 example : (parse "name\ta\n" == parse "name\ta") = true := by native_decide
 
 /-- checkHosts: a clean list passes; a duplicate is rejected (the `-r`

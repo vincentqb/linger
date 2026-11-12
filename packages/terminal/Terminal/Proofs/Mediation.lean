@@ -8,7 +8,7 @@ import all Terminal.Proofs.Render
 
 -- Module-private by default: `Vt`'s fields are sealed (see `packages/terminal/Terminal/Proofs/Vt/State.lean`).
 
-/-! # §Terminal — owned terminal queries without client dependence
+/-! # Owned terminal queries without client dependence
 
 The mediator is a pure stream transducer. These theorems pin its exact profile,
 its full-result chunk law, its unchanged `Vt.feed` projection, and the bound on
@@ -147,15 +147,15 @@ theorem step_decrqss (v : Vt) (payloadRev : Bytes) :
 A terminal query's reply is written straight into the child's own input
 (`Session.step .ptyOut` routes `replies` to `.writePty`), and the child's
 output is untrusted — a `cat` of a hostile file, an ssh stream, a log tail. The
-one reply that echoed child bytes, XTGETTCAP, could carry a CR and a shell
-command; on a cooked-mode tty the CR commits a line, so the untrusted output ran
-a command. This is the §Replay bug family aimed at the child instead of the
-client: an emitter correct only under an unstated precondition on what it writes
-to.
+one reply that echoes child bytes, XTGETTCAP, would carry a CR and a shell
+command if it echoed them verbatim; on a cooked-mode tty the CR commits a line, so
+the untrusted output would run a command. This is the restore stream's bug family
+aimed at the child instead of the client: an emitter correct only under an unstated
+precondition on what it writes to.
 
 The invariant that closes it: **no reply contains a line terminator** (`0x0D`
 CR or `0x0A` LF). Every fixed reply satisfies it by inspection; `cprReply` and
-`textAreaReply` carry only digits; and `xtgetcapReply` now filters its echo to
+`textAreaReply` carry only digits; and `xtgetcapReply` filters its echo to
 the XTGETTCAP alphabet (`capByte`: hex and `;`), none of which is a terminator.
 Proved over the whole `feed` stream, so a future reply builder that reintroduced
 an echo would fail here rather than ship. -/
@@ -281,8 +281,8 @@ theorem versionNumber_eq : versionNumber = "0.1.0" := rfl
 
 /-- **linger never writes a line terminator into the child.** The reply stream of
 any child output, from any scanner state, contains no CR or LF — so untrusted
-output cannot commit a command line through a query reply. Anchor: the child half
-of §Terminal's client-independence, and the injection guard the audit added. -/
+output cannot commit a command line through a query reply. It is the child's half of
+the mediator's independence from clients, and the guard against reply injection. -/
 theorem feed_replies_noNl (v : Vt) (s : Scan) (bs : Bytes) : NoNl (feed v s bs).replies := by
   induction bs generalizing v s with
   | nil =>
@@ -293,7 +293,7 @@ theorem feed_replies_noNl (v : Vt) (s : Scan) (bs : Bytes) : NoNl (feed v s bs).
 
 /-! ## Stream laws -/
 
-/-- Full §Chunk law: re-chunking preserves the final VT and scanner, and
+/-- The full chunk law: re-chunking preserves the final VT and scanner, and
 concatenates visible bytes and child replies in order. -/
 theorem feed_append (v : Vt) (s : Scan) (a b : Bytes) :
     feed v s (a ++ b) =

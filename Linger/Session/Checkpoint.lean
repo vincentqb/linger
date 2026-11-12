@@ -3,16 +3,15 @@ module
 public import Linger.Session.Spec
 public import Terminal.Vt
 -- A **permanent** friend import, and the one in the tree that needs its reason
--- written down. `specs/archive/vt-toolkit.md` Step 2 held it open for one step to remove
--- `rVt`'s forge; the forge is gone (`rVt` goes through `Vt.ofDecoded`, which validates)
--- and this line stayed. Two things it buys, and the difference between them is the
+-- written down. `rVt` forges no `Vt`: it goes through `Vt.ofDecoded`, which validates.
+-- Two things the import buys, and the difference between them is the
 -- whole design decision:
 --
 -- * **`wVt`'s 17 field reads.** The seal blocks reads as well as writes. The
 --   alternative was 15 new public accessors on `Vt` (13 fields have none; `cursorPos`
 --   drops `pending` and `inAlt` drops the stashed screen, so neither serves the
---   codec) — 15 permanent public defs, 15 new claims for the zero-headroom coverage
---   ratchet, and read-hiding surrendered on 15 of 20 fields to buy nothing the
+--   codec) — 15 permanent public defs, 15 new claims for the coverage check, and
+--   read-hiding surrendered on 15 of 20 fields to buy nothing the
 --   no-forge property needs. A `Vt` written *out* cannot create a bad one.
 -- * **`Vt.ofDecoded`, which is `private`.** That is what makes this line the cheaper
 --   trade rather than the lazier one: dropping the import would force the smart
@@ -21,10 +20,10 @@ public import Terminal.Vt
 --   that power to this file, which is reviewed and grep-gated.
 --
 -- So: reads and one checked constructor, permanently. What must never come back is a
--- `Vt` structure literal here — `scripts/gates.sh` asserts `rVt` calls `Vt.ofDecoded`
--- and that no `Vt` field is assigned anywhere in this file. Do not copy the pattern
--- to a third module: `Render`/`Terminal` are friends because they *are* the emulator,
--- and this one is a friend because it is the emulator's only serialiser.
+-- `Vt` structure literal here — `scripts/gates.sh` asserts this file calls `Vt.ofDecoded`
+-- and that no `Vt` field is assigned anywhere in it. Do not copy the pattern to another
+-- module: `Render`, `Mediation` and `Replay` are friends because they *are* the terminal
+-- toolkit, and this one is a friend because it is the emulator's only serialiser.
 import all Terminal.Vt
 
 /-! # Linger.Session.Checkpoint — the reboot-resume codec
@@ -33,7 +32,8 @@ Serializes the resumable part of a session — screen, scrollback,
 cursor, pen, modes, title, labels, and working directory — to bytes
 and back. The parser state is reset on load.
 
-§Restore, which recovery rests on (Challenge.lean, part 7):
+The checkpoint round trip, which recovery rests on (`loadBytes_saveBytes_live`,
+`Challenge.lean` part 7):
 * The default `read* ∘ write*` round-trips **unconditionally** — every length is
   encoded as an arbitrary-precision little-endian `Nat`, so there is
   no "fits in u32" side condition anywhere.
@@ -61,8 +61,8 @@ open Terminal.Vt
 
 `abbrev`, not `def`: a type-level definition has to be visible across a `module`
 boundary or the compiler cannot agree on the compiled representation of anything
-typed by it ("locally inferred compilation type differs…"). This was a `def` with
-`@[expose]`, which says the same thing in two more lines — an alias has no
+typed by it ("locally inferred compilation type differs…"). A `def` with
+`@[expose]` would say the same thing in two more lines — an alias has no
 implementation to hide, so reducible-and-exposed is simply what it is. -/
 abbrev R (α : Type) : Type := List UInt8 → Option (α × List UInt8)
 
@@ -218,7 +218,7 @@ A terminal row is mostly runs of identical cells — trailing blanks, or
 stretches of same-styled text — so storing it cell-by-cell is ~30×
 larger than it needs to be. `wRLE` collapses maximal equal runs to
 `(count, cell)` pairs. Exact fidelity (no re-render approximation), and
-the round-trip proof composes like any other combinator: see §Restore
+the round-trip proof composes like any other combinator: see
 `rt_rle`, which rests on `expand_runs`. -/
 
 /-- Maximal runs of `DecidableEq`-equal elements, in order. -/
@@ -360,10 +360,10 @@ def wVt (v : Vt) (legacy : Bool := false) : List UInt8 :=
     wBool v.shiftOut ++
     wBool v.bell
 
-/-- **The decoder, and no longer a forge.** It used to build a `Vt` field-by-field
-out of decoded bytes, which is exactly how a corrupt or hostile on-disk record would
+/-- **The decoder, which forges nothing.** `rNat` accepts whatever the file says, so a `Vt`
+built field by field out of decoded bytes would let a corrupt or hostile on-disk record
 hand the emulator `cols := 0` — a state no `Vt.init`/`resize`/`feed` path can produce.
-Nothing validated: `rNat` accepts whatever the file says.
+The decoded fields go through `Vt.ofDecoded` instead.
 
 Dimensions must already be in the live range before reading any rows. Both screen
 grids use those dimensions to bound row counts and the sum of encoded cell runs
@@ -429,7 +429,7 @@ def saveV1 (c : Ckpt Vt.Vt) : List UInt8 :=
 rather than the check inlined in `load`: with the decision inline, `load_save`'s round-trip
 proof carries it through the whole parser chain and times out at two million heartbeats,
 where naming it gives the round trip one rewrite (`stripMagic_magic`) and needs no raise at
-all. Measured both ways — the AGENTS.md "restructure for provability" rule, on the smallest
+all. Measured both ways — the AGENTS.md rule to design code for provability, on the smallest
 possible thing. -/
 def stripMagic (l : List UInt8) : Option (Bool × List UInt8) :=
   match magic.isPrefixOf? l with

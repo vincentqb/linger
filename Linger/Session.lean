@@ -12,17 +12,21 @@ public section
 /-! # Linger.Session — the daemon's brain, as data
 
 One daemon = one session = one pty + one `Vt` + attached clients. This
-module is the *entire* decision logic: `step : State → Event → State ×
-List Effect`. The runtime (Step 6) is a dumb poll loop that turns fds
-into `Event`s and `Effect`s into syscalls.
+module is the session's decision logic:
+`step : State → Event → State × List (Effect Plan)`. The daemon
+(`Linger/Session/Shell/Daemon.lean`) is a poll loop that turns fds into `Event`s and
+`Effect`s into syscalls.
 
-Tensions carried:
-* §Detach — a session with zero clients still advances; detach never
-  touches the screen; attach touches only the dimensions (resize).
-* §Bound — clients ≤ `maxClients`, labels ≤ `maxLabels`, every stored
-  wire decoder stays under the Wire §Bound cap and non-errored (a
-  malformed peer is closed, not buffered).
-* §Frame (machine half) — an `unknown` message is refused and changes nothing.
+What `step` keeps:
+* A session with zero clients still advances; detach never touches the screen; attach
+  touches only the dimensions (resize).
+* Clients ≤ `maxClients`, labels ≤ `maxLabels`, every stored wire decoder holds at most
+  one frame and is not errored (a malformed peer is closed, not buffered), and the pty
+  scanner stays within its caps: `Bounds`, which `run_total_safe` (`Challenge.lean`,
+  part 5) keeps.
+* An `unknown` message is refused and changes nothing (`onMsg_unknown`); the event that
+  carries it answers only the refusal and keeps the terminal and labels
+  (`step_unknown_refused`, part 5).
 -/
 
 namespace Linger.Session
@@ -73,17 +77,18 @@ def Offloop.ask {R W : Type} (o : Offloop R W) (w : W) : Offloop R W × Option W
 /-- Maximum encoded info answer, shared by the producer and the CLI accumulator. -/
 def infoReplyCap : Nat := 1048576
 
-/-- The session's whole state. Sealed since lean-modules Step 5: the
-bookkeeping fields §Bound and §Unread protect, and every helper that rewrites
-them, are `private`; the fields make the anonymous constructor private too —
-outside this module and its friends (`Linger/Session/Proofs/Session.lean`,
-`Linger/Session/Tests/Session.lean`, via `import all`) a `State` can only be `State.boot`ed
+/-- The session's whole state, sealed: the bookkeeping fields, the unread counter among them,
+and every helper that rewrites the state are `private`; the private fields make the anonymous
+constructor private too — outside this module and its friends
+(`Linger/Session/Proofs/Session.lean`, `Linger/Session/Tests/Session.lean`,
+`Linger/App/Proofs/Wait.lean`, via `import all`) a `State` can only be `State.boot`ed
 and `step`ped, never forged or field-poked, so
 `run_wf`'s well-formedness is a fact about every state the daemon can possess
 rather than about the states it politely constructs. `vt`, `labels` and
-`metaKv` stay public-read: they are exactly what the checkpoint save hook
-serializes (`Linger/Session/Shell/Resume.lean`). `scan` and `clients` are public-read too,
-because the session bounds headline theorems state (`Linger.Session.Bounds`) read them. -/
+`metaKv` stay public-read: the checkpoint save hook (`Linger/Session/Shell/Resume.lean`) saves
+the first two and finds the session's directory through the third. `scan` and `clients` are
+public-read too, because the session bounds headline theorems state (`Linger.Session.Bounds`)
+read them. -/
 structure StateRec where
   /-- The emulator, fed every byte the child writes. -/
   vt : Vt.Vt
@@ -137,20 +142,17 @@ def State.labelList (s : State) : List (String × String) := s.labels
 /-- The pty scanner's state, as the headline theorems observe it. -/
 def State.scanner (s : State) : Mediation.Scan := s.scan
 
--- No `deriving` clause at all. `Inhabited` went in `specs/archive/vt-toolkit.md`
--- Step 3: it needed `Inhabited Vt`, a public door out of the `Vt` seal admitting a
--- zero-column screen. `Repr` went with the seal's read half (the audit's R6): it
--- needed `Repr Vt`, whose removal is what makes the seal actually hide reads.
--- Nothing used either instance. A `State` still has exactly one door, `State.boot`.
+-- No `deriving` clause at all. `Inhabited` would need `Inhabited Vt`, a public door out of
+-- the `Vt` seal admitting a zero-column screen, and `Repr` would need `Repr Vt`, whose
+-- absence is what makes the seal hide reads. A `State` has exactly one door, `State.boot`.
 
 /-- The one public door into a `State`: a fresh or restored emulator, the
 restored labels, the boot-time metadata. Everything else a `State` ever holds
 is `step`'s doing (the private fields above make the constructor private).
 
-Restored labels are capped HERE, which closes the Bounded-at-boot gap this
-step's sizing surfaced: `.labelSet` enforces `maxLabels` per message, but
+Restored labels are capped HERE: `.labelSet` enforces `maxLabels` per message, but
 `Checkpoint.loadBytes` is deliberately total on arbitrary bytes, so a corrupt or
-forged checkpoint could carry any list and boot used to be the bypass. Over
+forged checkpoint could carry any list. Over
 the cap, the first `maxLabels` survive (`.labelSet` appends at the end, so
 these are the oldest). `boot_wf` is the claim; composed with `run_wf`
 (`run_boot_wf`), every state the daemon can hold is well-formed. -/
@@ -287,7 +289,7 @@ def infoFields (s : State) : List (String × String) :=
     ++
     [("unseen", toString (unseen s)), ("fresh", toString s.freshFlag),
       ("behind", toString (behind s))]
-    -- what an agent needs to see the session (specs/archive/agent-cli.md Step 1):
+    -- what an agent needs to see the session:
     -- geometry + cursor for `capture`, `alt` for "a full-screen app is live",
     -- `outseq` as the change cursor ("re-capture only when it moved"). Values
     -- are read at reply time, so they are current as of this `.info`.
@@ -314,14 +316,11 @@ Established here rather than at `.labelSet`, for the same reason `Render.gridAns
 establishes its own pen instead of trusting its callers: a guard at the emit site
 needs no invariant about where the field came from, and it covers fields nobody has
 added yet. `Status.name_clean` proves the *status* column carries no framing byte;
-this is the same promise for every other column, and labels used to bypass both.
+this is the same promise for every other column.
 
-This was `(String.join (fields.map (fun (k, v) => s!"{k}\t{v}\n"))).toUTF8.toList`,
-which passed a label's newline through verbatim (`specs/archive/restore-conformance.md`
-Step 0 ledger item 2, §Row/§Status integrity). That shape was also what made the
-output unprovable — a `String` literal does not reduce in the kernel, so no theorem
-could see its bytes, which is exactly the argument in `packages/terminal/Terminal/Render.lean`'s
-header. Building `List UInt8` directly fixes both at once. -/
+The records are built as `List UInt8` directly, not through a `String`: a `String` does not
+reduce in the kernel, so no theorem could see its bytes, which is the argument in
+`packages/terminal/Terminal/Render.lean`'s header. -/
 def infoText (s : State) : List UInt8 :=
   (infoFields s).flatMap
     (fun (k, v) =>
@@ -366,14 +365,14 @@ private def resizeOwned (s : State) (c : Client) : State × List (Effect Plan) :
   if c.sizes && (sizeOwner s).any (·.id == c.id) then resize s c.cols c.rows else (s, [])
 
 /-- The control-resize decision (`linger resize`, from a NON-attached
-connection — agent-cli Decision 3). The size-owner rule extends rather than
+connection). The size-owner rule extends rather than
 bends: while an attached client sizes the session it always wins (refuse, loudly — a
 silent drop would let an agent believe a size it never got); with nobody
 sizing it there is nobody to fight, and the requested size applies. The
 same-size branch leaves the emulator alone for the attach guard's reason:
 `Vt.resize` resets the scroll region and tab ruler unconditionally, and at an
-unchanged winsize no SIGWINCH nudges the child to re-establish them
-(restore-conformance Step 0 ledger 1). Zero is refused: a zero dimension is never a size. -/
+unchanged winsize no SIGWINCH nudges the child to re-establish them. Zero is refused: a zero
+dimension is never a size. -/
 private def controlResize (s : State) (c : Client) (cols rows : UInt32) :
     State × List (Effect Plan) :=
   if (sizeOwner s).isSome then
@@ -402,8 +401,8 @@ private def infoMsgs (id : Nat) (bytes : List UInt8) : List (Effect Plan) :=
 The empty guard is load-bearing, not defensive tidiness: `chunksOf n [] = [[]]`,
 so without it a chunk consisting *entirely* of an owned query — whose visible
 bytes are empty by design — would push a zero-length `output` frame to every
-attached client on every terminal query. Unreachable before the mediator
-existed, since the runtime raises `.ptyOut` only for a non-empty read.
+attached client on every terminal query. The runtime raises `.ptyOut` only for a
+non-empty read, so empty bytes come only from the mediator.
 Pinned by `broadcast_empty` and by a Session fixture. -/
 private def broadcast (s : State) (bytes : List UInt8) : List (Effect Plan) :=
   if bytes.isEmpty then []
@@ -476,7 +475,7 @@ private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Pla
     -- `linger capture`: the grid only, plain text. Delivering the current
     -- screen IS a look, so it catches the read mark up — after a capture,
     -- "output arrived while nobody was watching" is false and `behind` counts
-    -- from this moment (agent-cli Decision 1). `.info` must never do this
+    -- from this moment. `.info` must never do this
     -- (`ls` polls every daemon; a listing that marks everything read destroys
     -- the status column) and `.history` stays an export, not an observation.
     if c.answered then (s, [.send c.id (.err "one request per read".toUTF8.toList)])

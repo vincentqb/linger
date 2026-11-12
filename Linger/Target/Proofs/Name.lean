@@ -6,12 +6,13 @@ import all Linger.Target.Name
 
 public section
 
-/-! # §Name — session names cannot escape the socket directory
+/-! # Session names cannot escape the socket directory
 
 `check` accepts exactly names that `sanitize` would leave unchanged.
 Accepted names are nonempty, short, made only of `okChar`s (no `/`,
 NUL or controls), and do not begin with a dot. Invalid names are
-rejected without manufacturing another session's identity.
+rejected without manufacturing another session's identity. `check_eq_some_iff` and
+`check_no_alias` below prove the headlines of those names (`Challenge.lean`, part 3).
 -/
 
 namespace Linger.Target.Name
@@ -36,7 +37,7 @@ theorem okChar_no_at (c : Char) (h : okChar c = true) : c ≠ '@' := by
 theorem mapChar_ok (c : Char) : okChar (if okChar c then c else '_') = true := by
   by_cases h : okChar c <;> simp [h]; decide
 
-/-- §Name, the main statement: `sanitize` establishes `Valid` for any
+/-- The main statement: `sanitize` establishes `Valid` for any
 input whatsoever. -/
 theorem sanitize_valid (s : String) : Valid (sanitize s) := by
   unfold sanitize Valid
@@ -89,7 +90,7 @@ theorem check_no_alias {a b name : String}
 theorem sanitize_idempotent (s : String) : sanitize (sanitize s) = sanitize s :=
   sanitize_eq_self_of_valid _ (sanitize_valid s)
 
-/-- The §Name corollary the runtime actually leans on: no character of
+/-- The corollary the runtime actually leans on: no character of
 a sanitized name is a path separator or NUL. -/
 theorem sanitize_no_escape (s : String) : ∀ c ∈ (sanitize s).toList, c ≠ '/' ∧ c ≠ '\x00' := by
   intro c hc

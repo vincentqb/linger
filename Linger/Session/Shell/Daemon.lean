@@ -29,8 +29,9 @@ deadline. Final shutdown also has a finite drain grace period.
 
 The session ends when its program does, or when a stop signal stops the daemon. The daemon hears
 both through its signal pipe (`signalPipe`): a child's end, whether or not a background job still
-holds the terminal, after which it reaps the program without blocking and reports how it ended,
-and SIGHUP, SIGINT, SIGQUIT or SIGTERM, which it reports as the session's event
+holds the terminal, after which it asks without blocking whether the program ended and reports how,
+leaving it unreaped until the rest of its terminal session has ended (`programEnd`), and SIGHUP,
+SIGINT, SIGQUIT or SIGTERM, which it reports as the session's event
 (`Event.signal`); the terminal's end of file ends nothing by itself. A kill stops the program
 first, with each signal of `Session.ending` in turn (`Effect.stopProgram`), and the session then
 ends as it does when its program ends by itself; a stop signal stops the program the same way,
@@ -187,8 +188,8 @@ structure Rt where
   /-- How the program ended, once a wait has said. The program stays unreaped until `serve` has
   ended the rest of its terminal session, so its pid stays its own until then. -/
   ending : Option Outcome := none
-  /-- Without a child-end descriptor, how long the next poll waits for the program's end while
-  its terminal is closed. The end usually follows at once, so the wait starts at 10 ms; it
+  /-- Without a signal pipe, how long the next poll waits for the program's end while its
+  terminal is closed. The end usually follows at once, so the wait starts at 10 ms; it
   doubles each round up to a second, so a program that runs on without its terminal wakes the
   daemon once a second. -/
   reapWaitMs : Nat := 10
@@ -389,8 +390,9 @@ def flushConn (c : Conn) : IO (Option Conn) := do
   return some c
 
 /-- The same bookkeeping for the child's input queue, with the *other* reaction:
-a full pty and a gone child both stop the loop, because a dead child surfaces through the reap
-every poll round makes (`.childExited`), and there is nothing to disconnect. Sharing the
+a full pty and a gone child both stop the loop, because a dead child surfaces as `.childExited`
+when a poll round asks whether the program ended, which it does when the signal pipe carried a
+byte, or every round without a pipe, and there is nothing to disconnect. Sharing the
 loop would invite "fixing" that asymmetry, which would either drop the pty queue
 on a transient or leave a dead client's frames queued. -/
 private def flushPty (rt : Rt) : IO Rt := do
@@ -403,7 +405,7 @@ private def flushPty (rt : Rt) : IO Rt := do
     | .done =>
       wrote := owed
     | .await | .gone =>
-      break -- the child is not reading, or is gone; POLLOUT or the reap handles it
+      break -- the child is not reading, or is gone; POLLOUT or the program's end handles it
   -- `serve` flushes every round, also while the child is not reading, and
   -- `bufAdvance` copies the bytes it keeps: skip it when nothing was written.
   if wrote == 0 then

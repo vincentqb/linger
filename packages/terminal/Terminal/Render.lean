@@ -1,7 +1,7 @@
 module
 
 public import Terminal.Vt
--- `Vt`'s fields are `private` (the seal, `specs/archive/vt-toolkit.md` Step 1). Render is
+-- `Vt`'s fields are `private` (the seal). Render is
 -- inside the toolkit boundary and reads the state it emits, so it is a friend by
 -- construction: this is not an escape hatch, it is the library's own second module.
 import all Terminal.Vt
@@ -14,15 +14,14 @@ Pure functions from a `Vt` snapshot to the byte stream that reproduces
 it on a real terminal: `restore` (what a re-attaching client is sent)
 and `history` (scrollback dump for `linger capture --history`).
 
-**Bytes, not Strings** (§Replay, specs/archive/bigger-theorems.md). This module
-used to assemble `String`s and UTF-8 them at the end, which made the
-output unprovable: a `String` literal does not reduce in the kernel, so
-no theorem could see that `csi` is `[0x1B, 0x5B]` (`decide` gets stuck
-on `"\x1b[".toUTF8`). Everything here now builds `List UInt8` through
+**Bytes, not Strings.** Output assembled from `String`s and UTF-8 encoded at
+the end would be unprovable: a `String` literal does not reduce in the kernel,
+so no theorem could see that `"\x1b["` is `[0x1B, 0x5B]` (`decide` gets stuck
+on `"\x1b[".toUTF8`). Everything here builds `List UInt8` through
 named stages — `digits`, `utf8`, `csiNum`, `penSgr`, `rowAnsi` — each of
-which the §Replay ladder in `packages/terminal/Terminal/Proofs/Render.lean` can state a lemma
-about. `rowText` (plain text for `history`) was the last holdout and is now
-bytes too, which is what let `history_framing`/`history_lines` be stated at all.
+which the replay ladder in `packages/terminal/Terminal/Proofs/Render.lean` can state a lemma
+about. `rowText` (plain text for `history`) is bytes too, which is what lets
+`history_framing`/`history_lines` be stated at all.
 
 Emitted characters pass `safeChar`: a C0/DEL codepoint is replaced by
 U+FFFD. That makes the emitter's output provably free of control bytes
@@ -163,8 +162,8 @@ colours lost. That pen is reachable: an application sets attributes and
 colours in separate SGRs, and nothing merges them.
 
 Split this way each sequence carries at most 8, and no colour triplet can
-straddle a boundary. Found by proving §Replay, not by testing (the
-18-parameter roundtrip example in `packages/terminal/Terminal/Tests/Render.lean` now pins it). -/
+straddle a boundary. Found by proving the replay, not by testing (the
+18-parameter roundtrip example in `packages/terminal/Terminal/Tests/Render.lean` pins it). -/
 def penSgr (p : Pen) : Bytes :=
   sgrOf (penAttrCodes p) ++ sgrColorSeq p.fg true ++ sgrColorSeq p.bg false
 
@@ -185,9 +184,8 @@ checkpoint, whose rows carry no such guarantee.
 
 A wide cell's **own** marks need the cursor parked *between* the glyph and
 its shadow, or they attach to the shadow instead: `print` puts a mark at
-`cursor.x - 1`, and a 2-column advance leaves the cursor two past the glyph
-(§Replay fix 8). `CHA` puts it there by absolute column, which is why the fold
-carries the column.
+`cursor.x - 1`, and a 2-column advance leaves the cursor two past the glyph.
+`CHA` puts it there by absolute column, which is why the fold carries the column.
 
 The fold's column is a **cell index**, so every cell advances it by one. A
 width-2 base advancing it by two double-counted the pair — its shadow advances
@@ -268,8 +266,8 @@ its "pen already in effect" accumulator with the *default* pen, and
 leading run of default-pen cells emits no `SGR` at all and inherits whatever
 pen the terminal happened to be carrying. `screensAnsi` is exactly such a
 caller: it sets the stashed main pen immediately before painting the alt
-grid, and without this reset the whole leading run of the alt screen came
-back in that pen (§Replay fix 9). Establishing the assumption here rather
+grid, and without this reset the whole leading run of the alt screen comes
+back in that pen. Establishing the assumption here rather
 than trusting each call site is what makes `gridAnsi` self-contained. -/
 private def gridAnsi (grid : Array Row) : Bytes :=
   let (rows, _) :=
@@ -441,7 +439,7 @@ def scrollbackAnsi (v : Vt) : Bytes :=
 `restore` is fed to a client terminal in whatever state its previous occupant
 left it — `Session.onMsg` sends it on attach with nothing before it — so every
 mode the repaint depends on has to be established rather than assumed. Each line
-below is a hazard that was previously latent:
+below removes one hazard:
 
 * `?1049l` — if the client sits on the alt screen, the main-grid repaint would
   land there and `screensAnsi`'s own `?1049h` would then be a no-op, so the main
@@ -451,8 +449,8 @@ below is a hazard that was previously latent:
 * `?6l` (DECOM) — under origin mode `CSI H` homes to the region top, not row 0,
   and every absolute address in the stream is reinterpreted;
 * `?7h` (DECAWM) — wrap must be **on**: `Vt.printMark` reads wrap-pending to
-  attach a combining mark to the margin cell it just wrote (see SCRATCHPAD
-  2026-08-15, and the note on `restoreBody`);
+  attach a combining mark to the margin cell it just wrote (see the note on
+  `restoreBody`);
 * `1;rows r` — a leftover scroll region turns the repaint's line feeds into
   scrolls. Degenerate for one row, where `DECSTBM` is a no-op and the region is
   already whole;
@@ -476,8 +474,8 @@ def prologueAnsi (v : Vt) : Bytes :=
     [0x0F]
 
 /-- Mode replay: what a fresh terminal must be told so the application
-keeps working after reattach. DECOM and IRM are included (§Replay
-fix 4): origin mode changes how the final cursor address must be
+keeps working after reattach. DECOM and IRM are included: origin mode
+changes how the final cursor address must be
 computed, and insert mode would corrupt the *next* app output if lost.
 Emitted after the repaint (insert mode during the repaint would shift
 cells) and before the final cursor (setting DECOM homes the cursor).
@@ -497,8 +495,8 @@ come from `setMode`: `Checkpoint.load` reads `mouse` as an arbitrary `Nat` and i
 deliberately total on arbitrary bytes, so a corrupt or foreign checkpoint can put
 anything there — and this line replays it verbatim. A denylist got the first case
 right and the rest wrong: `!= 6` was there because private mode 6 is DECOM, so
-replaying a `mouse` of 6 would silently turn origin mode on (§Replay's
-`quiet_modesAnsi`), but 47, 1047 and 1049 **switch screens**, which would corrupt
+replaying a `mouse` of 6 would silently turn origin mode on
+(`quiet_modesAnsi`), but 47, 1047 and 1049 **switch screens**, which would corrupt
 the very grid the restore is rebuilding. Naming the three modes the emulator can
 legitimately hold closes both holes at once and cannot grow a third.
 
@@ -522,7 +520,7 @@ def modesAnsi (v : Vt) : Bytes :=
 
 /-! ## Restore
 
-Named stages throughout, so §Replay can discharge one at a time and each
+Named stages throughout, so the replay proof can discharge one at a time and each
 whole-stream claim is their composition (`packages/terminal/Terminal/Proofs/Render.lean`).
 -/
 
@@ -559,7 +557,7 @@ def parkAnsi (cols : Nat) (grid : Array Row) (s : Saved) : Bytes :=
 def originOffAnsi (s : Saved) : Bytes := if s.origin then modeSet 6 false else []
 
 /-- The history, then the two screens: in alt, paint main, park the stashed
-cursor/pen, switch, then paint alt (§Replay fix 7).
+cursor/pen, switch, then paint alt.
 
 `scrollbackAnsi` goes here rather than being a new top-level stage in
 `restoreBody` because `screensAnsi v` is what the ladder names *opaquely*:
@@ -588,34 +586,31 @@ def regionAnsi (v : Vt) : Bytes :=
 /-- **The tab ruler, emitted unconditionally**: `CSI 3 g` clears every stop, then
 one `HTS` per stop the session holds.
 
-This used to skip the whole thing when the session's ruler was the default, on the
-theory that "the default is what a reset terminal has". That is the set-only
-mistake `87f64b3` fixed in `modesAnsi`, one field later — a client is **not** a
+It is emitted even when the session's ruler is the default, because a client is **not** a
 reset terminal. Its previous occupant may have run `CSI 3 g` and set its own stops,
 and nothing else in a restore stream clears a tab stop: the prologue has no `TBC`,
-`ED 2` does not touch the ruler, and linger emits no `RIS` anywhere. So the
-previous occupant's ruler survived verbatim and a `\t` from the session landed on
-the wrong column. Reproduced against `packages/terminal/Terminal/Tests/Render.lean`'s own `replayEq` before
-the fix (a receiver whose ruler was re-set every four columns made
-`roundtripsFrom` false on `.tabs`) and pinned by the `dirtyTabs` fixture there; it
-had passed only because no fixture moved the *receiver's* ruler.
+`ED 2` does not touch the ruler, and linger emits no `RIS` anywhere. Skipping a default
+ruler would leave the previous occupant's in place, and a `\t` from the session would land
+on the wrong column. The `dirtyTabs` fixture of `packages/terminal/Terminal/Tests/Render.lean`
+moves the *receiver's* ruler, setting stops every four columns, and `roundtripsFrom` on it
+compares `.tabs`.
 
 Being unconditional costs one `CSI 3 g` plus a `CHA`+`HTS` pair per stop on every
 attach — nine stops and ~70 bytes for an 80-column default ruler. The alternative
-is a field that is only right when the client happens to be pristine, which is the
-one thing `specs/archive/restore-conformance.md` says a client never is. The `CHA`s move
-the cursor, which is safe here because `cursorAnsi` addresses it absolutely afterwards. -/
+is a field that is only right when the client happens to be pristine, which a restore
+never assumes a client is. The `CHA`s move the cursor, which is safe here because
+`cursorAnsi` addresses it absolutely afterwards. -/
 def tabsAnsi (v : Vt) : Bytes :=
   csiNum 3 0x67 ++
     (((List.range v.cols).filter (fun i => v.tabs.getD i false)).flatMap
       (fun i => csiNum (i + 1) 0x47 ++ escSeq 0x48))
 
-/-- Replay the DECSC slot (§Replay fix 3): park it and save it, cursor, wrap-pending flag, pen
-and origin mode, then leave origin mode off. -/
+/-- Replay the DECSC slot: park it and save it, cursor, wrap-pending flag, pen and origin mode,
+then leave origin mode off. -/
 def savedAnsi (v : Vt) : Bytes :=
   parkAnsi v.cols v.grid v.saved ++ escSeq 0x37 ++ originOffAnsi v.saved
 
-/-- Charset designations and the shift state (§Replay fix 2). -/
+/-- Charset designations and the shift state. -/
 def charsetAnsi (v : Vt) : Bytes :=
   (if v.g0Line then escCharset 0x28 0x30 else escCharset 0x28 0x42) ++
     (if v.g1Line then escCharset 0x29 0x30 else escCharset 0x29 0x42) ++
@@ -630,7 +625,7 @@ title was the same set-only bug as the modes had, leaving the client showing wha
 its previous occupant set. An empty OSC 2 clears it. -/
 def titleAnsi (v : Vt) : Bytes := escB ++ [0x5D, 0x32, 0x3B] ++ utf8s v.title.toList ++ [0x07]
 
-/-- Final cursor placement — region-relative under DECOM (§Replay fix 5).
+/-- Final cursor placement — region-relative under DECOM.
 It precedes deferred-wrap preparation and clears any partial UTF-8. -/
 def cursorAnsi (v : Vt) : Bytes :=
   if v.modes.origin then csiNum2 (v.cursor.y - v.top + 1) (v.cursor.x + 1) 0x48
@@ -657,28 +652,27 @@ def cursorPendingAnsi (v : Vt) : Bytes :=
   else []
 
 /-- Everything a re-attaching client's terminal needs except the final
-cursor placement. Emission order is load-bearing — each comment names
-the §Replay constraint (specs/archive/bigger-theorems.md):
+cursor placement. Emission order is load-bearing:
 
 1. repaint before modes (IRM would shift cells; charset would
    re-translate ASCII glyphs);
 2. in alt, park the stash cursor/pen *before* `?1049h` — the switch is
    what stashes them, so painting first and switching after would stash
-   wherever the main repaint happened to end (fix 7);
+   wherever the main repaint happened to end;
 3. the saved-cursor replay comes *after* the alt switch (which
    clobbers `saved`) and *before* the scroll region (under the saved
    origin mode its address is relative to the region, still the whole
-   screen there) (fix 3);
-4. the final cursor address is region-relative iff DECOM is on (fix 5,
-   in `cursorAnsi`).
+   screen there);
+4. the final cursor address is region-relative iff DECOM is on
+   (`cursorAnsi`).
 
 Autowrap is deliberately **left on** across the repaint. Turning it off looks
 attractive — it would delete the wrap-pending branches from the row-replay
 induction — but it is wrong: `Vt.printMark` uses `cursor.pending` to tell
 "parked on the margin cell just written" from "positioned before writing it",
 and with wrap off both look identical, so a combining mark in the final column
-attaches one cell to the left. Two fuzz seeds catch it (see SCRATCHPAD,
-2026-08-15). The pending flag is load-bearing, and the replay proof has to
+attaches one cell to the left. Two fuzz seeds catch it. The pending flag is
+load-bearing, and the replay proof has to
 model it rather than legislate it away. -/
 private def restoreBody (v : Vt) : Bytes :=
   prologueAnsi v -- establish the receiver's state
@@ -706,16 +700,15 @@ def defaultTitleAnsi : Bytes := escB ++ [0x5D, 0x32, 0x3B, 0x07]
 user's terminal before it goes.
 
 `prologueAnsi` exists because a *client* is whatever its previous occupant left
-behind. The mirror image was unhandled: the user's **shell** is whatever the
+behind. The mirror image: the user's **shell** is whatever the
 *session* left behind. A client that only restores termios (which is the kernel's
 line discipline, not the terminal's state) hands back a terminal still holding
 whatever the session's last program set — and detaching out of a full-screen
-application is the ordinary way to leave, not an edge case. Measured before this
-existed (SCRATCHPAD 2026-08-15): after `printf` of a full-screen app's opening
-sequences and `ctrl-\`, the shell was left on the alt screen, with mouse
-reporting on, the cursor hidden, bracketed paste on, autowrap off, a six-line
-scroll region, DEC line drawing selected (every ASCII character rendered as a box
-glyph) and a bold red pen.
+application is the ordinary way to leave, not an edge case. Without this, after
+`printf` of a full-screen app's opening sequences and `ctrl-\`, the shell is left
+on the alt screen, with mouse reporting on, the cursor hidden, bracketed paste on,
+autowrap off, a six-line scroll region, DEC line drawing selected (every ASCII
+character rendered as a box glyph) and a bold red pen.
 
 So this is the same discipline as the prologue, pointed the other way, and it is
 a **constant**: what linger hands back does not depend on what the session was
@@ -723,7 +716,7 @@ doing. Each line is a hazard for the next program to use the terminal:
 
 * `ESC \` (ST) — a program that died mid-OSC/DCS (a crashed sixel writer, a
   truncated title) leaves the parser in a string state that would swallow this
-  entire stream, exactly as it swallowed `restore` before `cd7c17b`;
+  entire stream, exactly as it would swallow a `restore` with no lead-in;
 * `?1049l` — leave the alt screen, which also hands back the screen the terminal
   itself saved when the application switched;
 * `4l` (IRM), `?6l` (DECOM), `?7h` (DECAWM), `CSI r` (DECSTBM) — a shell that
@@ -748,9 +741,8 @@ The final empty title establishes an explicit default after parser
 neutralization and the other resets. It preserves those terminal-state
 guarantees, and the next shell prompt can supply its usual title.
 
-Not `DECSTR` (`CSI ! p`), for the reason already recorded in
-`specs/archive/restore-conformance.md`: its reset list varies by terminal, and we would
-be trusting bytes we do not parse. -/
+Not `DECSTR` (`CSI ! p`): its reset list varies by terminal, and we would be
+trusting bytes we do not parse. -/
 def leaveAnsi : Bytes :=
   escSeq 0x5C ++ modeSet 1049 false ++ csiNum 4 0x6C ++ modeSet 25 true ++ modeSet 2004 false ++
     modeSet 1000 false ++
@@ -789,36 +781,25 @@ def rowText (row : Row) : Bytes := utf8s (dropTrailingBlanks (rowChars row))
 
 /-- Scrollback + screen, oldest first; for `linger capture --history`.
 
-One `LF`-terminated line per row. It was
-`String.intercalate "\n" (rows.map rowText) ++ "\n"`, which agrees with this for every
-reachable state and differs only when there are *no* rows at all: the old shape emitted a
-lone newline, this emits nothing. A grid always has at least one row (`clampDim`), so the
-difference is unreachable for a live session and is the more honest output for a decoded
-one.
+One `LF`-terminated line per row, so a terminal with no rows at all, which no live session
+has (`clampDim`), gives no bytes.
 
-**Plain text only, and there is deliberately no colour variant.** This took a
-`withAnsi : Bool` and an unreachable `rowAnsi` branch behind it: the only call site
-passed `false`, all four claims below were stated at `false`, and `Cli.lean` had no flag
-to reach it — so the branch was dead *and* unproved (verified by mutation: replacing that
-branch's body with four junk bytes left `./lake build` and `./lake build Theorems Tests`
-green).
-Deleted rather than wired up, because a colour transcript is not a stated requirement
-and reaching it costs a wire tag: `Msg.history` carries no payload and the tag
-assignment is frozen, so adding colour means a new tag plus a case in each
-of `Wire`'s four exhaustive tag case-bashes. It would also need a *weaker* framing
+**Plain text only, and there is deliberately no colour variant**: a colour transcript is not
+a stated requirement, and reaching it costs a wire tag: `Msg.history` carries no payload and
+the tag assignment is frozen, so adding colour means a new tag plus a case in each of
+`Wire`'s exhaustive tag case-bashes. It would also need a *weaker* framing
 claim of its own rather than a reuse of `history_framing` — `rowAnsi` emits `ESC`, so
 "every byte is `LF` or printable" is false of a coloured stream. -/
 def history (v : Vt) : Bytes :=
   (v.sb.toList ++ v.grid.toList).flatMap (fun row => rowText row ++ [0x0A])
 
 /-- The current screen only — the grid, one LF-terminated plain-text line per
-row; for `linger capture` (specs/archive/agent-cli.md). The shape of `history`
+row; for `linger capture`. The shape of `history`
 minus the ring, so `screenText_framing`/`screenText_lines` carry the
 same anti-forgery claim: a cell cannot inject a line break, and the line count
 is exactly the row count — which is what lets an agent that knows `rows` (from
 `info`) parse the screen positionally. Plain text on purpose: the receiver is
-a parser, not a terminal (colored capture is a non-goal there, and the ANSI
-ladder belongs to specs/archive/scrollback-fidelity.md). -/
+a parser, not a terminal, and colored capture is a non-goal there. -/
 def screenText (v : Vt) : Bytes := v.grid.toList.flatMap (fun row => rowText row ++ [0x0A])
 
 /-- LF-terminated records, as a consumer's parser reads them — the

@@ -68,14 +68,14 @@ example :
       true := by
   native_decide
 
-/-- Fixed-size chunker for the §Stream test: every 7 bytes, which cuts each frame but the last
+/-- Fixed-size chunker for the re-chunking test: every 7 bytes, which cuts each frame but the last
 of the stream below. -/
 def chop7 (l : List UInt8) : List (List UInt8) :=
   if l.length ≤ 7 then [l] else l.take 7 :: chop7 (l.drop 7)
 termination_by l.length
 decreasing_by simp only [List.length_drop]; omega
 
-/-- `feedAll` (§Stream's subject) over a chunking that splits every
+/-- `feedAll` (the subject of `decode_encode_chunked`) over a chunking that splits every
 frame across boundaries delivers exactly the one-shot decode: same
 messages, same order, clean final state. -/
 example :
@@ -117,7 +117,7 @@ example : (decode (encode (.resize 213 58))).2 == [.resize 213 58] := by native_
 example : (decode (encode (.exited 127))).2 == [.exited 127] := by native_decide
 
 /-- Golden frame: `screen` (capture) is tag 16, nullary — frozen-append, so
-16 is `.screen` forever (specs/archive/agent-cli.md). And it round-trips as itself,
+16 is `.screen` forever. And it round-trips as itself,
 not as `.unknown 16`. -/
 example : encode .screen = [16, 0, 0, 0, 0] := by decide
 

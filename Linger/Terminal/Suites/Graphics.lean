@@ -7,23 +7,21 @@ public section
 
 /-! # Linger.Terminal.Suites.Graphics — kitty (APC) and sixel (DCS) image passthrough
 
-Ported from `tests/graphics_test.py`. What linger promises here, and what it does
-not:
+What linger promises here, and what it does not:
 
 * live, while attached: image bytes reach the client's terminal VERBATIM. The
   bounded terminal mediator recognizes only its owned query profile and emits every
   unowned APC/DCS byte unchanged; kitty/sixel enter payload-free passthrough
   states, so no opt-in switch is needed.
 * the emulator IGNORES the payload (parser state `.str` until ST) and accumulates
-  nothing, so a megabyte of base64 cannot grow the session or reach the checkpoint
-  (§Bound).
+  nothing, so a megabyte of base64 cannot grow the session or reach the checkpoint.
 * after detach/reattach: images are GONE. `restore` repaints from the cell grid,
   and cells hold no image data. The text screen comes back; the picture does not.
 
-The third is the documented limitation (`linger help`, and the settled non-goal
-in AGENTS.md). This suite exists so the first two cannot regress silently — a
-future "render from the grid instead of broadcasting" optimization would break
-images with no other test noticing.
+The third is the documented limitation (the settled non-goal in AGENTS.md, and
+`Challenge.lean` claims no images). This suite exists so the first two cannot
+regress silently — a future "render from the grid instead of broadcasting"
+optimization would break images with no other test noticing.
 
 BYTES, AND WHERE THEY COME FROM. The framing is the implementation's: ST is
 `Render.escSeq Mediation.STFinal`, and the two introducers are `Render.escSeq` of
@@ -96,7 +94,7 @@ def run : IO UInt32 :=
     expect (!has (← e.out #["capture", "--history", "gfx"]) "GFXPAYLOAD")
         "image payload does not land in the text grid"
     -- 5. detach, reattach: the text screen restores and the parser is sane. The
-    -- image is gone — the documented limitation, asserted here so the help and the
+    -- image is gone — the documented limitation, asserted here so the documentation and the
     -- behaviour cannot drift apart.
     c.bye
     let c2 ← e.spawn #["attach", "gfx"] 80 24

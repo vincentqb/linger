@@ -8,37 +8,32 @@ public section
 
 The daemon's socket output buffers and pty input backlog share this value type.
 It carries the cap, the policy when it is reached, and the discipline that keeps
-the stored byte sequence equal to the unwritten debt. Those decisions lived in
-`Linger/Session/Shell/Daemon.lean`, where nothing could prove them, and the queues' bounds,
-which `reachableIn_bound` and `reachableOut_bound` (Challenge.lean, part 6) now state, were
-documented as not proved.
+the stored byte sequence equal to the unwritten debt. The queues' bounds are
+`reachableIn_bound` and `reachableOut_bound` (`Challenge.lean`, part 6).
 
 This module is the value; `Linger/Session/Proofs/Buf.lean` is the proof; the daemon is the
 interpreter. That is the same split `Session.step` already uses one layer up (the
 machine decides, the runtime performs syscalls) — extended inward.
 
 **There is no write cursor, and that is the design.** The obvious shape is
-`bytes` plus an `off` the writer advances, which is what the daemon held. It has
+`bytes` plus an `off` the writer advances. It has
 a latent leak: reclaim the written prefix only when the queue *empties*, and a
 peer that drains a little each round grows `bytes` without limit while the debt
-stays small, so a cap on the debt never trips. That bug was real and was fixed by
-compacting on every flush — after which `off` is always `0` between rounds, so the
-field only ever held a value *inside* the write loop. Carrying it in the
-persistent state bought nothing and cost an invariant (`off ≤ bytes.size`) that no
-type enforced and every content proof needed. So the queue stores exactly the bytes
+stays small, so a cap on the debt never trips. Compacting on every flush closes it,
+and then `off` is always `0` between rounds, so the
+field would only ever hold a value *inside* the write loop. Carrying it in the
+persistent state would buy nothing and cost an invariant (`off ≤ bytes.size`) that no
+type enforces and every content proof needs. So the queue stores exactly the bytes
 still owed; the write loop keeps its cursor as a local `Nat` and calls `bufAdvance`
-once when it stops. Same single copy per flush as before, and the leak is now
+once when it stops. That is one copy per flush, and the leak is
 **unrepresentable** rather than merely absent.
 
-**The field is `private` (2026-08-19, the module system).** The 2026-08-18
-measurement said "not adoptable yet" for two reasons, and the module system
-retired both: proofs no longer have to move here — `Linger/Session/Proofs/Buf.lean` is a
-`module` with `import all Linger.Session.Buf`, the friend import — and
-the write hole is closed, because a private field makes the *constructor*
-private, so structure-instance notation can no longer write or forge where it
+**The field is `private`.** `Linger/Session/Proofs/Buf.lean` is a `module` with
+`import all Linger.Session.Buf`, the friend import, and a private field makes the
+*constructor* private, so structure-instance notation cannot write or forge where it
 cannot read (all three refuse from the runtime, break-verified). The
-runtime's discipline is now compiler-enforced at this boundary; `scripts/gates.sh`'s
-three greps stay unweakened, because they guard the half privacy cannot see — a
+runtime's discipline is compiler-enforced at this boundary; `scripts/gates.sh`'s
+three greps guard the half privacy cannot see — a
 *parallel* `ByteArray` queue declared in the runtime is sealed by nothing here.
 
 **`ByteArray`, not `List UInt8`.** The other pure modules speak `List UInt8`
@@ -46,8 +41,8 @@ because the emitters must reduce in the kernel; a queue must not. A 4 MiB
 `List UInt8` costs ~48 bytes per byte and `++` is O(left), so every `.send` would
 become a multi-megabyte cons walk. `ByteArray` in a pure module is house-legal — the
 purity gate bans unproved axioms, `partial` definitions and effects, not a choice
-of representation — and is not even the first: `Vt.feedBytes` has taken one since
-long before this (a `Tests/`-facing convenience, which is all the precedent needs
+of representation — and is not the only one: `Vt.feedBytes` takes one too
+(a `Tests/`-facing convenience, which is all the precedent needs
 — it establishes that the gate admits the type, not that the daemon calls it).
 Nothing here is stated through
 `ByteArray.toList`, which is a `get!` + `reverse` loop.
@@ -66,7 +61,7 @@ structure BufRec where
 `BufRec`, because `Challenge.lean` declares the type as a hole the program fills. -/
 abbrev Buf : Type := BufRec
 
-/-- The empty queue. The public door where `{}` used to be: a private field
+/-- The empty queue, the public door into one: a private field
 makes the anonymous constructor private, which is the point — an importer can
 start a queue but not forge one mid-debt. -/
 def Buf.empty : Buf := {}

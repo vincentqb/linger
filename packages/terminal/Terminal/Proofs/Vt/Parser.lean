@@ -6,9 +6,9 @@ namespace Terminal.Vt
 
 /-! ## No half-decoded character (`u8need`) survives an operation
 
-The companion of the `pstate` layer above. Same staged shape, same
-reason: §Replay needs to know that a restore stream leaves the emulator
-holding no partial UTF-8 sequence, so a checkpoint taken right after a
+The companion of the `pstate` layer in `packages/terminal/Terminal/Proofs/Vt/State.lean`.
+Same staged shape, same reason: the replay needs to know that a restore stream leaves the
+emulator holding no partial UTF-8 sequence, so a checkpoint taken right after a
 reattach is exact and the next byte from the application is read as
 itself.
 
@@ -491,14 +491,12 @@ theorem uz_feed :
 
 /-! ## The grid keeps its dimensions
 
-The third invariance layer, and the one the step-4 notes recorded as
-open: "every operation preserves `cols`/`rows` syntactically except RIS
-(which re-derives them via `clampDim`, identity under `Good`), but
-stating it needs per-op lemmas". Here they are — the same staged,
-equation-form shape as the `pstate` and `u8need` layers, over the pair
-`dims v = (v.cols, v.rows)` so one lemma covers both fields.
+The third invariance layer: every operation preserves `cols`/`rows` syntactically
+except RIS, which re-derives them via `clampDim`, the identity under `Good`. Stating it
+takes per-operation lemmas, the same staged, equation-form shape as the `pstate` and
+`u8need` layers, over the pair `dims v = (v.cols, v.rows)` so one lemma covers both fields.
 
-Needed because §Replay's cursor claim goes through `moveTo`, which clamps
+Needed because the replay's cursor claim goes through `moveTo`, which clamps
 against the *replayed* state's dimensions: `w.cursor = v.cursor` is only
 meaningful once `w.cols = v.cols`.
 
@@ -754,11 +752,11 @@ theorem dims_feed_ne_ris :
       (dims_feed_ne_ris xs (fun b hb => h b (by simp [hb]))).trans
         (dims_step_ne_ris x (h x (by simp)))
 
-/-! ## §Ruler — the tab stops keep pace with the width
+/-! ## The ruler: the tab stops keep pace with the width
 
 Another instance of the invariance-layer recipe the `dims` section above set up, and
 the one `Render.restore_tabs_any` needs: its premise `v.tabs.size = v.cols` holds of
-every reachable state (`tabsOk_of_liveReachable`, `specs/archive/vt-toolkit.md` Step 3).
+every reachable state (`tabsOk_of_liveReachable`).
 
 `tabs` is written in exactly five places in the whole emulator — `Vt.init` and
 `Vt.resize` install `defaultTabs`, `TBC 0`/`HTS` poke one stop with
@@ -772,9 +770,9 @@ moves the value.
 
 /-- A fresh ruler is exactly `cols` long — the `hvtabs` witness for a live session,
 and the reason the hypothesis is discharged rather than assumed at every call site
-that starts from `Vt.init`. Stated here rather than in `packages/terminal/Terminal/Proofs/Render/Tabs.lean`,
-where it used to live, because the invariant below is what generalises it and both
-`Vt.init` and `Vt.resize` need it. -/
+that starts from `Vt.init`. Stated here rather than in
+`packages/terminal/Terminal/Proofs/Render/Tabs.lean` because the invariant below is what
+generalises it and both `Vt.init` and `Vt.resize` need it. -/
 theorem size_defaultTabs (c : Nat) : (defaultTabs c).size = c := by
   unfold defaultTabs
   simp
@@ -1046,7 +1044,7 @@ theorem tabsOk_feed : ∀ (bs : List UInt8) {v : Vt}, TabsOk v → TabsOk (v.fee
 
 /-! ## Origin mode survives everything that is not a mode set or a cursor restore
 
-The rung §Replay's *restore-level* cursor claim stands on: a session with
+The rung the replay's *restore-level* cursor claim stands on: a session with
 DECOM off must replay with DECOM off, or the final `CUP` would be read
 region-relative and land somewhere else.
 
@@ -1055,7 +1053,7 @@ by `setMode` and by the restores of a saved cursor, which `csiDispatch` reaches 
 `h`/`l` finals and `CSI u`, and `stepEsc` through `ESC 8` and `RIS`. So one conditional lemma
 (`org_setMode`: only *private* mode 6 and the resets of 1048 and 1049, which restore a saved
 cursor, touch `origin`) plus the usual arm sweep carries it. Fourth instance of the
-invariance-layer recipe, and the one that will also serve pen, region and mode fidelity.
+invariance-layer recipe.
 -/
 
 theorem org_foldl {α : Type} (f : Vt → α → Vt) (hf : ∀ v a, (f v a).modes.origin = v.modes.origin) :
@@ -1379,8 +1377,8 @@ theorem org_stepCsi_pending (v : Vt) (s : CsiState) (b : UInt8) (hu : b ≠ 0x75
 /-! ### The dispatcher: `origin` across one whole `Vt.step`
 
 The lemmas above are per parser state; a byte-stream proof composes
-`Vt.step` itself (`packages/terminal/Terminal/Proofs/Render.lean`). `abortUtf8` runs first inside
-`step` and touches only `u8need`/`u8acc`, so each case is its branch
+`Vt.step` itself (`packages/terminal/Terminal/Proofs/Render/Quiet.lean`). `abortUtf8` runs
+first inside `step` and touches only `u8need`/`u8acc`, so each case is its branch
 lemma followed by `org_abortUtf8`. -/
 
 theorem org_step_of_ground {v : Vt} (b : UInt8) (hg : v.pstate = .ground) :
