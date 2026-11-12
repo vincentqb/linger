@@ -280,7 +280,7 @@ theorem handle_stopped_exits (execute : Interpreter World) (r : Result State Wor
   split
   · assumption
   · have hexit : (batch execute r (.stopped o)).1.exiting = true := by
-      simpa [batch] using (Session.step_exit_iff r.st (.stopped o)).mpr ⟨o, .inr rfl⟩
+      simpa [batch] using (Session.step_exit_iff r.st (.stopped o)).mpr rfl
     simp [hexit]
 
 /-- Handling events among which a stopped program's end is ends with the driver exited. -/

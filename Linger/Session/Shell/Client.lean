@@ -21,7 +21,9 @@ public section
 The attach client is deliberately dumb: raw mode, forward stdin bytes
 as `input` frames (watching for the detach key), write `output` frames
 to stdout, resize on terminal size change (checked each poll round), and
-report detach, child exit, daemon refusal, or transport loss distinctly.
+report detach, child exit, a saved session, daemon refusal, transport loss, or a signal that
+ended it distinctly. SIGTERM, SIGHUP and SIGINT (`Os.Shell.handbackSignals`) end it as a detach
+does, handing the terminal back first.
 
 Detach key: `ctrl-\` (0x1C); set `LINGER_NO_DETACH_KEY` to disable it for writable attach.
 -/
@@ -51,27 +53,25 @@ a nonblocking `fd` would block, or when the write fails. -/
 def sendMsg (fd : UInt32) (m : Msg) : IO Unit :=
   writeAll fd (ByteArray.mk (Linger.Session.Wire.encode m).toArray)
 
-/-- How a session's program ended, as its daemon reported it. -/
+/-- How a session ended, as its daemon reported it. -/
 inductive Ending where
   /-- The daemon said how the program ended, as daemons at `Wire.protocol` 2 and later do. -/
   | outcome (outcome : Linger.Session.Outcome)
   /-- An older daemon reported only the exit status a shell would show. -/
   | status (status : UInt32)
+  /-- The daemon said that this signal stopped it and that it saved the session, as daemons at
+  `Wire.protocol` 4 and later do. -/
+  | saved (signal : UInt8)
   deriving Repr, Inhabited
 
-/-- The exit status a caller sees: `Outcome.status` for a reported outcome, else the status an
-older daemon reported. -/
-def Ending.exitStatus : Ending → UInt32
-  | .outcome reported => reported.status
-  | .status reported => reported
-
-/-- The ending in words: the exit status, the signal that killed the program, or that linger did
-not see how it ended. -/
+/-- The ending in words: the exit status, the signal that killed the program, that linger did
+not see how it ended, or the signal that stopped the daemon, which saved the session. -/
 def Ending.describe : Ending → String
   | .outcome (.exited code) => s!"status {code}"
   | .outcome (.signaled signal) => s!"killed by signal {signal}"
   | .outcome .unknown => "outcome unknown"
   | .status reported => s!"status {reported}"
+  | .saved signal => s!"saved: signal {signal} stopped its daemon"
 
 /-- How a request/reply conversation ended. Messages stay data until the CLI
 chooses an exit status and diagnostic; a refusal or transport loss cannot collapse
@@ -138,6 +138,8 @@ private def drainReplies (fd : UInt32) (untilDone : Bool) (silenceMs : Int32 := 
           return .exited (.outcome outcome)
         | .exited status =>
           return .exited (.status status)
+        | .saved signal =>
+          return .exited (.saved signal)
         | .done =>
           if untilDone then
             return .done
@@ -199,14 +201,17 @@ inductive Outcome where
   | refused (msg : String)
   /-- The socket closed or its framing became invalid before an outcome. -/
   | lost (why : String)
+  /-- A signal ended the client, which handed the terminal back first. -/
+  | interrupted
   deriving Repr, Inhabited
 
 /-- A fixed checkpoint view. Redraw from the original snapshot on resize;
 discard input except the detach key. The title shows `status`, the saved session's.
 Ownership was released after loading, so this viewer cannot block another process from
-resuming the session. -/
+resuming the session. A signal of `handbackSignals` ends it as the detach key does. -/
 def viewSaved (name : String) (snapshot : Terminal.Vt.Vt) (status : Linger.Display.Status.Status) :
     IO Outcome := do
+  let stops ← watch handbackSignals
   let saved ← termRaw stdinFd
   try
     let fds := #[stdinFd]
@@ -235,6 +240,8 @@ def viewSaved (name : String) (snapshot : Terminal.Vt.Vt) (status : Linger.Displ
         writeAll stdoutFd (ByteArray.mk (Terminal.Title.update view title).toArray)
         lastSize := some size
       let ready ← poll fds events 200
+      if ← stops.heard then
+        return .interrupted
       if ready[0]! &&& POLLNVAL != 0 then
         throw (IO.userError "viewer input descriptor became invalid")
       if ready[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
@@ -250,12 +257,15 @@ def viewSaved (name : String) (snapshot : Terminal.Vt.Vt) (status : Linger.Displ
       writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
     finally
       termRestore stdinFd saved
+      stops.stop
 
 /-- One attach conversation; it owns the socket. `sample` computes the title's
 attention summary on its own task, one second after the previous sample completed;
-a failed sample shows the unknown icon. -/
+a failed sample shows the unknown icon. A signal of `handbackSignals` ends it as a detach does,
+the terminal handed back on the same path, and it answers `interrupted`. -/
 private def converse (name : String) (fd : UInt32) (sample : IO String) (readOnly : Bool)
     (pending : IO.Ref (Option (Task (Except IO.Error String)))) : IO Outcome := do
+  let stops ← watch handbackSignals
   try
     let detachEnabled := Linger.Os.Env.detachEnabled readOnly (← IO.getEnv "LINGER_NO_DETACH_KEY")
     -- the rights travel as the mode, and the size, 0×0 for a terminal that has none yet, as
@@ -288,6 +298,10 @@ private def converse (name : String) (fd : UInt32) (sample : IO String) (readOnl
         if (← pending.get).isNone && (← monotonicMs) ≥ nextSummary then
           pending.set (some (← IO.asTask sample Task.Priority.dedicated))
         let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] 200
+        if ← stops.heard then
+          result := .interrupted
+          leaving := true
+          continue
         let size ← winsizeGet stdinFd
         if size != lastSize && !readOnly then
           lastSize := size
@@ -332,6 +346,9 @@ private def converse (name : String) (fd : UInt32) (sample : IO String) (readOnl
                   | .exited status =>
                     result := .ended (.status status)
                     leaving := true
+                  | .saved signal =>
+                    result := .ended (.saved signal)
+                    leaving := true
                   | .err msg =>
                     result := .refused (replyText "attach refused" msg)
                     leaving := true
@@ -353,6 +370,7 @@ private def converse (name : String) (fd : UInt32) (sample : IO String) (readOnl
         termRestore stdinFd saved
     return result
   finally
+    stops.stop
     close fd
 
 /-- Interactive attach. `readOnly` attaches read-only: output mirrors, keyboard is not

@@ -26,13 +26,16 @@ Active and retired client transports share `maxClients`. Logical close reports
 `.closed` immediately; accepted bytes may drain until the connection's fixed
 deadline. Final shutdown also has a finite drain grace period.
 
-The session ends when its program does. The daemon hears a child end through the descriptor
-`childEndFd` makes, whether or not a background job still holds the terminal, and then reaps
-the program without blocking and reports how it ended; the terminal's end of file ends nothing
-by itself. A kill stops the program first, with each signal of `Session.ending` in turn
-(`Effect.stopProgram`), and the session then ends as it does when its program ends by itself.
-Between events it sleeps until the session's next tick (`State.nextTick`), so an idle session
-costs no wakeup.
+The session ends when its program does, or when a stop signal stops the daemon. The daemon hears
+both through its signal pipe (`signalPipe`): a child's end, whether or not a background job still
+holds the terminal, after which it reaps the program without blocking and reports how it ended,
+and SIGHUP, SIGINT, SIGQUIT or SIGTERM, which it reports as the session's event
+(`Event.signal`); the terminal's end of file ends nothing by itself. A kill stops the program
+first, with each signal of `Session.ending` in turn (`Effect.stopProgram`), and the session then
+ends as it does when its program ends by itself; a stop signal stops the program the same way,
+and the session then ends saved, with an end record that says which signal stopped it
+(`Effect.record`). Between events it sleeps until the session's next tick (`State.nextTick`), so
+an idle session costs no wakeup.
 
 `Linger/Session/Proofs/Buf.lean` proves the byte-buffer caps, shared allowance and removal of
 written prefixes. `packages/terminal/Terminal/Proofs/Replay.lean` proves the cursor's exact stream,
@@ -174,9 +177,11 @@ structure Rt where
   can exit while its background jobs hold the terminal, and a program can close its terminal and
   keep running. Only the program's own exit ends the session. -/
   ptyOpen : Bool := true
-  /-- The descriptor `childEndFd` made readable when a child of the daemon ends, or `none` when
-  it could not be made, and every poll round then asks whether the program has ended. -/
-  childEnd : Option UInt32 := none
+  /-- The read end of the daemon's signal pipe (`signalPipe`), which carries a 0 when a child of
+  the daemon ends and the number of each stop signal the daemon hears, or `none` when it could not
+  be made: every poll round then asks whether the program has ended, and a stop signal has its
+  default action. -/
+  signals : Option UInt32 := none
   /-- How the program ended, once a wait has said. The program stays unreaped until `serve` has
   ended the rest of its terminal session, so its pid stays its own until then. -/
   ending : Option Outcome := none
@@ -203,6 +208,10 @@ structure Rt where
   /-- Whether the last record write failed, so the log records the failure once rather than
   once per event. -/
   recordFailed : Bool := false
+  /-- The end record the session asked to leave (`Effect.record`), which `serve` writes before it
+  gives the name up; a daemon that ends before the session asks for one records how its program
+  ended. -/
+  final : Option Linger.Session.Record := none
 
 /-- A diagnostic write failure must not turn recovery into session loss. -/
 private def report (message : String) : IO Unit := do
@@ -553,6 +562,9 @@ private def perform (st : State) (rt : Rt) : (eff : Effect Plan) → IO (Rt × D
     catch err =>
       report s!"linger: checkpoint delete failed: {err}"
     return (rt, ())
+  -- the end record is written last, once the session's processes have ended (`serve`)
+  | .record r => do
+    return ({ rt with final := some r }, ())
   | .exit => do
     return (rt, ())
 
@@ -570,7 +582,7 @@ private def failed (rt : Rt) : (eff : Effect Plan) → BaseIO (Rt × Driver.Repl
     return (rt, true)
   | .stopProgram => do
     return ({ rt with ending := some .unknown }, .unknown)
-  | .writePty _ | .resizePty .. | .dropCheckpoint | .exit => do
+  | .writePty _ | .resizePty .. | .dropCheckpoint | .record _ | .exit => do
     return (rt, ())
 
 /-- The executor the driver runs, which answers every effect and raises nothing
@@ -606,10 +618,12 @@ private def finalReads : Nat := 16
 
 /-- One poll round: gather events from fd readiness. It sleeps until an event or its first
 deadline (`Session.pollTimeout`): the session's next tick, a retired transport's drain,
-admission's retry, and without a child-end descriptor a timer that asks whether the program has
-ended. With none, it waits for an event however long that takes, unless the caller bounds the
-wait with `limitMs`, as a suite that drives the round by hand does. The program's end is asked
-after only when the child-end descriptor says a child ended, or every round without one. -/
+admission's retry, and without a signal pipe a timer that asks whether the program has ended.
+With none, it waits for an event however long that takes, unless the caller bounds the wait with
+`limitMs`, as a suite that drives the round by hand does. The program's end is asked after only
+when the signal pipe carried a byte, or every round without one, and a stop signal the pipe
+carried is the session's event, before the program's end when it came first
+(`Session.stopOf`). -/
 def pollRound (rt : Rt) (limitMs : Option Nat := none) : IO (Rt × List Event) := do
   let now ← monotonicMs
   let rt ← expireConns rt now
@@ -622,7 +636,7 @@ def pollRound (rt : Rt) (limitMs : Option Nat := none) : IO (Rt × List Event) :
   if let some limit := limitMs then
     deadlines := (now + limit) :: deadlines
   -- once the terminal has closed, the program's end usually follows at once
-  if rt.childEnd.isNone && rt.ending.isNone then
+  if rt.signals.isNone && rt.ending.isNone then
     deadlines := (now + if rt.ptyOpen then 1000 else rt.reapWaitMs) :: deadlines
   for c in rt.conns do
     if let some deadline := c.closeBy then
@@ -635,10 +649,10 @@ def pollRound (rt : Rt) (limitMs : Option Nat := none) : IO (Rt × List Event) :
   -- snapshot: only these conns are in the poll set; accepts during
   -- this round join the NEXT one (revs stays index-aligned)
   let polled := rt.conns
-  let watchEnd := rt.ending.isNone && rt.childEnd.isSome
+  let watchEnd := rt.ending.isNone && rt.signals.isSome
   let mut fds : Array UInt32 :=
     #[rt.listenFd, if rt.ptyOpen then rt.ptyFd else closedFd,
-      if watchEnd then rt.childEnd.getD closedFd else closedFd]
+      if watchEnd then rt.signals.getD closedFd else closedFd]
   let mut evts : Array UInt32 :=
     #[(if accepting then POLLIN else 0), POLLIN ||| (if owedLen rt.ptyIn != 0 then POLLOUT else 0),
       POLLIN]
@@ -724,18 +738,17 @@ def pollRound (rt : Rt) (limitMs : Option Nat := none) : IO (Rt × List Event) :
         | none =>
           rt ← rt.closeConn c.fd
           events := events ++ [.closed c.fd.toNat]
-  -- the program's end, whatever still holds its terminal: asked after when a child ended, and
-  -- every round when no descriptor says so. The byte is read first, so an end the signal
-  -- reports after this read wakes the next round.
-  let asked ←
-    if watchEnd then
-      if revs[2]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
-        discard <| (read (rt.childEnd.getD closedFd) 65536).toBaseIO
-        pure true
-      else
-        pure false
-    else
-      pure true
+  -- the program's end, whatever still holds its terminal, and the daemon's stop: the pipe
+  -- carries them in the order they came, a 0 for a child's end and a stop signal's number. The
+  -- end is asked after when the pipe carried a byte, and every round with no pipe. The bytes
+  -- are read first, so a signal after this read wakes the next round.
+  let mut heard : List UInt8 := []
+  let mut asked := !watchEnd
+  if watchEnd && revs[2]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
+    asked := true
+    if let .ok (some bytes)← (read (rt.signals.getD closedFd) 65536).toBaseIO then
+      heard := bytes.toList
+  let mut ended : List Event := []
   if rt.ending.isNone && asked then
     match ← programEnd rt.childPid with
     | none =>
@@ -752,13 +765,21 @@ def pollRound (rt : Rt) (limitMs : Option Nat := none) : IO (Rt × List Event) :
             | some bs =>
               if bs.isEmpty then
                 break
-              events := events ++ [.ptyOut bs.toList]
+              ended := ended ++ [.ptyOut bs.toList]
             | none =>
               rt := { rt with ptyOpen := false }
               break
         catch err =>
           report s!"linger: reading the program's last output failed: {err}"
-      events := events ++ [.childExited outcome]
+      ended := ended ++ [.childExited outcome]
+  -- a stop that came before every child's end ends the session even if the program ended too
+  match Linger.Session.stopOf heard with
+  | some (signal, true) =>
+    events := events ++ .signal signal :: ended
+  | some (signal, false) =>
+    events := events ++ ended ++ [.signal signal]
+  | none =>
+    events := events ++ ended
   return (rt, events)
 
 /-- Stop admitting work and drain accepted bytes, with a finite grace period.
@@ -976,14 +997,16 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
         -- the syscall boundary; resizing the restored VT would reset its margins.
         let vt0 := Linger.Session.bootVt (restore.map (·.1))
         let created ← realtimeS
-        -- before the program starts, so its end always reaches the descriptor; without one, every
-        -- poll round asks whether the program has ended
-        let childEnd ←
-          match ← childEndFd.toBaseIO with
+        -- before the program starts, so its end always reaches the pipe; without one, every poll
+        -- round asks whether the program has ended, and a stop signal has its default action
+        let signals ←
+          match ← signalPipe.toBaseIO with
           | .ok fd =>
             pure (some fd)
           | .error err =>
-            report s!"linger: waiting for the program's end on a timer: {err}"
+            report
+                s!"linger: waiting for the program's end on a timer, and a stop signal ends the \
+                  daemon at once: {err}"
             pure none
         -- The name is this session's from here on: should the daemon end without saying how
         -- its program ended, a reader that holds the name hears that the ending is unknown,
@@ -1021,7 +1044,7 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
         -- whatever fails after that round.
         let latest ←
           IO.mkRef
-              ({ st, listenFd, ptyFd, childPid := pid, childEnd, saveCkpt, dropCkpt,
+              ({ st, listenFd, ptyFd, childPid := pid, signals, saveCkpt, dropCkpt,
                  saveRecord := record.save } :
                 Rt)
         try
@@ -1049,9 +1072,9 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
           let outcome ← stopProgram rt
           let rt ← settleRecord rt
           try
-            record.save (.ended outcome)
+            record.save (rt.final.getD (.ended outcome))
           catch err =>
-            report s!"linger: recording how the program ended failed: {err}"
+            report s!"linger: recording how the session ended failed: {err}"
           -- the session's last screen reaches the disk while the name is still this session's
           discard <| finishSaves rt
           -- the program is reaped last: until then its zombie keeps its pid, which is its
@@ -1062,7 +1085,7 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
             report s!"linger: ending the session's processes failed: {err}"
           discard <| reapNohang rt.childPid
           close rt.ptyFd
-          if let some fd := rt.childEnd then
+          if let some fd := rt.signals then
             close fd
       finally
         close listenFd

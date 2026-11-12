@@ -1102,37 +1102,123 @@ theorem step_kill_stops_rejects_exit :
   simp at stopped
 
 theorem step_ended_reports (s : State) (ev : Event) :
-    (Effect.exit ∈ (Session.step s ev).2 ↔ ∃ o, ev = .childExited o ∨ ev = .stopped o) ∧
-      ∀ o,
-        ev = .childExited o ∨ ev = .stopped o →
-          (Session.step s ev).2.getLast? = some .exit ∧
-            ∀ c ∈ s.roster,
-              c.attached = true ∨ c.waiting = true →
-                [Effect.send c.id (.ended o), Effect.send c.id (.exited o.status)] <:+:
-                  (Session.step s ev).2 := Session.step_ended_reports s ev
+    (Effect.exit ∈ (Session.step s ev).2 ↔ ev.ends.isSome) ∧
+      ∀ e keep,
+        ev.ends = some (e, keep) →
+          ∃ front,
+            (Session.step s ev).2 =
+                front ++
+                  [.record e.record, if keep then Effect.checkpoint else Effect.dropCheckpoint,
+                    .exit] ∧
+              Effect.checkpoint ∉ front ∧
+              Effect.dropCheckpoint ∉ front ∧
+              (∀ c ∈ s.roster,
+                c.attached = true ∨ c.waiting = true → e.told.map (Effect.send c.id) <:+: front) ∧
+              (Session.step s ev).1.terminal = s.terminal := Session.step_ended_reports s ev
 
 theorem step_ended_reports_rejects_status :
     ¬∀ (s : State) (ev : Event),
         (Effect.exit ∈
-              ((fun s _ => (s, ([.send 0 (.exited 1), .exit] : List (Effect Replay.Plan)))) s
-                  ev).2 ↔
-            ∃ o, ev = .childExited o ∨ ev = .stopped o) ∧
-          ∀ o,
-            ev = .childExited o ∨ ev = .stopped o →
-              ((fun s _ => (s, ([.send 0 (.exited 1), .exit] : List (Effect Replay.Plan)))) s
-                      ev).2.getLast? =
-                  some .exit ∧
-                ∀ c ∈ (fun (_ : State) => [({ id := 0, attached := true } : Client)]) s,
-                  c.attached = true ∨ c.waiting = true →
-                    [Effect.send c.id (.ended o), Effect.send c.id (.exited o.status)] <:+:
-                      ((fun s _ => (s, ([.send 0 (.exited 1), .exit] : List (Effect Replay.Plan))))
-                          s ev).2 := by
+              ((fun s _ =>
+                    (s,
+                      ([.send 0 (.exited 1), .record (.ended .unknown), .checkpoint, .exit] :
+                        List (Effect Replay.Plan))))
+                  s ev).2 ↔
+            ev.ends.isSome) ∧
+          ∀ e keep,
+            ev.ends = some (e, keep) →
+              ∃ front,
+                ((fun s _ =>
+                          (s,
+                            ([.send 0 (.exited 1), .record (.ended .unknown), .checkpoint, .exit] :
+                              List (Effect Replay.Plan))))
+                        s ev).2 =
+                    front ++
+                      [.record e.record, if keep then Effect.checkpoint else Effect.dropCheckpoint,
+                        .exit] ∧
+                  Effect.checkpoint ∉ front ∧
+                  Effect.dropCheckpoint ∉ front ∧
+                  (∀ c ∈ (fun (_ : State) => [({ id := 0, attached := true } : Client)]) s,
+                    c.attached = true ∨ c.waiting = true →
+                      e.told.map (Effect.send c.id) <:+: front) ∧
+                  ((fun s _ =>
+                          (s,
+                            ([.send 0 (.exited 1), .record (.ended .unknown), .checkpoint, .exit] :
+                              List (Effect Replay.Plan))))
+                        s ev).1.terminal =
+                    s.terminal := by
   intro h
-  have heard :=
-    ((h (State.boot (Vt.Vt.init 1 1) [] []) (.childExited .unknown)).2 .unknown (.inl rfl)).2
-      { id := 0, attached := true } (by simp) (.inl rfl)
-  have same := heard.eq_of_length rfl
-  simp at same
+  obtain ⟨front, effects, -, -, heard, -⟩ :=
+    (h (State.boot (Vt.Vt.init 1 1) [] []) (.childExited .unknown)).2 (.program .unknown) true rfl
+  have only :
+    [Effect.send 0 (.exited 1)] ++ [.record (.ended .unknown), .checkpoint, .exit] =
+      front ++ [.record (.ended .unknown), .checkpoint, .exit] :=
+    effects
+  rw [← List.append_cancel_right only] at heard
+  -- the ending's two messages cannot fit in the one the wrong daemon sends
+  have short := (heard { id := 0, attached := true } (by simp) (.inl rfl)).length_le
+  simp [Ending.told] at short
+
+theorem step_signal_saves (s : State) (n : UInt8) :
+    ∃ front,
+      (Session.step s (.signal n)).2 =
+          .stopProgram :: front ++ [.record (.saved n), .checkpoint, .exit] ∧
+        Effect.dropCheckpoint ∉ front ∧
+        (∀ c ∈ s.roster,
+          c.attached = true ∨ c.waiting = true → Effect.send c.id (.saved n) ∈ front) ∧
+        (Session.step s (.signal n)).1.terminal = s.terminal := Session.step_signal_saves s n
+
+theorem step_signal_saves_rejects_drop :
+    ¬∀ (s : State) (n : UInt8),
+        ∃ front,
+          ((fun (s : State) (_ : Event) =>
+                    (s,
+                      ([.stopProgram, .record (.saved 15), .dropCheckpoint, .exit] :
+                        List (Effect Replay.Plan))))
+                  s (.signal n)).2 =
+              .stopProgram :: front ++ [.record (.saved n), .checkpoint, .exit] ∧
+            Effect.dropCheckpoint ∉ front ∧
+            (∀ c ∈ s.roster,
+              c.attached = true ∨ c.waiting = true → Effect.send c.id (.saved n) ∈ front) ∧
+            ((fun (s : State) (_ : Event) =>
+                    (s,
+                      ([.stopProgram, .record (.saved 15), .dropCheckpoint, .exit] :
+                        List (Effect Replay.Plan))))
+                  s (.signal n)).1.terminal =
+              s.terminal := by
+  intro h
+  obtain ⟨front, effects, -⟩ := h (State.boot (Vt.Vt.init 1 1) [] []) 15
+  have short := congrArg List.length effects
+  simp only [List.length_cons, List.length_append, List.length_nil] at short
+  have empty : front = [] := List.eq_nil_of_length_eq_zero (by omega)
+  subst empty
+  simp at effects
+
+theorem step_signal_saves_rejects_silent :
+    ¬∀ (s : State) (n : UInt8),
+        ∃ front,
+          ((fun (s : State) (_ : Event) =>
+                    (s,
+                      ([.stopProgram, .record (.saved 15), .checkpoint, .exit] :
+                        List (Effect Replay.Plan))))
+                  s (.signal n)).2 =
+              .stopProgram :: front ++ [.record (.saved n), .checkpoint, .exit] ∧
+            Effect.dropCheckpoint ∉ front ∧
+            (∀ c ∈ (fun (_ : State) => [({ id := 0, attached := true } : Client)]) s,
+              c.attached = true ∨ c.waiting = true → Effect.send c.id (.saved n) ∈ front) ∧
+            ((fun (s : State) (_ : Event) =>
+                    (s,
+                      ([.stopProgram, .record (.saved 15), .checkpoint, .exit] :
+                        List (Effect Replay.Plan))))
+                  s (.signal n)).1.terminal =
+              s.terminal := by
+  intro h
+  obtain ⟨front, effects, -, heard, -⟩ := h (State.boot (Vt.Vt.init 1 1) [] []) 15
+  have short := congrArg List.length effects
+  simp only [List.length_cons, List.length_append, List.length_nil] at short
+  have empty : front = [] := List.eq_nil_of_length_eq_zero (by omega)
+  subst empty
+  simpa using heard { id := 0, attached := true } (by simp) (.inl rfl)
 
 theorem step_stopped_discards (s : State) (o : Outcome) :
     (∃ front,
@@ -1186,50 +1272,76 @@ theorem step_childExited_keeps_rejects_drop :
   exact kept (List.mem_singleton_self _)
 
 theorem record_answer (afterSave : List UInt8 → Option (List UInt8)) (kept : Record.Kept afterSave)
-    (o : Outcome) (seen : Option Seen) (file : Option (List UInt8)) :
-    Record.answer (afterSave (Record.encode (.ended o))) = some o ∧
-      Record.answer (afterSave (Record.encode (.running seen))) = some .unknown ∧
+    (o : Outcome) (n : UInt8) (seen : Option Seen) (file : Option (List UInt8)) :
+    Record.answer (afterSave (Record.encode (.ended o))) = some (.program o) ∧
+      Record.answer (afterSave (Record.encode (.saved n))) = some (.saved n) ∧
+      Record.answer (afterSave (Record.encode (.running seen))) = some (.program .unknown) ∧
       (Record.answer file).isSome = file.isSome := by
-  rw [kept, kept]
-  exact ⟨Record.answer_ended o, Record.answer_running seen, Record.answer_isSome file⟩
+  rw [kept, kept, kept]
+  exact
+    ⟨Record.answer_ended o, Record.answer_saved n, Record.answer_running seen,
+      Record.answer_isSome file⟩
 
 theorem record_answer_rejects_unknown :
     ¬∀ (afterSave : List UInt8 → Option (List UInt8)),
         Record.Kept afterSave →
-          ∀ (o : Outcome) (seen : Option Seen) (file : Option (List UInt8)),
-            (fun (_ : Option (List UInt8)) => some Outcome.unknown)
+          ∀ (o : Outcome) (n : UInt8) (seen : Option Seen) (file : Option (List UInt8)),
+            (fun (_ : Option (List UInt8)) => some (Ending.program .unknown))
                   (afterSave (Record.encode (.ended o))) =
-                some o ∧
-              (fun (_ : Option (List UInt8)) => some Outcome.unknown)
+                some (.program o) ∧
+              (fun (_ : Option (List UInt8)) => some (Ending.program .unknown))
+                  (afterSave (Record.encode (.saved n))) =
+                some (.saved n) ∧
+              (fun (_ : Option (List UInt8)) => some (Ending.program .unknown))
                   (afterSave (Record.encode (.running seen))) =
-                some .unknown ∧
-              ((fun (_ : Option (List UInt8)) => some Outcome.unknown) file).isSome =
+                some (.program .unknown) ∧
+              ((fun (_ : Option (List UInt8)) => some (Ending.program .unknown)) file).isSome =
                 file.isSome := by
   intro h
   -- a file system that keeps every record whole, as the claim says
-  exact absurd (h some (fun _ => rfl) (.exited 0) none none).1 (by simp)
+  exact absurd (h some (fun _ => rfl) (.exited 0) 15 none none).1 (by simp)
 
-theorem wait_ending (deadline heldSince : Option Nat) (now : Nat) (o : Outcome) :
-    App.Wait.decide deadline heldSince now (.ended o) = .answer (App.Answer.ofOutcome o) ∧
-      App.Wait.decide deadline heldSince now (.recorded (some o)) =
-        .answer (App.Answer.ofOutcome o) := App.Wait.wait_ending deadline heldSince now o
+theorem record_answer_rejects_running :
+    ¬∀ (afterSave : List UInt8 → Option (List UInt8)),
+        Record.Kept afterSave →
+          ∀ (o : Outcome) (n : UInt8) (seen : Option Seen) (file : Option (List UInt8)),
+            Record.answer
+                  (afterSave ((fun (_ : Record) => Record.encode (.running none)) (.ended o))) =
+                some (.program o) ∧
+              Record.answer
+                  (afterSave ((fun (_ : Record) => Record.encode (.running none)) (.saved n))) =
+                some (.saved n) ∧
+              Record.answer
+                  (afterSave
+                    ((fun (_ : Record) => Record.encode (.running none)) (.running seen))) =
+                some (.program .unknown) ∧
+              (Record.answer file).isSome = file.isSome := by
+  intro h
+  -- a daemon whose end records all say its program still runs, as one that a signal killed left
+  have ended := (h some (fun _ => rfl) (.exited 0) 15 none none).1
+  simp [Record.answer_running] at ended
+
+theorem wait_ending (deadline heldSince : Option Nat) (now : Nat) (e : Ending) :
+    App.Wait.decide deadline heldSince now (.ended e) = .answer (App.Answer.ofEnding e) ∧
+      App.Wait.decide deadline heldSince now (.recorded (some e)) =
+        .answer (App.Answer.ofEnding e) := App.Wait.wait_ending deadline heldSince now e
 
 theorem wait_ending_rejects_failed :
-    ¬∀ (deadline heldSince : Option Nat) (now : Nat) (o : Outcome),
+    ¬∀ (deadline heldSince : Option Nat) (now : Nat) (e : Ending),
         (fun (_ _ : Option Nat) (_ : Nat) (_ : App.Wait.Heard) => App.Wait.Next.answer .failed)
-              deadline heldSince now (.ended o) =
-            .answer (App.Answer.ofOutcome o) ∧
+              deadline heldSince now (.ended e) =
+            .answer (App.Answer.ofEnding e) ∧
           (fun (_ _ : Option Nat) (_ : Nat) (_ : App.Wait.Heard) => App.Wait.Next.answer .failed)
-              deadline heldSince now (.recorded (some o)) =
-            .answer (App.Answer.ofOutcome o) := by
+              deadline heldSince now (.recorded (some e)) =
+            .answer (App.Answer.ofEnding e) := by
   intro h
-  have told := (h none none 0 (.exited 0)).1
-  simp [App.Answer.ofOutcome] at told
+  have told := (h none none 0 (.program (.exited 0))).1
+  simp [App.Answer.ofEnding, App.Answer.ofOutcome] at told
 
 theorem wait_held (deadline heldSince : Option Nat) (now : Nat) (heard : App.Wait.Heard) :
     (App.Wait.decide deadline heldSince now heard = .answer .failed ↔
-        heard = .ended .unknown ∨
-          heard = .recorded (some .unknown) ∨
+        heard = .ended (.program .unknown) ∨
+          heard = .recorded (some (.program .unknown)) ∨
           heard = .held ∧ ∃ since, heldSince = some since ∧ since + App.Wait.heldNameMs ≤ now) ∧
       (heard = .held →
         (∀ due, deadline = some due → now < due) →
@@ -1242,8 +1354,8 @@ theorem wait_held_rejects_eager :
         ((fun (_ _ : Option Nat) (_ : Nat) (_ : App.Wait.Heard) => App.Wait.Next.answer .failed)
                 deadline heldSince now heard =
               .answer .failed ↔
-            heard = .ended .unknown ∨
-              heard = .recorded (some .unknown) ∨
+            heard = .ended (.program .unknown) ∨
+              heard = .recorded (some (.program .unknown)) ∨
               heard = .held ∧ ∃ since, heldSince = some since ∧ since + App.Wait.heldNameMs ≤ now) ∧
           (heard = .held →
             (∀ due, deadline = some due → now < due) →
@@ -1306,6 +1418,23 @@ theorem outcomeFields_injective_rejects_silence :
           o₁ = o₂ := by
   intro h
   exact absurd (h (.exited 0) .unknown rfl) (by simp)
+
+theorem endingFields_injective (e₁ e₂ : Ending)
+    (h : Session.endingFields e₁ = Session.endingFields e₂) : e₁ = e₂ :=
+  Session.endingFields_injective h
+
+theorem endingFields_injective_rejects_unknown :
+    ¬∀ (e₁ e₂ : Ending),
+        (fun (e : Ending) => Session.endingFields (if e = .saved 15 then .program .unknown else e))
+              e₁ =
+            (fun (e : Ending) =>
+                Session.endingFields (if e = .saved 15 then .program .unknown else e))
+              e₂ →
+          e₁ = e₂ := by
+  intro h
+  -- a reader that hears a saved session as one whose program's ending is unknown
+  have same := h (.saved 15) (.program .unknown) (by simp)
+  cases same
 
 theorem infoFields_protocol (s : State) :
     ("protocol", toString Wire.protocol) ∈ Session.infoFields s := (Session.infoFields_protocol s).1
@@ -1393,8 +1522,7 @@ theorem run_refines_rejects_inert :
     @h Unit (fun _ world eff => (world, Driver.success .unknown eff)) .unknown (fun _ _ _ => rfl)
       { st := State.boot (Vt.Vt.init 1 1) [] [], world := () } [.childExited .unknown] rfl
   have ends :=
-    (Session.step_exit_iff (State.boot (Vt.Vt.init 1 1) [] []) (.childExited .unknown)).mpr
-      ⟨.unknown, .inl rfl⟩
+    (Session.step_exit_iff (State.boot (Vt.Vt.init 1 1) [] []) (.childExited .unknown)).mpr rfl
   cases handles with
   | exit => simp [Driver.inert] at stayed
   | next _ _ _ _ _ stays => exact stays ends

@@ -30,6 +30,9 @@ inductive Choice where
   | cancel
   /-- A listing exited nonzero, with its exit status and standard error. -/
   | failed (status : UInt32) (stderr : String)
+  /-- A watched signal ended the visit, which handed the terminal back first, as a cancellation
+  does. -/
+  | interrupted
 
 /-- Each listed target's status, read once per listing in one pass over its records: a name
 record starts a row, a blank record ends it, and its `status` record says its status, as
@@ -62,9 +65,11 @@ act on the displayed snapshot, which is returned on acceptance; a completed
 replacement is applied afterward and rendered before polling again.
 Saved-tmux and read-only visits have no creation choice. The first listing is cancellable too.
 A native visit starts with a full listing, then lists local rows alone between
-remote queries. Native listings get a cooperative stop so they can retire isolated SSH groups. -/
-def choose (executable : String) (save : Option String := none) (readOnly : Bool := false) :
-    IO Choice := do
+remote queries. Native listings get a cooperative stop so they can retire isolated SSH groups.
+Once `stopped` says a watched signal came, the visit ends on the cancellation's path, as
+`interrupted`. -/
+def choose (executable : String) (save : Option String := none) (readOnly : Bool := false)
+    (stopped : IO Bool := pure false) : IO Choice := do
   let savedTmux := save.isSome
   unless (← stdinIsTty) && (← (← IO.getStdout).isTty) do
     throw (IO.userError "the picker needs terminal input and output")
@@ -104,6 +109,8 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
         size := current
         dirty := false
       let ready ← poll fds events 50
+      if ← stopped then
+        return .interrupted
       let bits := ready[0]!
       if bits &&& POLLNVAL != 0 then
         throw (IO.userError "picker input descriptor became invalid")
@@ -178,20 +185,29 @@ def attachArgs (target : String) (readOnly : Bool := false) : Array String :=
 
 /-- Execute either selected row through attach, after terminal restoration. Every attach
 exit returns to a fresh listing; cancellation ends the manager. The caller
-supplies one frozen absolute executable for all listing and attach children. -/
+supplies one frozen absolute executable for all listing and attach children. A signal of
+`handbackSignals` ends the manager with 130, `interrupted`, as a cancellation does: a visit hands
+the terminal back first, and an attach, which owns the terminal while it runs and hears the
+signals its terminal sends, first ends. -/
 def run (executable : String) (readOnly : Bool := false) : IO UInt32 := do
-  while true do
-    match ← choose executable (readOnly := readOnly) with
-    | .cancel =>
-      return 130
-    | .failed status stderr =>
-      IO.eprintln s!"linger: could not list sessions (exit {status})"
-      if !stderr.isEmpty then
-        IO.eprint stderr
-      return status
-    | .attach target _ =>
-      let child ← IO.Process.spawn { cmd := executable, args := attachArgs target readOnly }
-      discard child.wait
-  return 0
+  let stops ← watch handbackSignals
+  try
+    while true do
+      match ← choose executable (readOnly := readOnly) (stopped := stops.heard) with
+      | .cancel | .interrupted =>
+        return 130
+      | .failed status stderr =>
+        IO.eprintln s!"linger: could not list sessions (exit {status})"
+        if !stderr.isEmpty then
+          IO.eprint stderr
+        return status
+      | .attach target _ =>
+        let child ← IO.Process.spawn { cmd := executable, args := attachArgs target readOnly }
+        discard child.wait
+        if ← stops.heard then
+          return 130
+    return 0
+  finally
+    stops.stop
 
 end Linger.Selector.Shell

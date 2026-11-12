@@ -69,6 +69,9 @@ def readInfo (fd : UInt32) (stopAt : Option Nat := none) : IO (List (String × S
           | .ended outcome =>
             let ending := Client.Ending.outcome outcome
             throw (IO.userError s!"session ended before info completed ({ending.describe})")
+          | .saved signal =>
+            let ending := Client.Ending.saved signal
+            throw (IO.userError s!"session ended before info completed ({ending.describe})")
           | .exited status =>
             throw (IO.userError s!"session ended before info completed (status {status})")
           | _ =>
@@ -177,8 +180,10 @@ private def removeStaleSocket (n : Paths.Listed) : IO Bool := do
 
 /-- A saved session's listing row and the fields it adds, from reading its name's end record:
 ended, with the status a shell reports and how its program ended (`Session.outcomeFields`),
-when the record says so; unknown when the record cannot be read; otherwise resumable, as a
-session interrupted before its program ended, or saved before end records existed. -/
+when the record says so; unknown when the record cannot be read; resumable, with the signal that
+stopped its daemon (`Session.endingFields`), when a signal to its daemon saved it; otherwise
+resumable, as a session interrupted before its program ended, or saved before end records
+existed. -/
 def savedRow (record : Except IO.Error (Option (List UInt8))) :
     Linger.Display.Listing.Row × List (String × String) :=
   match record with
@@ -186,6 +191,7 @@ def savedRow (record : Except IO.Error (Option (List UInt8))) :
   | .ok bytes =>
     match bytes.bind Linger.Session.Record.decode with
     | some (.ended outcome) => (.ended outcome.status.toNat, Linger.Session.outcomeFields outcome)
+    | some (.saved signal) => (.stale, Linger.Session.endingFields (.saved signal))
     | _ => (.stale, [])
 
 /-- What a session's end record says its daemon saw, while that daemon holds the name, so a

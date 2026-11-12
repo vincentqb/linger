@@ -403,10 +403,58 @@ private def durableChecks (e : Env) : IO Unit := do
         and an end record that decodes ({during} of 5 kills landed while a save wrote)"
   e.killAll #[name]
 
+/-- A terminating signal to a daemon is the environment stopping linger, not the program ending.
+The daemon stops the program, saves the screen as of the signal and keeps it, records that the
+signal stopped it, and gives the name up: the session then lists as resumable, `info` and `wait`
+say it was saved, and `resume` restores that screen. A session's first save follows its first
+output, so only the daemon's last save can hold the marker printed after that one. -/
+private def signalChecks (e : Env) : IO Unit := do
+  let name := "stopped"
+  let _ ← e.typeIn name #["true"]
+  let first ← waitFor patienceMs (System.FilePath.pathExists s!"{e.dir}/{name}.ckpt")
+  let _ ← e.typeIn name #["echo SIGTERM-$((40+2))"]
+  let shown ← waitFor patienceMs (return has (← e.out #["capture", name]) "SIGTERM-42")
+  let daemon ← e.daemonPid name
+  if let some pid := daemon then
+    Os.Shell.kill pid 15
+  let gone ←
+    waitFor patienceMs do
+        match daemon with
+        | some pid =>
+          return !(← Os.Shell.alive pid)
+        | none =>
+          return false
+  let socketGone := !(← e.dirNames ".sock").contains s!"{name}.sock"
+  let saved ← e.out #["capture", name]
+  expect (first && shown && gone && socketGone && has saved "SIGTERM-42")
+      "SIGTERM to a daemon saves the screen as of the signal, keeps it and removes the socket"
+  let record := (← (IO.FS.readBinFile s!"{e.dir}/{name}.end").toBaseIO).toOption.map (·.toList)
+  let (waitRc, _, waitErr) ← e.cli #["wait", name]
+  let status ← e.status name
+  let savedBy ← e.info name "saved"
+  let says :=
+    (lines (← e.out #["ls"])).any fun row =>
+      has row s!" {name} " && has row "(resumable, saved by signal 15)"
+  expect
+      (record == some (Linger.Session.Record.encode (.saved 15)) && status == Status.resumable &&
+        says &&
+        savedBy == some "15" &&
+        waitRc == 130)
+      s!"a session a signal saved says so in its end record, lists as resumable, saved by the \
+        signal, and info and wait say so ({Linger.Display.Status.name status}, saved={savedBy}, \
+        rc={waitRc}, {waitErr.trimAscii.toString})"
+  let (resumedRc, _, _) ← e.cli #["resume", name]
+  let restored ←
+    waitFor patienceMs do
+        return (← e.info name "pid").isSome && has (← e.out #["capture", name]) "SIGTERM-42"
+  expect (resumedRc == 0 && restored) "resume restores the screen a signal saved"
+  e.killAll #[name]
+
 /-- The resume suite: checkpoint, crash and restore, and where a resume runs. -/
 @[exercises Linger.Session.Spawn.Runs, exercises Linger.Session.Disk.Durable]
 def run : IO UInt32 :=
   Env.suite "resume" fun e => do
+    signalChecks e
     directoryChecks e
     answerChecks e
     checkpointRetry

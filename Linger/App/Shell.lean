@@ -636,10 +636,12 @@ private def cmdSummary : IO Answer := do
     IO.println summary
   return .done
 
-/-- The answer that tells how a session's program ended, as its daemon reported it
-(`Answer.ofOutcome`); an older daemon's status is the program's. -/
+/-- The answer that tells how a session ended, as its daemon reported it (`Answer.ofEnding`): its
+program's, or `interrupted` for a session a signal to its daemon saved; an older daemon's status
+is the program's. -/
 private def endingAnswer : Client.Ending → Answer
-  | .outcome outcome => Answer.ofOutcome outcome
+  | .outcome outcome => Answer.ofEnding (.program outcome)
+  | .saved signal => Answer.ofEnding (.saved signal)
   | .status status => .program status
 
 /-- Attach over `fd` once its daemon has said, in an `info` answer on `fd` within
@@ -704,9 +706,25 @@ private def cmdAttach (name : String) (cmd : List String) (readOnly : Bool) : IO
   match result with
   | .error answer =>
     return answer
+  | .ok (.ended (.saved signal)) =>
+    -- the system stopping linger may have hung up this terminal too: the answer says it
+    try
+      IO.eprintln
+          s!"\r\nlinger: session '{name}' was saved when signal {signal} stopped its daemon; \
+            attach to resume it"
+    catch _ =>
+      pure ()
+    return endingAnswer (.saved signal)
   | .ok (.ended ending) =>
     IO.eprintln s!"\r\nlinger: session '{name}' ended ({ending.describe})"
     return endingAnswer ending
+  | .ok .interrupted =>
+    -- the terminal is handed back, but a hung-up one cannot show why: the answer says it
+    try
+      IO.eprintln s!"\r\nlinger: interrupted; detached from '{name}'"
+    catch _ =>
+      pure ()
+    return .interrupted
   | .ok .detached =>
     IO.eprintln s!"\r\nlinger: detached from '{name}'"
     return .done
@@ -875,6 +893,10 @@ private def cmdSendStdin (name : String) : IO Answer := do
                 | .exited status =>
                   IO.eprintln s!"linger: session '{name}' ended while sending (status {status})"
                   return .notDone
+                | .saved signal =>
+                  let ending := Client.Ending.saved signal
+                  IO.eprintln s!"linger: session '{name}' ended while sending ({ending.describe})"
+                  return .notDone
                 | _ =>
                   pure ()
         if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
@@ -888,14 +910,16 @@ private def cmdSendStdin (name : String) : IO Answer := do
     finally
       close fd
 
-/-- Say on stderr how the session's program ended when a signal killed it or how it ended is
-unknown; an exit status says the rest. -/
-private def sayEnding (name : String) (ending : Client.Ending) : IO Unit := do
-  match ending with
-  | .outcome (.exited _) | .status _ =>
-    pure ()
-  | .outcome _ =>
-    IO.eprintln s!"linger: session '{name}' ended ({ending.describe})"
+/-- Say on stderr how the session ended when a signal killed its program, how its program ended
+is unknown, or a signal to its daemon saved it; an exit status says the rest. -/
+private def sayEnding (name : String) : Linger.Session.Ending → IO Unit
+  | .program (.exited _) => pure ()
+  | .program outcome =>
+    IO.eprintln s!"linger: session '{name}' ended ({(Client.Ending.outcome outcome).describe})"
+  | .saved signal =>
+    IO.eprintln
+      s!"linger: session '{name}' was saved when signal {signal} stopped its daemon; \
+          `linger resume {name}` runs it again"
 
 /-- What answers for a name when no daemon does. -/
 private inductive Unanswered where
@@ -903,7 +927,7 @@ private inductive Unanswered where
   | held (why : String)
   /-- The name's end record says this (`Record.answer`), read while holding the name when the
   answer depends on it (`Record.settled`). -/
-  | recorded (outcome : Option Linger.Session.Outcome)
+  | recorded (ending : Option Linger.Session.Ending)
 
 /-- Read the name's end record. A missing record or one that says how its program ended answers
 at once (`Record.settled`); only a running one needs the name held to read, since a reader that
@@ -925,7 +949,9 @@ why, for a refusal or a held name. -/
 private def hear (name : String) (silenceMs : Int32) : IO (Wait.Heard × String) := do
   match ← Client.oneShot name .wait (untilDone := false) (silenceMs := silenceMs) with
   | some (.exited (.outcome outcome)) =>
-    return (.ended outcome, "")
+    return (.ended (.program outcome), "")
+  | some (.exited (.saved signal)) =>
+    return (.ended (.saved signal), "")
   | some (.exited (.status status)) =>
     return (.status status, "")
   | some .silent =>
@@ -941,11 +967,12 @@ private def hear (name : String) (silenceMs : Int32) : IO (Wait.Heard × String)
     | .held why =>
       return (.held, why)
 
-/-- `wait`: block until the session's program ends and answer as `Wait.decide` does with what
-each look hears, saying why on stderr when that is not the program's own exit. The program's
-ending comes from its daemon or, with no daemon to answer, from the name's end record once
-nothing else holds the name; `notFound`, as a shell's `wait` reports an unknown job, when no
-session has taken the name. A daemon lost during the wait leaves its own record, never an older
+/-- `wait`: block until the session ends and answer as `Wait.decide` does with what each look
+hears, saying why on stderr when that is not the program's own exit. The ending comes from its
+daemon or, with no daemon to answer, from the name's end record once nothing else holds the
+name: the program's, or `interrupted` for a session a signal to its daemon saved, whose program
+did not end by itself; `notFound`, as a shell's `wait` reports an unknown job, when no session
+has taken the name. A daemon lost during the wait leaves its own record, never an older
 one. With a `deadline` on the monotonic clock, `timedOut` once it has passed and the session is
 still running, as `timeout(1)` reports, leaving the session as it is. A refusal answers
 `notDone`; that linger could not find out, only for an unknown ending or a name held with no
@@ -965,8 +992,8 @@ private def cmdWait (deadline : Option Nat) (name : String) : IO Answer := do
       match answer, heard with
       | .timedOut, _ =>
         IO.eprintln s!"linger: timed out waiting for '{name}'"
-      | _, .ended outcome | _, .recorded (some outcome) =>
-        sayEnding name (.outcome outcome)
+      | _, .ended ending | _, .recorded (some ending) =>
+        sayEnding name ending
       | _, .recorded none =>
         IO.eprintln s!"linger: no session '{name}'"
       | _, .refused =>
@@ -1084,8 +1111,9 @@ private def cmdKill (name : String) : IO Answer := do
       IO.eprintln s!"linger: {why}"
       return .notDone
 
-/-- `info`: the live session's fields; with no daemon to answer, the name and how the program of
-the last session to hold it ended, from the name's end record. No session answers `notFound`; a
+/-- `info`: the live session's fields; with no daemon to answer, the name and how the last session
+to hold it ended (`Session.endingFields`), from the name's end record: how its program ended, or
+the signal that stopped its daemon, which saved it. No session answers `notFound`; a
 refusal or a failed reply prints a diagnostic and answers `notDone`. -/
 private def cmdInfo (name : String) : IO Answer := do
   match ← Client.oneShot name .info with
@@ -1093,8 +1121,8 @@ private def cmdInfo (name : String) : IO Answer := do
     requestStatus name result
   | none =>
     match ← unanswered name with
-    | .recorded (some outcome) =>
-      for (k, v) in ("name", name) :: Linger.Session.outcomeFields outcome do
+    | .recorded (some ending) =>
+      for (k, v) in ("name", name) :: Linger.Session.endingFields ending do
         IO.println s!"{k}\t{v}"
       return .done
     | .recorded none =>

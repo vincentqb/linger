@@ -66,7 +66,28 @@ inductive Record where
   | running (seen : Option Seen)
   /-- The program of the session that last held the name ended this way. -/
   | ended (outcome : Outcome)
+  /-- The daemon of the session that last held the name was stopped by this signal, as the system
+  stops it at logout or shutdown, and saved the session first, as it stood when the signal came:
+  its program did not end by itself, and `resume` runs it again from that screen. -/
+  | saved (signal : UInt8)
   deriving Repr, DecidableEq
+
+/-- How a session ended, as linger tells whoever asks: its program ended, or its daemon was
+stopped by a signal first and saved it. A saved session's program has no outcome to report: its
+daemon ended it, and `resume` runs it again. -/
+inductive Ending where
+  /-- The program ended this way, by itself or once a kill stopped it; `unknown` when linger did
+  not see how. -/
+  | program (outcome : Outcome)
+  /-- The daemon was stopped by this signal, and saved the session. -/
+  | saved (signal : UInt8)
+  deriving Repr, DecidableEq
+
+/-- The end record a session that ended this way leaves its name. -/
+@[expose]
+def Ending.record : Ending → Record
+  | .program outcome => .ended outcome
+  | .saved signal => .saved signal
 
 end Linger.Session
 
@@ -166,10 +187,12 @@ refuse a request an older daemon cannot serve before sending it. Level 1 refuses
 does not know; level 2 also says how a program ended (`Msg.ended`); level 3 attaches with the
 mode the client asks for (`Msg.attach`, tag 18) and reads the attach of levels 1 and 2, tag 3,
 which carried only a size, as a message it does not know, so across a mismatch either side
-refuses the other's attach. A daemon that reports no level predates the field and drops an
-unknown message silently. -/
+refuses the other's attach; level 4 also says when a signal stopped the daemon, which saved the
+session (`Msg.saved`, tag 19), where an older client would hear only that its connection was
+lost. A daemon that reports no level predates the field and drops an unknown message
+silently. An attach refuses a daemon of any earlier level, as one that reports none. -/
 @[expose]
-def protocol : Nat := 3
+def protocol : Nat := 4
 
 /-- Largest payload a frame may carry. Reads from the OS are ≤ 64 KiB, so honest senders stay
 far below; a frame claiming more is either corruption or an attack, and the decoder turns it
@@ -222,6 +245,9 @@ inductive Msg where
   /-- daemon → client: how the session's program ended, sent just before `exited`, which
   carries the same ending as the status a shell would report. -/
   | ended (outcome : Outcome)
+  /-- daemon → client: this signal stopped the daemon, which saved the session before its
+  program ended; no status follows, since the program has none to report. -/
+  | saved (signal : UInt8)
   /-- any tag this version does not know: skipped, never fatal (§Frame). -/
   | unknown (tag : UInt8) (payload : List UInt8)
   deriving Repr, DecidableEq, Inhabited
@@ -236,13 +262,13 @@ structure Decoder where
   deriving Repr, DecidableEq, Inhabited
 
 /-- A message the encoder may send: its bytes fit one frame's payload, and an `unknown` message
-carries a tag this version leaves unassigned, 3, the attach of levels 1 and 2, or one above 18,
+carries a tag this version leaves unassigned, 3, the attach of levels 1 and 2, or one above 19,
 so that it cannot read back as a known one. -/
 @[expose]
 def Msg.Fits : Msg → Prop
   | .input bytes | .output bytes | .infoReply bytes | .labelSet bytes | .labelUnset bytes |
     .err bytes => bytes.length ≤ maxPayload
-  | .unknown tag payload => payload.length ≤ maxPayload ∧ (tag = 3 ∨ 18 < tag.toNat)
+  | .unknown tag payload => payload.length ≤ maxPayload ∧ (tag = 3 ∨ 19 < tag.toNat)
   | _ => True
 
 /-- A request to change a session's labels: set one, remove one, or remove them all. -/
@@ -284,6 +310,14 @@ than this after the first change no save holds, and saves on its own at most onc
 minute, in natural-number milliseconds, so that adding it to a deadline cannot wrap. -/
 @[expose]
 def ckptIntervalMs : Nat := 60000
+
+/-- What a client attached to a session, or waiting for its end, hears when the session ends this
+way: how its program ended and then the status a shell would report for that, or that a signal
+stopped the daemon, which saved the session. -/
+@[expose]
+def Ending.told : Ending → List Msg
+  | .program outcome => [.ended outcome, .exited outcome.status]
+  | .saved signal => [.saved signal]
 
 /-- One connection's record: its identity, rights, terminal size, attach and request state, and
 its undecoded input. -/
@@ -330,6 +364,9 @@ inductive Event where
   /-- The session's program ended this way once the daemon stopped it, as a kill asks: the
   runtime's answer to `Effect.stopProgram`. -/
   | stopped (outcome : Outcome)
+  /-- The daemon heard this terminating signal, SIGHUP, SIGINT, SIGQUIT or SIGTERM, as the system
+  sends at logout or shutdown: the environment stopping linger, not the program ending. -/
+  | signal (signal : UInt8)
   /-- A poll round ended; `nowMs` is the monotonic clock in milliseconds. -/
   | tick (nowMs : Nat)
   /-- The last `.checkpoint` effect failed to save. -/
@@ -364,9 +401,22 @@ inductive Effect (Plan : Type) where
   | checkpoint
   /-- Delete the session's checkpoint. -/
   | dropCheckpoint
+  /-- Leave this as the name's end record, which the daemon writes before it gives the name
+  up. -/
+  | record (record : Record)
   /-- Stop the daemon; no later event is handled. -/
   | exit
   deriving Repr, DecidableEq
+
+/-- How an event ends the session, if it does: how the session ended, and whether its last
+screen stays saved. A program's own end leaves the session as its result, and a terminating signal
+to the daemon leaves it saved to resume; a kill discards it. -/
+@[expose]
+def Event.ends : Event → Option (Ending × Bool)
+  | .childExited outcome => some (.program outcome, true)
+  | .stopped outcome => some (.program outcome, false)
+  | .signal number => some (.saved number, true)
+  | _ => none
 
 /-- Whether an effect sends a frame of a rendered reply: an `output` frame of a history or
 screen capture, or a frame of an `info` reply. -/
@@ -601,7 +651,7 @@ target stayed connected, its checkpoint was saved, or its program ended that way
 def success {Plan : Type} (ending : Outcome) : (eff : Effect Plan) → Reply eff
   | .send .. | .replay .. | .close .. | .checkpoint => false
   | .stopProgram => ending
-  | .writePty .. | .resizePty .. | .dropCheckpoint | .exit => ()
+  | .writePty .. | .resizePty .. | .dropCheckpoint | .record _ | .exit => ()
 
 /-- What an effect that succeeded feeds back to the session: a stop's reply, how its program
 ended, as the event `stopped ending`, and nothing for any other effect, since its target stayed

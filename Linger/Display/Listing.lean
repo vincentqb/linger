@@ -115,7 +115,8 @@ def endingText (info : List (String × String)) : Option String :=
 /-- One shared row: status badge, aligned name, command/pid, labels and watchers.
 Every untrusted value is made printable before a renderer sees it, including C1
 controls that can otherwise be interpreted as terminal commands. A saved row whose program
-ended says how, where another saved row says it is resumable. -/
+ended says how, where another saved row says it is resumable, and which signal stopped its
+daemon when one saved it (the `saved` field `Session.endingFields` writes). -/
 def rowPieces (nameCol : Nat) (info : List (String × String)) : List RowPiece :=
   let f := fun k => (info.lookup k).getD ""
   let st := Status.ofName (f "status")
@@ -129,7 +130,10 @@ def rowPieces (nameCol : Nat) (info : List (String × String)) : List RowPiece :
     if f "state" == "resumable" then
       if st == .exitedOk || st == .exitedBad then
         "ended" ++ ((endingText info).map (s!" ({·})")).getD ""
-      else "(resumable)"
+      else
+        match info.lookup "saved" with
+        | some signal => s!"(resumable, saved by signal {signal})"
+        | none => "(resumable)"
     else
       if st == .unknown && (f "pid").isEmpty && (f "cmd").isEmpty then "(busy)"
       else if (f "pid").isEmpty then f "cmd" else s!"pid {f "pid"}  {f "cmd"}"

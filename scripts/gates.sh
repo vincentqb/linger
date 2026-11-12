@@ -625,11 +625,11 @@ for tie in \
   'let value := if [[]"directory", "session", "window", "pane", "title", "command", "saved-command", "window-title"[]][.]contains key then value[.]quote else diagnostic value' \
   'Os[.]Shell[.]writeAll Os[.]Shell[.]stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor rows[)][.]toArray[)]' \
   'let save ← readSave origin home file createPanes executable origin save[.]panes [(]readArchive save[.]path[)]' \
-  'let path ← savePath origin home file while true do match ← Linger[.]Selector[.]Shell[.]choose executable [(]some path[.]toString[)] with' \
+  'let path ← savePath origin home file let stops ← Os[.]Shell[.]watch Os[.]Shell[.]handbackSignals try while true do match ← Linger[.]Selector[.]Shell[.]choose executable [(]some path[.]toString[)] [(]stopped := stops[.]heard[)] with' \
   '[|] [.]attach target displayed => unless displayed[.]candidates[.]contains target do throw [(]IO[.]userError "selected pane was absent from the displayed save"[)] let row := displayed[.]row target' \
   'let some dir := [(]row[.]lookup "directory"[)][.]bind fun value => [(]Lean[.]Syntax[.]decodeStrLit value[)][.]filter [(]·[.]quote == value[)] [|] throw [(]IO[.]userError "selected pane has no directory"[)]' \
   'let some pane := selectedPane target dir line details [|] throw [(]IO[.]userError "invalid selected pane"[)]' \
-  'createPanes executable origin [[]pane[]] archive let child ← IO[.]Process[.]spawn [{] cmd := executable, args := Linger[.]Selector[.]Shell[.]attachArgs pane[.]name, cwd := some [(]System[.]FilePath[.]mk pane[.]dir[)] [}] discard child[.]wait' \
+  'createPanes executable origin [[]pane[]] archive let child ← IO[.]Process[.]spawn [{] cmd := executable, args := Linger[.]Selector[.]Shell[.]attachArgs pane[.]name, cwd := some [(]System[.]FilePath[.]mk pane[.]dir[)] [}] discard child[.]wait if ← stops[.]heard then return 130' \
   'let panes := panes[.]map [(]preparePane content panes[)]' \
   'let archive ← if [(]plan existing panes[)][.]isEmpty then pure none else archive for pane in plan existing panes do let contents ← capturedPane archive pane discard <[|] seedPane pane contents' \
   'preflight origin panes let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]] [}]'; do
@@ -711,7 +711,10 @@ for tie in \
   'nextListing := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextListing then full := savedTmux [|][|] [(]← monotonicMs[)] ≥ nextRemote let args := if full then fullArgs else #[[]"ls", "--porcelain"[]] pending[.]set [(]some [(]← Os[.]Shell[.]Command[.]start executable args[)][)] return [.]cancel finally' \
   'finally Os[.]Shell[.]Command[.]stop pending [(]if savedTmux then 0 else 1000[)]' \
   'let fullArgs := if savedTmux then #[[]"tmux", "ls", "--porcelain"[]] [+][+] save[.]toArray else #[[]"ls", "-r", "--porcelain"[]]' \
-  'match ← choose executable [(]readOnly := readOnly[)] with' \
+  'match ← choose executable [(]readOnly := readOnly[)] [(]stopped := stops[.]heard[)] with' \
+  'let ready ← poll fds events 50 if ← stopped then return [.]interrupted' \
+  'IO UInt32 := do let stops ← watch handbackSignals try while true do' \
+  'discard child[.]wait if ← stops[.]heard then return 130 return 0 finally stops[.]stop' \
   'def attachArgs [(]target : String[)] [(]readOnly : Bool := false[)] : Array String := [(]"attach" :: [(]if readOnly then [[]"--read-only"[]] else [[][]][)] [+][+] Linger[.]Target[.]Remote[.]targetOperands target[)][.]toArray'; do
   printf '%s\n' "$picker_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "manager lost its selection, refresh, process ownership or attach contract: $tie"
@@ -826,10 +829,21 @@ for tie in \
   'while !leaving do if let some task[[:space:]]*← pending[.]get then if ← IO[.]hasFinished task then pending[.]set none let fresh := match ← IO[.]wait task with [|] [.]ok text => text [|] [.]error _ => String[.]singleton [(]Linger[.]Display[.]Status[.]icon [.]unknown[)] titleDirty := titleDirty [|][|] fresh != summary summary := fresh nextSummary := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextSummary then pending[.]set [(]some [(]← IO[.]asTask sample Task[.]Priority[.]dedicated[)][)] let revs ← poll #[[]stdinFd, fd[]] #[[]POLLIN, POLLIN[]] 200' \
   'writeAll stdoutFd [(]ByteArray[.]mk payload[.]toArray[)] observer := observer[.]observe payload receivedOutput := true' \
   'if receivedOutput && titleDirty && !leaving then let title := Linger[.]Display[.]Title[.]compose name observer[.]windowTitle summary Terminal[.]Title[.]maxChars let bytes := Terminal[.]Title[.]update observer title if !bytes[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] titleDirty := false' \
-  'try writeAll stdoutFd [(]ByteArray[.]mk Terminal[.]Render[.]leaveAnsi[.]toArray[)] finally termRestore stdinFd saved return result finally close fd' \
+  'try writeAll stdoutFd [(]ByteArray[.]mk Terminal[.]Render[.]leaveAnsi[.]toArray[)] finally termRestore stdinFd saved return result finally stops[.]stop close fd' \
   'def attach [(]name : String[)] [(]fd : UInt32[)] [(]sample : IO String[)] [(]readOnly : Bool := false[)] : IO Outcome := do let pending ← IO[.]mkRef [(]none : Option [(]Task [(]Except IO[.]Error String[)][)][)] try converse name fd sample readOnly pending finally if let some task[[:space:]]*← pending[.]get then discard <[|] IO[.]wait task'; do
   printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "attached title lost its observer, sampler or handback contract: $tie"
+done
+# SIGTERM, SIGHUP and SIGINT (`Os.Shell.handbackSignals`) end an attach, and a view of a saved
+# session, as a detach does: they are caught before raw mode, and the next poll round leaves the
+# loop, so the terminal is handed back on the same path. Linger.Session.Suites.Attach sends each.
+for tie in \
+  'IO Outcome := do let stops ← watch handbackSignals try let detachEnabled' \
+  'let revs ← poll #[[]stdinFd, fd[]] #[[]POLLIN, POLLIN[]] 200 if ← stops[.]heard then result := [.]interrupted leaving := true continue' \
+  'IO Outcome := do let stops ← watch handbackSignals let saved ← termRaw stdinFd try' \
+  'let ready ← poll fds events 200 if ← stops[.]heard then return [.]interrupted'; do
+  printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "an attached client ends on a signal other than as a detach does: $tie"
 done
 ! code_grep 'IO[.]Process|Command[.]|spawnDetached|spawnPty|appPath' Linger/Session/Shell/Client.lean \
   || fail "the attach client starts processes; it samples title attention in its own process"
@@ -1090,6 +1104,19 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])[|] [.]stopProgram => do le
   || fail "the daemon stops a program other than by Session.ending, or keeps how it ended from the session"
 code_grep '^[[:space:]]+[|] [.]stopProgram, outcome => [[][.]stopped outcome[]]$' 'Linger/Session/Driver.lean' > /dev/null \
   || fail "the driver no longer hands a stopped program's end back to the session"
+# A stop signal to the daemon reaches the session as its event (`step_signal_saves`): the signal
+# pipe carries it, and the first stop signal a round heard is the session's event, before the
+# program's end when it came first (`Session.stopOf`); the end record the session asks for
+# (`Effect.record`) is the one the daemon writes as it gives the name up. Linger.Session.Suites.Resume
+# sends SIGTERM to a daemon and reads what it left.
+for tie in \
+  'let signals ← match ← signalPipe[.]toBaseIO with' \
+  'if watchEnd && revs[[]2[]]! &&& [(]POLLIN [|][|][|] POLLHUP [|][|][|] POLLERR[)] != 0 then asked := true if let [.]ok [(]some bytes[)][[:space:]]*← [(]read [(]rt[.]signals[.]getD closedFd[)] 65536[)][.]toBaseIO then heard := bytes[.]toList' \
+  'match Linger[.]Session[.]stopOf heard with [|] some [(]signal, true[)] => events := events [+][+] [.]signal signal :: ended [|] some [(]signal, false[)] => events := events [+][+] ended [+][+] [[][.]signal signal[]] [|] none => events := events [+][+] ended return [(]rt, events[)]' \
+  '[|] [.]record r => do return [(][{] rt with final := some r [}], [(][)][)]'; do
+  printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "a stop signal ends a daemon other than as the session's event, or its end record is not the session's: $tie"
+done
 # A daemon's checkpoint saves and record writes start on a thread of their own, as
 # `Session.Offloop.ask` decides (`offloop_coalesces`): while one runs, a later one waits in place
 # of any that waited, so a slow disk holds up no answer and writes never queue.
@@ -1314,7 +1341,7 @@ retrying="$(code_grep '(^|[^[:alnum:]_])with(Session)?LockRetrying([^[:alnum:]_]
   || fail "only the daemon's startup claim may retry a held lock: ${retrying:-no retrying claim}"
 for tie in \
   'finally close listenFd try IO[.]FS[.]removeFile sockPath catch _ => pure [(][)][[:space:]]+end Linger[.]Session[.]Shell[.]Daemon' \
-  'finally let rt ← latest[.]get for c in rt[.]conns do close c[.]fd let outcome ← stopProgram rt let rt ← settleRecord rt try record[.]save [(][.]ended outcome[)]' \
+  'finally let rt ← latest[.]get for c in rt[.]conns do close c[.]fd let outcome ← stopProgram rt let rt ← settleRecord rt try record[.]save [(]rt[.]final[.]getD [(][.]ended outcome[)][)]' \
   'let previous ← record[.]load record[.]save [(][.]running none[)] let spawned ← try trySpawnPty'; do
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "daemon resource cleanup escaped its ownership lifetime: $tie"

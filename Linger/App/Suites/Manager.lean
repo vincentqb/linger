@@ -1068,6 +1068,17 @@ private def inputChecks (e : Env) : IO Unit := do
             return false
           s.text key
           return (← restored s 130) && (← f.visits) == listed
+  -- a signal that ends the picker leaves it as a cancellation does
+  for (slug, sig) in [("sigterm", (15 : UInt32)), ("sighup", 1), ("sigint", 2)] do
+    check e slug
+        s!"a signal to the picker restores termios and display modes and exits 130 ({slug})"
+        fun f =>
+        withPrompt f.picker #[] fun s => do
+          let pid ← numberFile (f.root / "manager-pid")
+          if pid == 0 then
+            return false
+          kill (UInt32.ofNat pid) sig
+          return ← restored s 130
   check e "split-arrow" "picker probe decodes an arrow split between reads" fun f =>
       withPrompt f.picker #[] fun s => do
         s.text "\x1b["

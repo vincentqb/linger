@@ -922,31 +922,39 @@ LEAN_EXPORT lean_obj_res linger_waitpid_nohang(uint32_t pid, uint8_t keep) {
     return lean_io_result_mk_ok(lean_box_uint64((uint64_t)out));
 }
 
-/* The write end of the pipe linger_child_end_fd makes, for its handler: set once, before the
- * handler is installed, and never changed after. */
-static volatile sig_atomic_t child_end_write = -1;
+/* The write end of the pipe linger_signal_pipe makes, for its handler: set once, before the
+ * handlers are installed, and never changed after. */
+static volatile sig_atomic_t signal_write = -1;
 
-/* SIGCHLD: write one byte, so that a poll() waiting on the read end wakes. A full pipe
- * already holds an unread wake-up, and a closed read end has no reader left (the Lean runtime
- * ignores SIGPIPE, so that write fails with EPIPE), so a write that fails loses nothing. The
- * handler restores errno for the code the signal interrupted. */
-static void on_child_end(int sig) {
-    (void)sig;
+/* The signals the pipe carries: a child's end, and the four the system stops a process with at
+ * logout or shutdown. */
+static const int piped_signals[] = { SIGCHLD, SIGHUP, SIGINT, SIGQUIT, SIGTERM };
+
+/* Write one byte per signal, so that a poll() waiting on the read end wakes and learns which, in
+ * the order they came: 0 for SIGCHLD, a child's end, and the signal's own number otherwise. A
+ * full pipe already holds an unread wake-up, and a closed read end has no reader left (the Lean
+ * runtime ignores SIGPIPE, so that write fails with EPIPE), so a write that fails loses nothing
+ * a reader could still act on. The handler restores errno for the code the signal interrupted. */
+static void on_signal(int sig) {
     int saved = errno;
-    ssize_t n = write((int)child_end_write, "", 1);
+    unsigned char byte = sig == SIGCHLD ? 0 : (unsigned char)sig;
+    ssize_t n = write((int)signal_write, &byte, 1);
     (void)n;
     errno = saved;
 }
 
-/* linger_child_end_fd : IO UInt32
- * A descriptor that becomes readable whenever a child of this process ends: the read end of
- * a pipe a SIGCHLD handler writes one byte to. Both ends are nonblocking and close on exec,
- * so a program the daemon starts inherits neither. poll() cannot wait for a process and Lean
- * core has no pipe, so a daemon that sleeps until something happens needs this to hear its
- * program end. Call it once, before starting the program. SA_NOCLDSTOP: a stop is no end;
- * SA_RESTART: read and write resume after the signal (poll still returns EINTR, which
- * linger_poll reports as no event, and the next poll sees the byte). */
-LEAN_EXPORT lean_obj_res linger_child_end_fd(void) {
+/* linger_signal_pipe : IO UInt32
+ * The read end of a pipe this process's handlers for SIGCHLD and for SIGHUP, SIGINT, SIGQUIT and
+ * SIGTERM write one byte to per signal: 0 when a child ends, else the signal's number. Both ends
+ * are nonblocking and close on exec, so a program the daemon starts inherits neither, and a
+ * handler ends at exec. poll() cannot wait for a process or a signal and Lean core has no pipe,
+ * so a daemon that sleeps until something happens needs this to hear its program end and the
+ * system stop it. Call it once, before starting the program: it installs the process's handlers
+ * for these five signals. SA_NOCLDSTOP: a stop is no end; SA_RESTART: read and write resume after
+ * a signal (poll still returns EINTR, which linger_poll reports as no event, and the next poll
+ * sees the byte). When a handler cannot be installed, the ones already installed are put back
+ * as they were, the pipe is closed, and it fails. */
+LEAN_EXPORT lean_obj_res linger_signal_pipe(void) {
     int fds[2];
     if (pipe(fds) < 0) return io_err("pipe");
     for (int i = 0; i < 2; i++) {
@@ -957,18 +965,26 @@ LEAN_EXPORT lean_obj_res linger_child_end_fd(void) {
             return io_err_code("fcntl", e);
         }
     }
-    child_end_write = fds[1];
+    signal_write = fds[1];
+    enum { count = sizeof piped_signals / sizeof piped_signals[0] };
+    struct sigaction before[count];
     struct sigaction sa;
     memset(&sa, 0, sizeof sa);
-    sa.sa_handler = on_child_end;
+    sa.sa_handler = on_signal;
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
-    if (sigaction(SIGCHLD, &sa, NULL) < 0) {
-        int e = errno;
-        child_end_write = -1;
-        close(fds[0]);
-        close(fds[1]);
-        return io_err_code("sigaction", e);
+    for (int i = 0; i < count; i++) {
+        int sig = piped_signals[i];
+        sa.sa_flags = sig == SIGCHLD ? SA_RESTART | SA_NOCLDSTOP : SA_RESTART;
+        if (sigaction(sig, &sa, &before[i]) < 0) {
+            int e = errno;
+            /* put back what this replaced before the pipe goes, so no handler writes to a
+             * descriptor number the process reuses */
+            while (i-- > 0) sigaction(piped_signals[i], &before[i], NULL);
+            signal_write = -1;
+            close(fds[0]);
+            close(fds[1]);
+            return io_err_code("sigaction", e);
+        }
     }
     return lean_io_result_mk_ok(lean_box_uint32((uint32_t)fds[0]));
 }

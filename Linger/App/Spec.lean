@@ -98,6 +98,14 @@ def Answer.ofOutcome : Linger.Session.Outcome → Answer
   | .unknown => .failed
   | outcome => .program outcome.status
 
+/-- The answer that tells how a session ended: its program's, as `ofOutcome` gives it, or, for a
+session a signal to its daemon saved, that a signal interrupted it, and never a status of its
+program, which did not end by itself and runs again on `resume`. -/
+@[expose]
+def Answer.ofEnding : Linger.Session.Ending → Answer
+  | .program outcome => ofOutcome outcome
+  | .saved _ => .interrupted
+
 /-- What a command does with a name no live session holds, from what the name's checkpoint
 file holds, given what a checkpoint holds: start a new session, resume the saved one, or start
 nothing, leave the file as it is and answer why. -/
@@ -117,8 +125,9 @@ namespace Linger.App.Wait
 /-- What one look at a name tells `wait`: its daemon's reply, or, with no daemon to answer, the
 name's end record or that another process holds the name. -/
 inductive Heard where
-  /-- The daemon said how the session's program ended. -/
-  | ended (outcome : Linger.Session.Outcome)
+  /-- The daemon said how the session ended: how its program ended, or that a signal stopped the
+  daemon, which saved the session. -/
+  | ended (ending : Linger.Session.Ending)
   /-- A daemon from before `Wire.Msg.ended` gave only the status a shell would report. -/
   | status (status : UInt32)
   /-- The daemon said nothing before the time limit. -/
@@ -127,7 +136,7 @@ inductive Heard where
   | refused
   /-- No daemon answered, and the name's end record says this, as `Record.answer` reads it:
   `none` when no session has taken the name. -/
-  | recorded (answer : Option Linger.Session.Outcome)
+  | recorded (answer : Option Linger.Session.Ending)
   /-- No daemon answered, and another process holds the name, as a daemon does while it starts
   or ends. -/
   | held

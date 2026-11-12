@@ -41,6 +41,18 @@ first, as a terminal that hangs up sends, so a program can save its work, then S
 whatever outlives a second of it. -/
 def ending : List (UInt32 × Nat) := [(1, 1000), (9, 1000)]
 
+/-- The signals that stop a daemon as the system stops linger at logout or shutdown, by number,
+the same on Linux and macOS: SIGHUP, SIGINT, SIGQUIT and SIGTERM. -/
+def stopSignals : List UInt8 := [1, 2, 3, 15]
+
+/-- What a daemon makes of the bytes its signal pipe carried in one poll round, in the order they
+came, each stop signal as its number and each child's end as 0: the first stop signal, if any, and
+whether it came before every child's end, so that it ends the session even when the program also
+ended in the round. -/
+def stopOf (bytes : List UInt8) : Option (UInt8 × Bool) :=
+  (bytes.find? stopSignals.contains).map fun signal =>
+    (signal, !(bytes.takeWhile (!stopSignals.contains ·)).contains 0)
+
 /-- How long a daemon lets a connection finish the bytes it owes once it closes it, and every
 connection once the session has ended: one grace period for both. -/
 def drainTimeoutMs : Nat := 3000
@@ -83,7 +95,7 @@ structure StateRec where
   labels : List (String × String) := []
   /-- name/pid/created/cwd…, set once by the runtime at boot. -/
   metaKv : List (String × String) := []
-  private exited : Option Outcome := none
+  private ended : Option Ending := none
   /-- Persistent screen or label changes since the last checkpoint? -/
   private dirty : Bool := false
   private lastCkptMs : Nat := 0
@@ -255,6 +267,14 @@ def outcomeFields : Outcome → List (String × String)
     [("exit", toString (Outcome.signaled signal).status.toNat), ("signal", toString signal.toNat)]
   | .unknown => [("exit", toString Outcome.unknown.status.toNat), ("outcome", "unknown")]
 
+/-- How `info` reports how a session ended: its program's ending as `outcomeFields` reports it, or,
+for a session a signal to its daemon saved, `saved` with that signal's number and no `exit`,
+since its program has no status to report, so no saved session reads as an ending of its
+program (`endingFields_injective`). -/
+def endingFields : Ending → List (String × String)
+  | .program outcome => outcomeFields outcome
+  | .saved signal => [("saved", toString signal.toNat)]
+
 /-- The fields one listing record carries, as a named stage. Split out from
 `infoText` because the framing below is only unambiguous if no field contains a
 framing byte, and that is a claim about *these* — see `infoText_framing`. -/
@@ -275,8 +295,8 @@ def infoFields (s : State) : List (String × String) :=
     [("cols", toString s.vt.colCount), ("rows", toString s.vt.rowCount),
       ("cursorx", toString s.vt.cursorPos.1), ("cursory", toString s.vt.cursorPos.2),
       ("alt", toString s.vt.inAlt), ("outseq", toString s.outSeq)] ++
-    (match s.exited with
-    | some outcome => outcomeFields outcome
+    (match s.ended with
+    | some ending => endingFields ending
     | none => []) ++
     s.labels.map (fun (k, v) => (s!"label.{k}", v))
 
@@ -414,8 +434,8 @@ private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Pla
       -- Capture here: feedMsgs can change the VT again before effects run.
       (s,
         effs ++ focusEffects typist before s ++ [.replay c.id (Replay.start s.vt)] ++
-          (match s.exited with
-          | some outcome => [.send c.id (.ended outcome), .send c.id (.exited outcome.status)]
+          (match s.ended with
+          | some ending => ending.told.map (Effect.send c.id)
           | none => []))
   | .input bytes =>
     -- a watcher's keystrokes are dropped; a control connection (not attached, as `linger send`
@@ -464,8 +484,8 @@ private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Pla
       ({ s.setClient { c with answered := true } with lookSeq := s.outSeq },
         outputMsgs c.id (Render.screenText s.vt) ++ [.send c.id .done])
   | .wait =>
-    match s.exited with
-    | some outcome => (s, [.send c.id (.ended outcome), .send c.id (.exited outcome.status)])
+    match s.ended with
+    | some ending => (s, ending.told.map (Effect.send c.id))
     | none => (s.setClient { c with waiting := true }, [])
   | .labelSet kv =>
     if c.mode == .readOnly then (s, [.send c.id (.err "read-only".toUTF8.toList)])
@@ -496,25 +516,26 @@ private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Pla
         [.send c.id .done])
   -- daemon-to-client vocabulary arriving at the daemon is no request and is dropped;
   -- a tag this version does not know is a request it cannot serve, and is refused
-  | .output _ | .exited _ | .ended _ | .infoReply _ | .done | .err _ => (s, [])
+  | .output _ | .exited _ | .ended _ | .saved _ | .infoReply _ | .done | .err _ => (s, [])
   | .unknown _ _ => (s, [.send c.id (.err "unknown message".toUTF8.toList)])
 
-/-- How a session ends once its program has ended this way, whether by itself or because the
-daemon stopped it: the scanner's pending bytes reach the attached clients, every client attached
-or waiting hears how the program ended and then the status a shell would report for it, every
-connection closes, `last` keeps or discards the session, and the daemon exits. -/
-private def conclude (s : State) (outcome : Outcome) (last : Effect Plan) :
-    State × List (Effect Plan) :=
+/-- How a session ends, whatever ended it: the scanner's pending bytes reach the attached clients,
+every client attached or waiting hears how it ended (`Ending.told`), every connection closes, the
+name's end record says how it ended, the session's last screen is saved and kept, or discarded,
+as `keep` says, and the daemon exits. -/
+private def conclude (s : State) (ending : Ending) (keep : Bool) : State × List (Effect Plan) :=
   let flushed := Terminal.Mediation.finish s.scanner
   let s :=
     { s with
-      exited := some outcome, scan := flushed.2 }
+      ended := some ending, scan := flushed.2 }
   let flush := broadcast s flushed.1
   let notify :=
     s.clients.filter (fun c => c.attached || c.waiting) |>.flatMap
-      (fun c => [Effect.send c.id (.ended outcome), Effect.send c.id (.exited outcome.status)])
+      (fun c => ending.told.map (Effect.send c.id))
   let closes := s.clients.map (fun c => Effect.close c.id)
-  (s, flush ++ notify ++ closes ++ [last, .exit])
+  (s,
+    flush ++ notify ++ closes ++
+      [.record ending.record, if keep then .checkpoint else .dropCheckpoint, .exit])
 
 /-! ## The step function -/
 
@@ -612,10 +633,15 @@ def step (s : State) (ev : Event) : State × List (Effect Plan) :=
   | .childExited outcome =>
     -- an ended session is a result: its last screen is saved, and stays until `kill`
     -- discards it or a writable attach resumes it
-    conclude s outcome .checkpoint
+    conclude s (.program outcome) true
   | .stopped outcome =>
     -- a session the daemon stopped, as `kill` asks, ends the same way and is discarded
-    conclude s outcome .dropCheckpoint
+    conclude s (.program outcome) false
+  | .signal signal =>
+    -- the environment stopping linger, not the program ending: the daemon stops the program,
+    -- then ends the same way, saving the screen the signal found, to resume
+    let r := conclude s (.saved signal) true
+    (r.1, .stopProgram :: r.2)
   | .tick now =>
     -- the activity fields are refreshed in both branches by one helper: a `let` before the
     -- `if` would hide the `if` from the proofs that `split` on this handler

@@ -2,6 +2,7 @@ module
 
 import all Os.Boundary
 import Os.Wait
+public import Std.Async.Signal
 import Std.Async.System
 
 public section
@@ -311,11 +312,13 @@ def reapNohang (pid : UInt32) : IO Reaped := waitNohang "reapNohang" pid false
 the id of the session it leads, from every other process until a reap. -/
 def peekNohang (pid : UInt32) : IO Reaped := waitNohang "peekNohang" pid true
 
-/-- A descriptor that becomes readable whenever a child of this process ends, so a poll loop
-can wait for its program's end instead of asking on a timer. Each end makes at least one byte
-readable; read it all before the next wait. Call it once per process, before starting the
-program: it installs the process's SIGCHLD handler. -/
-def childEndFd : IO UInt32 := Boundary.childEndFd
+/-- A descriptor that becomes readable whenever a child of this process ends or the process hears
+SIGHUP, SIGINT, SIGQUIT or SIGTERM, so a poll loop can wait for its program's end, and hear the
+system stop it, instead of asking on a timer. It carries one byte per signal, in the order they
+came, while it has room: 0 for a child's end, else the signal's number; read it all before the
+next wait. Call it once per process, before starting the program: it installs the process's
+handlers for those five signals, so the four stop signals no longer end the process. -/
+def signalPipe : IO UInt32 := Boundary.signalPipe
 
 /-- Send `sig` to every process whose session id is `sid`, other than `sid` itself, and return
 how many it reached; signal 0 only counts them. The caller keeps the session's leader, its
@@ -384,6 +387,52 @@ def nap (deadline step : Nat) : IO Bool := do
 /-- Sleep `ms` between the looks of a wait with no deadline. Only the waits named at its uses
 take it (`scripts/gates.sh`), each on something that ends without waiting itself. -/
 def pause (ms : Nat) : IO Unit := IO.sleep ms.toUInt32
+
+/-- Signals a process catches instead of letting them end it, so that it ends as it chooses,
+as a client hands its terminal back first: each signal's waiter, from Lean core's `Std.Async`,
+and the task that resolves when the signal comes. -/
+structure Watched where
+  /-- Each watched signal's waiter and the task its signal resolves. -/
+  waiters : Array (Std.Async.Signal.Waiter × Std.Async.AsyncTask Int) := #[]
+
+/-- The signals that end an interactive program, which hands its terminal back first, as it does
+when it leaves by itself: SIGTERM, as a logout sends, SIGHUP, as a closed window sends, and
+SIGINT, which a terminal in raw mode never sends for ^C. -/
+def handbackSignals : List Std.Async.Signal := [.sigterm, .sighup, .sigint]
+
+/-- Start catching one signal: its waiter, and the task that resolves when it comes. A waiter that
+starts and cannot wait is stopped. -/
+private def watchOne (signal : Std.Async.Signal) :
+    IO (Std.Async.Signal.Waiter × Std.Async.AsyncTask Int) := do
+  let waiter ← Std.Async.Signal.Waiter.mk signal true
+  try
+    return (waiter, ← waiter.wait)
+  catch err =>
+    waiter.stop
+    throw err
+
+/-- Catch `signals` until `Watched.stop`: each, when it comes, resolves its task instead of taking
+its default action. A signal that cannot be watched keeps its default action. -/
+def watch (signals : List Std.Async.Signal) : IO Watched := do
+  let mut waiters := #[]
+  for signal in signals do
+    if let .ok watched← (watchOne signal).toBaseIO then
+      waiters := waiters.push watched
+  return { waiters }
+
+/-- Whether a watched signal has come. -/
+def Watched.heard (w : Watched) : IO Bool :=
+  w.waiters.anyM fun (_, task) => do
+    return (← task.getState) == IO.TaskState.finished
+
+/-- Stop catching the watched signals, which take their default actions again. Never throws, so
+a cleanup that ends with it cannot lose what follows. -/
+def Watched.stop (w : Watched) : IO Unit := do
+  for (waiter, _) in w.waiters do
+    try
+      waiter.stop
+    catch _ =>
+      pure ()
 
 /-- Unix epoch seconds — `created` timestamps in listings. -/
 def realtimeS : IO UInt64 := do

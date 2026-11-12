@@ -563,6 +563,24 @@ def testDeepCwd : IO Unit := do
   check "child walked past PATH_MAX" walked
   check "getcwdOf reports a usable directory or nothing" usable
 
+/-- The signal pipe carries each signal it catches as one byte: 0 for a child's end, and a stop
+signal's own number, which then ends nothing. It installs this process's handlers for good, so it
+runs last. -/
+def testSignalPipe : IO Unit := do
+  let fd ← signalPipe
+  let child ← IO.Process.spawn { cmd := "true" }
+  discard <| child.wait
+  kill (← getpid) 15
+  let deadline := (← monotonicMs) + 5000
+  let mut heard : List UInt8 := []
+  while !(heard.contains 0 && heard.contains 15) && (← monotonicMs) < deadline do
+    let revs ← poll #[fd] #[POLLIN] 200
+    if revs[0]! &&& POLLIN != 0 then
+      if let some bytes← read fd 65536 then
+        heard := heard ++ bytes.toList
+  check "the signal pipe carries a child's end as 0 and SIGTERM as 15, which ends nothing"
+      (heard.contains 0 && heard.count 15 == 1 && heard.all (fun b => b == 0 || b == 15))
+
 /-- Run every check; the exit code counts the failures. -/
 public def main (args : List String) : IO UInt32 := do
   if let ["--closed-stdio", kind, logPath] := args then
@@ -587,6 +605,7 @@ public def main (args : List String) : IO UInt32 := do
   testDeepCwd
   testDurable
   testWaits check
+  testSignalPipe
   let n ← failed.get
   IO.println (if n == 0 then "ALL PASS" else s!"{n} FAILURES")
   return n.toUInt32

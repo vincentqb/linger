@@ -248,7 +248,7 @@ theorem decodeMsg_payload_le (t : UInt8) (p : List UInt8) (hp : p.length ≤ max
     | exact attach
     |
       (simp only [Msg.payload, List.length_append, writeU32_length, outcomeBytes_length,
-         List.length_nil];
+         List.length_nil, List.length_cons];
        omega)
 
 theorem takeFrames_msgs_payload_le (bytes : List UInt8) :
@@ -347,7 +347,7 @@ theorem fits_wf (m : Msg) (h : m.Fits) : m.WF := by
     refine ⟨short, ?_⟩
     rcases unassigned with rfl | above
     · exact (by decide : knownTag 3 = false)
-    · have high : ¬t ≤ 18 := by
+    · have high : ¬t ≤ 19 := by
         simp only [UInt8.le_iff_toNat_le, UInt8.reduceToNat]
         omega
       simp [knownTag, high]

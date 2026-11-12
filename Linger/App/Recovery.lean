@@ -8,8 +8,9 @@ public section
 
 /-! # Linger.App.Recovery — what a command does with a saved session
 
-A name no live session holds may have a checkpoint: what a detach, an ended program or the
-cadence last saved. A command that may start a session, as `attach` does, starts a new one only
+A name no live session holds may have a checkpoint: what a detach, an ended program, a signal
+that stopped its daemon or the cadence last saved. A command that may start a session, as
+`attach` does, starts a new one only
 when there is no file; one that may not, as `resume` and the offline readers, answers `notFound`
 then. A file whose bytes decode resumes the session they saved. A file whose bytes do not decode
 is never taken for no file: the command starts nothing, leaves it as it is and answers `notDone`,

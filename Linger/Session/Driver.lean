@@ -16,7 +16,7 @@ def feedback : (eff : Effect Plan) → Reply eff → List Event
   | .close id, gone => if gone then [.closed id] else []
   | .checkpoint, failed => if failed then [.checkpointFailed] else []
   | .stopProgram, outcome => [.stopped outcome]
-  | .writePty _, _ | .resizePty .., _ | .dropCheckpoint, _ | .exit, _ => []
+  | .writePty _, _ | .resizePty .., _ | .dropCheckpoint, _ | .record _, _ | .exit, _ => []
 
 /-- Feedback strictly descends: external input, which may stop the program; the program's end
 once the daemon stopped it; disconnect; checkpoint failure. -/

@@ -118,7 +118,7 @@ example :
      let r := step s (.childExited (.exited 0))
      r.1.scan == .ground && r.1.vt.cursor == s.vt.cursor &&
        r.2 == [.send 7 (.output [ESC, 0x5B]), .send 7 (.ended (.exited 0)), .send 7 (.exited 0),
-               .close 7, .checkpoint, .exit]) = true := by
+               .close 7, .record (.ended (.exited 0)), .checkpoint, .exit]) = true := by
   native_decide
 
 /-- A client closing changes nothing but the roster (a checkpoint
@@ -462,7 +462,33 @@ example :
      let r := step s (.stopped (.signaled 1))
      effs == [.stopProgram, .close 2] &&
        r.2 == [.send 1 (.ended (.signaled 1)), .send 1 (.exited 129), .close 1, .close 2,
-               .dropCheckpoint, .exit]) = true := by
+               .record (.ended (.signaled 1)), .dropCheckpoint, .exit]) = true := by
+  native_decide
+
+/-- A stop signal ends the session saved: the daemon stops the program, the waiter and the
+attached client hear that SIGTERM stopped the daemon and no status, the record says so, and the
+screen it found is saved, not dropped. A wait or an attach that comes once it ended hears the
+same. -/
+example :
+    (let (s, _) :=
+        run
+          [.connected 1, .bytes 1 (encode .wait), .connected 2,
+            .bytes 2 (encode (.attach .writable 80 24)), .connected 3]
+     let r := step s (.signal 15)
+      let late := step r.1 (.bytes 3 (encode .wait))
+      r.2.head? == some .stopProgram && r.2.contains (.send 1 (.saved 15)) &&
+        r.2.contains (.send 2 (.saved 15)) &&
+        !r.2.any
+            (fun e =>
+              match e with
+              | .send _ (.exited _) => true
+              | _ => false) &&
+        r.2.getLast? == some .exit &&
+        r.2.contains (.record (.saved 15)) &&
+        r.2.contains .checkpoint &&
+        !r.2.contains .dropCheckpoint &&
+        late.2 == [.send 3 (.saved 15)]) =
+      true := by
   native_decide
 
 /-- An unknown tag in a real frame is refused and changes nothing else (§Frame). -/

@@ -247,8 +247,8 @@ shim_out="$logs/shim.out"
   || { tail -25 "$shim_out"; fail "lingertest"; }
 tail -1 "$shim_out" | grep -q '^ALL PASS$' || fail "lingertest"
 shim_n="$(grep -c '^PASS ' "$shim_out")"
-[ "$shim_n" -eq 75 ] \
-  || fail "lingertest ran $shim_n checks (expected exactly 75)"
+[ "$shim_n" -eq 76 ] \
+  || fail "lingertest ran $shim_n checks (expected exactly 76)"
 
 # Keep one real session in another state directory through every suite. A suite
 # may clean up its own Env, never the user's process namespace. State directories hold
@@ -308,8 +308,8 @@ else
 fi
 # shellcheck disable=SC2086  # each skip count is a number
 ./.lake/build/bin/suites --suites \
-  manager:128 delivery:38 attach:75 agent:70:$agent_skips \
-  resume:36:$resume_skips watch:51 title:18:$title_skips graphics:9 robust:33:$robust_skips \
+  manager:131 delivery:38 attach:78 agent:70:$agent_skips \
+  resume:39:$resume_skips watch:51 title:18:$title_skips graphics:9 robust:33:$robust_skips \
   interop:72 recipes:56 status:18 terminal:12 overview:15 remote:68 shells:5 identity:25 \
   quiet:7:$quiet_skips \
   || fail "live suites (see $logs/linger-*.out)"

@@ -673,6 +673,24 @@ def run : IO UInt32 :=
         "detach leads with ST (a program that died mid-OSC/DCS would eat the rest)"
     h.bye (sendDetach := false)
     e.killAll #["hyg"]
+    -- 9b. A signal that ends the client hands the terminal back as a detach does, and the client
+    --    exits 130, `interrupted`: SIGTERM, as a logout sends, SIGHUP, as a closed window sends,
+    --    and SIGINT. Its session stays, with nobody attached.
+    for (sig, what) in [((15 : UInt32), "SIGTERM"), (1, "SIGHUP"), (2, "SIGINT")] do
+      let name := s!"sig{sig}"
+      let c ← e.spawn #["attach", name] cols rows
+      let shown ← IO.mkRef ByteArray.empty
+      c.type s!"echo {name}-$((40+2))\r"
+      let ready ← c.awaitText shown (hasText · s!"{name}-42")
+      let mark := (← shown.get).size
+      Os.Shell.kill c.pid sig
+      let handed ← c.awaitText shown (hasBytes · leaveAnsi) (start := mark)
+      let code ← c.reap patienceMs
+      let left ← waitFor 4000 (return (← e.info name "clients") == some "0")
+      expect (ready && handed && code == 130 && left)
+          s!"{what} hands the terminal back and the client exits 130 (rc={code})"
+      c.bye (sendDetach := false)
+      e.killAll #[name]
     -- If the hand-back write fails, termios restoration must still run. stdout is a
     -- second terminal, so attach passes its tty check and enters raw mode; closing that
     -- terminal's only master while attached makes the hand-back write fail. The shells
