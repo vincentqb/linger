@@ -16,6 +16,7 @@ import Linger.Import.Suites.Recipes
 import Linger.Import.Suites.Interop
 import Linger.App.Suites.Manager
 import Linger.Target.Suites.RemoteLive
+import Linger.Target.Suites.Shells
 import Verify.Ci
 import Verify.Hygiene
 import Linger.Session.Suites.Identity
@@ -42,9 +43,10 @@ def suites : List (String × IO UInt32) :=
     ("graphics", Linger.Terminal.Suites.Graphics.run), ("agent", Linger.Session.Suites.Agent.run),
     ("resume", Linger.Session.Suites.Resume.run), ("attach", Linger.Session.Suites.Attach.run),
     ("delivery", Linger.Session.Suites.Delivery.run), ("robust", Linger.Session.Suites.Robust.run),
-    ("remote", Linger.Target.Suites.Remote.run), ("terminal", Linger.Terminal.Suites.Mediation.run),
-    ("title", Linger.Display.Suites.Title.run), ("recipes", Linger.Import.Suites.Recipes.run),
-    ("interop", Linger.Import.Suites.Interop.run), ("manager", Linger.App.Suites.Manager.run),
+    ("remote", Linger.Target.Suites.Remote.run), ("shells", Linger.Target.Suites.Shells.run),
+    ("terminal", Linger.Terminal.Suites.Mediation.run), ("title", Linger.Display.Suites.Title.run),
+    ("recipes", Linger.Import.Suites.Recipes.run), ("interop", Linger.Import.Suites.Interop.run),
+    ("manager", Linger.App.Suites.Manager.run),
     -- opt-in: needs a real reachable host, so NOT in scripts/verify.sh
     ("remote-live", Linger.Target.Suites.RemoteLive.run),
     -- opt-in: reports what workloads cost on this host, so NOT in scripts/verify.sh;

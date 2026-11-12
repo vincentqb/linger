@@ -93,11 +93,11 @@ def Linger.Target.Name.check : String → Option String := sorry
 
 def Linger.Target.Remote.command : String → List String → String := sorry
 
+def Linger.Target.Remote.decode : List String → Option (List String) := sorry
+
 def Linger.Target.Remote.targetArgs : List String → Option (String × List String) := sorry
 
 def Linger.Target.Remote.targetOperands : String → List String := sorry
-
-def Linger.Target.Remote.shellQuote : String → String := sorry
 
 def Linger.Target.Remote.checkHosts : List String → Except String (List String) := sorry
 
@@ -176,6 +176,8 @@ def Linger.Session.Wire.encode : Wire.Msg → List UInt8 := sorry
 
 def Linger.Session.Wire.Decoder.feed : Wire.Decoder → List UInt8 → Wire.Decoder × List Wire.Msg :=
   sorry
+
+def Linger.Session.Wire.inputFrames : List UInt8 → List Wire.Msg := sorry
 
 def Linger.Session.Record.encode : Record → List UInt8 := sorry
 
@@ -263,7 +265,8 @@ taken between control sequences and characters; and a terminal's history only ga
 end, unless output may ask to erase it. Here: the program reads exactly the input linger
 accepted for it, in order, when the kernel delivers what linger writes (`Pty.Delivers`); linger
 accepts each frame a client that may type sends, whole, or refuses it whole when the program's
-queue is full. -/
+queue is full; and `send` hands the program text of any length in frames the decoder takes,
+whose payloads are the text, in order. -/
 
 theorem step_input_exact (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {inputs : List (List UInt8)} (hc : s.client? id = some c)
@@ -316,6 +319,20 @@ theorem decode_encode_chunked_rejects_silence :
           ∀ (chunks : List (List UInt8)),
             chunks.flatten = ms.flatMap (fun (_ : Wire.Msg) => ([] : List UInt8)) →
               Wire.feedAll Wire.Decoder.feed {} chunks = ({ buf := [], errored := false }, ms) := by
+  sorry
+
+theorem inputFrames_exact (bytes : List UInt8) :
+    ∃ chunks : List (List UInt8),
+      Wire.inputFrames bytes = chunks.map Wire.Msg.input ∧
+        chunks.flatten = bytes ∧ ∀ m ∈ Wire.inputFrames bytes, m.Fits := by
+  sorry
+
+theorem inputFrames_exact_rejects_one :
+    ¬∀ (bytes : List UInt8),
+        ∃ chunks : List (List UInt8),
+          (fun (bytes : List UInt8) => [Wire.Msg.input bytes]) bytes = chunks.map Wire.Msg.input ∧
+            chunks.flatten = bytes ∧
+            ∀ m ∈ (fun (bytes : List UInt8) => [Wire.Msg.input bytes]) bytes, m.Fits := by
   sorry
 
 theorem step_attach_focus (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
@@ -555,27 +572,33 @@ theorem picker_create_new_rejects_empty :
 `LINGER_SESSION`, `TERM`, `TERM_PROGRAM` and `TERM_PROGRAM_VERSION` change, when the operating
 system runs what linger asks (`start_runs`, in part 4). A program that cannot start there makes
 `start` return what `env -C` would, and a resume that runs elsewhere than its saved directory
-says so. -/
+says so.
+
+A command on a `name@host` target reaches the linger on that host as exactly its verb and words,
+whatever they hold, through any login shell that passes plain words on (`Shell.Literal`):
+`Remote.command` encodes them as plain words, and the remote entry decodes them before it routes
+the command line and refuses one that does not decode as a usage error. POSIX quoting would not:
+fish reads a backslash inside single quotes, so a quoted word could close its quote there and
+run what follows. Not claimed: that the remote linger decodes, since an older one refuses the
+encoded line as a usage error, nor that a command line fits the remote host's argument limit. -/
 
 theorem route_exact (args : List String) :
     App.Entry.route args =
-      if args = [] then .session ["help"]
-      else
-        if args = ["attach"] ∨ args = ["a"] then .selector false
-        else
-          if args = ["attach", "--read-only"] ∨ args = ["a", "--read-only"] then .selector true
-          else if args.head? = some "tmux" then .tmux args.tail else .session args := by
+      if args.head? = some Remote.marker then
+        match Remote.decode args.tail with
+        | some argv => App.Entry.Route.of argv
+        | none => .malformed
+      else App.Entry.Route.of args := by
   sorry
 
 theorem route_exact_rejects_selector :
     ¬∀ (args : List String),
         (fun (args : List String) => App.Entry.Route.session args) args =
-          if args = [] then .session ["help"]
-          else
-            if args = ["attach"] ∨ args = ["a"] then .selector false
-            else
-              if args = ["attach", "--read-only"] ∨ args = ["a", "--read-only"] then .selector true
-              else if args.head? = some "tmux" then .tmux args.tail else .session args := by
+          if args.head? = some Remote.marker then
+            match Remote.decode args.tail with
+            | some argv => App.Entry.Route.of argv
+            | none => .malformed
+          else App.Entry.Route.of args := by
   sorry
 
 theorem lookup_table :
@@ -648,15 +671,30 @@ theorem check_eq_some_iff_rejects_any :
     ¬∀ (s result : String), (fun s => some s) s = some result ↔ result = s ∧ Name.Valid s := by
   sorry
 
-theorem command_argv (verb : String) (words : List String) :
-    Remote.Shell.Words (Remote.command verb words).toList
-      (("linger" :: verb :: words).map String.toList) := by
+theorem command_exact (split : String → List String) (literal : Remote.Shell.Literal split)
+    (verb : String) (words : List String) :
+    ∃ args,
+      split (Remote.command verb words) = "linger" :: args ∧
+        App.Entry.route args = App.Entry.Route.of (verb :: words) := by
   sorry
 
-theorem command_argv_rejects_empty :
-    ¬∀ (verb : String) (words : List String),
-        Remote.Shell.Words ((fun (_ : String) (_ : List String) => "") verb words).toList
-          (("linger" :: verb :: words).map String.toList) := by
+theorem command_exact_rejects_quoted :
+    ¬∀ (split : String → List String),
+        Remote.Shell.Literal split →
+          ∀ (verb : String) (words : List String),
+            ∃ args,
+              split
+                    ((fun (verb : String) (words : List String) =>
+                        String.intercalate " "
+                          (("linger" :: verb :: words).map fun word =>
+                            String.ofList
+                              ('\'' ::
+                                  word.toList.flatMap
+                                    (fun c => if c = '\'' then ['\'', '\\', '\'', '\''] else [c]) ++
+                                ['\''])))
+                      verb words) =
+                  "linger" :: args ∧
+                App.Entry.route args = App.Entry.Route.of (verb :: words) := by
   sorry
 
 theorem check_no_alias (a b name : String) (ha : Name.check a = some name)
@@ -675,17 +713,6 @@ theorem targetArgs_targetOperands_rejects_none :
     ¬∀ (name : String) (rest : List String),
         Remote.targetArgs ((fun (_ : String) => ([] : List String)) name ++ rest) =
           some (name, rest) := by
-  sorry
-
-theorem shellQuote_roundtrip (s : String) (tail : List Char)
-    (boundary : tail = [] ∨ ∃ rest, tail = ' ' :: rest) :
-    Remote.Shell.word ((Remote.shellQuote s).toList ++ tail) = some (s.toList, tail) := by sorry
-
-theorem shellQuote_roundtrip_rejects_bare :
-    ¬∀ (s : String) (tail : List Char),
-        (tail = [] ∨ ∃ rest, tail = ' ' :: rest) →
-          Remote.Shell.word (((fun (s : String) => s) s).toList ++ tail) =
-            some (s.toList, tail) := by
   sorry
 
 theorem checkHosts_ok_iff (hosts result : List String) :

@@ -534,6 +534,25 @@ def run : IO UInt32 :=
     expect (senderCode == some 1 && has senderErr "connection lost")
         "send - exits 1 when the daemon dies while stdin is idle"
     e.killAll #["ag"]
+    -- Text longer than one frame may carry: three words of 100 KiB, each within an argument's
+    -- 128 KiB limit, to a program that copies its raw input to a file.
+    let bulkFile := s!"{e.dir}/bulk.input"
+    let _ ←
+      e.cli
+          #["start", "bulk", "/bin/sh", "-c", "stty raw -echo; printf ready; exec cat > \"$1\"",
+            "sh", bulkFile]
+    let bulkReady ← waitFor patienceMs (return has (← e.out #["capture", "bulk"]) "ready")
+    let bulkWords := ['a', 'b', 'c'].map fun c => String.ofList (List.replicate 102400 c)
+    let bulk := (String.intercalate " " bulkWords).toUTF8
+    let (bulkRc, _, bulkErr) ← e.cli (#["send", "bulk"] ++ bulkWords.toArray)
+    let readBulk : IO ByteArray := do
+      return ((← (IO.FS.readBinFile bulkFile).toBaseIO).toOption).getD ByteArray.empty
+    let arrived ← waitFor patienceMs (return (← readBulk).size ≥ bulk.size)
+    let bulkWhy := if bulkErr.isEmpty then "" else s!", {bulkErr.trimAscii}"
+    expect (bulkReady && bulkRc == 0 && arrived && (← readBulk) == bulk)
+        s!"send of {bulk.size} bytes, more than one frame carries, reaches the program whole and \
+          in order ({bulkRc}, {(← readBulk).size} bytes{bulkWhy})"
+    e.killAll #["bulk"]
     -- ── Step 4: resize ────────────────────────────────────────────────────────
     let _ ← e.typeIn "rz" #["true"]
     let rzCols : UInt32 := 120

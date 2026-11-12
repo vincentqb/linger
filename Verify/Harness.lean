@@ -456,6 +456,13 @@ def Env.cliTimeout (e : Env) (args : Array String) (ms : Nat) :
   | some c =>
     return some (c, ← IO.ofExcept (← IO.wait out), ← IO.ofExcept (← IO.wait err))
 
+/-- One POSIX shell word, for the `/bin/sh` scripts the suites write: a quote in it closes the
+single-quoted region, emits an escaped quote and reopens it. -/
+def shellQuote (s : String) : String :=
+  String.ofList
+    (['\''] ++ s.toList.flatMap (fun c => if c == '\'' then ['\'', '\\', '\'', '\''] else [c]) ++
+      ['\''])
+
 /-- A lowercase hexadecimal numeral's value; `none` when empty or another character appears. -/
 def hexValue? (s : String) : Option Nat :=
   s.foldl

@@ -5,11 +5,12 @@ import Linger.Target.Spec
 
 public section
 
-/-! # Linger.Target.Remote — parsing `linger ls --porcelain` from other machines
+/-! # Linger.Target.Remote — other machines' listings, targets and command lines
 
 The overview (`linger -r <hosts>`) folds in sessions from configured
 remote hosts by running `ssh <host> linger ls --porcelain` and parsing
-stdout here.
+stdout here. A session verb on a `name@host` target runs on that host as the encoded command
+line `command` builds, which the remote entry decodes (`decode`).
 
 §Remote: the parser is total (any bytes → some rows,
 never ⊥), garbage-tolerant (a malformed line or record is dropped, not
@@ -142,17 +143,59 @@ target this way; verbs that take their target by position never read `--`. -/
 def targetOperands (name : String) : List String :=
   if name.startsWith "-" then ["--", name] else [name]
 
-/-- One POSIX shell word. Quotes in the payload briefly close the single-quoted
-region, emit an escaped quote, and reopen it; all other characters remain literal. -/
-def shellQuote (s : String) : String :=
-  String.ofList
-    (['\''] ++ s.toList.flatMap (fun c => if c == '\'' then ['\'', '\\', '\'', '\''] else [c]) ++
-      ['\''])
+/-! ## Encoded command lines
 
-/-- SSH passes a command string to a shell, so quote every word after the verb,
-including empty words and the session name. The caller orders them: options, the
-target's operands, then the command's arguments, which remain opaque. -/
+SSH hands its command line to the login shell of the remote account, whichever shell that is,
+and shells disagree about quotes: fish reads a backslash inside single quotes, so POSIX quoting
+lets a word close its quote there and run what follows. So linger gives the shell nothing to
+interpret: after `marker`, `command` spells the verb and each word as an `x` and the lowercase
+hex of its UTF-8 bytes, plain words every shell passes on as they are (`Shell.Literal`), and the
+remote linger's entry decodes them (`decode`) before it routes the command line. -/
+
+/-- The hex digit of `n`, which is below 16: `0`–`9`, then `a`–`f`. -/
+def hexDigit (n : Nat) : Char := if n < 10 then Char.ofNat (48 + n) else Char.ofNat (87 + n)
+
+/-- Each byte as two hex digits, the high one first. -/
+def hexChars (bytes : List UInt8) : List Char :=
+  bytes.flatMap fun b => [hexDigit (b.toNat / 16), hexDigit (b.toNat % 16)]
+
+/-- One word, encoded: an `x`, so that the empty word is a word too, then the hex digits of its
+UTF-8 bytes. Every encoded word is plain (`plain_encodeWord`). -/
+def encodeWord (word : String) : String := String.ofList ('x' :: hexChars word.toUTF8.data.toList)
+
+/-- The value of a lowercase hex digit, or `none` for any other character. -/
+def digitValue (c : Char) : Option Nat :=
+  if '0' ≤ c ∧ c ≤ '9' then some (c.toNat - 48)
+  else if 'a' ≤ c ∧ c ≤ 'f' then some (c.toNat - 87) else none
+
+/-- The bytes that pairs of lowercase hex digits spell, after the bytes `done` holds in reverse,
+or `none` for an odd digit or any other character. -/
+def unhex : List Char → List UInt8 → Option (List UInt8)
+  | [], done => some done.reverse
+  | high :: low :: rest, done =>
+    match digitValue high, digitValue low with
+    | some h, some l => unhex rest (UInt8.ofNat (16 * h + l) :: done)
+    | _, _ => none
+  | [_], _ => none
+
+/-- The word an encoded word spells, or `none` when it does not start with `x`, its digits do
+not spell bytes, or the bytes are not UTF-8. Only `encodeWord`'s spelling decodes
+(`decodeWord_eq_some_iff`). -/
+def decodeWord (word : String) : Option String :=
+  match word.toList with
+  | 'x' :: digits =>
+    (unhex digits []).bind fun bytes => String.fromUTF8? (ByteArray.mk bytes.toArray)
+  | _ => none
+
+/-- The words an encoded command line carries after `marker`: each word decoded, or `none` when
+one does not decode, which the entry route turns into a usage error. -/
+def decode (words : List String) : Option (List String) := words.mapM decodeWord
+
+/-- The command line SSH hands the remote shell: `linger`, `marker`, then the verb and every word
+encoded, the empty ones and the session name included. The caller orders the words: options, the
+target's operands, then the command's arguments, which remain opaque. The remote linger routes
+exactly the verb and words (`command_exact`). -/
 def command (verb : String) (words : List String) : String :=
-  String.intercalate " " (("linger" :: verb :: words).map shellQuote)
+  String.intercalate " " ("linger" :: marker :: (verb :: words).map encodeWord)
 
 end Linger.Target.Remote

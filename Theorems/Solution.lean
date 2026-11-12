@@ -145,6 +145,24 @@ theorem decode_encode_chunked_rejects_silence :
   have read := h [.done] (by simp [Wire.Msg.Fits]) [] (by simp)
   exact absurd (congrArg Prod.snd read) (by simp [Wire.feedAll])
 
+theorem inputFrames_exact (bytes : List UInt8) :
+    ∃ chunks : List (List UInt8),
+      Wire.inputFrames bytes = chunks.map Wire.Msg.input ∧
+        chunks.flatten = bytes ∧ ∀ m ∈ Wire.inputFrames bytes, m.Fits :=
+  Wire.inputFrames_exact bytes
+
+theorem inputFrames_exact_rejects_one :
+    ¬∀ (bytes : List UInt8),
+        ∃ chunks : List (List UInt8),
+          (fun (bytes : List UInt8) => [Wire.Msg.input bytes]) bytes = chunks.map Wire.Msg.input ∧
+            chunks.flatten = bytes ∧
+            ∀ m ∈ (fun (bytes : List UInt8) => [Wire.Msg.input bytes]) bytes, m.Fits := by
+  intro h
+  obtain ⟨_, _, _, fits⟩ := h (List.replicate (Wire.maxPayload + 1) 0)
+  have whole := fits _ (List.mem_singleton_self _)
+  simp only [Wire.Msg.Fits, List.length_replicate] at whole
+  omega
+
 theorem step_attach_focus (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {cols rows : UInt32} (hc : s.client? id = some c)
     (read : c.decoder.feed chunk = (dec, [.attach cols rows])) (healthy : dec.errored = false)
@@ -465,26 +483,22 @@ theorem picker_create_new_rejects_empty :
 
 theorem route_exact (args : List String) :
     App.Entry.route args =
-      if args = [] then .session ["help"]
-      else
-        if args = ["attach"] ∨ args = ["a"] then .selector false
-        else
-          if args = ["attach", "--read-only"] ∨ args = ["a", "--read-only"] then .selector true
-          else
-            if args.head? = some "tmux" then .tmux args.tail
-            else .session args := App.Entry.route_eq args
+      if args.head? = some Remote.marker then
+        match Remote.decode args.tail with
+        | some argv => App.Entry.Route.of argv
+        | none => .malformed
+      else App.Entry.Route.of args := App.Entry.route_eq args
 
 theorem route_exact_rejects_selector :
     ¬∀ (args : List String),
         (fun (args : List String) => App.Entry.Route.session args) args =
-          if args = [] then .session ["help"]
-          else
-            if args = ["attach"] ∨ args = ["a"] then .selector false
-            else
-              if args = ["attach", "--read-only"] ∨ args = ["a", "--read-only"] then .selector true
-              else if args.head? = some "tmux" then .tmux args.tail else .session args := by
+          if args.head? = some Remote.marker then
+            match Remote.decode args.tail with
+            | some argv => App.Entry.Route.of argv
+            | none => .malformed
+          else App.Entry.Route.of args := by
   intro h
-  exact absurd (h ["attach"]) (by simp)
+  exact absurd (h ["attach"]) (by simp [App.Entry.Route.of, Remote.marker])
 
 theorem lookup_table :
     (App.Commands.table.flatMap fun command => command.word :: command.aliases).Nodup ∧
@@ -570,18 +584,40 @@ theorem check_eq_some_iff_rejects_any :
   intro h
   exact absurd ((h "" "").mp rfl).2.1 (by simp)
 
-theorem command_argv (verb : String) (words : List String) :
-    Remote.Shell.Words (Remote.command verb words).toList
-      (("linger" :: verb :: words).map String.toList) := Remote.command_argv verb words
+theorem command_exact (split : String → List String) (literal : Remote.Shell.Literal split)
+    (verb : String) (words : List String) :
+    ∃ args,
+      split (Remote.command verb words) = "linger" :: args ∧
+        App.Entry.route args = App.Entry.Route.of (verb :: words) := by
+  obtain ⟨encoded, received, decoded⟩ := Remote.command_decode split literal verb words
+  exact ⟨Remote.marker :: encoded, received, App.Entry.route_encoded encoded _ decoded⟩
 
-theorem command_argv_rejects_empty :
-    ¬∀ (verb : String) (words : List String),
-        Remote.Shell.Words ((fun (_ : String) (_ : List String) => "") verb words).toList
-          (("linger" :: verb :: words).map String.toList) := by
+theorem command_exact_rejects_quoted :
+    ¬∀ (split : String → List String),
+        Remote.Shell.Literal split →
+          ∀ (verb : String) (words : List String),
+            ∃ args,
+              split
+                    ((fun (verb : String) (words : List String) =>
+                        String.intercalate " "
+                          (("linger" :: verb :: words).map fun word =>
+                            String.ofList
+                              ('\'' ::
+                                  word.toList.flatMap
+                                    (fun c => if c = '\'' then ['\'', '\\', '\'', '\''] else [c]) ++
+                                ['\''])))
+                      verb words) =
+                  "linger" :: args ∧
+                App.Entry.route args = App.Entry.Route.of (verb :: words) := by
   intro h
-  have words := h "" []
-  cases words
-  simp_all [Remote.Shell.word]
+  -- fish keeps the world claim, and reads POSIX quoting of `send \'` as `send ''`
+  obtain ⟨args, received, routed⟩ := h Remote.fishSplit Remote.fishSplit_literal "send" ["\\'"]
+  dsimp only at received
+  rw [Remote.fishSplit_quoted] at received
+  simp only [List.cons.injEq, true_and] at received
+  subst received
+  rw [App.Entry.route_eq] at routed
+  simp [App.Entry.Route.of, Remote.marker] at routed
 
 theorem check_no_alias (a b name : String) (ha : Name.check a = some name)
     (hb : Name.check b = some name) : a = b := Name.check_no_alias ha hb
@@ -604,20 +640,6 @@ theorem targetArgs_targetOperands_rejects_none :
   intro h
   have read := h "s" []
   simp [Remote.targetArgs_nil] at read
-
-theorem shellQuote_roundtrip (s : String) (tail : List Char)
-    (boundary : tail = [] ∨ ∃ rest, tail = ' ' :: rest) :
-    Remote.Shell.word ((Remote.shellQuote s).toList ++ tail) = some (s.toList, tail) :=
-  Remote.shellQuote_roundtrip s tail boundary
-
-theorem shellQuote_roundtrip_rejects_bare :
-    ¬∀ (s : String) (tail : List Char),
-        (tail = [] ∨ ∃ rest, tail = ' ' :: rest) →
-          Remote.Shell.word (((fun (s : String) => s) s).toList ++ tail) =
-            some (s.toList, tail) := by
-  intro h
-  have read := h "" [] (.inl rfl)
-  simp [Remote.Shell.word] at read
 
 theorem checkHosts_ok_iff (hosts result : List String) :
     Remote.checkHosts hosts = .ok result ↔

@@ -346,7 +346,7 @@ library_roots() {
 # globs below build those two with these options.
 [ "$(library_decl Linger)" = "lean_lib Linger where leanOptions := implementationOptions " ] \
   || fail "the Linger library lost implementationOptions: $(library_decl Linger)"
-[ "$(library_decl Suites)" = "lean_lib Suites where globs := #[.submodules \`Linger.Session.Suites] leanOptions := implementationOptions " ] \
+[ "$(library_decl Suites)" = "lean_lib Suites where globs := #[.submodules \`Linger.Session.Suites, .submodules \`Linger.Target.Suites] leanOptions := implementationOptions " ] \
   || fail "the Suites library lost its globs or implementationOptions: $(library_decl Suites)"
 [ "$(git grep -c 'def implementationOptions : Array LeanOption := #\[⟨`linter.missingDocs, true⟩\]$' -- lakefile.lean)" = lakefile.lean:1 ] \
   || fail "implementationOptions no longer enables linter.missingDocs"
@@ -431,7 +431,7 @@ import_closure packages/input/Input/Spec.lean ''
 import_closure packages/input/Input/Proofs.lean 'public import Input;import all Input;'
 import_closure packages/os/Os/Spec.lean 'import SoftwareChallenge.Commands;'
 import_closure packages/os/Os/Wait.lean ''
-import_closure Linger/App/Entry.lean 'public import Linger.App.Spec;'
+import_closure Linger/App/Entry.lean 'public import Linger.App.Spec;import Linger.Target.Spec;import Linger.Target.Remote;'
 import_closure Linger/App/Spec.lean ''
 import_closure Linger/Target/Name.lean 'import Linger.Target.Spec;'
 import_closure Linger/Target/Remote.lean 'import Linger.Target.Name;import Linger.Target.Spec;'
@@ -584,7 +584,8 @@ for tie in \
   'def main [(]args : List String[)] : IO UInt32 := do try match Linger[.]App[.]Entry[.]route args with' \
   '[|] [.]selector readOnly => Linger[.]Selector[.]Shell[.]run [(]← IO[.]appPath[)][.]toString readOnly' \
   '[|] [.]tmux rest => Linger[.]Import[.]Shell[.]run [(]← IO[.]appPath[)][.]toString rest' \
-  '[|] [.]session argv => Linger[.]App[.]Shell[.]main argv'; do
+  '[|] [.]session argv => Linger[.]App[.]Shell[.]main argv' \
+  '[|] [.]malformed => IO[.]eprintln "linger: malformed encoded command line" return 2'; do
   printf '%s\n' "$entry_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "entry point bypassed its proved route or fixed IO boundary: $tie"
 done
@@ -1135,8 +1136,9 @@ code_grep '^[[:space:]]+Linger[.]Session[.]Buf[.]bufOffer infoReplyCap acc [(]By
   || fail "the info accumulator no longer uses the shared byte policy"
 
 # All session verbs consume the same exact target parser. Fuzzy matching stays
-# in the interactive picker. SSH joins a command string, so the actual transport
-# must consume the proved quoting function and inherit stdin for binary input.
+# in the interactive picker. SSH hands a command string to the remote account's login shell,
+# whichever it is, so the actual transport must consume the proved encoder, whose plain words
+# every shell passes on (`Shell.Literal`), and inherit stdin for binary input.
 # Every attach or capture argv linger builds for itself places its target with
 # Remote.targetOperands, which Remote.targetArgs reads back exactly (targetArgs_targetOperands).
 # A literal attach argv passes a name starting with - as an option. "attach" may begin

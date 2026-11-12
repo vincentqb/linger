@@ -1,5 +1,6 @@
 module
 
+public import Linger.Session.Spec
 import all Linger.Session.Wire
 
 /-! # §Frame / §Chunk / §Bound — the wire protocol theorems
@@ -343,5 +344,40 @@ theorem feedAll_feed (d : Decoder) (chunks : List (List UInt8)) :
   induction chunks generalizing d with
   | nil => rfl
   | cons c cs ih => simp [feedAll, Decoder.feedAll, ih]
+
+/-! ## Input frames -/
+
+/-- The runs `inputChunks` cuts are the bytes, in order. -/
+theorem inputChunks_flatten (bytes : List UInt8) : (inputChunks bytes).flatten = bytes := by
+  induction bytes using inputChunks.induct with
+  | case1 => simp [inputChunks]
+  | case2 b rest ih => rw [inputChunks, List.flatten_cons, ih, List.take_append_drop]
+
+/-- No run is longer than `inputChunk`. -/
+theorem inputChunks_length_le (bytes : List UInt8) :
+    ∀ chunk ∈ inputChunks bytes, chunk.length ≤ inputChunk := by
+  induction bytes using inputChunks.induct with
+  | case1 => simp [inputChunks]
+  | case2 b rest ih =>
+    intro chunk member
+    rw [inputChunks, List.mem_cons] at member
+    rcases member with rfl | later
+    · exact List.length_take_le _ _
+    · exact ih chunk later
+
+/-- **`send` of any length.** The frames that carry `bytes` are `.input` frames whose payloads,
+in order, are the bytes, and each fits the decoder's cap. -/
+theorem inputFrames_exact (bytes : List UInt8) :
+    ∃ chunks : List (List UInt8),
+      inputFrames bytes = chunks.map Msg.input ∧
+        chunks.flatten = bytes ∧ ∀ m ∈ inputFrames bytes, m.Fits := by
+  refine ⟨inputChunks bytes, rfl, inputChunks_flatten bytes, ?_⟩
+  intro m member
+  simp only [inputFrames, List.mem_map] at member
+  obtain ⟨chunk, inChunks, rfl⟩ := member
+  have short := inputChunks_length_le bytes chunk inChunks
+  simp only [Msg.Fits, maxPayload]
+  simp only [inputChunk] at short
+  omega
 
 end Linger.Session.Wire

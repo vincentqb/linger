@@ -419,11 +419,14 @@ private def invalidTarget : IO UInt32 := do
   IO.eprintln s!"linger: invalid session name or malformed name@host target (use {Paths.nameRule})"
   return 2
 
-/-- One transport boundary for all session verbs. SSH interprets a command string
-with a shell; `Remote.command` preserves the original argv, including empty words.
-The remote linger reads an attach or capture target with `targetArgs`, so it travels
-as `targetOperands`; the other verbs take it by position.
-Inherited stdin keeps `send name@host -` byte-exact. -/
+/-- One transport boundary for all session verbs. SSH hands a command string to the login
+shell of the remote account, whichever shell that is; `Remote.command` spells the verb and every
+word, empty ones included, in plain words that every shell passes on as they are, and the
+remote linger routes exactly the original argv (`command_exact`). Encoding doubles a word's
+length, and a Linux host takes a command line of at most 128 KiB, so `send name@host -`,
+whose inherited stdin stays byte-exact, carries longer text. The remote linger reads an attach
+or capture target with `targetArgs`, so it travels as `targetOperands`; the other verbs take it
+by position. -/
 private def runTarget (verb : String) (target : Linger.Target.Remote.Target) (args : List String)
     (localAction : String → IO UInt32) (options : List String := []) : IO UInt32 := do
   let interactive := verb == "attach"
@@ -706,9 +709,9 @@ private def requireLive (name : String) (m : Msg) : IO UInt32 := do
   | some result =>
     requestStatus name result
 
-/-- Like `requireLive`, but delivers `m` without awaiting a reply: `send` text and `kill`. -/
-private def requireLiveSend (name : String) (m : Msg) : IO UInt32 := do
-  if ← Client.sendOnly name m then
+/-- Like `requireLive`, but delivers `ms` without awaiting a reply: `send` text. -/
+private def requireLiveSend (name : String) (ms : List Msg) : IO UInt32 := do
+  if ← Client.sendOnly name ms then
     return 0
   noSession name
 
@@ -730,9 +733,9 @@ private def cmdRead (name : String) (m : Msg) (render : Terminal.Vt.Vt → List 
           IO.eprintln s!"linger: no live session or readable checkpoint for '{name}'"
           missingOrUnreadable name
 
-/-- `send <name> -`: stdin to the session's pty, byte-exact, one `.input`
-frame per read (≤ 64 KiB, so every frame satisfies `Msg.WF`). The agent's raw input
-path — Enter, ^C, ESC, arrow sequences, exact whitespace: everything argv
+/-- `send <name> -`: stdin to the session's pty, byte-exact, each read (≤ 64 KiB) in the
+frames `Wire.inputFrames` cuts, each within the decoder's cap (`inputFrames_exact`). The agent's
+raw input path — Enter, ^C, ESC, arrow sequences, exact whitespace: everything argv
 cannot carry (agent-cli Decision 5). Poll-then-read so EOF (`read` = `none`)
 is distinguished from would-block (`some #[]`, looped past) without spinning;
 no timeout on purpose — a slow producer feeding a pipe is legitimate, and every event the loop
@@ -781,8 +784,8 @@ private def cmdSendStdin (name : String) : IO UInt32 := do
           | none =>
             go := false
           | some bs =>
-            if !bs.isEmpty then
-              Client.sendMsg fd (.input bs.toList)
+            for m in Linger.Session.Wire.inputFrames bs.toList do
+              Client.sendMsg fd m
       return 0
     finally
       close fd
@@ -1074,7 +1077,9 @@ def main (args : List String) : IO UInt32 := do
       return ← usageError "send"
     withTarget "send" name text fun name =>
         if text == ["-"] then cmdSendStdin name
-        else requireLiveSend name (.input (String.intercalate " " text).toUTF8.toList)
+        else
+          requireLiveSend name
+            (Linger.Session.Wire.inputFrames (String.intercalate " " text).toUTF8.toList)
   | ["detach", name] | ["d", name] =>
     withTarget "detach" name [] (requireLive · .detachAll)
   | ["kill", name] | ["k", name] =>

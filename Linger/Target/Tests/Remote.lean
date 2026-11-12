@@ -44,7 +44,19 @@ example :
       (fun s => (parseTarget s).isNone) := by
   native_decide
 
-example : shellQuote "" == "''" ∧ shellQuote "a'b" == "'a'\\''b'" := by native_decide
+/-- The encoded command line: `linger`, the marker, then each word as `x` and its UTF-8 bytes in
+lowercase hex, so the empty word is `x`. -/
+example : command "send" ["", "a b", "é"] == "linger argv:hex x73656e64 x x612062 xc3a9" := by
+  native_decide
+
+/-- Only the encoder's spelling decodes: a word without its `x`, with an odd digit, an uppercase
+or other character, or bytes that are not UTF-8 is refused, and one refused word refuses the
+line. -/
+example :
+    ["", "61", "x6", "x6A", "x6g", "xff", "xc3"].all (decodeWord · == none) &&
+      decode ["x61", "x"] == some ["a", ""] &&
+      decode ["x61", "y"] == none := by
+  native_decide
 
 /-- Control bytes in display fields are scrubbed (no ANSI injection
 into the listing). -/

@@ -1,20 +1,26 @@
 module
 
 public import Verify.Harness
+public import Linger.App.Spec
 import Linger.App.Shell
+import Linger.App.Entry
 import Os.Shell.Command
 import Linger.Target.Remote
+import Linger.Target.Spec
 import Linger.Session.Shell.Client
 
 public section
 
-/-! Remote listing and command transport. A fake SSH executes the real POSIX
-shell boundary; a fake remote linger records the resulting arguments. -/
+/-! Remote listing and command transport. A fake SSH hands its command line to `/bin/sh`, as
+sshd hands it to a login shell; a fake remote linger records the words it receives, which the
+checks read as the remote entry routes them (`Entry.route`). The shells suite runs the same
+command lines through every login shell this host has. -/
 
 namespace Linger.Target.Suites.Remote
 
 open Verify.Harness
 open Os.Shell (chmod)
+open Linger.Target.Remote (encodeWord)
 
 private def devHost : String := "dev-a"
 
@@ -34,8 +40,7 @@ private def dupMsg : String :=
   | .ok _ => "checkHosts accepted a duplicate host"
 
 private def fakeSsh (log : String) : String :=
-  "#!/bin/sh\n" ++ s!"printf '%s\\000' \"$@\" > {Linger.Target.Remote.shellQuote log}\n" ++
-    "while [ $# -gt 0 ]; do\n" ++
+  "#!/bin/sh\n" ++ s!"printf '%s\\000' \"$@\" > {shellQuote log}\n" ++ "while [ $# -gt 0 ]; do\n" ++
     "  case \"$1\" in\n" ++
     "    -o) shift 2 ;;\n" ++
     "    -t|-T) shift ;;\n" ++
@@ -57,8 +62,11 @@ private def fakeLinger : String :=
     s!"    printf 'name\\t{hostileName}\\nstate\\tresumable\\n\\n'\n" ++
     "    printf 'garbage line with no tabs\\n\\n'\n" ++
     "    ;;\n" ++
-    s!"  attach) printf '\\033]2;remote-editor\\007{attachMark}\\n' ;;\n" ++
-    "  send) if [ \"$3\" = - ]; then cat > \"$LINGER_REMOTE_STDIN\"; fi ;;\n" ++
+    s!"  {Linger.Target.Remote.marker})\n" ++
+    "    case \"$2\" in\n" ++
+    s!"      {encodeWord "attach"}) printf '\\033]2;remote-editor\\007{attachMark}\\n' ;;\n" ++
+    s!"      {encodeWord "send"}) if [ \"$4\" = {encodeWord "-"} ]; then cat > \"$LINGER_REMOTE_STDIN\"; fi ;;\n" ++
+    "    esac ;;\n" ++
     "esac\n" ++
     "exit 0\n"
 
@@ -68,6 +76,10 @@ def readArgs (path : System.FilePath) : IO (List String) := do
     let text ← IO.FS.readFile path
     return if text.isEmpty then [] else (text.splitOn "\x00").dropLast
   return []
+
+/-- Where the remote linger's entry routes the words the fake remote linger last received. -/
+def remoteRoute (path : System.FilePath) : IO Linger.App.Entry.Route := do
+  return Linger.App.Entry.route (← readArgs path)
 
 /-- A descendant keeps the SSH pipes open until its owner terminates the group. It outlives
 every ceiling a discovery check waits under, so a command or stop that waited for the pipes
@@ -139,7 +151,7 @@ private def discoverySetup (e : Env) (slug : String) : IO (Env × String × Stri
   IO.FS.createDirAll bin
   let self ← IO.appPath
   IO.FS.writeFile s!"{bin}/ssh"
-      s!"#!/bin/sh\nexec {Linger.Target.Remote.shellQuote self.toString} --discovery-ssh {Linger.Target.Remote.shellQuote root} \"$@\"\n"
+      s!"#!/bin/sh\nexec {shellQuote self.toString} --discovery-ssh {shellQuote root} \"$@\"\n"
   chmod s!"{bin}/ssh" 0o755
   return (state, root, s!"{bin}:{(← IO.getEnv "PATH").getD "/usr/bin:/bin"}")
 
@@ -327,7 +339,7 @@ def run : IO UInt32 :=
       expect
           ((← readArgs log) ==
               ["-t", "--", devHost, Linger.Target.Remote.command "attach" [goodName]] &&
-            (← readArgs remoteArgs) == ["attach", goodName])
+            (← remoteRoute remoteArgs) == .session ["attach", goodName])
           "remote attach uses a PTY and preserves the target"
       expect
           ((← c1.reap patienceMs) == 0 && hasText attached "remote-editor" &&
@@ -369,7 +381,7 @@ def run : IO UInt32 :=
       let _ ← drain commandClient.fd hangMs
       expect
           ((← commandClient.reap patienceMs) == 0 &&
-            (← readArgs remoteArgs) == ["attach", goodName] ++ words &&
+            (← remoteRoute remoteArgs) == .session (["attach", goodName] ++ words) &&
             !(← injected.pathExists))
           "remote attach preserves every command argument through the shell"
       commandClient.bye (sendDetach := false)
@@ -377,7 +389,7 @@ def run : IO UInt32 :=
       let watched ← drain watcher.fd hangMs
       expect
           ((← watcher.reap patienceMs) == 0 &&
-            (← readArgs remoteArgs) == ["attach", "--read-only", goodName] &&
+            (← remoteRoute remoteArgs) == .session ["attach", "--read-only", goodName] &&
             (← readArgs log).head? == some "-t" &&
             hasBytes watched Terminal.Render.leaveAnsi)
           "remote read-only attach retains its option and terminal handback"
@@ -389,7 +401,8 @@ def run : IO UInt32 :=
         let _ ← drain literal.fd hangMs
         expect
             ((← literal.reap patienceMs) == 0 &&
-              (← readArgs remoteArgs) == ["attach"] ++ options ++ ["--", "--read-only"])
+              (← remoteRoute remoteArgs) ==
+                .session (["attach"] ++ options ++ ["--", "--read-only"]))
             "remote attach separates options from an option-like session name"
         literal.bye (sendDetach := false)
       for (verb, canonical, options, args) in
@@ -402,14 +415,19 @@ def run : IO UInt32 :=
           ("unset", "unset", [], ["x", "y"]), ("clear", "clear", [], [])] do
         let (rc, _, _) ← e.cliEnv procPath ([verb] ++ options ++ [tag] ++ args).toArray
         expect
-            (rc == 0 && (← readArgs remoteArgs) == [canonical] ++ options ++ [goodName] ++ args &&
+            (rc == 0 &&
+              (← remoteRoute remoteArgs) ==
+                .session ([canonical] ++ options ++ [goodName] ++ args) &&
               (← readArgs log).head? == some "-T" &&
               !(← injected.pathExists))
             s!"remote {verb} uses the common non-PTY transport with exact arguments"
       for options in [[], ["--history"]] do
         let (rc, _, _) ←
           e.cliEnv procPath (["capture"] ++ options ++ ["--", s!"--history@{devHost}"]).toArray
-        expect (rc == 0 && (← readArgs remoteArgs) == ["capture"] ++ options ++ ["--", "--history"])
+        expect
+            (rc == 0 &&
+              (← remoteRoute remoteArgs) ==
+                .session (["capture"] ++ options ++ ["--", "--history"]))
             "remote capture separates options from an option-like session name"
       let payload := ByteArray.mk #[0, 3, 10, 27, 127, 195, 169, 255]
       let sender0 ←

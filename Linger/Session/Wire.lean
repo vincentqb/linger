@@ -178,4 +178,28 @@ private def Decoder.feedAll (d : Decoder) : List (List UInt8) → Decoder × Lis
     let rest := r.1.feedAll cs
     (rest.1, r.2 ++ rest.2)
 
+/-! ## Input frames
+
+`send` hands a session's program text of any length: the daemon refuses a frame whose payload
+passes `maxPayload` and drops its connection, so the text travels in frames of `inputChunk`
+bytes, as `send -` reads its standard input. -/
+
+/-- The most bytes one `.input` frame of `send` carries: one read of `send -`'s standard input,
+a quarter of `maxPayload`. -/
+def inputChunk : Nat := 65536
+
+/-- `bytes` in runs of `inputChunk` bytes, in order, the last one shorter, and none for no
+bytes. -/
+def inputChunks (bytes : List UInt8) : List (List UInt8) :=
+  match bytes with
+  | [] => []
+  | b :: rest => (b :: rest).take inputChunk :: inputChunks ((b :: rest).drop inputChunk)
+termination_by bytes.length
+decreasing_by simp only [List.length_drop, List.length_cons, inputChunk]; omega
+
+/-- The `.input` frames that carry `bytes` to a session's program, in order, each within the
+decoder's cap (`inputFrames_exact`): `send` sends its text and each read of its standard input
+this way. -/
+def inputFrames (bytes : List UInt8) : List Msg := (inputChunks bytes).map .input
+
 end Linger.Session.Wire

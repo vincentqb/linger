@@ -43,7 +43,7 @@ open Verify.Harness
 open Os.Shell
 open Terminal.Render (modeSet csiNum screenText)
 open Terminal.Vt (Vt)
-open Linger.Target.Remote renaming shellQuote → quote
+open Verify.Harness renaming shellQuote → quote
 
 /-- PTY acquisition uses libc's shared `ptsname` buffer and briefly holds
 descriptors without close-on-exec. Keep every parent launch out of that region,

@@ -54,9 +54,10 @@ lean_lib Tests where
     .submodules `Linger.Target.Tests]
   leanOptions := implementationOptions
 
-/-- The session suites, built by default so the audit sees which claims they exercise. -/
+/-- The session and target suites, built by default so the audit sees which claims they
+exercise. -/
 @[default_target] lean_lib Suites where
-  globs := #[.submodules `Linger.Session.Suites]
+  globs := #[.submodules `Linger.Session.Suites, .submodules `Linger.Target.Suites]
   leanOptions := implementationOptions
 
 /-- Executable suites: `./lake exe suites <suite>`. -/

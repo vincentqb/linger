@@ -146,14 +146,16 @@ private def drainReplies (fd : UInt32) (untilDone : Bool) (silenceMs : Int32 := 
         | _ =>
           pure ()
 
-/-- Fire-and-forget: deliver one message, no reply expected. -/
-def sendOnly (name : String) (m : Msg) : IO Bool := do
+/-- Fire-and-forget: deliver `ms` in order on one connection, no reply expected. `false` means no
+live daemon. -/
+def sendOnly (name : String) (ms : List Msg) : IO Bool := do
   match ← connect name with
   | none =>
     return false
   | some fd =>
     try
-      sendMsg fd m
+      for m in ms do
+        sendMsg fd m
       return true
     finally
       close fd

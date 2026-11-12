@@ -1,5 +1,7 @@
 module
 
+import SoftwareChallenge.Commands
+
 public section
 
 /-! # What session names and remote commands are judged by
@@ -7,11 +9,13 @@ public section
 A valid session name is nonempty, at most `maxLen` characters, made only of `okChar`s, and does
 not begin with a dot, so it cannot name a path outside the socket directory.
 
-The literal subset of POSIX shell syntax. Inside single quotes, every character is literal.
-The sequence `'\''` emits one quote and resumes the quoted region. A command consists only of
-these words separated by spaces; there are no expansions or operators. This models the shell
-syntax, not the SSH implementation. OS argument strings exclude NUL. Bodies are exposed: each
-definition here is its own specification. -/
+A remote command is the line SSH hands to the login shell of the remote account, which may be
+any shell, each with its own quoting. A plain word starts with a lowercase ASCII letter and goes
+on with lowercase letters, digits and colons, which no shell expands, quotes, escapes or splits
+at, and the world claim `Shell.Literal` says that every shell passes `linger` and then plain
+words, one space apart, to `linger` as exactly those words. `marker` opens an encoded command
+line; holding a colon, it is no valid session name. Bodies are exposed: each definition here is
+its own specification. -/
 
 namespace Linger.Target.Name
 
@@ -40,38 +44,35 @@ did not ask for. -/
 @[expose] def hostClean (h : String) : Bool :=
   h.toList.all (fun c => c.toNat ≥ 32 && (c.toNat < 127 || c.toNat ≥ 160))
 
+/-- The word that opens an encoded command line: `linger argv:hex`, then the command's words,
+each encoded as plain words. A colon is no `Name.okChar`, so no session has it for a name, and no
+command does either: a linger that does not decode its command line refuses this one as a usage
+error rather than acting on it. -/
+@[expose] def marker : String := "argv:hex"
+
 end Linger.Target.Remote
 
 namespace Linger.Target.Remote.Shell
 
-/-- Read a single-quoted region through its closing quote. -/
-@[expose]
-def quoted : List Char → Option (List Char × List Char)
-  | [] => none
-  | c :: rest =>
-    if c == '\'' then
-      match rest with
-      | '\\' :: '\'' :: '\'' :: more => do
-        let (text, tail) ← quoted more
-        some ('\'' :: text, tail)
-      | _ => some ([], rest)
-    else do
-      let (text, tail) ← quoted rest
-      some (c :: text, tail)
+/-- A character a plain word may go on with: a lowercase ASCII letter, a digit or a colon. -/
+@[expose] def plainChar (c : Char) : Bool :=
+  ('a' ≤ c && c ≤ 'z') || ('0' ≤ c && c ≤ '9') || c == ':'
 
-/-- A word must start with a quote; unquoted shell syntax is outside the model. -/
-@[expose]
-def word : List Char → Option (List Char × List Char)
-  | '\'' :: rest => quoted rest
-  | _ => none
+/-- A word every shell reads as itself: a lowercase ASCII letter, then `plainChar`s. None of them
+is a quote, an escape, a separator or a character any shell expands, and the letter first makes
+the word no number, option, assignment or path. -/
+@[expose] def plain (word : String) : Bool :=
+  match word.toList with
+  | first :: rest => ('a' ≤ first && first ≤ 'z') && rest.all plainChar
+  | [] => false
 
-/-- A complete command contains only literal words and their separators. -/
-inductive Words : List Char → List (List Char) → Prop where
-  /-- The source is one word and nothing after it. -/
-  | last {source text} (read : word source = some (text, [])) : Words source [text]
-  /-- A word, one space, and the words of the rest. -/
-  |
-  next {source text tail rest} (read : word source = some (text, ' ' :: tail))
-    (more : Words tail rest) : Words source (text :: rest)
+/-- SSH hands its command line to the login shell of the remote account, whichever shell that is,
+and `split line` is the words the program that shell runs for `line` receives, its own name first.
+A line that is `linger` and then plain words, one space apart, reaches `linger` as exactly those
+words. A shell that changes, drops, joins or re-splits such a word, or passes `linger` any word
+the line does not hold, falsifies it. -/
+WorldClaim Literal (split : String → List String) :=
+  ∀ words : List String, (∀ word ∈ words, plain word = true) →
+    split (String.intercalate " " ("linger" :: words)) = "linger" :: words
 
 end Linger.Target.Remote.Shell
