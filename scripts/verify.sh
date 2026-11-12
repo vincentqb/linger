@@ -267,6 +267,30 @@ trap cleanup_sentinel EXIT HUP TERM
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger start "$sentinel_name" sleep 600
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \
   || fail "sentinel session did not start"
+# A suite changes only the directories it creates, never one a plain `linger` here uses, which
+# holds the user's own sessions and whose lock files are never removed. linger names those
+# directories itself, with LINGER_DIR unset and with every variable they follow unset, as a
+# check of the defaults runs: each one's listing, or its absence, must be the same after the
+# live suites as before. A session the user starts or ends meanwhile, or another checkout's
+# suites, change them too.
+default_dirs() {
+  { env -u LINGER_DIR ./.lake/build/bin/linger version
+    env -u LINGER_DIR -u XDG_RUNTIME_DIR -u XDG_STATE_HOME -u HOME ./.lake/build/bin/linger version
+  } | sed -n 's/^sockets: //p; s/^state: *//p' | sort -u
+}
+default_listing() {
+  default_dirs | while IFS= read -r dir; do
+    if [ -d "$dir" ]; then
+      printf '%s:\n' "$dir"
+      ls -A "$dir" 2>&1 || true
+    else
+      printf '%s: absent\n' "$dir"
+    fi
+  done
+}
+[ "$(default_dirs | awk 'END { print NR }')" -ge 2 ] \
+  || fail "linger version does not name its default directories"
+defaults_before="$(default_listing)"
 
 say "4. live suites (separate processes, at most four at once)"
 # One assertion inventory, consumed by the tested Lean runner, longer suites first.
@@ -284,11 +308,18 @@ else
 fi
 # shellcheck disable=SC2086  # each skip count is a number
 ./.lake/build/bin/suites --suites \
-  manager:128 delivery:38 attach:71 agent:70:$agent_skips \
+  manager:128 delivery:38 attach:75 agent:70:$agent_skips \
   resume:29:$resume_skips watch:51 title:18:$title_skips graphics:9 robust:33:$robust_skips \
   interop:72 recipes:56 status:18 terminal:12 overview:15 remote:68 shells:5 identity:25 \
   quiet:7:$quiet_skips \
   || fail "live suites (see $logs/linger-*.out)"
+defaults_after="$(default_listing)"
+if [ "$defaults_after" != "$defaults_before" ]; then
+  printf '%s\n' "$defaults_before" > "$logs/defaults-before"
+  printf '%s\n' "$defaults_after" > "$logs/defaults-after"
+  diff "$logs/defaults-before" "$logs/defaults-after" >&2 || true
+  fail "the live suites changed a directory a plain linger uses (diff above); a suite may change only what it creates"
+fi
 
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \
   || fail "a suite terminated the unrelated sentinel session"

@@ -748,11 +748,20 @@ for tie in \
   'let withColor := [(]← [(]← IO[.]getStdout[)][.]isTty[)] && [(]← IO[.]getEnv "NO_COLOR"[)][.]isNone let ordered := Linger[.]Display[.]View[.]sort [(]fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD ""[)][)] rows writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor ordered[)][.]toArray[)]' \
   'def summaryText : IO String := do let rows ← localRows [(]some [(][(]← monotonicMs[)] [+] 250[)][)] [(]statusOnly := true[)] return Linger[.]Display[.]Status[.]summary [(]rows[.]map fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD "unknown"[)][)]' \
   'def cmdSummary : IO Answer := do let summary ← summaryText if !summary[.]isEmpty then IO[.]println summary return [.]done' \
-  'let fd ← connectUpsert name cmd some <[$]> Client[.]attach name fd summaryText' \
+  'let fd ← connectUpsert name cmd some <[$]> attachSpoken name fd false' \
   '[|] [[]"ls", "--summary"[]] [|] [[]"list", "--summary"[]] [|] [[]"l", "--summary"[]] => cmdSummary'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "listing or prompt bypassed its shared policy: $tie"
 done
+# An attach, writable or watching, goes only to a daemon that says in an info answer on the
+# attach's own connection, within the one-shot reply budget, that it speaks this version's
+# protocol (`admits_level`); the chooser runs `linger attach`. Linger.Session.Suites.Attach checks
+# the refusals against older daemons' answers and against silence.
+tie='let heard ← [(]Inventory[.]readInfo fd [(]some [(][(]← monotonicMs[)] [+] Client[.]replySilenceMs[.]toNatClampNeg[)][)][)][.]toBaseIO let level := [(]heard[.]toOption[.]bind [(]·[.]lookup "protocol"[)][)][.]bind String[.]toNat[?] if Linger[.]Session[.]Wire[.]admits level then return [.]ok [(]← Client[.]attach name fd summaryText readOnly[)] close fd'
+printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+  || fail "an attach bypasses its daemon's protocol level (Wire.admits): $tie"
+[ "$(code_count 'Client[.]attach([^[:alnum:]_]|$)' Linger/App/Shell.lean)" -eq 1 ] \
+  || fail "Client.attach is called outside attachSpoken, which first asks the daemon's protocol level"
 # `linger help` lists the exit statuses from the vocabulary every command answers in
 # (`code_documented`, `listed_once`), one line per answer of linger's own.
 printf '%s\n' "$cli_code" | CG_RE='(^|[[:space:]])Answer[.]legend[.]map [(]" +" [+][+] ·[)][)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
@@ -1309,7 +1318,7 @@ for tie in \
 done
 for tie in \
   'requestStatus name result [|] none => Paths[.]withSessionLock name do match ← Resume[.]loadCkpt name with [|] some [(]vt, _, _[)] => writeAll stdoutFd [(]ByteArray[.]mk [(]render vt[)][.]toArray[)]' \
-  'if readOnly then match ← Client[.]connect name with [|] some fd => some <[$]> Client[.]attach name fd summaryText true [|] none => let [(]checkpoint, record[)] ← Paths[.]withSessionLock name do return [(]← Resume[.]loadCkpt name, ← [(]Record[.]load name[)][.]toBaseIO[)] let status := Linger[.]Display[.]Listing[.]rowStatus [(]savedRow record[)][.]1 checkpoint[.]mapM fun [(]vt, _, _[)] => Client[.]viewSaved name vt status'; do
+  'if readOnly then match ← Client[.]connect name with [|] some fd => some <[$]> attachSpoken name fd true [|] none => let [(]checkpoint, record[)] ← Paths[.]withSessionLock name do return [(]← Resume[.]loadCkpt name, ← [(]Record[.]load name[)][.]toBaseIO[)] let status := Linger[.]Display[.]Listing[.]rowStatus [(]savedRow record[)][.]1 checkpoint[.]mapM fun [(]vt, _, _[)] => [.]ok <[$]> Client[.]viewSaved name vt status'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "offline reading or listing bypassed ownership: $tie"
 done
@@ -1803,7 +1812,8 @@ ed_n="$(code_count '(^|[^[:alnum:]_.])drain(Str)?[[:space:]]+[^[:space:]]+[[:spa
 #     10 ms; the loop, until an event or a deadline; the final drain, at most drainTimeoutMs
 #     (3 s); stopping a program, in 10 ms steps for at most 2 s, and the rest of its session, in
 #     50 ms steps for at most 2 s; a held startup claim, every 10 ms for at most claimWaitMs (1 s).
-#   Session/Shell/Inventory: an info reply, until the request's deadline.
+#   Session/Shell/Inventory: an info reply, until the request's deadline: replySilenceMs (10 s)
+#     for the one an attach asks for its daemon's protocol level.
 timers="$(code_grep '(IO[.]sleep [^[:space:]]|← poll [^[:space:]]|(^|[[:space:].])nap [^[:space:]]|(^|[[:space:]])pause [0-9])' 'Linger/*.lean' \
     ':!Linger/*/Suites/*' ':!Linger/*/Proofs/*' ':!Linger/*/Tests/*' \
     'packages/*.lean' ':!packages/*/Suites/*' ':!packages/*/Proofs/*' ':!packages/*/Tests/*' \

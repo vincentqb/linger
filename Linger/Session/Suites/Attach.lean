@@ -2,8 +2,10 @@ module
 
 public import Verify.Harness
 import Linger.App.Wait
+import Linger.Session.Shell.Client
 import Linger.Session.Shell.Daemon
 import Linger.Session.Checkpoint
+import Linger.Session.Wire
 import Linger.Target.Name
 public import Linger.Session.Spec
 import SoftwareChallenge.Commands
@@ -270,8 +272,110 @@ private def sigkillChecks : IO Unit := do
         s!"SIGKILL ends a {kind} process that ignores every other signal within a second \
           ({repr how} after {took} ms)"
 
+/-- A daemon an earlier linger started, at `socketPath`, for one connection. `level-2` answers
+`info` as a daemon at protocol level 2 does, with `protocol` 2, and refuses the attach of level 3
+as a message it does not know; `unleveled` answers `info` with no `protocol` field and drops the
+attach without a reply, as a daemon from before the field did; `silent` answers nothing, as a
+stopped daemon. It ends once the client leaves: 0 when no attach came, 3 when one did, and 1 when
+no client came or the client never left. -/
+def olderDaemon (socketPath readyPath mode : String) : IO UInt32 := do
+  let lfd ← Os.Shell.unixListen socketPath
+  Os.Shell.setNonblock lfd
+  try
+    IO.FS.writeFile readyPath "ready"
+    let some fd ← acceptWithin lfd hangMs | return 1
+    try
+      let fields := "pid\t1\ncmd\tfixture\n" ++ if mode == "level-2" then "protocol\t2\n" else ""
+      let send (m : Linger.Session.Wire.Msg) : IO Unit := do
+        -- a client that refused may close before the last write
+        try
+          Linger.Session.Shell.Client.sendMsg fd m
+        catch _ =>
+          pure ()
+      let mut dec : Linger.Session.Wire.Decoder := {}
+      let mut attached := false
+      let deadline := (← Os.Shell.monotonicMs) + hangMs
+      while (← Os.Shell.monotonicMs) < deadline do
+        let revs ← Os.Shell.poll #[fd] #[Os.Shell.POLLIN] 100
+        if revs[0]! &&& (Os.Shell.POLLIN ||| Os.Shell.POLLHUP ||| Os.Shell.POLLERR) == 0 then
+          continue
+        -- a client that left closes the connection or resets it
+        let received ←
+          try
+            Os.Shell.read fd 65536
+          catch _ =>
+            pure none
+        let some bytes := received | return if attached then 3 else 0
+        let (next, msgs) := dec.feed bytes.toList
+        dec := next
+        for m in msgs do
+          match m with
+          | .info =>
+            if mode != "silent" then
+              send (.infoReply fields.toUTF8.toList)
+              send .done
+          | .attach _ _ _ =>
+            attached := true
+            if mode == "level-2" then
+              send (.err "unknown message".toUTF8.toList)
+          | _ =>
+            pure ()
+      return 1
+    finally
+      Os.Shell.close fd
+  finally
+    Os.Shell.close lfd
+
+/-- A session whose daemon an earlier linger started is refused, by a writable attach and by a
+watcher alike, within the time its `info` answer may take, `Client.replySilenceMs`, with the
+session's name and its level, and is sent no attach: a level-2 daemon refuses the attach of
+level 3 as a message it does not know, and one from before the level was reported drops it
+without a reply, so an attach sent blind shows a bare refusal or waits for the detach key. -/
+def olderDaemonChecks (e : Env) : IO Unit := do
+  let self ← IO.appPath
+  let bound := Linger.Session.Shell.Client.replySilenceMs.toNatClampNeg + patienceMs
+  for (mode, said, options) in
+    [("level-2", "(protocol 2)", #[]), ("unleveled", "(no protocol level)", #[]),
+      ("silent", "did not say which protocol it speaks", #[]),
+      ("level-2", "(protocol 2)", #["--read-only"])] do
+    let name := s!"older-{mode}{if options.isEmpty then "" else "-watched"}"
+    let socketPath := s!"{e.dir}/{name}.sock"
+    let readyPath := s!"{e.dir}/{name}.ready"
+    let server ←
+      IO.Process.spawn
+          { cmd := self.toString, args := #["--older-daemon", socketPath, readyPath, mode],
+            stdout := .null, stderr := .null }
+    try
+      unless ← waitFor patienceMs (System.FilePath.pathExists readyPath) do
+        throw (IO.userError s!"older daemon {name} did not become ready")
+      let start ← Os.Shell.monotonicMs
+      let client ← e.spawn (#["attach"] ++ options ++ #[name])
+      try
+        -- refused, the client exits, so this reads to its end of file
+        let output ← drain client.fd bound
+        let elapsed := (← Os.Shell.monotonicMs) - start
+        let code ← client.reap patienceMs
+        let served ← waitProcess server patienceMs
+        expect
+            (code == 1 && hasText output s!"linger: session '{name}'" && hasText output said &&
+              elapsed < bound &&
+              served == some 0)
+            s!"attach {String.intercalate " " (options.toList ++ [name])} refuses a daemon an older \
+              linger started, naming the session and its level, within {bound} ms and without \
+              attaching (exit {code}, {elapsed} ms, daemon {served})"
+      finally
+        client.bye
+    finally
+      reapOrKill server 0
+      for path in [socketPath, readyPath] do
+        try
+          IO.FS.removeFile path
+        catch _ =>
+          pure ()
+
 /-- The attach suite: attach, detach, reattach, mirroring, waiting, hand-back and
-scrollback, and that nothing of an ended session's terminal session outlives it. -/
+scrollback, the refusal of a daemon an older linger started, and that nothing of an ended
+session's terminal session outlives it. -/
 @[exercises Linger.Session.Signal.Ends]
 def run : IO UInt32 :=
   Env.suite "attach" fun e => do
@@ -279,6 +383,7 @@ def run : IO UInt32 :=
     closeFeedback e
     focusChecks e
     unsizedChecks e
+    olderDaemonChecks e
     -- one source for the pty geometry and for the off-the-screen window below
     let cols : UInt32 := 80
     let rows : UInt32 := 24

@@ -80,6 +80,8 @@ def main (args : List String) : IO UInt32 := do
     Linger.Session.Suites.Agent.infoServer socketPath readyPath mode
   | ["--stream-info-server", socketPath, readyPath] =>
     Linger.Session.Suites.Robust.streamInfoServer socketPath readyPath
+  | ["--older-daemon", socketPath, readyPath, mode] =>
+    Linger.Session.Suites.Attach.olderDaemon socketPath readyPath mode
   | "--discovery-ssh" :: root :: rest =>
     Linger.Target.Suites.Remote.discoverySsh root rest
   | ["--discovery-leaf", root, host] =>

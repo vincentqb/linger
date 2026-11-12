@@ -594,41 +594,71 @@ private def endingAnswer : Client.Ending → Answer
   | .outcome outcome => Answer.ofOutcome outcome
   | .status status => .program status
 
-/-- A live connection is authoritative. Only read-only attachment can view an
-offline checkpoint, loaded with its end record while owning both resources and displayed after
-releasing them, under the status the listing shows for it. Writable attachment keeps the
-create/resume path, which resumes an ended session too. Live titles sample `summaryText` in this
-process. -/
+/-- Attach over `fd` once its daemon has said, in an `info` answer on `fd` within
+`Client.replySilenceMs`, that it speaks this version's protocol (`Wire.admits`). Otherwise close
+`fd`, say which session and which level its daemon reported, and answer `notDone`: a daemon an
+older linger started refuses this version's attach as a message it does not know, one from
+before the level was reported drops it without a reply, and one that does not answer would leave
+the attach waiting for the detach key. -/
+private def attachSpoken (name : String) (fd : UInt32) (readOnly : Bool) :
+    IO (Except Answer Client.Outcome) := do
+  let heard ←
+    (Inventory.readInfo fd (some ((← monotonicMs) + Client.replySilenceMs.toNatClampNeg))).toBaseIO
+  let level := (heard.toOption.bind (·.lookup "protocol")).bind String.toNat?
+  if Linger.Session.Wire.admits level then
+    return .ok (← Client.attach name fd summaryText readOnly)
+  close fd
+  match heard, level with
+  | .error why, _ =>
+    IO.eprintln s!"linger: session '{name}' did not say which protocol it speaks ({why})"
+  | .ok _, some level =>
+    let which := if level < Linger.Session.Wire.protocol then "an older" else "a newer"
+    IO.eprintln
+        s!"linger: session '{name}' was started by {which} linger (protocol {level}); restart \
+          it, or attach with that linger"
+  | .ok _, none =>
+    IO.eprintln
+        s!"linger: session '{name}' was started by an older linger (no protocol level); restart \
+          it, or attach with that linger"
+  return .error .notDone
+
+/-- A live connection is authoritative, once its daemon says it speaks this version's protocol
+(`attachSpoken`). Only read-only attachment can view an offline checkpoint, loaded with its end
+record while owning both resources and displayed after releasing them, under the status the
+listing shows for it. Writable attachment keeps the create/resume path, which resumes an ended
+session too. Live titles sample `summaryText` in this process. -/
 private def cmdAttach (name : String) (cmd : List String) (readOnly : Bool) : IO Answer := do
-  let result ←
+  let result : Option (Except Answer Client.Outcome) ←
     if readOnly then
       match ← Client.connect name with
       | some fd =>
-        some <$> Client.attach name fd summaryText true
+        some <$> attachSpoken name fd true
       | none =>
         let (checkpoint, record) ←
           Paths.withSessionLock name do
               return (← Resume.loadCkpt name, ← (Record.load name).toBaseIO)
         let status := Linger.Display.Listing.rowStatus (savedRow record).1
-        checkpoint.mapM fun (vt, _, _) => Client.viewSaved name vt status
+        checkpoint.mapM fun (vt, _, _) => .ok <$> Client.viewSaved name vt status
     else
       let fd ← connectUpsert name cmd
-      some <$> Client.attach name fd summaryText
+      some <$> attachSpoken name fd false
   let some result := result
     |
     IO.eprintln s!"linger: no live session or readable checkpoint for '{name}'"
     return ← missingOrUnreadable name
   match result with
-  | .ended ending =>
+  | .error answer =>
+    return answer
+  | .ok (.ended ending) =>
     IO.eprintln s!"\r\nlinger: session '{name}' ended ({ending.describe})"
     return endingAnswer ending
-  | .detached =>
+  | .ok .detached =>
     IO.eprintln s!"\r\nlinger: detached from '{name}'"
     return .done
-  | .refused msg =>
+  | .ok (.refused msg) =>
     IO.eprintln s!"\r\nlinger: {msg}"
     return .notDone
-  | .lost why =>
+  | .ok (.lost why) =>
     IO.eprintln s!"\r\nlinger: {why} for '{name}'"
     return .notDone
 

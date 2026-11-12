@@ -16,6 +16,7 @@ Tensions carried here:
 * §Chunk — `Decoder.feed` is invariant under re-chunking.
 * §Bound — a decoder never holds more than `4 + maxPayload` bytes; an
   oversize frame flips it into a sticky error state instead of growing.
+* §Level — a client attaches only to a daemon that reports this version's protocol level.
 -/
 
 namespace Linger.Session.Wire
@@ -224,5 +225,17 @@ decreasing_by simp only [List.length_drop, List.length_cons, inputChunk]; omega
 decoder's cap (`inputFrames_exact`): `send` sends its text and each read of its standard input
 this way. -/
 def inputFrames (bytes : List UInt8) : List Msg := (inputChunks bytes).map .input
+
+/-! ## Protocol levels (§Level)
+
+A daemon's `info` answer reports the protocol level it speaks. An attach goes only to a daemon
+at this version's level: an older daemon refuses this version's attach as a message it does not
+know, and one from before the level was reported drops it without a reply, so an attach sent
+without asking would end in a bare refusal or wait for the detach key. -/
+
+/-- Whether a client attaches to a daemon whose `info` answer reports protocol `level`, `none`
+for an answer that reports no level, or for no answer: exactly when `level` is this version's,
+`protocol` (`admits_iff`). -/
+def admits (level : Option Nat) : Bool := level == some protocol
 
 end Linger.Session.Wire

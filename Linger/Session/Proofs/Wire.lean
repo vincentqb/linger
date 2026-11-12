@@ -405,4 +405,11 @@ theorem inputFrames_exact (bytes : List UInt8) :
   simp only [inputChunk] at short
   omega
 
+/-! ## Protocol levels (§Level) -/
+
+/-- **An attach goes only to a daemon at this version's level.** An older or a newer level, an
+answer with no level and no answer are each refused. -/
+theorem admits_iff (level : Option Nat) : admits level = true ↔ level = some protocol := by
+  simp [admits]
+
 end Linger.Session.Wire

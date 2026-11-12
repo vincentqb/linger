@@ -524,18 +524,24 @@ fi
   IO.FS.removeFile (bin / "linger")
   -- The same effective home and state paths reach ls in the invocation cwd and the checkpoint
   -- the import writes. Missing suffixes, empty overrides and absent variables must retain their
-  -- meanings for both.
-  let states :=
-    #[("LINGER_DIR", some "saved-link/../state"), ("XDG_RUNTIME_DIR", some "saved-link/../runtime"),
-      ("XDG_STATE_HOME", some "saved-link/../persistent")]
+  -- meanings for both: each variable is relative in one case, empty in one and absent in one.
+  -- XDG_RUNTIME_DIR is absent where LINGER_DIR is relative and relative where LINGER_DIR is
+  -- absent, so the import takes its session's name lock in a directory this suite owns. With
+  -- both absent it would take it in the user's own `/tmp/linger-$UID`, which keeps lock files.
+  let relative := fun (key dir : String) => (key, some s!"saved-link/../{dir}")
   let host := Linger.Target.Name.sanitize (← Os.Shell.gethostname)
   for (label, extra, expected, state) in
-    [("relative", states,
-        [(paneDir / "state").toString, (paneDir / "runtime").toString,
-          (paneDir / "persistent").toString],
+    [("relative",
+        #[relative "LINGER_DIR" "state", ("XDG_RUNTIME_DIR", none),
+          relative "XDG_STATE_HOME" "persistent"],
+        [(paneDir / "state").toString, "<unset>", (paneDir / "persistent").toString],
         paneDir / "state"),
-      ("empty", states.map fun (key, _) => (key, some ""), [origin.toString, "", ""], origin),
-      ("unset", states.map fun (key, _) => (key, none), ["<unset>", "<unset>", "<unset>"],
+      ("empty",
+        #[("LINGER_DIR", some ""), ("XDG_RUNTIME_DIR", some ""), ("XDG_STATE_HOME", some "")],
+        [origin.toString, "", ""], origin),
+      ("unset",
+        #[("LINGER_DIR", none), relative "XDG_RUNTIME_DIR" "runtime", ("XDG_STATE_HOME", none)],
+        ["<unset>", (paneDir / "runtime").toString, "<unset>"],
         paneDir / ".local" / "state" / "linger" / host)] do
     let session := s!"environment-{label}-{← Os.Shell.getpid}"
     IO.FS.writeFile save (paneLine session "1" "0" "~" "")

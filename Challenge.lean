@@ -192,6 +192,8 @@ def Linger.Session.Wire.Decoder.feed : Wire.Decoder → List UInt8 → Wire.Deco
 
 def Linger.Session.Wire.inputFrames : List UInt8 → List Wire.Msg := sorry
 
+def Linger.Session.Wire.admits : Option Nat → Bool := sorry
+
 def Linger.Session.Record.encode : Record → List UInt8 := sorry
 
 def Linger.Session.Record.answer : Option (List UInt8) → Option Outcome := sorry
@@ -1030,7 +1032,13 @@ nothing (`record_answer`).
 `wait` answers with how the program ended when its daemon or the end record says, and that it
 could not find out only when that is so: the ending is unknown, or the name stays held, with no
 daemon answering, from the look that first found it so for longer than a daemon's ending lasts.
-Every command answers with one of the answers `Answer` names, and exits with its code. -/
+Every command answers with one of the answers `Answer` names, and exits with its code.
+An attach goes only to a daemon whose `info` answer reports this version's protocol level, as
+every daemon of this version does (`infoFields_protocol`), so a daemon an older linger started
+is refused with a reason, never sent an attach it would refuse as unknown or drop unanswered.
+Not claimed: that the answer comes within the client's wait and that the refusal names the
+session and the level, which the attach suite checks against a level-2 daemon, one that reports
+no level and one that never answers. -/
 
 theorem step_kill_stops (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {rest : List Wire.Msg} (hc : s.client? id = some c)
@@ -1245,6 +1253,14 @@ theorem infoFields_protocol_rejects_empty :
     ¬∀ (s : State),
         ("protocol", toString Wire.protocol) ∈
           (fun (_ : State) => ([] : List (String × String))) s := by
+  sorry
+
+theorem admits_level (level : Option Nat) :
+    Wire.admits level = true ↔ level = some Wire.protocol := by sorry
+
+theorem admits_level_rejects_any :
+    ¬∀ (level : Option Nat),
+        (fun (_ : Option Nat) => true) level = true ↔ level = some Wire.protocol := by
   sorry
 
 theorem step_unknown_refused (s : State) (id : Nat) (chunk : List UInt8) {c : Client}

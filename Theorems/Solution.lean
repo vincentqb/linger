@@ -1230,6 +1230,15 @@ theorem infoFields_protocol_rejects_empty :
   intro h
   exact absurd (h (State.boot (Vt.Vt.init 1 1) [] [])) (by simp)
 
+theorem admits_level (level : Option Nat) :
+    Wire.admits level = true ↔ level = some Wire.protocol := Wire.admits_iff level
+
+theorem admits_level_rejects_any :
+    ¬∀ (level : Option Nat),
+        (fun (_ : Option Nat) => true) level = true ↔ level = some Wire.protocol := by
+  intro h
+  cases (h none).1 rfl
+
 theorem step_unknown_refused (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {tag : UInt8} {payload : List UInt8} (hc : s.client? id = some c)
     (read : c.decoder.feed chunk = (dec, [.unknown tag payload])) (healthy : dec.errored = false) :
