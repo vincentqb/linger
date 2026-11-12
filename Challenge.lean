@@ -105,6 +105,8 @@ def Linger.App.Wait.decide : Option Nat → Option Nat → Nat → App.Wait.Hear
 def Linger.App.Recovery.decide : Bool → Option ByteArray → App.Recovery (Checkpoint.Ckpt Vt.Vt) :=
   sorry
 
+def Linger.App.Capture.plan : List App.Capture.Step := sorry
+
 /-! ### Session targets -/
 
 def Linger.Target.Name.check : String → Option String := sorry
@@ -1717,14 +1719,14 @@ refused, and a command never takes bytes that do not decode for no checkpoint: i
 nothing over them and leaves them as they are, for `kill` to discard (`recovery_exact`). A crash
 costs at most the changes of the last interval. A session asks for a save within
 `ckptIntervalMs` of every change no save holds, by the clock its ticks give it (`unsaved_due`);
-its daemon saves off its loop and replaces the checkpoint whole and durably, so that after a
-crash the file at the path is the last save whose flushes returned, or the one then running,
-whole (`Disk.Durable`, which the resume suite exercises by killing a daemon while it saves); and
-resuming then gives back that save, never a fresh session (`crash_resumes`). Not claimed: a
-bound in bytes or rows on what a crash loses, since the bound is in time, the interval and the
-saves then running, whatever the program wrote in it, and a bound in rows waits for an
-append-only store of the history; and that power loss keeps what the flushes returned for, which
-rests on `Disk.Durable` and which no suite exercises. -/
+its daemon saves off its loop and replaces the checkpoint whole and durably, as the tmux import
+writes one, so that after a crash the file at the path is the last save whose flushes returned,
+or the one then running, whole (`Disk.Durable`, which the resume suite exercises by killing a
+daemon while it saves); and resuming then gives back that save, never a fresh session
+(`crash_resumes`). Not claimed: a bound in bytes or rows on what a crash loses, since the bound
+is in time, the interval and the saves then running, whatever the program wrote in it, and a
+bound in rows waits for an append-only store of the history; and that power loss keeps what the
+flushes returned for, which rests on `Disk.Durable` and which no suite exercises. -/
 
 theorem loadBytes_saveBytes_live (c : Checkpoint.Ckpt Vt.Vt)
     (h :
@@ -1998,10 +2000,18 @@ answer and no output, and the writes it asks for while one runs coalesce into th
 decides (`scripts/gates.sh`), so it gives up once its deadline has passed, which the os package
 claims (`packages/os`), and then reports what
 it missed: `start` that its daemon did not answer, `ls` a remote host as `?`, `wait --timeout`
-124. Not claimed: the waits with no deadline, each on something that ends without waiting
-itself, or on purpose: `wait` without `--timeout`, an idle daemon's poll, `start` or `resume`
-once their daemon took the request's ticket, and a daemon's last disk write, which it reports
-after a second. How long a wait takes under load the robust, resume and status suites measure. -/
+124. A `capture` of a saved session loads and renders it holding the name's locks and lets them
+go before it writes, so no step it takes holding them waits on a party outside linger, and an
+attach or a resume that starts the session while a pager or a pipe nobody reads holds up the
+capture's write waits for the locks only as long as the load and the render take
+(`capture_waits_unlocked`); the shell runs exactly these steps (`scripts/gates.sh`). A write that
+finds its descriptor full, as one another program left nonblocking is, waits for the reader and
+goes on, never taken for a reader that is gone, which the os package claims. Not claimed: the
+waits with no deadline, each on something that ends without waiting itself, or on purpose:
+`wait` without `--timeout`, an idle daemon's poll, `start` or `resume` once their daemon took the
+request's ticket, a daemon's last disk write, which it reports after a second, and a command's
+write to a reader that does not read, as a blocking write waits too. How long a wait takes under
+load the robust, resume and status suites measure. -/
 
 theorem start_answer_true (r : Start.Request) (h : Start.Reachable Start.proceeds Start.answer r) :
     (r.answer = some .started → r.runs = true) ∧
@@ -2034,6 +2044,22 @@ theorem offloop_coalesces_rejects_eager :
             ws.head?.map start ∧
           (ws.foldl (Offloop.run (fun (o : Offloop R W) (w : W) => (o, some w)) start) {}).waiting =
             if ws.length ≤ 1 then none else ws.getLast? := by
+  sorry
+
+theorem capture_waits_unlocked :
+    (App.Capture.work App.Capture.plan false).map Prod.fst = [.load, .render, .write] ∧
+      (.load, true) ∈ App.Capture.work App.Capture.plan false ∧
+      ∀ step,
+        (step, true) ∈ App.Capture.work App.Capture.plan false → step.waitsOutside = false := by
+  sorry
+
+theorem capture_waits_unlocked_rejects_inside :
+    ¬((App.Capture.work [.acquire, .load, .render, .write, .release] false).map Prod.fst =
+          [.load, .render, .write] ∧
+        (.load, true) ∈ App.Capture.work [.acquire, .load, .render, .write, .release] false ∧
+        ∀ step,
+          (step, true) ∈ App.Capture.work [.acquire, .load, .render, .write, .release] false →
+            step.waitsOutside = false) := by
   sorry
 
 /-! ## The status rule

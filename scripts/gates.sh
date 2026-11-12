@@ -473,7 +473,7 @@ module_imports Linger/Session.lean ':(glob)Linger/Session/*.lean' 'Linger/Sessio
     packages/terminal/Terminal/Replay.lean Linger.lean \
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
-    if (mod !~ /^(Linger[.]Session|Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](Shell|Commands|Answer|Wait|Recovery|Spec)|Std[.]Async[.](System|Signal))$/ \
+    if (mod !~ /^(Linger[.]Session|Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](Shell|Commands|Answer|Wait|Recovery|Capture|Spec)|Std[.]Async[.](System|Signal))$/ \
         && mod != "SoftwareChallenge.Commands") {
       print "  " $0; bad = 1
     }
@@ -638,7 +638,8 @@ for tie in \
 done
 # Captures belong to the adjacent latest save only. Freeze their revision across
 # display and acceptance, read the exact proved member to stdout, then publish
-# the proved checkpoint while owning both identity locks. No saved command is run.
+# the proved checkpoint while owning both identity locks, whole and durably as a
+# daemon's saves are (`Os.Shell.replaceFile`). No saved command is run.
 for tie in \
   'unless ← latestSave save do return none' \
   'metadata[.]byteSize[.]toNat ≤ 64 [*] 1024 [*] 1024' \
@@ -649,7 +650,7 @@ for tie in \
   'unless text "archive" == some found[.]path[.]toString && row[.]lookup "archive-revision" == some [(]archiveRevision found[)] do throw [(]IO[.]userError "pane capture archive changed; refresh the saved panes"[)]' \
   'private def seedPane [(]pane : Pane[)] [(]contents : Option String[)] : IO Bool := Paths[.]withSessionLock pane[.]name do' \
   'if [(]← [(]System[.]FilePath[.]mk path[)][.]pathExists[)] [|][|] [(]← [(]System[.]FilePath[.]mk socket[)][.]pathExists[)] then return false' \
-  'let handle ← IO[.]FS[.]Handle[.]mk tmp [.]writeNew try Os[.]Shell[.]chmod tmp[.]toString 0o600 handle[.]write [(]Linger[.]Session[.]Checkpoint[.]saveBytes [(]checkpoint pane contents[)][)] handle[.]flush IO[.]FS[.]hardLink tmp path finally IO[.]FS[.]removeFile tmp' \
+  'then return false Os[.]Shell[.]replaceFile path [(]Linger[.]Session[.]Checkpoint[.]saveBytes [(]checkpoint pane contents[)][)] return true' \
   'pending[.]set [(]some [(]← Command[.]startLimited "tar" args limit[)][)] let deadline := [(]← Os[.]Shell[.]monotonicMs[)] [+] 5000' \
   'throw [(]IO[.]userError "pane capture archive timed out"[)] finally Command[.]stop pending'; do
   printf '%s\n' "$import_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
@@ -1324,13 +1325,14 @@ for tie in \
 done
 [ "$(code_count 'takeTicket report' Linger/App/Shell.lean)" -eq 4 ] \
   || fail "only the daemon's take-once, a failed begin and the command's wait take a request's ticket"
-# An offline reader holds both locks briefly, so the daemon's startup claim retries a
-# held lock for a bounded, positive time, and stops at once when a live daemon answers
-# on the socket. A retry is asked only after a failed attempt. Every other acquisition
-# is withLock or withSessionLock, one attempt each, and only the claim names a retrying
-# acquisition, so no reader can pass a retry by position. The Claim model reads each
-# failed attempt as an unchanged step. Linger.Session.Suites.Robust holds an offline capture's locks
-# while resume starts the session, and checks that a claim finding both free logs no wait.
+# An offline reader holds both locks briefly, while it loads and renders, so the daemon's
+# startup claim retries a held lock for a bounded, positive time, and stops at once when a live
+# daemon answers on the socket. A retry is asked only after a failed attempt. Every other
+# acquisition is withLock or withSessionLock, one attempt each, and only the claim names a
+# retrying acquisition, so no reader can pass a retry by position. The Claim model reads each
+# failed attempt as an unchanged step. Linger.Session.Suites.Robust holds both of a name's locks
+# while resume starts the session, as an offline reader does, and checks that a claim finding
+# both free logs no wait.
 code_grep '^private def claimWaitMs : Nat := [1-9][0-9]*$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "the startup claim must wait a positive, fixed time"
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])if [(]← monotonicMs[)] ≥ deadline then return false let live ← unixConnect sockPath if live ≥ 0 then close live[.]toUInt64[.]toUInt32 return false([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
@@ -1346,11 +1348,12 @@ for tie in \
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "daemon resource cleanup escaped its ownership lifetime: $tie"
 done
-# A name's end record and a session's checkpoint are replaced whole and durably
-# (`Os.Shell.replaceFile`): a temporary sibling written and flushed, renamed over the file, and
-# the directory flushed, the protocol the world claims `Record.Kept` (`record_answer`) and
-# `Disk.Durable` (`crash_resumes`) take the file system to honor. The agent suite reads records
-# after their sessions end, and the resume suite reads both after a daemon killed while it saves.
+# A name's end record and a session's checkpoint, a daemon's or an imported one, are replaced
+# whole and durably (`Os.Shell.replaceFile`): a temporary sibling made private, written and
+# flushed, renamed over the file, and the directory flushed, the protocol the world claims
+# `Record.Kept` (`record_answer`) and `Disk.Durable` (`crash_resumes`) take the file system to
+# honor. The agent suite reads records after their sessions end, the resume suite reads both
+# after a daemon killed while it saves, and the interop suite reads an imported checkpoint.
 record_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Record.lean)"
 for tie in \
   'def save [(]name : String[)] [(]record : Linger[.]Session[.]Record[)] : IO Unit := do Os[.]Shell[.]replaceFile [(]← Paths[.]recordPath name[)] [(]ByteArray[.]mk [(]Linger[.]Session[.]Record[.]encode record[)][.]toArray[)]' \
@@ -1359,12 +1362,18 @@ for tie in \
     || fail "an end record is written other than whole and durably, through Os.Shell.replaceFile: $tie"
 done
 os_shell_code="$(awk '{ $1 = $1; printf "%s ", $0 }' packages/os/Os/Shell.lean)"
-printf '%s\n' "$os_shell_code" | CG_RE='(^|[[:space:]])def replaceFile [(]path : String[)] [(]bytes : ByteArray[)] : IO Unit := do let tmp := path [+][+] "[.]tmp" IO[.]FS[.]writeBinFile tmp bytes let _ ← fsyncPath tmp IO[.]FS[.]rename tmp path let dir := [(][(]System[.]FilePath[.]mk path[)][.]parent[.]map [(]·[.]toString[)][)][.]getD "" let _ ← fsyncPath [(]if dir[.]isEmpty then "[.]" else dir[)] [(]directory := true[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
-  || fail "Os.Shell.replaceFile no longer flushes the temporary file before its rename and the directory after it"
+printf '%s\n' "$os_shell_code" | CG_RE='(^|[[:space:]])def replaceFile [(]path : String[)] [(]bytes : ByteArray[)] : IO Unit := do let tmp := path [+][+] "[.]tmp" IO[.]FS[.]withFile tmp [.]write fun handle => do IO[.]Prim[.]setAccessRights tmp 0o600 handle[.]write bytes let _ ← fsyncPath tmp IO[.]FS[.]rename tmp path let dir := [(][(]System[.]FilePath[.]mk path[)][.]parent[.]map [(]·[.]toString[)][)][.]getD "" let _ ← fsyncPath [(]if dir[.]isEmpty then "[.]" else dir[)] [(]directory := true[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "Os.Shell.replaceFile no longer makes its temporary file private and flushes it before its rename and the directory after it"
 [ "$(code_count 'IO[.]FS[.]rename' 'Linger/Session/Shell/*')" -eq 0 ] \
   || fail "a session file is renamed into place outside Os.Shell.replaceFile, which flushes it"
+# `capture` of a saved session takes the steps of `Capture.plan` (`capture_waits_unlocked`), each
+# from an `acquire` to the next `release` inside one `withSessionLock`, as `Capture.work` reads
+# them: it loads and renders holding both locks and writes once it has let them go. The robust
+# suite resumes a session while a capture of it waits on a pipe nobody reads.
 for tie in \
-  'requestStatus name result [|] none => Paths[.]withSessionLock name do match Linger[.]App[.]Recovery[.]decide false [(]← Resume[.]readCkpt name[)] with [|] [.]resume ck => writeAll stdoutFd [(]ByteArray[.]mk [(]render ck[.]vt[)][.]toArray[)]' \
+  'private def runHolding [(]name : String[)] [(]plan : List Linger[.]App[.]Capture[.]Step[)] [(]run : Linger[.]App[.]Capture[.]Step → IO Unit[)] : IO Unit := do let mut held : Option [(]Array Linger[.]App[.]Capture[.]Step[)] := none for step in plan do match step, held with [|] [.]acquire, none => held := some #[[][]] [|] [.]release, some inside => Paths[.]withSessionLock name [(]inside[.]forM run[)] held := none [|] [.]acquire, some _ [|] [.]release, none => pure [(][)] [|] step, some inside => held := some [(]inside[.]push step[)] [|] step, none => run step if let some inside := held then Paths[.]withSessionLock name [(]inside[.]forM run[)]' \
+  'requestStatus name result [|] none => let file ← IO[.]mkRef [(]none : Option ByteArray[)] let shown ← IO[.]mkRef [(]Shown[.]refusal [.]notFound [(]← refusalText name [.]notFound[)][)] let answer ← IO[.]mkRef Answer[.]failed runHolding name Linger[.]App[.]Capture[.]plan fun [|] [.]load => do file[.]set [(]← Resume[.]readCkpt name[)] [|] [.]render => do match Linger[.]App[.]Recovery[.]decide false [(]← file[.]get[)] with [|] [.]resume ck => shown[.]set [(][.]session [(]render ck[.]vt[)][)]' \
+  '[|] [.]write => do match ← shown[.]get with [|] [.]session bytes => writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] answer[.]set [.]done [|] [.]refusal said why => IO[.]eprintln s!"linger: [{]why[}]" answer[.]set said [|] [.]acquire [|] [.]release => pure [(][)] answer[.]get' \
   'if readOnly then match ← Client[.]connect name with [|] some fd => attachSpoken name fd true [|] none => let [(]recovery, record[)] ← Paths[.]withSessionLock name do return [(]Linger[.]App[.]Recovery[.]decide false [(]← Resume[.]readCkpt name[)], ← [(]Record[.]load name[)][.]toBaseIO[)] let status := Linger[.]Display[.]Listing[.]rowStatus [(]savedRow record[)][.]1 match recovery with [|] [.]resume ck => pure [(][.]ok [(]← Client[.]viewSaved name ck[.]vt status[)][)]'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "offline reading or listing bypassed ownership: $tie"
@@ -1849,8 +1858,9 @@ ed_n="$(code_count '(^|[^[:alnum:]_.])drain(Str)?[[:space:]]+[^[:space:]]+[[:spa
 #     looks at a held name every 20 ms for at most heldNameMs (8 s) from the look that first
 #     found it so, as `Wait.decide` says, and `kill` for its release as long.
 #   Import/Shell: tmux's configuration and a pane archive, every 10 ms for at most 1 s and 5 s.
-#   packages/os, Os/Shell: `nap` and `pause`, the only sleeps; Os/Shell/Command: a stopped
-#     command's output, every 5 ms for its grace period.
+#   packages/os, Os/Shell: `nap` and `pause`, the only sleeps; a full write's wait for its
+#     descriptor to take more (`writeAll`), with no deadline, on its reader, as a blocking
+#     write's; Os/Shell/Command: a stopped command's output, every 5 ms for its grace period.
 #   Selector/Shell: the picker, every 50 ms while it is open, for keys, the escape deadline and
 #     a listing each second.
 #   Session/Shell/Client: a one-shot reply, until replySilenceMs (10 s) of silence; a saved view
@@ -1884,6 +1894,7 @@ Linger/Session/Shell/Daemon.lean: let revs ← poll fds evts timeout
 Linger/Session/Shell/Daemon.lean: let revs ← poll fds (Array.replicate fds.size POLLOUT) (Int32.ofNat (min 100 (deadline - now)))
 Linger/Session/Shell/Daemon.lean: nap deadline 10
 Linger/Session/Shell/Inventory.lean: let revs ← poll #[fd] #[POLLIN] (Int32.ofNat (min 100 remaining))
+packages/os/Os/Shell.lean: let _ ← poll #[fd] #[POLLOUT] (-1)
 packages/os/Os/Shell.lean: def nap (deadline step : Nat) : IO Bool := do
 packages/os/Os/Shell.lean: IO.sleep ms.toUInt32
 packages/os/Os/Shell.lean: def pause (ms : Nat) : IO Unit := IO.sleep ms.toUInt32
@@ -1897,7 +1908,8 @@ $timers"
 # output and the repaint of its screen. A new write joins this list, and the headline when its
 # bytes are linger's own.
 #   App/Shell: the handback after a remote command (`leaveAnsi`); `ls` (`terminalListing`);
-#     `capture` of a saved session (`screenText` or `history`, as `cmdRead`'s caller passes).
+#     `capture` of a saved session (`screenText` or `history`, as `cmdRead`'s caller passes,
+#     rendered at the plan's `render` step and written at its `write` step, tied above).
 #   Import/Shell: `tmux ls` (`terminalListing`).
 #   Selector/Shell: taking the terminal (`enterAnsi`) and naming it, the window size, the frame
 #     (`frame`), giving the terminal back (`exitAnsi`) and clearing its title.
@@ -1910,7 +1922,7 @@ term_writes="$(code_grep 'stdoutFd' 'Main.lean' 'Linger/*.lean' \
   | sed -E 's/^([^:]+):[0-9]+:[[:space:]]*/\1: /')"
 expected_term_writes='Linger/App/Shell.lean: writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
 Linger/App/Shell.lean: writeAll stdoutFd
-Linger/App/Shell.lean: writeAll stdoutFd (ByteArray.mk (render ck.vt).toArray)
+Linger/App/Shell.lean: writeAll stdoutFd (ByteArray.mk bytes.toArray)
 Linger/Import/Shell.lean: Os.Shell.writeAll Os.Shell.stdoutFd
 Linger/Selector/Shell.lean: writeAll stdoutFd (ByteArray.mk Linger.Selector.Picker.enterAnsi.toArray)
 Linger/Selector/Shell.lean: writeAll stdoutFd (ByteArray.mk (Terminal.Title.ansi "linger").toArray)
@@ -1932,16 +1944,15 @@ $term_writes"
 tie='[|] [.]output payload [|] [.]infoReply payload => writeAll stdoutFd [(]ByteArray[.]mk payload[.]toArray[)]'
 printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
   || fail "a one-shot reply is written other than as the daemon's frames: $tie"
-# No other way to write bytes to standard output: no literal descriptor, and the one stream
-# write in the program is a checkpoint file's.
+# No other way to write bytes to standard output: no literal descriptor, and no stream write in
+# the program, whose files `Os.Shell.replaceFile` writes. A stream write is a call on a value,
+# `handle.write`; a match arm `| .write` names a step or a decision.
 ! code_grep '(writeAll|write) (Os[.]Shell[.])?[0-9]' 'Main.lean' 'Linger/*.lean' \
     ':!Linger/*/Suites/*' ':!Linger/*/Proofs/*' ':!Linger/*/Tests/*' \
   || fail "a write names a descriptor by number; use stdoutFd and list the write above"
-[ "$(code_grep '[.]write[[:space:](]' 'Main.lean' 'Linger/*.lean' \
+! code_grep '[[:alnum:]_)][.]write[[:space:](]' 'Main.lean' 'Linger/*.lean' \
     ':!Linger/*/Suites/*' ':!Linger/*/Proofs/*' ':!Linger/*/Tests/*' \
-  | sed -E 's/^([^:]+):[0-9]+:[[:space:]]*/\1: /')" = \
-  'Linger/Import/Shell.lean: handle.write (Linger.Session.Checkpoint.saveBytes (checkpoint pane contents))' ] \
-  || fail "a stream write besides the imported checkpoint's could reach standard output"
+  || fail "a stream write could reach standard output: write files through Os.Shell.replaceFile"
 # One command table: help prints it and every usage error quotes its command's row, so no usage
 # text is written anywhere else.
 ! code_grep '"usage: linger' Linger/App/Shell.lean \

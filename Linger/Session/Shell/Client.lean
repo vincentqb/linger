@@ -48,8 +48,8 @@ def connect (name : String) (nonblocking : Bool := false) : IO (Option UInt32) :
       throw err
   return none
 
-/-- Write `m`'s complete frame to `fd` with `writeAll`. Throws when the peer is gone, when
-a nonblocking `fd` would block, or when the write fails. -/
+/-- Write `m`'s complete frame to `fd` with `writeAll`, which waits while a nonblocking `fd` is
+full. Throws when the peer is gone or when the write fails. -/
 def sendMsg (fd : UInt32) (m : Msg) : IO Unit :=
   writeAll fd (ByteArray.mk (Linger.Session.Wire.encode m).toArray)
 

@@ -249,8 +249,9 @@ private def answerChecks (e : Env) : IO Unit := do
         settled={settled}, left {left.map (·.fileName)})"
 
 /-- A checkpoint whose bytes do not decode is never taken for no checkpoint: `resume` and
-`attach` refuse it, say why, start nothing and leave the file as it is, and `kill` still
-discards it. The damage is what a crash or a failing disk leaves at a saved session's path: an
+`attach` refuse it, say why, start nothing and leave the file as it is, `start` refuses the name,
+saying that the checkpoint is damaged and kept and that `linger kill` discards it, and `kill`
+still discards it. The damage is what a crash or a failing disk leaves at a saved session's path: an
 empty file, the session's own checkpoint cut short, and a body that runs off its end behind a
 valid tag. That last one is deterministic: written with `Checkpoint.magic`, it passes the version
 gate, 80 and 24 read back as the geometry, and the grid's length is an `rNat` over a run of 0xFF,
@@ -284,6 +285,15 @@ private def damagedChecks (e : Env) : IO Unit := do
     let (rc, _, err) ← e.cli #["resume", name]
     expect (rc == 1 && has err "does not decode" && (← untouched))
         s!"resume refuses {what}, says why, starts nothing and keeps it (rc={rc}, {err})"
+    -- nothing resumes such a checkpoint, so `start` says that it is damaged and kept, and how to
+    -- discard it, never that an attach resumes it
+    let (startRc, _, startErr) ← e.cli #["start", name, "/bin/sh"]
+    expect
+        (startRc == 1 && has startErr "is damaged" && has startErr s!"linger kill {name}" &&
+          !has startErr "attach" &&
+          (← untouched))
+        s!"start refuses {what}, says it is damaged and kept and that kill discards it \
+          (rc={startRc}, {startErr})"
     let client ← e.spawn #["attach", name]
     let said ← IO.mkRef ByteArray.empty
     let told ← client.awaitText said (hasText · "does not decode")

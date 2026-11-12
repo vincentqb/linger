@@ -8,7 +8,9 @@ public section
 
 The executor a command line reaches, where a command line of plain words goes, one row of the
 command table, the answers a command's exit status gives, what a command does with a name's
-saved session, and what `wait` hears on each look at a name and does next. -/
+saved session, what `wait` hears on each look at a name and does next, and the steps of
+`capture` of a saved session, which of them hold the name's locks and which wait on a party
+outside linger. -/
 
 namespace Linger.App.Entry
 
@@ -153,3 +155,42 @@ inductive Next where
   deriving Repr, DecidableEq
 
 end Linger.App.Wait
+
+namespace Linger.App.Capture
+
+/-- One step of `capture` of a saved session, which a command takes when no daemon answers for
+the name. -/
+inductive Step where
+  /-- Take both of the name's locks, as every offline reader does: one attempt each. -/
+  | acquire
+  /-- Read the bytes of the name's checkpoint file. -/
+  | load
+  /-- Render what they decode to: the saved screen or history, or why there is none. -/
+  | render
+  /-- Let both locks go. -/
+  | release
+  /-- Write what it rendered: the session to standard output, or why there is none to standard
+  error. -/
+  | write
+  deriving Repr, DecidableEq
+
+/-- Whether a step can wait on a party outside linger, for as long as that party likes: a write
+waits for whoever reads it, as a pager that is not reading or a pipe nobody reads makes it wait
+for good. The other steps wait on no one outside linger: a lock is tried once, the checkpoint is
+a file on the local disk, and rendering and letting go of the locks compute and close. -/
+@[expose]
+def Step.waitsOutside : Step → Bool
+  | .write => true
+  | .acquire | .load | .render | .release => false
+
+/-- The steps of `plan` but those that take and let go of the name's locks, in order, each with
+whether it runs holding them: from an `acquire` to the next `release`, given `held`, whether the
+plan holds them when it begins. -/
+@[expose]
+def work : (plan : List Step) → (held : Bool) → List (Step × Bool)
+  | [], _ => []
+  | .acquire :: rest, _ => work rest true
+  | .release :: rest, _ => work rest false
+  | step :: rest, held => (step, held) :: work rest held
+
+end Linger.App.Capture

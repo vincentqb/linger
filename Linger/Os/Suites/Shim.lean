@@ -101,13 +101,75 @@ def testUnixSocket : IO Unit := do
   Os.Shell.close cfd
   let w1 ← write afd "x".toUTF8 0
   let w2 ← write afd "x".toUTF8 0
-  check "write to dead peer yields -1 (not a crash)" (w1 == -1 || w2 == -1)
+  check "write to a dead peer reports it gone (not a crash)" (w1 == .gone || w2 == .gone)
   Os.Shell.close afd
   Os.Shell.close lfd
   IO.FS.removeDirAll dir
   -- connect to a nonexistent path: -ENOENT, not an exception
   let r ← unixConnect s!"{dir}/absent.sock"
   check "connect to absent socket is negative errno" (r < 0)
+
+/-- A write to a nonblocking descriptor that takes no more reports it full, a value of its own:
+not as bytes written, nor as a reader that is gone, which `writeAll` would give up on. -/
+def testFullWrite : IO Unit := do
+  let dir ← IO.FS.createTempDir
+  try
+    let path := s!"{dir}/fill.sock"
+    let lfd ← unixListen path
+    let cfd := (← unixConnect path).toUInt64.toUInt32
+    let afd := (← accept lfd).toUInt64.toUInt32
+    setNonblock cfd
+    let chunk := ByteArray.mk (Array.replicate 65536 0x78)
+    let mut seen : List Os.Write.Result := []
+    for _ in List.range 1000 do
+      let result ← write cfd chunk 0
+      seen := result :: seen
+      unless result matches .wrote _ do
+        break
+    check "write reports a full nonblocking descriptor as full, not as bytes or a gone reader"
+        (seen.head? == some .full && seen.tail.all (· matches .wrote (_ + 1)))
+    Os.Shell.close cfd
+    Os.Shell.close afd
+    Os.Shell.close lfd
+  finally
+    IO.FS.removeDirAll dir
+
+/-- `writeAll` to a nonblocking descriptor that fills waits for its reader and goes on: a reader
+that reads nothing for 100 ms and then 16 KiB at a time gets every byte, in order, and the full
+descriptor is never taken for a reader that is gone. -/
+def testFullWriteAll : IO Unit := do
+  let dir ← IO.FS.createTempDir
+  try
+    let path := s!"{dir}/full.sock"
+    let lfd ← unixListen path
+    let cfd := (← unixConnect path).toUInt64.toUInt32
+    let afd := (← accept lfd).toUInt64.toUInt32
+    setNonblock cfd
+    let bytes := ByteArray.mk ((List.range (1024 * 1024)).map (fun i => (i % 251).toUInt8)).toArray
+    let reader ←
+      IO.asTask
+          (do
+            IO.sleep 100
+            let mut got := ByteArray.empty
+            while got.size < bytes.size do
+              match ← read afd 16384 with
+              | none =>
+                break
+              | some bs =>
+                got := got ++ bs
+                IO.sleep 1
+            return got)
+          Task.Priority.dedicated
+    let wrote ← (writeAll cfd bytes).toBaseIO
+    -- a failed write leaves the reader waiting for bytes that never come: closing ends it
+    Os.Shell.close cfd
+    let got ← IO.wait reader
+    check "writeAll waits for a full nonblocking descriptor and delivers every byte"
+        ((wrote matches .ok _) && (got.toOption.map (·.data) == some bytes.data))
+    Os.Shell.close afd
+    Os.Shell.close lfd
+  finally
+    IO.FS.removeDirAll dir
 
 def testWinsize : IO Unit := do
   let (pid, master) ← spawnPty 121 43 "" "sh" #["-c", "stty size; exit"] #[]
@@ -590,6 +652,8 @@ public def main (args : List String) : IO UInt32 := do
   testPtyEcho
   testPtyEnvAndInput
   testUnixSocket
+  testFullWrite
+  testFullWriteAll
   testWinsize
   testProcessSelectors
   testReapEnding

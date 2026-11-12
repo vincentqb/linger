@@ -1,7 +1,9 @@
 module
 
 import all Os.Boundary
+public import Os.Spec
 import Os.Wait
+import Os.Write
 public import Std.Async.Signal
 import Std.Async.System
 
@@ -69,27 +71,44 @@ def read (fd : UInt32) (max : USize) : IO (Option ByteArray) := do
     throw (IO.userError "read: max must be positive (0 cannot distinguish EOF)")
   Boundary.read fd max
 
-/-- One write attempt from `off`. `≥ 0` bytes written (0 = would block, or `off` is at or
-past the end); `-1` = peer gone (EPIPE/ECONNRESET/EIO), a normal event for a daemon. EINTR
-is retried; other errors throw. -/
-def write (fd : UInt32) (bytes : ByteArray) (off : USize) : IO Int64 := Boundary.write fd bytes off
-
-/-- Blocking full write over `write`. Would-block and a gone peer throw, as do `write`'s
-own errors. -/
-def writeAll (fd : UInt32) (bytes : ByteArray) : IO Unit := do
-  let mut off : Nat := 0
-  while off < bytes.size do
-    let n ← write fd bytes (USize.ofNat off)
-    if n ≤ 0 then
-      throw (IO.userError s!"write_all: peer gone (fd {fd})")
-    off := off + n.toNatClampNeg
-
 /-- poll(2). `fds` and `events` are parallel arrays; returns `revents`
 per fd (all zero on timeout or EINTR). `timeoutMs < 0` waits forever.
 Fails if the arrays differ in length, exceed 4096 fds or poll(2) itself fails — the
 daemon polls its listener, its pty and at most `maxClients` clients, well under it. -/
 def poll (fds events : Array UInt32) (timeoutMs : Int32) : IO (Array UInt32) :=
   Boundary.poll fds events timeoutMs
+
+/-- One write attempt from `off`, and what it did, one value for each outcome
+(`Os.Write.Result`): the bytes it wrote, none when `off` is at or past the end; nothing because
+the descriptor is nonblocking and full, which the shim reports as `-EAGAIN`; or nothing because
+the reader is gone, EPIPE, ECONNRESET, or EIO from a terminal whose other side has closed, which
+the shim reports as `-1`. A daemon meets the last two as normal events. EINTR is retried; other
+errors throw. -/
+def write (fd : UInt32) (bytes : ByteArray) (off : USize) : IO Os.Write.Result := do
+  let n ← Boundary.write fd bytes off
+  if n ≥ 0 then
+    return .wrote n.toNatClampNeg
+  if n == -1 then
+    return .gone
+  return .full
+
+/-- Write all of `bytes`, attempt after attempt, each from where the last one stopped, as
+`Os.Write.next` decides after each: a descriptor that is full, as one another program left
+nonblocking is, is waited on until it can take more, with no deadline, as a blocking write waits
+for its reader; a reader that is gone throws, saying the peer is gone; and `write`'s own errors
+throw. -/
+def writeAll (fd : UInt32) (bytes : ByteArray) : IO Unit := do
+  let mut off : Nat := 0
+  repeat
+    match Os.Write.next bytes.size off (← write fd bytes (USize.ofNat off)) with
+    | .write to =>
+      off := to
+    | .await =>
+      let _ ← poll #[fd] #[POLLOUT] (-1)
+    | .done =>
+      return
+    | .gone =>
+      throw (IO.userError s!"write_all: peer gone (fd {fd})")
 
 /-- Why a program could not start in a new terminal, with the operating system's words. -/
 inductive SpawnFailure where
@@ -234,15 +253,17 @@ def fsyncPath (path : String) (directory : Bool := false) : IO Bool := do
   checkCString "fsyncPath path" path
   Boundary.fsyncPath path directory
 
-/-- Replace the file at `path` with `bytes`, whole and durably: write them to the temporary
-sibling `path ++ ".tmp"`, flush it (`fsyncPath`), rename it over `path` and flush the directory
-that holds them. A crash leaves the old file or the new one at `path`, never part of either,
-and the new one once this returns, as far as the device keeps what it flushed; on a file system
-that cannot flush a directory, as far as it keeps the rename. A failure throws; one before the
-rename leaves `path` as it was. -/
+/-- Replace the file at `path` with `bytes`, whole and durably, readable by its owner alone:
+write them to the temporary sibling `path ++ ".tmp"`, made 0600 before a byte goes in, flush it
+(`fsyncPath`), rename it over `path` and flush the directory that holds them. A crash leaves the
+old file or the new one at `path`, never part of either, and the new one once this returns, as
+far as the device keeps what it flushed; on a file system that cannot flush a directory, as far
+as it keeps the rename. A failure throws; one before the rename leaves `path` as it was. -/
 def replaceFile (path : String) (bytes : ByteArray) : IO Unit := do
   let tmp := path ++ ".tmp"
-  IO.FS.writeBinFile tmp bytes
+  IO.FS.withFile tmp .write fun handle => do
+      IO.Prim.setAccessRights tmp 0o600
+      handle.write bytes
   let _ ← fsyncPath tmp
   IO.FS.rename tmp path
   let dir := ((System.FilePath.mk path).parent.map (·.toString)).getD ""

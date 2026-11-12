@@ -15,8 +15,9 @@ public section
 
 The suite covers busy-daemon listing, name ownership, bounded child input,
 lock-aware stale cleanup, absolute info deadlines, bounded accept rounds, the
-slow-client output cut and a daemon starting during an offline read or with
-its locks free. Two premises are not optional:
+slow-client output cut, a daemon starting while its locks are held or with
+its locks free, a capture whose reader does not read, which holds no lock, and
+one into a nonblocking pipe, which waits for its reader. Two premises are not optional:
 
 * **SIGSTOP and SIGCONT are sent by NAME, not by number.** On Linux SIGSTOP is 19
   and SIGCONT is 18; on macOS/BSD SIGSTOP is **17**, SIGCONT is **19** and 18 is
@@ -421,8 +422,121 @@ def slowSave (e : Env) : IO Unit := do
     e.killAll #[name]
     reapOrKill reader 2000
 
+/-- A saved terminal whose history is longer than any pipe holds: 4000 rows of 69 characters and
+a line break, about 280 KB, where a pipe holds at most 64 KiB. -/
+def longHistory : Terminal.Vt.Vt :=
+  let rows := (List.range 4000).map fun i => s!"row {i} {String.ofList (List.replicate 60 'x')}"
+  (Terminal.Vt.Vt.init 80 24).feedBytes (String.intercalate "\r\n" rows).toUTF8
+
+/-- Save `vt` as the checkpoint of the session `name`, in this directory, as a detach does. -/
+def saveSession (e : Env) (name : String) (vt : Terminal.Vt.Vt) : IO Unit :=
+  IO.FS.writeBinFile s!"{e.dir}/{name}.ckpt" (Linger.Session.Checkpoint.saveBytes ⟨vt, e.dir, []⟩)
+
+/-- An offline reader holds both of a name's locks while it loads the name's checkpoint, and the
+daemon a `resume` starts meanwhile waits for them rather than exit; its log says that it found
+them held. This check holds them itself, as such a reader does, until the log says so. -/
+def heldClaim (e : Env) : IO Unit := do
+  let name := "offline-reader"
+  try
+    saveSession e name longHistory
+    IO.FS.createDirAll s!"{e.dir}/.locks"
+    let locks ← [s!"{e.dir}/{name}.lock", s!"{e.dir}/.locks/{name}.lock"].mapM Os.Shell.flock
+    let released ← IO.mkRef false
+    let release : IO Unit := do
+      unless ← released.get do
+        released.set true
+        for fd in locks do
+          if fd ≥ 0 then
+            Os.Shell.close fd.toUInt64.toUInt32
+    let (found, startCode) ←
+      try
+        let starter ←
+          IO.Process.spawn
+              { cmd := e.bin, args := #["resume", name], env := e.procEnv, stdin := .null,
+                stdout := .null, stderr := .null }
+        let found ← waitFor patienceMs (return has (← e.log name) (claimWaitLine name))
+        release
+        pure (found, ← waitOrKill starter hangMs)
+      finally
+        release
+    let (sendCode, _, _) ← e.cli #["send", name, "echo resumed-$((40+2))\n"]
+    let resumed ← waitFor patienceMs (return has (← e.out #["capture", name]) "resumed-42")
+    expect (locks.all (· ≥ 0) && found && startCode == some 0 && sendCode == 0 && resumed)
+        s!"a daemon started while another process holds the name's locks waits for them and \
+          resumes (resume exit {startCode})"
+  finally
+    e.killAll #[name]
+
+/-- Work a request needs never waits on optional work (theorem 10, `capture_waits_unlocked`):
+`capture --history` of a saved session into a pipe nobody reads waits on its write for as long
+as nobody reads, and it lets the name's locks go before it writes, so a resume meanwhile comes
+up instead of giving up on the locks after its claim wait. The capture's first byte means it has
+loaded and rendered the history, which the pipe cannot hold. -/
+def unreadCapture (e : Env) : IO Unit := do
+  let name := "unread-capture"
+  saveSession e name longHistory
+  let capture ←
+    IO.Process.spawn
+        { cmd := e.bin, args := #["capture", "--history", name], env := e.procEnv, stdin := .null,
+          stdout := .piped, stderr := .null }
+  try
+    let first ← IO.asTask (capture.stdout.read 1) Task.Priority.dedicated
+    let writing ←
+      if ← waitFor patienceMs (IO.hasFinished first) then
+        pure ((← IO.wait first).toOption.any (·.size == 1))
+      else
+        pure false
+    let resumed ← e.cliTimeout #["resume", name] hangMs
+    let up ← waitFor patienceMs (return (← e.info name "pid").isSome)
+    expect (writing && resumed.any (·.1 == 0) && up)
+        s!"a capture whose reader does not read holds no lock: a resume meanwhile comes up \
+          (resume exit {resumed.map (·.1)}, {resumed.map (·.2.2)})"
+  finally
+    reapOrKill capture 0
+    e.killAll #[name]
+
+/-- Run `cmd` with `args` on this process's standard output, made nonblocking first, as another
+program may leave a descriptor it hands on, and answer the command's exit status. The flag
+belongs to the pipe's open file, which the command shares. -/
+def nonblockingStdout (cmd : String) (args : List String) : IO UInt32 := do
+  Os.Shell.setNonblock Os.Shell.stdoutFd
+  let child ← IO.Process.spawn { cmd, args := args.toArray, stdin := .null }
+  child.wait
+
+/-- A write that finds its descriptor full waits for the reader and goes on, and never takes it
+for a reader that is gone (`Os.write_full_waits`): `capture --history` of a saved session into a
+pipe another program left nonblocking, whose reader reads nothing until the capture has ended or
+a second has passed, by when the history has filled the pipe, delivers the whole history. -/
+def nonblockingReader (e : Env) : IO Unit := do
+  let name := "slow-reader"
+  saveSession e name longHistory
+  let expected :=
+    ((Linger.Session.Checkpoint.loadBytes (← IO.FS.readBinFile s!"{e.dir}/{name}.ckpt")).map
+          (Terminal.Render.history ·.vt)).getD
+      []
+  let helper ←
+    IO.Process.spawn
+        { cmd := (← IO.appPath).toString,
+          args := #["--nonblocking-stdout", e.bin, "capture", "--history", name], env := e.procEnv,
+          stdin := .null, stdout := .piped, stderr := .piped }
+  -- the slow reader: nothing is read until the capture has ended or a second has passed
+  let early ← waitProcess helper 1000
+  let out ← IO.asTask helper.stdout.readBinToEnd Task.Priority.dedicated
+  let err ← IO.asTask helper.stderr.readToEnd Task.Priority.dedicated
+  let code ←
+    match early with
+    | some code =>
+      pure (some code)
+    | none =>
+      waitOrKill helper hangMs
+  let got := ((← IO.wait out).toOption.map (·.toList)).getD []
+  let said := ((← IO.wait err).toOption.getD "").trimAscii.toString
+  expect (code == some 0 && !expected.isEmpty && got == expected)
+      s!"a capture into a nonblocking pipe its reader drains late delivers the whole history \
+        (exit {code}, {got.length} of {expected.length} bytes, '{said}')"
+
 /-- The robust suite: runtime boundaries under adverse timing. Concurrent starts of one name,
-and a resume while an offline capture holds the name's locks, exercise the operating system's
+and a resume while another process holds the name's locks, exercise the operating system's
 lock contract. -/
 @[exercises Linger.Session.Claim.Exclusive]
 def run : IO UInt32 :=
@@ -713,40 +827,11 @@ def run : IO UInt32 :=
           s!"a daemon that finds its locks free logs no wait (exit {code}, log '{shown}')"
     finally
       e.killAll #[free]
-    -- `capture --history` holds both locks while it writes, and a pty nobody reads
-    -- keeps it writing. The daemon `resume` starts meanwhile must wait for the lock
-    -- rather than exit; its log says when it found the lock held.
-    let reader := "offline-reader"
-    try
-      let rows := (List.range 4000).map fun i => s!"row {i} {String.ofList (List.replicate 60 'x')}"
-      let saved := (Terminal.Vt.Vt.init 80 24).feedBytes (String.intercalate "\r\n" rows).toUTF8
-      IO.FS.writeBinFile s!"{e.dir}/{reader}.ckpt"
-          (Linger.Session.Checkpoint.saveBytes ⟨saved, e.dir, []⟩)
-      let capture ← e.spawn #["capture", "--history", reader]
-      -- Output on the pty means the capture has loaded the checkpoint under both locks.
-      let holding :=
-        (← Os.Shell.poll #[capture.fd] #[Os.Shell.POLLIN] (Int32.ofNat patienceMs))[0]! != 0
-      let starter ←
-        IO.Process.spawn
-            { cmd := e.bin, args := #["resume", reader], env := e.procEnv, stdin := .null,
-              stdout := .null, stderr := .null }
-      let found ←
-        waitFor patienceMs do
-            let log ← e.log reader
-            return has log (claimWaitLine reader) || has log "owned by another process"
-      let read ← drain capture.fd hangMs
-      let captureCode ← capture.reap patienceMs
-      capture.bye (sendDetach := false)
-      let startCode ← waitOrKill starter hangMs
-      let (sendCode, _, _) ← e.cli #["send", reader, "echo resumed-$((40+2))\n"]
-      let resumed ← waitFor patienceMs (return has (← e.out #["capture", reader]) "resumed-42")
-      expect
-          (holding && found && hasText read "row 3999" && captureCode == 0 && startCode == some 0 &&
-            sendCode == 0 &&
-            resumed)
-          s!"a daemon started during an offline read waits for the lock and resumes (resume exit {startCode})"
-    finally
-      e.killAll #[reader]
+    heldClaim e
+    -- ── 10. a capture its reader does not read holds no lock ──────────────────
+    unreadCapture e
+    -- ── 11. a write that finds its pipe full waits for the reader ─────────────
+    nonblockingReader e
     hostileInput e
     inputBurst e
     failedDiagnostics

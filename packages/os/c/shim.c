@@ -388,9 +388,14 @@ LEAN_EXPORT lean_obj_res linger_read(uint32_t fd, size_t max) {
 }
 
 /* linger_write : UInt32 -> @& ByteArray -> USize -> IO Int64
- * One write(2) attempt from offset `off`. >=0: bytes written (0 on
- * EAGAIN). -1: peer gone (EPIPE/ECONNRESET/EIO) -- a normal event for
- * daemons, not an exception. EINTR retried. */
+ * One write(2) attempt from offset `off`, one value for each outcome.
+ * >=0: bytes written (0 only when `off` is at or past the end, with no
+ * write(2)). -EAGAIN: nothing written, the descriptor is nonblocking and
+ * full (EWOULDBLOCK reported as EAGAIN). -1: nothing written, the reader is
+ * gone: EPIPE, ECONNRESET, or EIO from a terminal, which is how a pty reports
+ * that its other side closed; EIO from anything else is a device error. A
+ * daemon meets the last two as normal events, not exceptions. EINTR retried;
+ * other errors throw. */
 LEAN_EXPORT lean_obj_res linger_write(uint32_t fd, b_lean_obj_arg bytes, size_t off) {
     size_t len = lean_sarray_size(bytes);
     if (off >= len) return lean_io_result_mk_ok(lean_box_uint64(0));
@@ -399,11 +404,12 @@ LEAN_EXPORT lean_obj_res linger_write(uint32_t fd, b_lean_obj_arg bytes, size_t 
         n = write((int)fd, lean_sarray_cptr(bytes) + off, len - off);
     } while (n < 0 && errno == EINTR);
     if (n < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
-            return lean_io_result_mk_ok(lean_box_uint64(0));
-        if (errno == EPIPE || errno == ECONNRESET || errno == EIO)
+        int e = errno;
+        if (e == EAGAIN || e == EWOULDBLOCK)
+            return lean_io_result_mk_ok(lean_box_uint64((uint64_t)(int64_t)-EAGAIN));
+        if (e == EPIPE || e == ECONNRESET || (e == EIO && isatty((int)fd)))
             return lean_io_result_mk_ok(lean_box_uint64((uint64_t)(int64_t)-1));
-        return io_err("write");
+        return io_err_code("write", e);
     }
     return lean_io_result_mk_ok(lean_box_uint64((uint64_t)(int64_t)n));
 }

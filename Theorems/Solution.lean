@@ -1,6 +1,7 @@
 module
 
 public import Linger.App.Answer
+public import Linger.App.Capture
 public import Linger.App.Commands
 public import Linger.App.Entry
 public import Linger.App.Recovery
@@ -27,6 +28,7 @@ public import Terminal.Replay
 public import Terminal.Spec
 public import Terminal.Title
 import all Linger.App.Proofs.Answer
+import all Linger.App.Proofs.Capture
 import all Linger.App.Proofs.Commands
 import all Linger.App.Proofs.Entry
 import all Linger.App.Proofs.Recovery
@@ -2162,6 +2164,23 @@ theorem offloop_coalesces_rejects_eager :
   intro h
   have first := (@h Nat Nat id [0, 1]).1
   simp [Offloop.run] at first
+
+theorem capture_waits_unlocked :
+    (App.Capture.work App.Capture.plan false).map Prod.fst = [.load, .render, .write] ∧
+      (.load, true) ∈ App.Capture.work App.Capture.plan false ∧
+      ∀ step, (step, true) ∈ App.Capture.work App.Capture.plan false → step.waitsOutside = false :=
+  App.Capture.waits_unlocked
+
+theorem capture_waits_unlocked_rejects_inside :
+    ¬((App.Capture.work [.acquire, .load, .render, .write, .release] false).map Prod.fst =
+          [.load, .render, .write] ∧
+        (.load, true) ∈ App.Capture.work [.acquire, .load, .render, .write, .release] false ∧
+        ∀ step,
+          (step, true) ∈ App.Capture.work [.acquire, .load, .render, .write, .release] false →
+            step.waitsOutside = false) := by
+  -- the write runs holding the locks, and it waits on whoever reads it
+  rintro ⟨-, -, unheld⟩
+  exact absurd (unheld .write (by decide)) (by decide)
 
 theorem classify_iff (o : Status.Obs) (s : Status.Status) : Status.classify o = s ↔ Status.Is s o :=
   Status.classify_iff o s

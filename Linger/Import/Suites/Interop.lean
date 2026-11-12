@@ -875,7 +875,10 @@ private def offlineCapture (f : Fixture) : IO Bool := do
   let again ←
     withVariables f.procEnv do
         Linger.Import.Shell.seedPane pane (some "replacement\n")
-  return seeded && !again && (← privateFile path) && before.isSome && screenRc == 0 &&
+  -- written as a daemon saves one: whole, private, and with no temporary sibling left behind
+  let leftover := System.FilePath.mk f.env.dir / s!"{pane.name}.ckpt.tmp"
+  return seeded && !again && (← privateFile path) && !(← leftover.pathExists) && before.isSome &&
+      screenRc == 0 &&
       screenErr.isEmpty &&
       screen == "screen\nSaved foreground command: make build\n\n" &&
       historyRc == 0 &&

@@ -76,7 +76,8 @@ in the foreground, as the verifier.
   (`Terminal`): the emulator `Vt`, `Render`, streaming `Replay`, child-facing `Mediation` and
   safe `Title` updates, and `os`, the operating system (`Os`): `Boundary.lean` holds the
   foreign declarations, `c/shim.c` the C they bind, `Shell.lean` the checked surface callers
-  use and `Wait.lean` the bounded wait. Linger's audit trusts each package, and linger's
+  use, `Wait.lean` the bounded wait and `Write.lean` what a full write does after each
+  attempt. Linger's audit trusts each package, and linger's
   headlines may name a package's parts, which its own headlines claim. Build one alone with
   `../../lake build` in its directory; it shares linger's `.lake/packages`.
 - `scripts/`: build and verification orchestration.

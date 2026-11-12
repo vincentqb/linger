@@ -277,22 +277,16 @@ private def capturedPane (archive : Option Archive) (pane : Pane) : IO (Option S
     throw (IO.userError s!"duplicate pane capture: {pane.name}")
 
 /-- Publish an imported checkpoint only while owning both session locks. Existing
-sockets and checkpoints win, including a concurrently created session. -/
+sockets and checkpoints win, including a concurrently created session. The checkpoint is written
+as a daemon saves one, whole, durably and readable by its owner alone (`Os.Shell.replaceFile`):
+a crash leaves no checkpoint or this one, never part of it. -/
 private def seedPane (pane : Pane) (contents : Option String) : IO Bool :=
   Paths.withSessionLock pane.name do
     let path ← Paths.ckptPath pane.name
     let socket ← Paths.socketPath pane.name
     if (← (System.FilePath.mk path).pathExists) || (← (System.FilePath.mk socket).pathExists) then
       return false
-    let tmp := System.FilePath.mk s!"{path}.linger-{← Os.Shell.getpid}-{← IO.rand 0 0xFFFFFFFF}.tmp"
-    let handle ← IO.FS.Handle.mk tmp .writeNew
-    try
-      Os.Shell.chmod tmp.toString 0o600
-      handle.write (Linger.Session.Checkpoint.saveBytes (checkpoint pane contents))
-      handle.flush
-      IO.FS.hardLink tmp path
-    finally
-      IO.FS.removeFile tmp
+    Os.Shell.replaceFile path (Linger.Session.Checkpoint.saveBytes (checkpoint pane contents))
     return true
 
 /-- Both bulk import and individual selection preflight before effects, then

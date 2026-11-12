@@ -3,10 +3,13 @@
   "solution_module": "Os.Solution",
   "theorem_names": [
     "Os.wait_ends",
-    "Os.wait_ends_rejects_endless"
+    "Os.wait_ends_rejects_endless",
+    "Os.write_full_waits",
+    "Os.write_full_waits_rejects_gone"
   ],
   "definition_names": [
-    "Os.Wait.next"
+    "Os.Wait.next",
+    "Os.Write.next"
   ],
   "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"]
 }

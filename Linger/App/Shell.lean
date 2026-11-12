@@ -11,6 +11,7 @@ import Terminal.Render
 import Linger.Display.Listing
 import Linger.Display.View
 import Linger.App.Answer
+import Linger.App.Capture
 public import Linger.App.Spec
 import Linger.App.Recovery
 import Linger.App.Commands
@@ -100,17 +101,22 @@ private def noSession (name : String) : IO Answer := do
   return .notFound
 
 /-- Why nothing starts over the name's checkpoint when its bytes do not decode
-(`Recovery.decide`): it stays as it is, and `kill` discards it. -/
+(`Recovery.decide`): it is damaged, it stays as it is, and `linger kill` discards it. -/
 private def undecodedText (name : String) : IO String := do
-  return s!"its checkpoint {← Paths.ckptPath name} does not decode, so it stays as it is; \
-    kill the session to discard it"
+  return s!"its checkpoint {← Paths.ckptPath name} is damaged and does not decode, so it stays \
+    as it is; linger kill {name} discards it"
+
+/-- Why a command that found no live session starts nothing, as `Recovery.decide` answered: no
+session holds the name, or its checkpoint does not decode. -/
+private def refusalText (name : String) (answer : Answer) : IO String := do
+  if answer == .notFound then
+    return s!"no session '{name}'"
+  return s!"session '{name}': {← undecodedText name}"
 
 /-- Say why a command that found no live session starts nothing, as `Recovery.decide`
 answered, and give that answer: no session holds the name, or its checkpoint does not decode. -/
 private def refused (name : String) (answer : Answer) : IO Answer := do
-  if answer == .notFound then
-    return ← noSession name
-  IO.eprintln s!"linger: session '{name}': {← undecodedText name}"
+  IO.eprintln s!"linger: {← refusalText name answer}"
   return answer
 
 /-- What the daemon of `name` starts from, as `Recovery.decide` says from the name's checkpoint
@@ -241,21 +247,24 @@ private def beginRequest (report log : String) (args : List String) : IO UInt32 
     discard <| takeTicket report
     throw err
 
-/-- What `start` says when a session holds the name, `notDone`: that it is running, or for a saved
-one whether its program ended. -/
+/-- What `start` says when a session holds the name, `notDone`: that it is running; for a saved
+one whose checkpoint decodes, whether its program ended; and for one whose checkpoint does not,
+which nothing resumes (`Recovery.decide`), that it is damaged and kept, and that `linger kill`
+discards it. -/
 private def startRefused (name : String) (saved : Bool) : IO Answer := do
-  if saved then
-    let record := (← (Record.load name).toBaseIO).toOption.join
-    match record.bind Linger.Session.Record.decode with
-    | some (.ended outcome) =>
-      IO.eprintln
-          s!"linger: session '{name}' ended ({(Client.Ending.outcome outcome).describe}); \
-          kill it to discard it, or attach to resume it"
-    | _ =>
-      IO.eprintln
-          s!"linger: session '{name}' is saved; attach to resume it, or kill it to discard it"
-  else
+  unless saved do
     IO.eprintln s!"linger: session '{name}' is running"
+    return .notDone
+  if let .refuse .notDone := Linger.App.Recovery.decide false (← Resume.readCkpt name) then
+    return ← refused name .notDone
+  let record := (← (Record.load name).toBaseIO).toOption.join
+  match record.bind Linger.Session.Record.decode with
+  | some (.ended outcome) =>
+    IO.eprintln
+        s!"linger: session '{name}' ended ({(Client.Ending.outcome outcome).describe}); \
+        kill it to discard it, or attach to resume it"
+  | _ =>
+    IO.eprintln s!"linger: session '{name}' is saved; attach to resume it, or kill it to discard it"
   return .notDone
 
 /-- `start`'s answer once its wait ended: `done` exactly when the program runs (`Start.answer`);
@@ -830,24 +839,72 @@ private def requireLiveSend (name : String) (ms : List Msg) : IO Answer := do
     return .done
   noSession name
 
-/-- A connected daemon is authoritative, including its errors. Only an absent
-connection followed by successful ownership acquisition permits an offline read.
-Hold both locks through loading and rendering; never start or modify a session. -/
+/-- What `capture` of a saved session has to show once it has rendered: the session, or why
+there is none, with the answer that says so. -/
+private inductive Shown where
+  /-- The saved session, rendered. -/
+  | session (bytes : List UInt8)
+  /-- None: no session holds the name, or its checkpoint does not decode, as `why` says. -/
+  | refusal (answer : Answer) (why : String)
+
+/-- Run the steps of `plan` through `run`, in order, as `Capture.work` reads them: the steps from
+an `acquire` to the next `release`, or to the end, inside one `Paths.withSessionLock` of `name`,
+which takes both of the name's locks once and lets them go however those steps end, and the
+other steps outside it. -/
+private def runHolding (name : String) (plan : List Linger.App.Capture.Step)
+    (run : Linger.App.Capture.Step → IO Unit) : IO Unit := do
+  let mut held : Option (Array Linger.App.Capture.Step) := none
+  for step in plan do
+    match step, held with
+    | .acquire, none =>
+      held := some #[]
+    | .release, some inside =>
+      Paths.withSessionLock name (inside.forM run)
+      held := none
+    | .acquire, some _ | .release, none =>
+      pure ()
+    | step, some inside =>
+      held := some (inside.push step)
+    | step, none =>
+      run step
+  if let some inside := held then
+    Paths.withSessionLock name (inside.forM run)
+
+/-- A connected daemon is authoritative, including its errors. Only an absent connection
+followed by successful ownership acquisition permits an offline read, which takes the steps of
+`Capture.plan`: it holds both locks through loading and rendering, and lets them go before it
+writes what it rendered, so a reader that does not read holds up no attach or resume
+(`capture_waits_unlocked`). Never start or modify a session. -/
 private def cmdRead (name : String) (m : Msg) (render : Terminal.Vt.Vt → List UInt8) : IO Answer :=
   do
   match ← Client.oneShot name m with
   | some result =>
     requestStatus name result
   | none =>
-    Paths.withSessionLock name do
-        match Linger.App.Recovery.decide false (← Resume.readCkpt name) with
-        | .resume ck =>
-          writeAll stdoutFd (ByteArray.mk (render ck.vt).toArray)
-          return .done
-        | .refuse answer =>
-          refused name answer
-        | .fresh =>
-          refused name .notFound
+    let file ← IO.mkRef (none : Option ByteArray)
+    let shown ← IO.mkRef (Shown.refusal .notFound (← refusalText name .notFound))
+    let answer ← IO.mkRef Answer.failed
+    runHolding name Linger.App.Capture.plan fun
+        | .load => do
+          file.set (← Resume.readCkpt name)
+        | .render => do
+          match Linger.App.Recovery.decide false (← file.get) with
+          | .resume ck =>
+            shown.set (.session (render ck.vt))
+          | .refuse refusal =>
+            shown.set (.refusal refusal (← refusalText name refusal))
+          | .fresh =>
+            shown.set (.refusal .notFound (← refusalText name .notFound))
+        | .write => do
+          match ← shown.get with
+          | .session bytes =>
+            writeAll stdoutFd (ByteArray.mk bytes.toArray)
+            answer.set .done
+          | .refusal said why =>
+            IO.eprintln s!"linger: {why}"
+            answer.set said
+        | .acquire | .release => pure ()
+    answer.get
 
 /-- `send <name> -`: stdin to the session's pty, byte-exact, each read (≤ 64 KiB) in the
 frames `Wire.inputFrames` cuts, each within the decoder's cap (`inputFrames_exact`). The agent's

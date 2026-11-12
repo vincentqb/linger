@@ -1,6 +1,7 @@
 module
 
 import Os.Shell
+import Os.Write
 public import Linger.Session.Buf
 import Linger.Session.Driver
 public import Linger.Session
@@ -59,8 +60,9 @@ open Terminal
 open Terminal.Replay (Plan)
 
 /-- One write attempt for a `Linger.Session.Buf` queue, skipping the `sent` bytes the
-flush loop already got out. The result is `write`'s: `≥ 0` bytes written (0 = would
-block, or nothing is owed past `sent`); `-1` = peer gone; other errors throw.
+flush loop already got out. The result is `write`'s (`Os.Write.Result`): the bytes written,
+none when nothing is owed past `sent`; that the descriptor is full; or that the peer is gone;
+other errors throw.
 `Buf.writeFrom` is the byte view of the debt, so what reaches `write(2)` here is the debt
 and nothing else: `Buf.bufSize_eq_owedLen` shows the queue retains no more, and
 `Buf.bufAdvance_writeFrom` gives what the loop leaves after advancing.
@@ -74,7 +76,7 @@ This wraps `Os.Shell.write`, so it is not a new syscall. It cannot read a `Buf`'
 representation — `bytes` is `private`, and this calls the one API window, `writeFrom`.
 `scripts/gates.sh`'s greps still gate the session shell against declaring parallel byte
 buffers of its own, the half privacy cannot see. -/
-private def writeBuf (fd : UInt32) (b : Buf) (sent : Nat) : IO Int64 :=
+private def writeBuf (fd : UInt32) (b : Buf) (sent : Nat) : IO Os.Write.Result :=
   write fd (Linger.Session.Buf.writeFrom b) (USize.ofNat sent)
 
 /-- A stopped-reading client is cut here (`Buf.reachableOut_bound`). -/
@@ -325,11 +327,12 @@ The write offset is a **local** `Nat`, and `bufAdvance` is called once when the
 write loop stops: `Buf.bufSize` is the retained logical byte length and equals
 what is still owed in `Buf.writeFrom` (`Buf.bufSize_eq_owedLen`,
 `Buf.bufAdvance_writeFrom`). Allocator capacity
-and physical heap footprint are outside that bound. The two write reactions are the
-reason this is not shared with `flushPty`: here `n < 0` means the peer is gone and
-the caller must close the fd and feed `.closed` back into the machine, while
-`n == 0` is EAGAIN and POLLOUT resumes. A write that fails for any other reason loses the peer
-the same way, reported: a client's broken transport costs that client alone, never the session. -/
+and physical heap footprint are outside that bound. Each attempt's outcome is decided as
+`Os.Write.next` says, and the two reactions to stopping are the reason this is not shared with
+`flushPty`: here a gone peer means the caller must close the fd and feed `.closed` back into the
+machine, while a full socket waits for the POLLOUT that resumes it. A write that fails for any
+other reason loses the peer the same way, reported: a client's broken transport costs that
+client alone, never the session. -/
 def flushConn (c : Conn) : IO (Option Conn) := do
   let mut c := c
   let mut filled := false
@@ -365,35 +368,42 @@ def flushConn (c : Conn) : IO (Option Conn) := do
     let mut wrote := 0
     let owed := owedLen c.out
     while wrote < owed do
-      let n ←
+      let written ←
         try
           writeBuf c.fd c.out wrote
         catch err =>
           report s!"linger: writing to a client failed; dropping it: {err}"
-          pure (-1)
-      if n < 0 then
-        return none
-      if n == 0 then
+          pure .gone
+      match Os.Write.next owed wrote written with
+      | .write to =>
+        wrote := to
+      | .done =>
+        wrote := owed
+      | .await =>
         break
-      wrote := wrote + n.toNatClampNeg
+      | .gone =>
+        return none
     c := { c with out := bufAdvance c.out wrote }
     if wrote < owed then
       break
   return some c
 
 /-- The same bookkeeping for the child's input queue, with the *other* reaction:
-both `n ≤ 0` cases collapse to `break`, because a dead child surfaces through the reap every
-poll round makes (`.childExited`), and there is nothing to disconnect. Sharing the
+a full pty and a gone child both stop the loop, because a dead child surfaces through the reap
+every poll round makes (`.childExited`), and there is nothing to disconnect. Sharing the
 loop would invite "fixing" that asymmetry, which would either drop the pty queue
 on a transient or leave a dead client's frames queued. -/
 private def flushPty (rt : Rt) : IO Rt := do
   let mut wrote := 0
   let owed := owedLen rt.ptyIn
   while wrote < owed do
-    let n ← writeBuf rt.ptyFd rt.ptyIn wrote
-    if n ≤ 0 then
-      break -- EAGAIN or child gone; POLLOUT/EOF handles it
-    wrote := wrote + n.toNatClampNeg
+    match Os.Write.next owed wrote (← writeBuf rt.ptyFd rt.ptyIn wrote) with
+    | .write to =>
+      wrote := to
+    | .done =>
+      wrote := owed
+    | .await | .gone =>
+      break -- the child is not reading, or is gone; POLLOUT or the reap handles it
   -- `serve` flushes every round, also while the child is not reading, and
   -- `bufAdvance` copies the bytes it keeps: skip it when nothing was written.
   if wrote == 0 then
