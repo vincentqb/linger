@@ -12,17 +12,10 @@ package's code supplies, and `Os.Solution` proves the same statement of it. -/
 
 public section
 
-/-- How long a wait with a deadline on the monotonic clock sleeps before its next look, asked at
-a given time, or `none` once the deadline has passed. -/
-@[expose]
 def Os.Wait.next : (deadline step now : Nat) → Option Nat := sorry
 
 namespace Os
 
-/-- Every wait ends: it gives up exactly once its deadline has passed, and between looks sleeps at
-least 1 ms and at most its step, never past its deadline; so when each sleep lasts at least as
-long as asked (`Os.Wait.Lasts`), a wait from `now` gives up after at most `deadline - now + 1`
-looks. -/
 theorem wait_ends (after : Nat → Nat → Nat) (lasts : Os.Wait.Lasts after) (deadline step : Nat) :
     (∀ now, Os.Wait.next deadline step now = none ↔ deadline ≤ now) ∧
       (∀ now ms,
@@ -33,7 +26,6 @@ theorem wait_ends (after : Nat → Nat → Nat) (lasts : Os.Wait.Lasts after) (d
             Os.Wait.Ends (Os.Wait.next deadline step) after now looks := by
   sorry
 
-/-- `wait_ends` rejects a wait that never gives up. -/
 theorem wait_ends_rejects_endless :
     ¬∀ (after : Nat → Nat → Nat),
         Os.Wait.Lasts after →

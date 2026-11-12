@@ -101,7 +101,10 @@ Lean erases proofs regardless of file placement.
 - The files the audit lists as `Owned:` (`Challenge.lean`, `comparator.json`, `Audit.lean`,
   each `Spec.lean`, `packages/os/Os/Boundary.lean`, the Lake configuration and the toolchain) say
   what linger claims. Change them to change a claim, never to make a proof pass, and restate a
-  theorem there no weaker than its source.
+  theorem there no weaker than its source. Each package root's `owned.lock` records their
+  hashes, and a build fails when one drifts: delete the lock to record a changed claim, and
+  commit the new lock with it. The challenges follow the library's convention: a module doc
+  says what is claimed and what is not, and holes, headlines and kills carry no doc comments.
 - Every headline in `Challenge.lean` needs a kill: a theorem there stating the headline's
   negation with a wrong part in place of a hole, proved in `Theorems/Solution.lean`.
 - State each assumption about the outside world as a `WorldClaim` in a `Spec.lean`, and mark
@@ -110,8 +113,8 @@ Lean erases proofs regardless of file placement.
   `lake shake` rejects a `meta` import there, and a public one would pass Lean's own syntax to
   every importer, where `{ id }` then reads as a singleton set.
 - Every public declaration in a library needs a docstring: `lakefile.lean` enables
-  `linter.missingDocs` for every library but `Verify`, and `scripts/verify.sh` checks the
-  modules under `Linger/` outside `Proofs/` and `Tests/` directly.
+  `linter.missingDocs` for every library but `Verify` and the challenges, and
+  `scripts/verify.sh` checks the modules under `Linger/` outside `Proofs/` and `Tests/` directly.
 - State user-visible behavior, not only invariants, and bound every input-controlled
   loop or reply count in the model with a theorem (`repeatAtMost_eq_repeat`,
   `step_bytes_one_reply`); `scripts/gates.sh` rejects a CSI loop that bypasses

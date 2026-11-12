@@ -70,221 +70,112 @@ open Linger.App Linger.Display Linger.Session Linger.Target Terminal
 
 ### Command line -/
 
-/-- The executor a command line reaches. -/
-@[expose]
 def Linger.App.Entry.route : List String → App.Entry.Route := sorry
 
-/-- The command table, in the order `linger help` lists it. -/
-@[expose]
 def Linger.App.Commands.table : List App.Commands.Command := sorry
 
-/-- The command a word names, if any. -/
-@[expose]
 def Linger.App.Commands.lookup : String → Option App.Commands.Command := sorry
 
-/-- The words of removed commands, each with what to use instead. -/
-@[expose]
 def Linger.App.Commands.retired : List (String × String) := sorry
 
-/-- The usage error a command given the wrong arguments prints. -/
-@[expose]
 def Linger.App.Commands.usageLine : App.Commands.Command → String := sorry
 
 /-! ### Session targets -/
 
-/-- The session-name validator every command applies to the names it is given. -/
-@[expose]
 def Linger.Target.Name.check : String → Option String := sorry
 
-/-- The command line linger runs on a remote host, for a verb and its words. -/
-@[expose]
 def Linger.Target.Remote.command : String → List String → String := sorry
 
-/-- The target and the command's words that `attach` and `capture` read from their arguments. -/
-@[expose]
 def Linger.Target.Remote.targetArgs : List String → Option (String × List String) := sorry
 
-/-- The operands that place a target in an argv linger builds for itself. -/
-@[expose]
 def Linger.Target.Remote.targetOperands : String → List String := sorry
 
-/-- One word quoted for a remote POSIX shell. -/
-@[expose]
 def Linger.Target.Remote.shellQuote : String → String := sorry
 
-/-- The remote host list, checked: the hosts back, or why the list is refused. -/
-@[expose]
 def Linger.Target.Remote.checkHosts : List String → Except String (List String) := sorry
 
 /-! ### Environment -/
 
-/-- The program a session starts without a command, from `SHELL`. -/
-@[expose]
 def Linger.Os.Env.shellOf : Option String → String := sorry
 
-/-- The remote hosts file, from `HOME`. -/
-@[expose]
 def Linger.Os.Env.remotesFile : Option String → Option String := sorry
 
-/-- Whether the detach key detaches, for a read-only attach or a writable one, from
-`LINGER_NO_DETACH_KEY`. -/
-@[expose]
 def Linger.Os.Env.detachEnabled : Bool → Option String → Bool := sorry
 
-/-- Where a resumed session runs, from `HOME`, its saved directory and whether that is still a
-directory. -/
-@[expose]
 def Linger.Os.Env.resumeDir : Option String → String → Bool → Option String := sorry
 
 /-! ### Statuses -/
 
-/-- The status a listing row shows for what linger observed of its session. -/
-@[expose]
 def Linger.Display.Status.classify : Status.Obs → Status.Status := sorry
 
-/-- The glyph a status is shown as. -/
-@[expose]
 def Linger.Display.Status.icon : Status.Status → Char := sorry
 
-/-- The attention summary titles and `ls --summary` show for the statuses of some sessions. -/
-@[expose]
 def Linger.Display.Status.summary : List Status.Status → String := sorry
 
-/-- A status's name in `ls --porcelain`, as a peer reads it back. -/
-@[expose]
 def Linger.Display.Status.name : Status.Status → String := sorry
 
-/-- A listing row's fields, from the socket's name and the daemon's reply. -/
-@[expose]
 def Linger.Display.Listing.rowFields : String → List (String × String) → List (String × String) :=
   sorry
 
-/-- The status a listing row shows. -/
-@[expose]
 def Linger.Display.Listing.rowStatus : Listing.Row → Status.Status := sorry
 
-/-- What `ls` prints to a terminal: a line per row, its badge styled when colour is on. -/
-@[expose]
 def Linger.Display.Listing.terminalListing : Bool → List (List (String × String)) → List UInt8 :=
   sorry
 
-/-- A listing's rows, those that ask for someone first. -/
-@[expose]
 def Linger.Display.View.sort {α : Type} : (α → Status.Status) → List α → List α := sorry
 
-/-- How many targets share each group name. -/
-@[expose]
 def Linger.Display.View.groups : List String → List (String × Nat) := sorry
 
-/-- The rows a window leaves out: how many, and how many in each group the summary names. -/
-@[expose]
 def Linger.Display.View.hidden : List String → Nat × List (String × Nat) := sorry
 
-/-- A window title from the session's name, the application's title and the attention summary,
-within a capacity in characters. -/
-@[expose]
 def Linger.Display.Title.compose : String → String → String → Nat → String := sorry
 
 /-! ### Sessions -/
 
-/-- A session daemon's state: its terminal, its clients, its labels and its pty scanner. -/
-@[expose]
 def Linger.Session.State : Type := sorry
 
-/-- The state a daemon boots with, from its terminal, its restored labels and its own metadata. -/
-@[expose]
 def Linger.Session.State.boot : Vt.Vt → List (String × String) → List (String × String) → State :=
   sorry
 
-/-- Whether a process may act as a session's owner, from whether it holds the session's socket
-lock and whether it holds its checkpoint lock. -/
-@[expose]
 def Linger.Session.Claim.enters : Bool → Bool → Bool := sorry
 
-/-- The signals a daemon ends its program and the rest of the program's terminal session with,
-in order, each with the milliseconds it then waits. -/
-@[expose]
 def Linger.Session.ending : List (UInt32 × Nat) := sorry
 
-/-- How long a daemon's poll sleeps, given the time now and the deadlines the daemon holds, in
-milliseconds; `-1` waits for an event however long that takes. -/
-@[expose]
 def Linger.Session.pollTimeout : Nat → List Nat → Int32 := sorry
 
-/-- What a daemon does with a write it asks for off its loop: the off-loop writes after it, and the
-write to start now, if any. -/
-@[expose]
 def Linger.Session.Offloop.ask {R W : Type} : Offloop R W → W → Offloop R W × Option W := sorry
 
-/-- The session's transition: the state after one event, and the effects it asks the runtime
-for, in order. -/
-@[expose]
 def Linger.Session.step : State → Event → State × List (Effect Replay.Plan) := sorry
 
-/-- The record of the connection with the given identifier, if it is connected. -/
-@[expose]
 def Linger.Session.State.client? : State → Nat → Option Client := sorry
 
-/-- The session's terminal. -/
-@[expose]
 def Linger.Session.State.terminal : State → Vt.Vt := sorry
 
-/-- The session's clients. -/
-@[expose]
 def Linger.Session.State.roster : State → List Client := sorry
 
-/-- The session's labels. -/
-@[expose]
 def Linger.Session.State.labelList : State → List (String × String) := sorry
 
-/-- The state of the scanner the pty's output passes through. -/
-@[expose]
 def Linger.Session.State.scanner : State → Mediation.Scan := sorry
 
-/-- When the session next needs a tick, if ever: `none` when it waits only for events. -/
-@[expose]
 def Linger.Session.State.nextTick : State → Option Nat := sorry
 
-/-- The text of the session's `info` reply: one field per line, its key, a tab and its value. -/
-@[expose]
 def Linger.Session.infoText : State → List UInt8 := sorry
 
-/-- The fields of the session's `info` reply, its labels included. -/
-@[expose]
 def Linger.Session.infoFields : State → List (String × String) := sorry
 
-/-- The `info` fields that say how the session's program ended. -/
-@[expose]
 def Linger.Session.outcomeFields : Outcome → List (String × String) := sorry
 
-/-- One message's frame on the wire. -/
-@[expose]
 def Linger.Session.Wire.encode : Wire.Msg → List UInt8 := sorry
 
-/-- Feed one chunk of a stream to a decoder: its next state, and every message the chunk
-completes. -/
-@[expose]
 def Linger.Session.Wire.Decoder.feed : Wire.Decoder → List UInt8 → Wire.Decoder × List Wire.Msg :=
   sorry
 
-/-- The bytes of a name's end record. -/
-@[expose]
 def Linger.Session.Record.encode : Record → List UInt8 := sorry
 
-/-- What a reader holding the name learns from the end record file, or from its absence: how the
-last session's program ended, `unknown` when that is not known, or `none` when no session has
-taken the name. -/
-@[expose]
 def Linger.Session.Record.answer : Option (List UInt8) → Option Outcome := sorry
 
-/-- The terminal a daemon boots with, given the one its checkpoint restored, if any. -/
-@[expose]
 def Linger.Session.bootVt : Option Vt.Vt → Vt.Vt := sorry
 
-/-- The daemon's event driver: it handles a batch of events in order and executes each event's
-effects through the given interpreter, which reports disconnects and checkpoint failures back
-as events. -/
-@[expose]
 def Linger.Session.Driver.run :
     {m : Type → Type} →
       [Monad m] →
@@ -292,119 +183,62 @@ def Linger.Session.Driver.run :
       (State → World → (eff : Effect Replay.Plan) → m (World × Driver.Reply eff)) →
         Driver.Result State World → List Event → m (Driver.Result State World) := sorry
 
-/-- The bytes a checkpoint is saved as. -/
-@[expose]
 def Linger.Session.Checkpoint.saveBytes : Checkpoint.Ckpt Vt.Vt → ByteArray := sorry
 
-/-- The checkpoint some bytes decode to, if they are one. -/
-@[expose]
 def Linger.Session.Checkpoint.loadBytes : ByteArray → Option (Checkpoint.Ckpt Vt.Vt) := sorry
 
-/-- What `start` does with a name, given whether a live session and a saved one hold it. -/
-@[expose]
 def Linger.Session.Start.plan : (live saved : Bool) → Start.Plan := sorry
 
-/-- The program a daemon starts and its arguments, given the session's shell and the command's
-words. -/
-@[expose]
 def Linger.Session.Start.programOf : String → List String → String × Array String := sorry
 
-/-- Whether a daemon started for `start` or `resume` goes on to run the program at its commit
-point, given whether it took the request's ticket. -/
-@[expose]
 def Linger.Session.Start.proceeds : Bool → Bool := sorry
 
-/-- What `start` or `resume` answers about the program once its request is decided, given whether
-the command took the request's ticket and whether the program runs. -/
-@[expose]
 def Linger.Session.Start.answer : Bool → Bool → Start.Answer := sorry
 
-/-- The variables a session's program reads unlike the command that asked for the session, given
-the session's name. -/
-@[expose]
 def Linger.Session.Start.environment : String → List (String × String) := sorry
 
-/-- The status `start` returns for a program that could not start. -/
-@[expose]
 def Linger.Session.Start.failureStatus : Spawn.Failure → UInt8 := sorry
 
-/-- What a session's `info` reports of its start, given its name, its program's pid, when it
-started, its command, the directory its program runs in and, for a resume, its saved directory. -/
-@[expose]
 def Linger.Session.Start.metadata :
     (name pid created cmd dir : String) → Option String → List (String × String) := sorry
 
-/-- A byte queue the daemon keeps: its pty's input, or a client's output. -/
-@[expose]
 def Linger.Session.Buf.Buf : Type := sorry
 
-/-- The empty queue. -/
-@[expose]
 def Linger.Session.Buf.Buf.empty : Buf.Buf := sorry
 
-/-- The pty input queue offered some bytes under a cap, and whether it dropped them. -/
-@[expose]
 def Linger.Session.Buf.bufOffer : (cap : Nat) → Buf.Buf → ByteArray → Buf.Buf × Bool := sorry
 
-/-- A client output queue with some bytes appended under a cap, and whether the daemon must cut
-the client. -/
-@[expose]
 def Linger.Session.Buf.bufEnqueue : (cap : Nat) → Buf.Buf → ByteArray → Buf.Buf × Bool := sorry
 
-/-- The queue after the writer got the given number of bytes out. -/
-@[expose]
 def Linger.Session.Buf.bufAdvance : Buf.Buf → Nat → Buf.Buf := sorry
 
-/-- How many bytes the queue still owes. -/
-@[expose]
 def Linger.Session.Buf.owedLen : Buf.Buf → Nat := sorry
 
-/-- The bytes the queue still owes, oldest first: what its writer writes from. -/
-@[expose]
 def Linger.Session.Buf.writeFrom : Buf.Buf → ByteArray := sorry
 
 /-! ### Selector and import -/
 
-/-- How many listed rows the selector's query matches. -/
-@[expose]
 def Linger.Selector.Picker.matchCount : Selector.Picker.State → Nat := sorry
 
-/-- What the selector does with one action. -/
-@[expose]
 def Linger.Selector.Picker.step : Selector.Picker.State → Selector.Key → Selector.Picker.Outcome :=
   sorry
 
-/-- The bytes of the selector's frame, for its state, the listing, each row's status, whether a
-listing has loaded, colour, a saved-tmux visit, and the terminal's columns and rows. -/
-@[expose]
 def Linger.Selector.Picker.frame :
     Selector.Picker.State →
       Selector.Picker.Snapshot →
       (String → Status.Status) → Bool → Bool → Bool → Nat → Nat → List UInt8 := sorry
 
-/-- What the selector writes when it takes the terminal. -/
-@[expose]
 def Linger.Selector.Picker.enterAnsi : List UInt8 := sorry
 
-/-- What the selector writes when it gives the terminal back. -/
-@[expose]
 def Linger.Selector.Picker.exitAnsi : List UInt8 := sorry
 
-/-- The saved panes an import creates sessions for, given the names sessions already hold. -/
-@[expose]
 def Linger.Import.Resurrect.plan :
     List String → List Import.Resurrect.Pane → List Import.Resurrect.Pane := sorry
 
-/-- The most bytes of a pane's saved contents an import reads. -/
-@[expose]
 def Linger.Import.Resurrect.captureLimit : Nat := sorry
 
-/-- A pane's saved contents, as terminal input for its checkpoint. -/
-@[expose]
 def Linger.Import.Resurrect.captureBytes : String → List UInt8 := sorry
 
-/-- The checkpoint an import writes for a saved pane and its saved contents, if any. -/
-@[expose]
 def Linger.Import.Resurrect.checkpoint :
     Import.Resurrect.Pane → Option String → Checkpoint.Ckpt Vt.Vt := sorry
 
@@ -424,8 +258,6 @@ accepted for it, in order, when the kernel delivers what linger writes (`Pty.Del
 accepts each frame a client that may type sends, whole, or refuses it whole when the program's
 queue is full. -/
 
-/-- A read of input from a client that may type is written to the program exactly: one write per
-input message, its bytes, in the order the client sent them, and nothing else. -/
 theorem step_input_exact (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {inputs : List (List UInt8)} (hc : s.client? id = some c)
     (typist : c.attached = false ∨ c.sizer = true)
@@ -433,7 +265,6 @@ theorem step_input_exact (s : State) (id : Nat) (chunk : List UInt8) {c : Client
     (healthy : dec.errored = false) :
     (Session.step s (.bytes id chunk)).2 = inputs.map Effect.writePty := by sorry
 
-/-- `step_input_exact` rejects a session that drops its typists' input. -/
 theorem step_input_exact_rejects_drop :
     ¬∀ (s : State) (id : Nat) (chunk : List UInt8) {c : Client} {dec : Wire.Decoder}
         {inputs : List (List UInt8)},
@@ -446,10 +277,6 @@ theorem step_input_exact_rejects_drop :
             inputs.map Effect.writePty := by
   sorry
 
-/-- The program reads exactly the input linger accepted for it, in order: when the kernel
-delivers what linger writes, the program's reads followed by what the program's queue still
-holds are the accepted input, and the queue refuses a frame whole only when holding it would pass
-its cap. -/
 theorem input_exact (reads : ByteArray → ByteArray) (delivers : Pty.Delivers reads) {cap : Nat}
     {accepted written : ByteArray} {b : Buf.Buf}
     (life :
@@ -459,7 +286,6 @@ theorem input_exact (reads : ByteArray → ByteArray) (delivers : Pty.Delivers r
       ∀ more, (Buf.bufOffer cap b more).2 = true ↔ cap < Buf.owedLen b + more.size := by
   sorry
 
-/-- `input_exact` rejects a queue that accepts input without keeping it. -/
 theorem input_exact_rejects_lost :
     ¬∀ (reads : ByteArray → ByteArray),
         Pty.Delivers reads →
@@ -473,13 +299,10 @@ theorem input_exact_rejects_lost :
                     cap < Buf.owedLen b + more.size := by
   sorry
 
-/-- However a stream of messages the encoder may send is cut into chunks, a fresh decoder reads
-back exactly those messages, in order, with nothing left over and no error. -/
 theorem decode_encode_chunked (ms : List Wire.Msg) (fits : ∀ m ∈ ms, m.Fits)
     (chunks : List (List UInt8)) (cut : chunks.flatten = ms.flatMap Wire.encode) :
     Wire.feedAll Wire.Decoder.feed {} chunks = ({ buf := [], errored := false }, ms) := by sorry
 
-/-- `decode_encode_chunked` rejects an encoder that sends nothing. -/
 theorem decode_encode_chunked_rejects_silence :
     ¬∀ (ms : List Wire.Msg),
         (∀ m ∈ ms, m.Fits) →
@@ -488,10 +311,6 @@ theorem decode_encode_chunked_rejects_silence :
               Wire.feedAll Wire.Decoder.feed {} chunks = ({ buf := [], errored := false }, ms) := by
   sorry
 
-/-- A program that enabled focus reporting hears focus as a terminal reports it. A read that
-completes exactly one attach writes to the program only `CSI I`, and exactly when focus reporting
-is on, the connection was not attached yet, the attach gives a size, and nobody else could
-type. -/
 theorem step_attach_focus (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {cols rows : UInt32} (hc : s.client? id = some c)
     (read : c.decoder.feed chunk = (dec, [.attach cols rows])) (healthy : dec.errored = false)
@@ -504,7 +323,6 @@ theorem step_attach_focus (s : State) (id : Nat) (chunk : List UInt8) {c : Clien
         rows ≠ 0 ∧ ∀ other ∈ s.roster, other.id ≠ id → (other.attached && other.sizer) = false := by
   sorry
 
-/-- `step_attach_focus` rejects a session that reports focus whenever a client attaches. -/
 theorem step_attach_focus_rejects_eager :
     ¬∀ (s : State) (id : Nat) (chunk : List UInt8) {c : Client} {dec : Wire.Decoder}
         {cols rows : UInt32},
@@ -524,8 +342,6 @@ theorem step_attach_focus_rejects_eager :
                 ∀ other ∈ s.roster, other.id ≠ id → (other.attached && other.sizer) = false := by
   sorry
 
-/-- Closing a connection writes to the program only `CSI O`, and exactly when focus reporting is
-on, the connection had a size, and someone could type before it closed and nobody can after. -/
 theorem step_closed_focus (s : State) (id : Nat) (bytes : List UInt8) :
     Effect.writePty bytes ∈ (Session.step s (.closed id)).2 ↔
       bytes = [0x1B, 0x5B, 0x4F] ∧
@@ -535,8 +351,6 @@ theorem step_closed_focus (s : State) (id : Nat) (bytes : List UInt8) :
         (Session.step s (.closed id)).1.roster.any (fun c => c.attached && c.sizer) = false := by
   sorry
 
-/-- `step_closed_focus` rejects a session that reports a loss of focus whenever a connection
-closes. -/
 theorem step_closed_focus_rejects_eager :
     ¬∀ (s : State) (id : Nat) (bytes : List UInt8),
         Effect.writePty bytes ∈
@@ -561,16 +375,11 @@ A watcher is a client attached without a size. `start` takes no name a session h
 labels, the boot metadata and the terminal a session reports each have one source, and a listing
 names each row by its socket. -/
 
-/-- A name has one owner. Whatever processes do, in any order, two that act at once as owners
-of sessions sharing a socket or a checkpoint lock are the same process, when the operating system
-grants a lock only when it is free and each process acts as an owner only when linger decides it
-may. -/
 theorem one_owner (grant : Claim.State → Nat → Nat → Bool) (exclusive : Claim.Exclusive grant)
     {s : Claim.State} (reached : Claim.Reachable grant Claim.enters s) {a b resource : Nat}
     {left right : Claim.Lease} (ha : s.active a = some left) (hb : s.active b = some right)
     (leftUses : left.Uses resource) (rightUses : right.Uses resource) : a = b := by sorry
 
-/-- `one_owner` rejects a process that acts as an owner once it holds the socket lock alone. -/
 theorem one_owner_rejects_socket :
     ¬∀ (grant : Claim.State → Nat → Nat → Bool),
         Claim.Exclusive grant →
@@ -581,9 +390,6 @@ theorem one_owner_rejects_socket :
                   s.active b = some right → left.Uses resource → right.Uses resource → a = b := by
   sorry
 
-/-- A session's labels have one source, the label requests of a client that may change them: an
-event that changes them is a read, from a client that is not a watcher, that holds a label
-request. -/
 theorem step_labels_requested (s : State) (ev : Event)
     (changed : (Session.step s ev).1.labelList ≠ s.labelList) :
     ∃ id chunk c,
@@ -593,7 +399,6 @@ theorem step_labels_requested (s : State) (ev : Event)
         ∃ m ∈ (c.decoder.feed chunk).2, m.ChangesLabels := by
   sorry
 
-/-- `step_labels_requested` rejects a session that drops its labels on every event. -/
 theorem step_labels_requested_rejects_reset :
     ¬∀ (s : State) (ev : Event),
         ((fun (s : State) (_ : Event) =>
@@ -607,15 +412,12 @@ theorem step_labels_requested_rejects_reset :
               ∃ m ∈ (c.decoder.feed chunk).2, m.ChangesLabels := by
   sorry
 
-/-- A session's name, pid, creation time, command and start directory have one source, the daemon
-that booted it: whatever events follow, `info` reports them as it booted with them. -/
 theorem infoFields_boot (vt : Vt.Vt) (labels metadata : List (String × String)) (evs : List Event) :
     ∃ rest,
       Session.infoFields (Session.trace Session.step (State.boot vt labels metadata) evs).1 =
         metadata ++ rest := by
   sorry
 
-/-- `infoFields_boot` rejects a session that boots again on every event. -/
 theorem infoFields_boot_rejects_reboot :
     ¬∀ (vt : Vt.Vt) (labels metadata : List (String × String)) (evs : List Event),
         ∃ rest,
@@ -627,8 +429,6 @@ theorem infoFields_boot_rejects_reboot :
             metadata ++ rest := by
   sorry
 
-/-- A session's terminal has one source, its program: only the program's output writes it, and
-every other event keeps it or resizes it. -/
 theorem step_terminal_sources (s : State) (ev : Event) :
     (∃ chunk, ev = .ptyOut chunk ∧ (Session.step s ev).1.terminal = s.terminal.feed chunk) ∨
       ∃ sizes : List (Nat × Nat),
@@ -636,7 +436,6 @@ theorem step_terminal_sources (s : State) (ev : Event) :
           sizes.foldl (fun v (size : Nat × Nat) => v.resize size.1 size.2) s.terminal := by
   sorry
 
-/-- `step_terminal_sources` rejects a session that prints on its own. -/
 theorem step_terminal_sources_rejects_print :
     ¬∀ (s : State) (ev : Event),
         (∃ chunk,
@@ -652,26 +451,21 @@ theorem step_terminal_sources_rejects_print :
               sizes.foldl (fun v (size : Nat × Nat) => v.resize size.1 size.2) s.terminal := by
   sorry
 
-/-- `start` takes a name only when no live session holds it and none is saved. Otherwise it
-refuses, saying which holds it: a live one first, whose daemon also owns any saved state. -/
 theorem start_plan (live saved : Bool) :
     Start.plan live saved = if live then .running else if saved then .saved else .take := by sorry
 
-/-- `start_plan` rejects a `start` that takes every name. -/
 theorem start_plan_rejects_take :
     ¬∀ (live saved : Bool),
         (fun (_ _ : Bool) => Start.Plan.take) live saved =
           if live then .running else if saved then .saved else .take := by
   sorry
 
-/-- One client's bytes, however chunked, leave every other client's record unchanged. -/
 theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8)) {other : Nat}
     (h : other ≠ id) :
     (Session.trace Session.step s (chunks.map (Event.bytes id))).1.client? other =
       s.client? other := by
   sorry
 
-/-- `run_bytes_isolates` rejects a session that forgets every client on any event. -/
 theorem run_bytes_isolates_rejects_reset :
     ¬∀ (s : State) (id : Nat) (chunks : List (List UInt8)) {other : Nat},
         other ≠ id →
@@ -682,9 +476,6 @@ theorem run_bytes_isolates_rejects_reset :
             s.client? other := by
   sorry
 
-/-- A watcher can look and leave, and nothing else: whatever bytes it sends, however chunked,
-leave the terminal and the labels unchanged, and every effect they cause is a message to the
-watcher, its own disconnection or a checkpoint. -/
 theorem run_readonly (s : State) (id : Nat) (chunks : List (List UInt8)) {c : Client}
     (hc : s.client? id = some c) (attached : c.attached = true) (watcher : c.sizer = false) :
     (Session.trace Session.step s (chunks.map (Event.bytes id))).1.terminal = s.terminal ∧
@@ -693,7 +484,6 @@ theorem run_readonly (s : State) (id : Nat) (chunks : List (List UInt8)) {c : Cl
         (∃ m, eff = .send id m) ∨ eff = .close id ∨ eff = .checkpoint := by
   sorry
 
-/-- `run_readonly` rejects a session that ends itself on any event, a watcher's included. -/
 theorem run_readonly_rejects_kill :
     ¬∀ (s : State) (id : Nat) (chunks : List (List UInt8)) {c : Client},
         (fun (_ : State) (i : Nat) => some ({ id := i, attached := true } : Client)) s id = some c →
@@ -712,33 +502,26 @@ theorem run_readonly_rejects_kill :
               (∃ m, eff = .send id m) ∨ eff = .close id ∨ eff = .checkpoint := by
   sorry
 
-/-- No other account chooses the hosts linger asks: the remote hosts file is under a nonempty
-`HOME`, and with `HOME` unset or empty there is none, never a shared fallback. -/
 theorem remotesFile_home (home : Option String) :
     Os.Env.remotesFile home = none ↔ home = none ∨ home = some "" := by sorry
 
-/-- `remotesFile_home` rejects a remotes file that falls back to a shared directory. -/
 theorem remotesFile_home_rejects_shared :
     ¬∀ (home : Option String),
         (fun (_ : Option String) => some "remotes") home = none ↔ home = none ∨ home = some "" := by
   sorry
 
-/-- A listing row is named by its socket, whatever name the daemon's reply gives. -/
 theorem rowFields_name (socketName : String) (info : List (String × String)) :
     (Listing.rowFields socketName info).lookup "name" = some socketName := by sorry
 
-/-- `rowFields_name` rejects a row that takes its fields from the reply alone. -/
 theorem rowFields_name_rejects_reply :
     ¬∀ (socketName : String) (info : List (String × String)),
         ((fun (_ : String) (info : List (String × String)) => info) socketName info).lookup "name" =
           some socketName := by
   sorry
 
-/-- The selector attaches only to a session it lists. -/
 theorem picker_attach_listed (s : Selector.Picker.State) (key : Selector.Key) (target : String)
     (h : Selector.Picker.step s key = .attach target) : target ∈ s.candidates := by sorry
 
-/-- `picker_attach_listed` rejects a selector that attaches to a fixed session. -/
 theorem picker_attach_listed_rejects_fixed :
     ¬∀ (s : Selector.Picker.State) (key : Selector.Key) (target : String),
         (fun (_ : Selector.Picker.State) (_ : Selector.Key) => Selector.Picker.Outcome.attach "s") s
@@ -747,13 +530,10 @@ theorem picker_attach_listed_rejects_fixed :
           target ∈ s.candidates := by
   sorry
 
-/-- The selector creates only a session no listed one holds, with a nonempty target whose name is
-valid. -/
 theorem picker_create_new (s : Selector.Picker.State) (key : Selector.Key) (target : String)
     (h : Selector.Picker.step s key = .create target) :
     target ∉ s.candidates ∧ target ≠ "" ∧ Name.Valid ((target.splitOn "@").headD "") := by sorry
 
-/-- `picker_create_new` rejects a selector that creates an empty target. -/
 theorem picker_create_new_rejects_empty :
     ¬∀ (s : Selector.Picker.State) (key : Selector.Key) (target : String),
         (fun (_ : Selector.Picker.State) (_ : Selector.Key) => Selector.Picker.Outcome.create "") s
@@ -770,9 +550,6 @@ system runs what linger asks (`start_runs`, in part 4). A program that cannot st
 `start` return what `env -C` would, and a resume that runs elsewhere than its saved directory
 says so. -/
 
-/-- A command line reaches the executor it names, with its exact arguments: `attach` or `a`
-alone opens the selector, read-only on request; `tmux` hands the rest to save interchange; any
-other line goes to the session commands as given, and an empty one asks for help. -/
 theorem route_exact (args : List String) :
     App.Entry.route args =
       if args = [] then .session ["help"]
@@ -783,7 +560,6 @@ theorem route_exact (args : List String) :
           else if args.head? = some "tmux" then .tmux args.tail else .session args := by
   sorry
 
-/-- `route_exact` rejects a command line that never opens the selector. -/
 theorem route_exact_rejects_selector :
     ¬∀ (args : List String),
         (fun (args : List String) => App.Entry.Route.session args) args =
@@ -795,8 +571,6 @@ theorem route_exact_rejects_selector :
               else if args.head? = some "tmux" then .tmux args.tail else .session args := by
   sorry
 
-/-- Each word of the command table names one command: every command answers to its word and to
-each of its other spellings, and no two commands share a word. -/
 theorem lookup_table :
     (App.Commands.table.flatMap fun command => command.word :: command.aliases).Nodup ∧
       ∀ command ∈ App.Commands.table,
@@ -804,7 +578,6 @@ theorem lookup_table :
           ∀ word ∈ command.aliases, App.Commands.lookup word = some command := by
   sorry
 
-/-- `lookup_table` rejects a lookup that finds no command. -/
 theorem lookup_table_rejects_none :
     ¬((App.Commands.table.flatMap fun command => command.word :: command.aliases).Nodup ∧
         ∀ command ∈ App.Commands.table,
@@ -813,11 +586,9 @@ theorem lookup_table_rejects_none :
               (fun (_ : String) => (none : Option App.Commands.Command)) word = some command) := by
   sorry
 
-/-- A removed command's words name no command, so they never come back meaning something else. -/
 theorem retired_free : ∀ entry ∈ App.Commands.retired, App.Commands.lookup entry.1 = none := by
   sorry
 
-/-- `retired_free` rejects a lookup that answers every word. -/
 theorem retired_free_rejects_any :
     ¬∀ entry ∈ App.Commands.retired,
         (fun (_ : String) =>
@@ -826,15 +597,12 @@ theorem retired_free_rejects_any :
           none := by
   sorry
 
-/-- A command given the wrong arguments says how to call it: its word, then the arguments its
-table row lists, when it takes any. -/
 theorem usageLine_exact (command : App.Commands.Command) :
     App.Commands.usageLine command =
       if command.args.isEmpty then s!"usage: linger {command.word}"
       else s!"usage: linger {command.word} {command.args}" := by
   sorry
 
-/-- `usageLine_exact` rejects a usage error that names no command. -/
 theorem usageLine_exact_rejects_bare :
     ¬∀ (command : App.Commands.Command),
         (fun (_ : App.Commands.Command) => "usage: linger") command =
@@ -842,12 +610,10 @@ theorem usageLine_exact_rejects_bare :
           else s!"usage: linger {command.word} {command.args}" := by
   sorry
 
-/-- An import creates sessions for exactly the saved panes whose names no session holds. -/
 theorem plan_exact (existing : List String) (panes : List Import.Resurrect.Pane)
     (pane : Import.Resurrect.Pane) :
     pane ∈ Import.Resurrect.plan existing panes ↔ pane ∈ panes ∧ pane.name ∉ existing := by sorry
 
-/-- `plan_exact` rejects an import that recreates sessions that exist. -/
 theorem plan_exact_rejects_all :
     ¬∀ (existing : List String) (panes : List Import.Resurrect.Pane) (pane : Import.Resurrect.Pane),
         pane ∈
@@ -855,12 +621,10 @@ theorem plan_exact_rejects_all :
           pane ∈ panes ∧ pane.name ∉ existing := by
   sorry
 
-/-- Importing the same save again, right after an import made sessions, creates nothing. -/
 theorem plan_again_empty (existing : List String) (panes made : List Import.Resurrect.Pane)
     (first : made = Import.Resurrect.plan existing panes) :
     Import.Resurrect.plan (existing ++ made.map (·.name)) panes = [] := by sorry
 
-/-- `plan_again_empty` rejects an import that creates every saved pane each time. -/
 theorem plan_again_empty_rejects_all :
     ¬∀ (existing : List String) (panes made : List Import.Resurrect.Pane),
         made =
@@ -870,60 +634,46 @@ theorem plan_again_empty_rejects_all :
             [] := by
   sorry
 
-/-- Validation accepts exactly the valid names, and returns each unchanged. -/
 theorem check_eq_some_iff (s result : String) :
     Name.check s = some result ↔ result = s ∧ Name.Valid s := by sorry
 
-/-- `check_eq_some_iff` rejects a validator that accepts every name, the empty one included. -/
 theorem check_eq_some_iff_rejects_any :
     ¬∀ (s result : String), (fun s => some s) s = some result ↔ result = s ∧ Name.Valid s := by
   sorry
 
-/-- The command linger runs on a remote host parses, in the literal POSIX shell model, as
-exactly `linger`, the verb and every supplied word, with no other shell action. -/
 theorem command_argv (verb : String) (words : List String) :
     Remote.Shell.Words (Remote.command verb words).toList
       (("linger" :: verb :: words).map String.toList) := by
   sorry
 
-/-- `command_argv` rejects an empty command line, which parses as no words. -/
 theorem command_argv_rejects_empty :
     ¬∀ (verb : String) (words : List String),
         Remote.Shell.Words ((fun (_ : String) (_ : List String) => "") verb words).toList
           (("linger" :: verb :: words).map String.toList) := by
   sorry
 
-/-- No two spellings name one session: validation never maps two different strings to the
-same name. -/
 theorem check_no_alias (a b name : String) (ha : Name.check a = some name)
     (hb : Name.check b = some name) : a = b := by sorry
 
-/-- `check_no_alias` rejects a validator that folds every spelling into one name. -/
 theorem check_no_alias_rejects_fold :
     ¬∀ (a b name : String),
         (fun (_ : String) => some "s") a = some name →
           (fun (_ : String) => some "s") b = some name → a = b := by
   sorry
 
-/-- A target linger places in an argv it builds for itself reads back as exactly that name,
-with every word after it left to the command, a name that starts with `-` included. -/
 theorem targetArgs_targetOperands (name : String) (rest : List String) :
     Remote.targetArgs (Remote.targetOperands name ++ rest) = some (name, rest) := by sorry
 
-/-- `targetArgs_targetOperands` rejects operands that leave the target out. -/
 theorem targetArgs_targetOperands_rejects_none :
     ¬∀ (name : String) (rest : List String),
         Remote.targetArgs ((fun (_ : String) => ([] : List String)) name ++ rest) =
           some (name, rest) := by
   sorry
 
-/-- A word linger quotes for the remote shell reads back as exactly that word, and leaves what
-follows it, a space or the end, to be read next. -/
 theorem shellQuote_roundtrip (s : String) (tail : List Char)
     (boundary : tail = [] ∨ ∃ rest, tail = ' ' :: rest) :
     Remote.Shell.word ((Remote.shellQuote s).toList ++ tail) = some (s.toList, tail) := by sorry
 
-/-- `shellQuote_roundtrip` rejects a word passed to the remote shell unquoted. -/
 theorem shellQuote_roundtrip_rejects_bare :
     ¬∀ (s : String) (tail : List Char),
         (tail = [] ∨ ∃ rest, tail = ' ' :: rest) →
@@ -931,14 +681,11 @@ theorem shellQuote_roundtrip_rejects_bare :
             some (s.toList, tail) := by
   sorry
 
-/-- The remote host list is accepted exactly when no host repeats and none holds a control
-character or DEL, and then as given: a bad list is refused, never cleaned up. -/
 theorem checkHosts_ok_iff (hosts result : List String) :
     Remote.checkHosts hosts = .ok result ↔
       result = hosts ∧ hosts.Nodup ∧ ∀ x ∈ hosts, Remote.hostClean x = true := by
   sorry
 
-/-- `checkHosts_ok_iff` rejects a check that accepts a host listed twice. -/
 theorem checkHosts_ok_iff_rejects_any :
     ¬∀ (hosts result : List String),
         (fun (hosts : List String) => (.ok hosts : Except String (List String))) hosts =
@@ -946,28 +693,22 @@ theorem checkHosts_ok_iff_rejects_any :
           result = hosts ∧ hosts.Nodup ∧ ∀ x ∈ hosts, Remote.hostClean x = true := by
   sorry
 
-/-- The detach key always detaches a read-only attach, whose only exit it is, and detaches a
-writable one exactly when `LINGER_NO_DETACH_KEY` is unset. -/
 theorem detach_key (flag : Option String) :
     Os.Env.detachEnabled true flag = true ∧ Os.Env.detachEnabled false flag = flag.isNone := by
   sorry
 
-/-- `detach_key` rejects a detach key that never detaches. -/
 theorem detach_key_rejects_never :
     ¬∀ (flag : Option String),
         (fun (_ : Bool) (_ : Option String) => false) true flag = true ∧
           (fun (_ : Bool) (_ : Option String) => false) false flag = flag.isNone := by
   sorry
 
-/-- A resumed session runs in its saved directory while that is a directory; once it is gone,
-in a nonempty `HOME`; and with `HOME` unset or empty, nowhere, so the resume refuses. -/
 theorem resumeDir_where (home : Option String) (saved dir : String) (set : dir ≠ "") :
     Os.Env.resumeDir home saved true = some saved ∧
       Os.Env.resumeDir (some dir) saved false = some dir ∧
       Os.Env.resumeDir none saved false = none ∧ Os.Env.resumeDir (some "") saved false = none := by
   sorry
 
-/-- `resumeDir_where` rejects a resume that runs in its saved directory once it is gone. -/
 theorem resumeDir_where_rejects_gone :
     ¬∀ (home : Option String) (saved dir : String),
         dir ≠ "" →
@@ -983,15 +724,11 @@ theorem resumeDir_where_rejects_gone :
               none := by
   sorry
 
-/-- A program that cannot start makes `start` return what a shell or `env -C` reports: 125 when
-its directory cannot be entered, 127 when no program of its name is found, and 126 when it cannot
-be run. -/
 theorem failureStatus_exact (why : String) :
     Start.failureStatus (.directory why) = 125 ∧
       Start.failureStatus (.notFound why) = 127 ∧ Start.failureStatus (.notRunnable why) = 126 := by
   sorry
 
-/-- `failureStatus_exact` rejects a `start` that reports every failure alike. -/
 theorem failureStatus_exact_rejects_alike :
     ¬∀ (why : String),
         (fun (_ : Spawn.Failure) => (1 : UInt8)) (.directory why) = 125 ∧
@@ -999,9 +736,6 @@ theorem failureStatus_exact_rejects_alike :
           (fun (_ : Spawn.Failure) => (1 : UInt8)) (.notRunnable why) = 126 := by
   sorry
 
-/-- A session's `info` names the directory its program runs in, "start_dir", and a resume that
-runs it elsewhere than its saved directory, which is gone, says so: "saved_dir" names the saved
-directory exactly then. `info` reports both for the session's life (`infoFields_boot`). -/
 theorem metadata_dirs (name pid created cmd dir : String) (saved : Option String) :
     ("start_dir", dir) ∈ Start.metadata name pid created cmd dir saved ∧
       ∀ d,
@@ -1009,7 +743,6 @@ theorem metadata_dirs (name pid created cmd dir : String) (saved : Option String
           saved = some d ∧ d ≠ dir := by
   sorry
 
-/-- `metadata_dirs` rejects a resume that never says it moved. -/
 theorem metadata_dirs_rejects_silent :
     ¬∀ (name pid created cmd dir : String) (saved : Option String),
         ("start_dir", dir) ∈
@@ -1029,12 +762,9 @@ session's shell alone, which is what a resume runs again on the saved session's 
 (`resume_restores`, in part 7). The operating system runs it as asked: the world claim
 `Spawn.Runs`, which the agent and resume suites exercise. -/
 
-/-- A session runs exactly the program and words its creation named, as one program with no shell
-between, and a session created without a command runs its shell, alone. -/
 theorem programOf_exact (shell : String) (argv : List String) :
     Start.programOf shell argv = (argv.headD shell, (argv.drop 1).toArray) := by sorry
 
-/-- `programOf_exact` rejects a session that runs its command through the shell. -/
 theorem programOf_exact_rejects_shell :
     ¬∀ (shell : String) (argv : List String),
         (fun (shell : String) (argv : List String) => (shell, #["-c", String.intercalate " " argv]))
@@ -1042,14 +772,11 @@ theorem programOf_exact_rejects_shell :
           (argv.headD shell, (argv.drop 1).toArray) := by
   sorry
 
-/-- A session started without a command runs `$SHELL`, or `sh` when `SHELL` is unset or empty,
-since an empty word names no program. -/
 theorem shellOf_choice (shell : String) (set : shell ≠ "") :
     Os.Env.shellOf (some shell) = shell ∧
       Os.Env.shellOf none = "sh" ∧ Os.Env.shellOf (some "") = "sh" := by
   sorry
 
-/-- `shellOf_choice` rejects a session that ignores `SHELL`. -/
 theorem shellOf_choice_rejects_fixed :
     ¬∀ (shell : String),
         shell ≠ "" →
@@ -1058,12 +785,6 @@ theorem shellOf_choice_rejects_fixed :
             (fun (_ : Option String) => "sh") (some "") = "sh" := by
   sorry
 
-/-- A session's program sees exactly what its creation named, where linger asked, with the
-environment of the command that asked for it: when the operating system runs what linger asks, a
-program that starts sees its command's words, or without a command the shell alone, runs in the
-directory linger asked for, reads `LINGER_SESSION` as the session's name, `TERM` as
-`xterm-256color`, `TERM_PROGRAM` as `linger` and `TERM_PROGRAM_VERSION` as linger's version, and
-reads every other variable as that command had it. -/
 theorem start_runs (inherited : String → Option String)
     (start : String → String → Array String → List (String × String) → Option Spawn.Started)
     (runs : Spawn.Runs inherited start) (name dir shell : String) (argv : List String)
@@ -1083,7 +804,6 @@ theorem start_runs (inherited : String → Option String)
           started.env key = inherited key := by
   sorry
 
-/-- `start_runs` rejects a session whose program is not told the session's name. -/
 theorem start_runs_rejects_unnamed :
     ¬∀ (inherited : String → Option String)
         (start : String → String → Array String → List (String × String) → Option Spawn.Started),
@@ -1108,9 +828,6 @@ theorem start_runs_rejects_unnamed :
 A name's end record keeps how its last session's program ended, for whoever asks later, when the
 file system keeps what linger saves (`Record.Kept`, which the agent suite exercises). -/
 
-/-- When the session's program ends, every client attached to the session or waiting for its end
-is told how the program ended and then the status a shell would report for that ending, and the
-daemon's last effect is its exit. -/
 theorem step_ended_reports (s : State) (o : Outcome) {c : Client} (hc : c ∈ s.roster)
     (listening : c.attached = true ∨ c.waiting = true) :
     [Effect.send c.id (.ended o), Effect.send c.id (.exited o.status)] <:+:
@@ -1118,8 +835,6 @@ theorem step_ended_reports (s : State) (o : Outcome) {c : Client} (hc : c ∈ s.
       (Session.step s (.childExited o)).2.getLast? = some .exit := by
   sorry
 
-/-- `step_ended_reports` rejects a session that reports a status alone, which cannot tell a
-death by signal from an exit code. -/
 theorem step_ended_reports_rejects_status :
     ¬∀ (s : State) (o : Outcome) {c : Client},
         c ∈ (fun (_ : State) => [({ id := 0, attached := true } : Client)]) s →
@@ -1132,8 +847,6 @@ theorem step_ended_reports_rejects_status :
               some .exit := by
   sorry
 
-/-- When the program ends, the session keeps its last screen: its last two effects save a
-checkpoint and exit, none before them discards the checkpoint, and the terminal is unchanged. -/
 theorem step_childExited_keeps (s : State) (o : Outcome) :
     (∃ front,
         (Session.step s (.childExited o)).2 = front ++ [.checkpoint, .exit] ∧
@@ -1141,8 +854,6 @@ theorem step_childExited_keeps (s : State) (o : Outcome) :
       (Session.step s (.childExited o)).1.terminal = s.terminal := by
   sorry
 
-/-- `step_childExited_keeps` rejects a session that discards its checkpoint when its program
-ends. -/
 theorem step_childExited_keeps_rejects_drop :
     ¬∀ (s : State) (o : Outcome),
         (∃ front,
@@ -1157,14 +868,11 @@ theorem step_childExited_keeps_rejects_drop :
             s.terminal := by
   sorry
 
-/-- A name's end record tells a reader how the last session's program ended, and a reader always
-gets an answer exactly when a record exists. -/
 theorem record_answer (o : Outcome) (file : Option (List UInt8)) :
     Record.answer (some (Record.encode (.ended o))) = some o ∧
       (Record.answer file).isSome = file.isSome := by
   sorry
 
-/-- `record_answer` rejects a record whose every reader hears that the ending is unknown. -/
 theorem record_answer_rejects_unknown :
     ¬∀ (o : Outcome) (file : Option (List UInt8)),
         (fun (_ : Option (List UInt8)) => some Outcome.unknown) (some (Record.encode (.ended o))) =
@@ -1172,17 +880,12 @@ theorem record_answer_rejects_unknown :
           ((fun (_ : Option (List UInt8)) => some Outcome.unknown) file).isSome = file.isSome := by
   sorry
 
-/-- Whoever reads a name's end record after its session's daemon last saved it hears the truth,
-when the file system keeps what linger saves: how the program ended, which the daemon saves before
-it gives the name up, and that the ending is unknown when the daemon gave the name up, as only a
-crash does, with its record still saying the program runs. -/
 theorem record_kept (afterSave : List UInt8 → Option (List UInt8)) (kept : Record.Kept afterSave)
     (o : Outcome) (seen : Option Seen) :
     Record.answer (afterSave (Record.encode (.ended o))) = some o ∧
       Record.answer (afterSave (Record.encode (.running seen))) = some .unknown := by
   sorry
 
-/-- `record_kept` rejects a record that saves nothing. -/
 theorem record_kept_rejects_blank :
     ¬∀ (afterSave : List UInt8 → Option (List UInt8)),
         Record.Kept afterSave →
@@ -1193,11 +896,9 @@ theorem record_kept_rejects_blank :
                 some .unknown := by
   sorry
 
-/-- `info` reports each ending with its own fields: two different endings never read the same. -/
 theorem outcomeFields_injective (o₁ o₂ : Outcome)
     (h : Session.outcomeFields o₁ = Session.outcomeFields o₂) : o₁ = o₂ := by sorry
 
-/-- `outcomeFields_injective` rejects an `info` that reports no ending. -/
 theorem outcomeFields_injective_rejects_silence :
     ¬∀ (o₁ o₂ : Outcome),
         (fun (_ : Outcome) => ([] : List (String × String))) o₁ =
@@ -1205,21 +906,15 @@ theorem outcomeFields_injective_rejects_silence :
           o₁ = o₂ := by
   sorry
 
-/-- Every `info` reply reports the protocol level the daemon speaks, so a client can refuse a
-request an older daemon cannot serve before sending it. -/
 theorem infoFields_protocol (s : State) :
     ("protocol", toString Wire.protocol) ∈ Session.infoFields s := by sorry
 
-/-- `infoFields_protocol` rejects an `info` reply without fields. -/
 theorem infoFields_protocol_rejects_empty :
     ¬∀ (s : State),
         ("protocol", toString Wire.protocol) ∈
           (fun (_ : State) => ([] : List (String × String))) s := by
   sorry
 
-/-- A request the session does not know is refused with a reason: a read that completes exactly
-one such message gets `unknown message`, and the session's terminal and labels stay as they
-were. -/
 theorem step_unknown_refused (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {tag : UInt8} {payload : List UInt8} (hc : s.client? id = some c)
     (read : c.decoder.feed chunk = (dec, [.unknown tag payload])) (healthy : dec.errored = false) :
@@ -1228,7 +923,6 @@ theorem step_unknown_refused (s : State) (id : Nat) (chunk : List UInt8) {c : Cl
       (Session.step s (.bytes id chunk)).1.labelList = s.labelList := by
   sorry
 
-/-- `step_unknown_refused` rejects a session that ignores a request it does not know. -/
 theorem step_unknown_refused_rejects_silence :
     ¬∀ (s : State) (id : Nat) (chunk : List UInt8) {c : Client} {dec : Wire.Decoder} {tag : UInt8}
         {payload : List UInt8},
@@ -1246,10 +940,6 @@ theorem step_unknown_refused_rejects_silence :
               s.labelList := by
   sorry
 
-/-- When each external operation returns a typed result, every finite batch of events
-completes without an uncaught exception, keeping the session within its bounds and its
-terminal one a live session can hold. Disconnects and checkpoint failures are permitted
-results. -/
 theorem run_total_safe {World ε : Type}
     (execute : State → World → (eff : Effect Replay.Plan) → Except ε (World × Driver.Reply eff))
     (hw : Driver.Responds execute) (r : Driver.Result State World) (events : List Event)
@@ -1264,8 +954,6 @@ theorem run_total_safe {World ε : Type}
           (Checkpoint.Decoded Checkpoint.loadBytes) out.st.terminal := by
   sorry
 
-/-- `run_total_safe` rejects a driver that ignores its events and lands on a state past the
-label cap, read through labels that overflow on any terminal other than the starting one. -/
 theorem run_total_safe_rejects_jump :
     ¬∀ {World ε : Type}
         (execute :
@@ -1289,15 +977,12 @@ theorem run_total_safe_rejects_jump :
                     (Checkpoint.Decoded Checkpoint.loadBytes) out.st.terminal := by
   sorry
 
-/-- A disconnect or a failed save never stops the daemon: handling a batch of them keeps it
-running, whatever the interpreter reports about their own effects. -/
 theorem run_feedback_alive {World : Type}
     (execute : State → World → (eff : Effect Replay.Plan) → Id (World × Driver.Reply eff))
     (r : Driver.Result State World) (events : List Event) (running : r.exiting = false)
     (failures : ∀ ev ∈ events, ev = .checkpointFailed ∨ ∃ id, ev = .closed id) :
     (Driver.run execute r events).exiting = false := by sorry
 
-/-- `run_feedback_alive` rejects a driver that stops the daemon whatever its events. -/
 theorem run_feedback_alive_rejects_halt :
     ¬∀ {World : Type}
         (execute : State → World → (eff : Effect Replay.Plan) → Id (World × Driver.Reply eff))
@@ -1307,13 +992,11 @@ theorem run_feedback_alive_rejects_halt :
           (Driver.halt execute r events).exiting = false := by
   sorry
 
-/-- Once an event asks the daemon to exit, it handles no later event and runs no later effect. -/
 theorem run_exited {m : Type → Type} [Monad m] {World : Type}
     (execute : State → World → (eff : Effect Replay.Plan) → m (World × Driver.Reply eff))
     (r : Driver.Result State World) (events : List Event) (exited : r.exiting = true) :
     Driver.run execute r events = pure r := by sorry
 
-/-- `run_exited` rejects a driver that moves the session on after it exits. -/
 theorem run_exited_rejects_jump :
     ¬∀ {m : Type → Type} [Monad m] {World : Type}
         (execute : State → World → (eff : Effect Replay.Plan) → m (World × Driver.Reply eff))
@@ -1331,24 +1014,19 @@ so the program's pid, which is the session's id, stays reserved until then: no p
 terminal session that SIGKILL reaches remains (`ending_clean`, over the world claim
 `Signal.Ends`, which the attach suite exercises and whose comment names what it cannot reach). -/
 
-/-- The pty input queue never owes more than its cap, through any offers and flushes. -/
 theorem reachableIn_bound {cap : Nat} {b : Buf.Buf}
     (h : Buf.InputReach Buf.Buf.empty Buf.bufOffer Buf.bufAdvance cap b) : Buf.owedLen b ≤ cap := by
   sorry
 
-/-- `reachableIn_bound` rejects an input queue that appends every offer, whatever its cap. -/
 theorem reachableIn_bound_rejects_append :
     ¬∀ {cap : Nat} {b : Buf.Buf},
         Buf.InputReach Buf.Buf.empty Buf.bufEnqueue Buf.bufAdvance cap b → Buf.owedLen b ≤ cap := by
   sorry
 
-/-- A client output queue the daemon keeps never owes more than its cap, through any appends
-and flushes. -/
 theorem reachableOut_bound {cap : Nat} {b : Buf.Buf}
     (h : Buf.OutputReach Buf.Buf.empty Buf.bufEnqueue Buf.bufAdvance cap b) :
     Buf.owedLen b ≤ cap := by sorry
 
-/-- `reachableOut_bound` rejects an output queue that never asks to cut its client. -/
 theorem reachableOut_bound_rejects_uncut :
     ¬∀ {cap : Nat} {b : Buf.Buf},
         Buf.OutputReach Buf.Buf.empty (fun cap b more => ((Buf.bufEnqueue cap b more).1, false))
@@ -1356,9 +1034,6 @@ theorem reachableOut_bound_rejects_uncut :
           Buf.owedLen b ≤ cap := by
   sorry
 
-/-- One read is answered at most once: however many requests it holds, the frames it renders are
-one reply, a run closed by `done`, and while its connection stays unattached it resizes the pty
-at most once. -/
 theorem step_bytes_one_reply (s : State) (id : Nat) (chunk : List UInt8) :
     ((Session.step s (.bytes id chunk)).2.all (!·.rendered) ∨
         ∃ pre frames post,
@@ -1368,7 +1043,6 @@ theorem step_bytes_one_reply (s : State) (id : Nat) (chunk : List UInt8) :
         ((Session.step s (.bytes id chunk)).2.filter (·.resizes)).length ≤ 1) := by
   sorry
 
-/-- `step_bytes_one_reply` rejects a session that resizes the pty twice for one read. -/
 theorem step_bytes_one_reply_rejects_twice :
     ¬∀ (s : State) (id : Nat) (chunk : List UInt8),
         (((fun (s : State) (_ : Event) =>
@@ -1393,12 +1067,9 @@ theorem step_bytes_one_reply_rejects_twice :
               1) := by
   sorry
 
-/-- An import turns a pane's saved contents into at most twice its read limit of terminal
-input, however large the save. -/
 theorem captureBytes_bounded (contents : String) :
     (Import.Resurrect.captureBytes contents).length ≤ 2 * Import.Resurrect.captureLimit := by sorry
 
-/-- `captureBytes_bounded` rejects an import that passes on more than its limit allows. -/
 theorem captureBytes_bounded_rejects_unbounded :
     ¬∀ (contents : String),
         ((fun (_ : String) => List.replicate (2 * Import.Resurrect.captureLimit + 1) (0 : UInt8))
@@ -1406,10 +1077,6 @@ theorem captureBytes_bounded_rejects_unbounded :
           2 * Import.Resurrect.captureLimit := by
   sorry
 
-/-- Nothing of an ended session that a signal can reach outlives it: its program and the rest of
-the program's terminal session hear SIGHUP first, as from a terminal that hung up, and when
-SIGKILL ends within a second every process it reaches, none of them still runs once the daemon's
-ending is over. -/
 theorem ending_clean (after : UInt32 → Nat → List Nat → List Nat) (ends : Signal.Ends after)
     (alive : List Nat) :
     (Session.ending.head?.map (·.1)) = some 1 ∧
@@ -1418,7 +1085,6 @@ theorem ending_clean (after : UInt32 → Nat → List Nat → List Nat) (ends : 
         [] := by
   sorry
 
-/-- `ending_clean` rejects an ending that only hangs up. -/
 theorem ending_clean_rejects_hangup :
     ¬∀ (after : UInt32 → Nat → List Nat → List Nat),
         Signal.Ends after →
@@ -1435,15 +1101,12 @@ The terminal package's claims cover every terminal the checkpoint decoder return
 (`Checkpoint.live_of_decoded`), so any bytes on disk resume a session those claims cover, or are
 refused. -/
 
-/-- Saving a checkpoint of a terminal a session can hold and loading it back returns the same
-checkpoint, with the terminal's partial parser state forgotten. -/
 theorem loadBytes_saveBytes_live (c : Checkpoint.Ckpt Vt.Vt)
     (h :
       Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
         (Checkpoint.Decoded Checkpoint.loadBytes) c.vt) :
     Checkpoint.loadBytes (Checkpoint.saveBytes c) = some { c with vt := c.vt.quiesce } := by sorry
 
-/-- `loadBytes_saveBytes_live` rejects a decoder that refuses every file. -/
 theorem loadBytes_saveBytes_live_rejects_refusal :
     ¬∀ (c : Checkpoint.Ckpt Vt.Vt),
         Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
@@ -1452,8 +1115,6 @@ theorem loadBytes_saveBytes_live_rejects_refusal :
             some { c with vt := c.vt.quiesce } := by
   sorry
 
-/-- A daemon resumed from the saved checkpoint of a terminal a session can hold boots with that
-terminal, its partial parser state forgotten, and the checkpoint's first `maxLabels` labels. -/
 theorem resume_restores (c : Checkpoint.Ckpt Vt.Vt)
     (h :
       Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
@@ -1464,7 +1125,6 @@ theorem resume_restores (c : Checkpoint.Ckpt Vt.Vt)
     booted.terminal = c.vt.quiesce ∧ booted.labelList = c.labels.take maxLabels := by
   sorry
 
-/-- `resume_restores` rejects a daemon that boots a fresh terminal whatever its checkpoint holds. -/
 theorem resume_restores_rejects_fresh :
     ¬∀ (c : Checkpoint.Ckpt Vt.Vt),
         Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
@@ -1477,13 +1137,10 @@ theorem resume_restores_rejects_fresh :
             booted.terminal = c.vt.quiesce ∧ booted.labelList = c.labels.take maxLabels := by
   sorry
 
-/-- A checkpoint that loads saves again as one that loads back the same: recovery never drifts
-across save and load. -/
 theorem loadBytes_resave {b : ByteArray} {c : Checkpoint.Ckpt Vt.Vt}
     (h : Checkpoint.loadBytes b = some c) :
     Checkpoint.loadBytes (Checkpoint.saveBytes c) = some c := by sorry
 
-/-- `loadBytes_resave` rejects a save that writes one fixed checkpoint whatever it is given. -/
 theorem loadBytes_resave_rejects_fixed :
     ¬∀ {b : ByteArray} {c : Checkpoint.Ckpt Vt.Vt},
         Checkpoint.loadBytes b = some c →
@@ -1493,8 +1150,6 @@ theorem loadBytes_resave_rejects_fixed :
             some c := by
   sorry
 
-/-- An imported session resumes in its pane's directory, and its labels keep the pane's saved
-commands and whether its contents were saved. -/
 theorem checkpoint_metadata (pane : Import.Resurrect.Pane) (contents : Option String) :
     (Import.Resurrect.checkpoint pane contents).cwd = pane.dir ∧
       (Import.Resurrect.checkpoint pane contents).labels.lookup "tmux.command" =
@@ -1505,7 +1160,6 @@ theorem checkpoint_metadata (pane : Import.Resurrect.Pane) (contents : Option St
         some (if contents.isSome then "saved" else "none") := by
   sorry
 
-/-- `checkpoint_metadata` rejects an import that writes a blank checkpoint for every pane. -/
 theorem checkpoint_metadata_rejects_blank :
     ¬∀ (pane : Import.Resurrect.Pane) (contents : Option String),
         ((fun (_ : Import.Resurrect.Pane) (_ : Option String) =>
@@ -1539,8 +1193,6 @@ its output and the repaint of its screen, which the terminal package's headlines
 claimed: what linger prints as lines of text (help, version, `ls --summary`, porcelain records)
 and its messages on standard error. -/
 
-/-- An `info` reply is UTF-8 text with no C0 control, DEL or C1 control character other than its
-field and line separators, whatever its labels hold. -/
 theorem infoText_text (s : State) :
     ∃ cs : List Char,
       Session.infoText s = cs.flatMap String.utf8EncodeChar ∧
@@ -1549,7 +1201,6 @@ theorem infoText_text (s : State) :
             c = '\n' ∨ (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := by
   sorry
 
-/-- `infoText_text` rejects a reply that prints an escape byte. -/
 theorem infoText_text_rejects_escape :
     ¬∀ (s : State),
         ∃ cs : List Char,
@@ -1560,10 +1211,6 @@ theorem infoText_text_rejects_escape :
                 (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := by
   sorry
 
-/-- Everything linger writes to a terminal on its own account is clean: the listing `ls` and
-`tmux ls` print, the selector's frame and what it writes to take and give back the terminal, the
-window titles linger sets, the screen and history `capture` prints, `info`'s reply and the
-handback. -/
 theorem writes_clean :
     (∀ withColor rows, Display.Clean (Display.Listing.terminalListing withColor rows)) ∧
       (∀ state snapshot statusOf loaded withColor savedTmux cols rows,
@@ -1578,7 +1225,6 @@ theorem writes_clean :
       (∀ s, Display.Clean (Session.infoText s)) ∧ Display.Clean Terminal.Render.leaveAnsi := by
   sorry
 
-/-- `writes_clean` rejects a listing that resets the terminal (`ESC c`). -/
 theorem writes_clean_rejects_reset :
     ¬((∀ withColor rows,
           Display.Clean
@@ -1605,16 +1251,11 @@ sleeps as asked (`Poll.Sleeps`, which the quiet suite exercises by counting the 
 sessions). `scripts/gates.sh` lists every timer the program sets, with its bound. Not claimed
 yet: that an event's work follows its size. -/
 
-/-- After the last event, a session's daemon wakes at most twice on its own: ticking at the
-deadlines the session sets, for its save and for the end of its output's freshness, it then needs
-no tick until the next event. -/
 theorem ticks_settle (s : State) (now t₁ t₂ : Nat)
     (h₁ : (Session.trace Session.step s [.tick now]).1.nextTick = some t₁)
     (h₂ : (Session.trace Session.step s [.tick now, .tick t₁]).1.nextTick = some t₂) :
     (Session.trace Session.step s [.tick now, .tick t₁, .tick t₂]).1.nextTick = none := by sorry
 
-/-- `ticks_settle` rejects a session that always asks for another tick, as a daemon that polls
-would. -/
 theorem ticks_settle_rejects_poll :
     ¬∀ (s : State) (now t₁ t₂ : Nat),
         (fun (_ : State) => (some 0 : Option Nat)) (Session.trace Session.step s [.tick now]).1 =
@@ -1627,14 +1268,10 @@ theorem ticks_settle_rejects_poll :
             none := by
   sorry
 
-/-- A daemon sleeps until the earliest deadline it holds, at once for one already past, or until
-an event when it holds none: when poll(2) sleeps as asked, a daemon's poll whose descriptors stay
-quiet returns at the earliest of its deadlines, and never when it holds none. -/
 theorem poll_wakes (returns : Int32 → Option Nat) (sleeps : Poll.Sleeps returns) (now : Nat)
     (deadlines : List Nat) (fit : ∀ d ∈ deadlines, d - now ≤ 2147483647) :
     returns (Session.pollTimeout now deadlines) = deadlines.min?.map (· - now) := by sorry
 
-/-- `poll_wakes` rejects a daemon that wakes every tenth of a second. -/
 theorem poll_wakes_rejects_polling :
     ¬∀ (returns : Int32 → Option Nat),
         Poll.Sleeps returns →
@@ -1644,9 +1281,6 @@ theorem poll_wakes_rejects_polling :
                 deadlines.min?.map (· - now) := by
   sorry
 
-/-- A chunk of the program's output costs work only for its audience: each effect it asks for is
-a write to the program, of the replies its queries ask, or an output frame of at most 64 KiB to a
-client attached to the session. No other client, and no other session, hears of it. -/
 theorem step_output_audience (s : State) (chunk : List UInt8) :
     ∀ eff ∈ (Session.step s (.ptyOut chunk)).2,
       (∃ bytes, eff = .writePty bytes) ∨
@@ -1655,7 +1289,6 @@ theorem step_output_audience (s : State) (chunk : List UInt8) :
             ∃ payload, eff = .send c.id (.output payload) ∧ payload.length ≤ 65536 := by
   sorry
 
-/-- `step_output_audience` rejects a session that sends output to a client it does not have. -/
 theorem step_output_audience_rejects_stranger :
     ¬∀ (s : State) (chunk : List UInt8),
         ∀
@@ -1683,15 +1316,11 @@ itself, or on purpose: `wait` without `--timeout`, an idle daemon's poll, `start
 once their daemon took the request's ticket, and a daemon's last disk write, which it reports
 after a second. How long a wait takes under load the robust, resume and status suites measure. -/
 
-/-- A request's answer is true, even when its wait runs out: `start` and `resume` race the daemon
-they started for the request's ticket, whoever takes it decides, and so the command answers that
-the program runs only when it does, and that it does not only when it never will. -/
 theorem start_answer_true (r : Start.Request) (h : Start.Reachable Start.proceeds Start.answer r) :
     (r.answer = some .started → r.runs = true) ∧
       (r.answer = some .notStarted → r.runs = false) := by
   sorry
 
-/-- `start_answer_true` rejects a command that answers that the program runs whatever happened. -/
 theorem start_answer_true_rejects_started :
     ¬∀ (r : Start.Request),
         Start.Reachable Start.proceeds (fun _ _ => Start.Answer.started) r →
@@ -1699,8 +1328,6 @@ theorem start_answer_true_rejects_started :
             (r.answer = some .notStarted → r.runs = false) := by
   sorry
 
-/-- `start_answer_true` rejects a daemon that runs the program even after the command withdrew
-the request. -/
 theorem start_answer_true_rejects_proceed :
     ¬∀ (r : Start.Request),
         Start.Reachable (fun _ => true) Start.answer r →
@@ -1708,16 +1335,12 @@ theorem start_answer_true_rejects_proceed :
             (r.answer = some .notStarted → r.runs = false) := by
   sorry
 
-/-- Off-loop writes never queue: of the writes of one kind a daemon asks for while none ends, the
-first runs and only the last waits, to run when the first ends, so every write between them is
-skipped, its state superseded by the last one's. -/
 theorem offloop_coalesces {R W : Type} (start : W → R) (ws : List W) :
     (ws.foldl (Offloop.run Offloop.ask start) {}).running = ws.head?.map start ∧
       (ws.foldl (Offloop.run Offloop.ask start) {}).waiting =
         if ws.length ≤ 1 then none else ws.getLast? := by
   sorry
 
-/-- `offloop_coalesces` rejects a daemon that starts every write it asks for at once. -/
 theorem offloop_coalesces_rejects_eager :
     ¬∀ {R W : Type} (start : W → R) (ws : List W),
         (ws.foldl (Offloop.run (fun (o : Offloop R W) (w : W) => (o, some w)) start) {}).running =
@@ -1730,19 +1353,14 @@ theorem offloop_coalesces_rejects_eager :
 
 And the titles, listings and selector views that show statuses. -/
 
-/-- Every observation gets exactly the status its legend line describes: `?` no answer, `✓` ended
-with status 0, `!` ended any other way, `~` saved with no daemon, `⣷` output right now, `⣿` new
-output, then it stopped, and `⣀` nothing new since you looked. -/
 theorem classify_iff (o : Status.Obs) (s : Status.Status) :
     Status.classify o = s ↔ Status.Is s o := by sorry
 
-/-- `classify_iff` rejects a classifier that calls every session idle. -/
 theorem classify_iff_rejects_idle :
     ¬∀ (o : Status.Obs) (s : Status.Status),
         (fun (_ : Status.Obs) => Status.Status.idle) o = s ↔ Status.Is s o := by
   sorry
 
-/-- Each status is shown as its own glyph. -/
 theorem icon_glyphs :
     Status.icon .working = '⣷' ∧
       Status.icon .wantsYou = '⣿' ∧
@@ -1751,7 +1369,6 @@ theorem icon_glyphs :
       Status.icon .exitedBad = '!' ∧ Status.icon .resumable = '~' ∧ Status.icon .unknown = '?' := by
   sorry
 
-/-- `icon_glyphs` rejects an icon that shows every status as `?`. -/
 theorem icon_glyphs_rejects_unknown :
     ¬((fun (_ : Status.Status) => '?') .working = '⣷' ∧
         (fun (_ : Status.Status) => '?') .wantsYou = '⣿' ∧
@@ -1762,8 +1379,6 @@ theorem icon_glyphs_rejects_unknown :
         (fun (_ : Status.Status) => '?') .unknown = '?') := by
   sorry
 
-/-- Titles and `ls --summary` count only `⣿`, `!` and `?`: in that order, how many sessions show
-each, when that is not zero, followed by its glyph, separated by spaces. -/
 theorem summary_exact (statuses : List Status.Status) :
     Status.summary statuses =
       String.intercalate " "
@@ -1775,7 +1390,6 @@ theorem summary_exact (statuses : List Status.Status) :
           else [(toString (statuses.count .unknown)).push (Status.icon .unknown)])) := by
   sorry
 
-/-- `summary_exact` rejects a summary that counts every session. -/
 theorem summary_exact_rejects_count :
     ¬∀ (statuses : List Status.Status),
         (fun (all : List Status.Status) => toString all.length) statuses =
@@ -1788,15 +1402,12 @@ theorem summary_exact_rejects_count :
               else [(toString (statuses.count .unknown)).push (Status.icon .unknown)])) := by
   sorry
 
-/-- A listing shows a session whose program ended as `✓` for status 0 and `!` for any other,
-and a peer's saved session as resumable unless the peer says its program ended. -/
 theorem rowStatus_saved (status : Nat) (st : Status.Status) :
     Listing.rowStatus (.ended status) = (if status = 0 then .exitedOk else .exitedBad) ∧
       Listing.rowStatus (.remote false (Status.name st)) =
         if st = .exitedOk ∨ st = .exitedBad then st else .resumable := by
   sorry
 
-/-- `rowStatus_saved` rejects a listing that shows every row as unknown. -/
 theorem rowStatus_saved_rejects_unknown :
     ¬∀ (status : Nat) (st : Status.Status),
         (fun (_ : Listing.Row) => Status.Status.unknown) (.ended status) =
@@ -1805,9 +1416,6 @@ theorem rowStatus_saved_rejects_unknown :
             if st = .exitedOk ∨ st = .exitedBad then st else .resumable := by
   sorry
 
-/-- A window title keeps the attention summary last and whole: whatever the capacity, the title
-is the session's name and the application's title within what the summary leaves, then the
-summary. -/
 theorem compose_attention_last (session application summary : String) (capacity : Nat) :
     Title.compose session application summary capacity =
       Title.compose session application ""
@@ -1815,7 +1423,6 @@ theorem compose_attention_last (session application summary : String) (capacity 
         (if summary.isEmpty then "" else " · " ++ summary) := by
   sorry
 
-/-- `compose_attention_last` rejects a title that puts the summary first. -/
 theorem compose_attention_last_rejects_first :
     ¬∀ (session application summary : String) (capacity : Nat),
         (fun (session application summary : String) (_ : Nat) => summary ++ session ++ application)
@@ -1827,8 +1434,6 @@ theorem compose_attention_last_rejects_first :
             (if summary.isEmpty then "" else " · " ++ summary) := by
   sorry
 
-/-- A listing keeps every session and lists those that ask for someone, `⣿`, `!` and `?`, before
-all others. -/
 theorem sort_attention_first {α : Type} (status : α → Status.Status) (rows : List α) :
     (View.sort status rows).Perm rows ∧
       ∃ first rest,
@@ -1837,7 +1442,6 @@ theorem sort_attention_first {α : Type} (status : α → Status.Status) (rows :
           ∀ x ∈ rest, ¬(status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) := by
   sorry
 
-/-- `sort_attention_first` rejects a listing kept in arrival order. -/
 theorem sort_attention_first_rejects_arrival :
     ¬∀ {α : Type} (status : α → Status.Status) (rows : List α),
         ((fun (_ : α → Status.Status) (rows : List α) => rows) status rows).Perm rows ∧
@@ -1848,14 +1452,11 @@ theorem sort_attention_first_rejects_arrival :
                 ¬(status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) := by
   sorry
 
-/-- A summary's group counts are exact: each says how many targets the group holds, and together
-they count every target once. -/
 theorem groups_exact (keys : List String) :
     ((View.groups keys).map (·.2)).sum = keys.length ∧
       ∀ (k : String) (n : Nat), (k, n) ∈ View.groups keys → n = keys.count k := by
   sorry
 
-/-- `groups_exact` rejects a summary with a fixed group. -/
 theorem groups_exact_rejects_fixed :
     ¬∀ (keys : List String),
         (((fun (_ : List String) => [("", 1)]) keys).map (·.2)).sum = keys.length ∧
@@ -1863,14 +1464,11 @@ theorem groups_exact_rejects_fixed :
             (k, n) ∈ (fun (_ : List String) => [("", 1)]) keys → n = keys.count k := by
   sorry
 
-/-- The line that sums up the rows a window leaves out adds up: when it names groups, their
-counts sum to the rows left out. -/
 theorem hidden_adds_up (targets : List String) :
     (View.hidden targets).2 = [] ∨
       ((View.hidden targets).2.map (·.2)).sum = (View.hidden targets).1 := by
   sorry
 
-/-- `hidden_adds_up` rejects a summary whose groups miss the rows it says are left out. -/
 theorem hidden_adds_up_rejects_short :
     ¬∀ (targets : List String),
         ((fun (_ : List String) => (1, [("a", 0)])) targets).2 = [] ∨
@@ -1878,12 +1476,10 @@ theorem hidden_adds_up_rejects_short :
             ((fun (_ : List String) => (1, [("a", 0)])) targets).1 := by
   sorry
 
-/-- Typing another character into the selector's query never adds a match. -/
 theorem matchCount_push (s typed : Selector.Picker.State) (c : Char)
     (push : typed = { s with query := s.query.push c }) :
     Selector.Picker.matchCount typed ≤ Selector.Picker.matchCount s := by sorry
 
-/-- `matchCount_push` rejects a count that grows with the query. -/
 theorem matchCount_push_rejects_length :
     ¬∀ (s typed : Selector.Picker.State) (c : Char),
         typed = { s with query := s.query.push c } →

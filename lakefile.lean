@@ -8,7 +8,7 @@ package linger where leanOptions :=
     ⟨`linter.extra.unnecessarySeqFocus, true⟩]
 
 require software_challenge from git
-  "https://github.com/vincentqb/lean-software-challenge"@"a6725aa1ed50884d52788171a5ebdf0b53bda9c9"
+  "https://github.com/vincentqb/lean-software-challenge"@"a2970a16ec31dfd7b51df60b5751292cc73218fb"
 
 /-- The fuzzy matcher, a package of its own with its own challenge and audit. -/
 require fuzzy from "packages/fuzzy"
@@ -67,7 +67,7 @@ lean_exe suites where root := `Verify.Main
 /-- The headline theorems and their kills, stated with `sorry` for `./lake comparator`, which
 builds this library and checks that `Theorems.Solution` proves the same statements. `scripts/gates.sh` checks
 that each statement and hole is exactly `sorry`, so the build does not warn about them. -/
-lean_lib Challenge where leanOptions := #[⟨`warn.sorry, false⟩, ⟨`linter.missingDocs, true⟩]
+lean_lib Challenge where leanOptions := #[⟨`warn.sorry, false⟩]
 
 @[default_target] lean_exe linger where root := `Main
 

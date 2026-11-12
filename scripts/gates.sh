@@ -500,7 +500,7 @@ layer_bad="$(module_imports 'Linger/*' ':!Linger/*/Suites/*' \
   fail "a component imports a peer or a higher layer (layers: $component_layers)"; }
 
 # Headline theorems. Challenge.lean declares the program parts the headlines name as holes
-# (`@[expose]`, then `def <full name> : <type> := sorry`) and states the headlines with `sorry`;
+# (`def <full name> : <type> := sorry`) and states the headlines with `sorry`;
 # Theorems/Solution.lean proves the same statements of the program's parts; comparator.json names
 # both; and `./lake comparator` (scripts/verify.sh) checks that each part has its declared type,
 # that each proof matches its statement, and that no other axiom is used. These gates keep the
@@ -516,7 +516,7 @@ headline_count="$(printf '%s\n' "$headlines" | awk 'END { print NR }')"
 [ -n "$headlines" ] || fail "Challenge.lean states no headline theorem"
 [ "$(headline_names Theorems/Solution.lean)" = "$headlines" ] \
   || fail "Theorems/Solution.lean must prove exactly the theorems Challenge.lean states, in its order"
-hole_names="$(awk 'prev == "@[expose]" && /^def [A-Z][A-Za-z0-9_]*[.]/ { print $2 } { prev = $0 }' Challenge.lean)"
+hole_names="$(awk '/^def [A-Z][A-Za-z0-9_]*[.]/ { print $2 }' Challenge.lean)"
 hole_count="$(printf '%s' "$hole_names" | awk 'END { print NR }')"
 config_want="$(printf '%s\n' "$headlines" "--" "$hole_names" | awk '
   $0 == "--" { holes = 1; next }
@@ -550,18 +550,12 @@ challenge_code="$(code_grep '.' Challenge.lean | sed 's/^[^:]*:[0-9]*://' | tr '
 ! code_grep '^(@[[][^]]*[]][[:space:]]*)?((private|public|protected|noncomputable)[[:space:]]+)*(abbrev|instance|axiom|opaque|structure|inductive|class|example|lemma)([^[:alnum:]_]|$)' \
     Challenge.lean \
   || fail "Challenge.lean declares something other than a hole or a headline theorem"
-hole_lines="$(awk 'prev == "@[expose]" && /^def Linger[.]/ { print FNR } { prev = $0 }' Challenge.lean)"
+hole_lines="$(awk '/^def Linger[.]/ { print FNR }' Challenge.lean)"
 ! code_grep '(^|[[:space:]])def[[:space:]]' Challenge.lean | awk -F: -v holes="$hole_lines" '
     BEGIN { n = split(holes, h, "\n"); for (i = 1; i <= n; i++) hole[h[i]] = 1 }
     !($2 in hole) { print; bad = 1 }
     END { exit !bad }' \
-  || fail "a Challenge.lean definition must be a hole: '@[expose]', then 'def' and the full name"
-# Each hole and headline says in words what it is or guarantees: a docstring ends on the line
-# above it.
-awk '(/^theorem / || /^@[[]expose[]]$/) && prev !~ /-[/]$/ { print FILENAME ":" FNR ": " $0; bad = 1 }
-  { prev = $0 }
-  END { exit bad }' Challenge.lean >&2 \
-  || fail "every Challenge.lean hole and theorem needs a docstring"
+  || fail "a Challenge.lean definition must be a hole: a top-level 'def' and the full name"
 challenge_imports_bad="$(module_imports Challenge.lean | awk -F: "$IMPORT_AWK"'
   { if ($3 !~ /^public[[:space:]]+import[[:space:]]+/ || $3 ~ /import[[:space:]]+all[[:space:]]/ \
         || import_mod($3) !~ /^(Linger[.][A-Z][A-Za-z]*[.]Spec([.][A-Z][A-Za-z]*)?|Terminal([.][A-Z][A-Za-z]*)+)$/) print "  " $0 }')"
@@ -576,8 +570,8 @@ spec_imports_bad="$(module_imports 'Linger/*/Spec*.lean' | awk -F: "$IMPORT_AWK"
 [ -z "$spec_imports_bad" ] || {
   printf '%s\n' "$spec_imports_bad" >&2
   fail "Spec modules import only Spec modules and SoftwareChallenge.Commands"; }
-[ "$(library_decl Challenge)" = "lean_lib Challenge where leanOptions := #[⟨\`warn.sorry, false⟩, ⟨\`linter.missingDocs, true⟩] " ] \
-  || fail "the Challenge library may silence only its sorry warnings, and must require docstrings: $(library_decl Challenge)"
+[ "$(library_decl Challenge)" = "lean_lib Challenge where leanOptions := #[⟨\`warn.sorry, false⟩] " ] \
+  || fail "the Challenge library may silence only its sorry warnings: $(library_decl Challenge)"
 ! grep -qE '^@[[]default_target[]][[:space:]]+lean_lib Challenge' lakefile.lean \
   || fail "the Challenge library proves nothing; keep it out of the default targets"
 

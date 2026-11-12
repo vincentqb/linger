@@ -14,7 +14,7 @@ package os where
   packagesDir := "../../.lake/packages"
 
 require software_challenge from git
-  "https://github.com/vincentqb/lean-software-challenge"@"a6725aa1ed50884d52788171a5ebdf0b53bda9c9"
+  "https://github.com/vincentqb/lean-software-challenge"@"a2970a16ec31dfd7b51df60b5751292cc73218fb"
 
 /-- Options for every library but the challenge: with the package's `warningAsError`, a public
 declaration without a docstring fails the build. -/
@@ -41,7 +41,7 @@ and the wait checks a program's shim suite runs: every module under `Os`. -/
 
 /-- The boundary's headline theorems and their kills, stated with `sorry` for `lake comparator`,
 which checks that `Os.Solution` proves the same statements. -/
-lean_lib OsChallenge where leanOptions := #[⟨`warn.sorry, false⟩, ⟨`linter.missingDocs, true⟩]
+lean_lib OsChallenge where leanOptions := #[⟨`warn.sorry, false⟩]
 
 /-- The Lean Software Challenge audit of every module the default targets build. -/
 @[default_target] target audit pkg : Unit := do

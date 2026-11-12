@@ -12,15 +12,10 @@ of it. -/
 
 public section
 
-/-- The selector's fuzzy match of a query against a target, if there is one. -/
-@[expose]
 def Fuzzy.align : String → String → Option Fuzzy.Alignment := sorry
 
 namespace Fuzzy
 
-/-- A target matches the selector's query exactly when the query's characters, case folded, appear
-in it in order, and the characters the selector highlights spell the query, one mark per target
-character. -/
 theorem align_exact (query target : String) :
     ((Fuzzy.align query target).isSome = true ↔
         (query.toList.map Char.toLower).Sublist (target.toList.map Char.toLower)) ∧
@@ -32,7 +27,6 @@ theorem align_exact (query target : String) :
               query.toList.map Char.toLower := by
   sorry
 
-/-- `align_exact` rejects a matcher that matches nothing. -/
 theorem align_exact_rejects_none :
     ¬∀ (query target : String),
         (((fun (_ _ : String) => (none : Option Fuzzy.Alignment)) query target).isSome = true ↔
