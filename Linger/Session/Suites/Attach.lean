@@ -241,11 +241,41 @@ def unsizedChecks (e : Env) : IO Unit := do
     typist.bye
   e.killAll #[name]
 
+/-- SIGKILL ends a process within a second (`Signal.Ends`): a process that sleeps and one that
+keeps a CPU busy, each ignoring SIGHUP, SIGINT, SIGQUIT and SIGTERM, has ended, killed by signal 9,
+by this check's first look once a second has passed since SIGKILL, as the daemon's own wait looks.
+Each is this suite's own child, left unreaped until the check has looked, so its end shows as it
+happens. -/
+private def sigkillChecks : IO Unit := do
+  for (kind, body) in [("sleeping", "exec sleep 600"), ("busy", "while :; do :; done")] do
+    let child ←
+      IO.Process.spawn
+          { cmd := "/bin/sh", args := #["-c", s!"trap '' HUP INT QUIT TERM; echo up; {body}"],
+            stdin := .null, stdout := .piped, stderr := .null }
+    let up := (← child.stdout.getLine).trimAscii.toString == "up"
+    let pid := child.pid
+    Os.Shell.kill pid 9
+    let sent ← Os.Shell.monotonicMs
+    let ended : IO Bool := return (← Os.Shell.peekNohang pid) != .running
+    let mut gone ← ended
+    while !gone do
+      unless ← Os.Shell.nap (sent + 1000) 10 do
+        break
+      gone ← ended
+    gone ← ended
+    let took := (← Os.Shell.monotonicMs) - sent
+    let how ← Os.Shell.peekNohang pid
+    reapOrKill child 0
+    expect (up && gone && how == .signaled 9)
+        s!"SIGKILL ends a {kind} process that ignores every other signal within a second \
+          ({repr how} after {took} ms)"
+
 /-- The attach suite: attach, detach, reattach, mirroring, waiting, hand-back and
 scrollback, and that nothing of an ended session's terminal session outlives it. -/
 @[exercises Linger.Session.Signal.Ends]
 def run : IO UInt32 :=
   Env.suite "attach" fun e => do
+    sigkillChecks
     closeFeedback e
     focusChecks e
     unsizedChecks e

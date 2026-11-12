@@ -417,10 +417,24 @@ record, an older one, or a mix of two falsifies it. -/
 WorldClaim Record.Kept (afterSave : List UInt8 → Option (List UInt8)) :=
   ∀ bytes, afterSave bytes = some bytes
 
-/-- The kernel passes the bytes linger writes to a session's pty to its program, in order, as
-it passes a terminal's input: `reads written` is what the program reads, in raw mode, once
-linger wrote `written`. A byte lost, added or moved on the way falsifies it. -/
-WorldClaim Pty.Delivers (reads : ByteArray → ByteArray) := ∀ written, reads written = written
+/-- How a program has set its terminal to hand it input. -/
+inductive Pty.Mode where
+  /-- Raw, as `cfmakeraw` and `stty raw -echo` leave it: no line editing, echo, signal, flow
+  control or end-of-file characters, and no byte translated or stripped. -/
+  | raw
+  /-- Any other setting, among them the cooked mode a terminal starts in, whose line discipline
+  edits lines and turns ^C, ^Z and ^\ into signals instead of input. -/
+  | other
+  deriving Repr, DecidableEq
+
+/-- The kernel hands a program whose terminal is in raw mode exactly the bytes linger writes to
+its session's pty, in order: `reads mode written` is what a program whose terminal is in `mode`
+reads once linger wrote `written`. A program in raw mode that reads a byte linger did not write,
+misses one it wrote or reads two in another order falsifies it, a control byte as much as any
+other. Of any other mode it says nothing: in the cooked mode a terminal starts in, the line
+discipline edits lines and turns ^C into SIGINT instead of a byte to read. -/
+WorldClaim Pty.Delivers (reads : Pty.Mode → ByteArray → ByteArray) :=
+  ∀ written, reads .raw written = written
 
 /-- Why a program could not start in a new terminal, with the operating system's words. -/
 inductive Spawn.Failure where
@@ -503,25 +517,26 @@ WorldClaim Spawn.Clean
         (reset.mask = true → ∀ sig, started.blocked sig = false) ∧
         (reset.descriptors = true → ∀ fd, 3 ≤ fd → started.descriptor fd = none)
 
-/-- SIGKILL ends every process it reaches within a second. `after sig ms alive` is what still
-runs of the processes `alive` once linger sent them signal `sig` and waited `ms` milliseconds:
-the processes of the program's terminal session that run as linger's user, which are all a
-signal reaches. A signal ends some of them, all or none, and brings none back; SIGKILL ends them
-all once linger waited a second. A process that outlives that wait, as one stuck in the kernel
-does, falsifies it. A process that left the session with `setsid`, or runs as another user, is
-not one of `alive`; on macOS, and on Linux before 5.3, a pid freed and reused between reading
-its session and signalling it could receive the signal. -/
-WorldClaim Signal.Ends (after : UInt32 → Nat → List Nat → List Nat) :=
-  (∀ sig ms alive, ∀ p ∈ after sig ms alive, p ∈ alive) ∧
-    ∀ ms alive, 1000 ≤ ms → after 9 ms alive = []
+/-- SIGKILL ends a process within a second. `gone sig ms pid` says whether the process `pid` has
+ended `ms` milliseconds after signal `sig` reached it: SIGKILL, which no process can catch,
+ignore or block, has ended each process it reached once a second has passed, whatever the process
+was doing. A process that SIGKILL reached and that still runs a second later falsifies it, as one
+stuck in the kernel does. A signal reaches only a running process of the sender's user, so of a
+terminal session linger's signals miss a process that left it with `setsid`, one that runs as
+another user and one forked after linger looked for the session's processes; on macOS, and on
+Linux before 5.3, a pid freed and reused between reading its session and signalling it could
+receive them instead. -/
+WorldClaim Signal.Ends (gone : UInt32 → Nat → Nat → Bool) := ∀ pid ms, 1000 ≤ ms → gone 9 ms pid
 
-/-- poll(2) sleeps until an event or its timeout. `returns timeout` is when a poll with that
-timeout, whose descriptors stay quiet, returns: after `timeout` milliseconds for a timeout from 0
-to the largest `Int32`, and never for -1. A quiet poll that returns early, or that a timeout of
--1 lets return, falsifies it; so would a signal that interrupts it, but the only signal a daemon
-handles, SIGCHLD, also makes its child-end descriptor ready. -/
-WorldClaim Poll.Sleeps (returns : Int32 → Option Nat) :=
-  returns (-1) = none ∧ ∀ ms ≤ 2147483647, returns (Int32.ofNat ms) = some ms
+/-- poll(2) waits out its timeout. `quiet timeout ms` says that a poll with that timeout returned
+after `ms` milliseconds with none of its descriptors ready and no signal caught. Such a poll
+returns no sooner than its timeout, and, with a negative timeout, which waits for an event,
+never. A ready descriptor or a signal may end a poll sooner, as the SIGCHLD a daemon hears its
+program end by does, and a loaded host may end it later. A poll that returns before its timeout
+with nothing ready and no signal caught falsifies it, as does one with a negative timeout that
+returns so at all. -/
+WorldClaim Poll.Sleeps (quiet : Int32 → Nat → Prop) :=
+  ∀ timeout ms, quiet timeout ms → 0 ≤ timeout.toInt ∧ timeout.toInt ≤ ms
 
 end Linger.Session
 
@@ -566,10 +581,11 @@ def halt {S Plan : Type} {m : Type → Type} [Monad m] {World : Type}
     (_ : S → World → (eff : Effect Plan) → m (World × Reply eff)) (r : Result S World)
     (_ : List Event) : m (Result S World) := pure { r with exiting := true }
 
-/-- The external contract excludes unreported exceptions; it permits every
-disconnect/checkpoint-failure result. This is a premise about primitive
-execution, not an assumption that the event driver succeeds. A primitive that raises
-instead of returning a result falsifies it. -/
+/-- The effect executor answers every effect: `execute st world eff` gives the world it leaves and
+the effect's reply, which may say that the effect failed, its client gone, its checkpoint unsaved
+or its stopped program's ending unknown. This is a premise about executing effects, not an
+assumption that the event driver succeeds. An effect that raises instead of answering, as a
+write a client's transport refuses could, falsifies it. -/
 WorldClaim Responds {S World Plan ε : Type}
   (execute : S → World → (eff : Effect Plan) → Except ε (World × Reply eff)) :=
   ∀ st world eff, ∃ answer, execute st world eff = .ok answer

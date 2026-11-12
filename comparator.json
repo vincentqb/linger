@@ -90,8 +90,6 @@
     "Linger.step_childExited_keeps_rejects_drop",
     "Linger.record_answer",
     "Linger.record_answer_rejects_unknown",
-    "Linger.record_kept",
-    "Linger.record_kept_rejects_blank",
     "Linger.wait_ending",
     "Linger.wait_ending_rejects_failed",
     "Linger.wait_held",

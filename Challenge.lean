@@ -19,8 +19,8 @@ The guarantees linger must keep, in ten parts. Each part's section states its he
 each with a kill, and says what it does not claim yet:
 
 1. Transparency: a client that attaches shows the session's terminal, losing only history beyond
-   the replay budget, and the program reads exactly what its writers sent and hears focus as a
-   terminal reports it.
+   the replay budget, and a program whose terminal is in raw mode reads exactly what its writers
+   sent and hears focus as a terminal reports it.
 2. Authority and attribution: a connection changes only what its mode allows, a name has one
    owner, and every value linger reports has one source, which alone can change it.
 3. Exactness: a request takes effect exactly as given, or is refused with a reason and changes
@@ -30,8 +30,8 @@ each with a kill, and says what it does not claim yet:
 5. Accountability: every session ends once and one way, whether its program ends or a kill stops
    it, with an outcome recorded and reported truthfully to anyone who asks; every request gets a
    reply or a refusal, and every command exits with the code of an answer true of what happened.
-6. Bounded and clean: input cannot raise any buffer, loop or wait past its cap, and nothing a
-   session started outlives it.
+6. Bounded and clean: input cannot raise any buffer, loop or wait past its cap, and nothing of a
+   session's terminal session that linger's signals reach outlives it.
 7. Recovery: resuming from a checkpoint gives back the saved session, less any half-parsed
    control sequence.
 8. Clean terminal: what linger writes to a terminal on its own account is safe text or one of
@@ -277,13 +277,17 @@ decoder door, which every terminal linger's checkpoint decoder returns passes
 positive byte budget, the stream ends, and a receiver of the same size that parses it shows what
 the terminal shows; that it keeps showing it as output continues is conjectured, for a repaint
 taken between control sequences and characters; and a terminal's history only gains rows at its
-end, unless output may ask to erase it. Here: the program reads exactly the input linger
-accepted for it, in order, when the kernel delivers what linger writes (`Pty.Delivers`); linger
-accepts each frame a writable client sends, whatever its terminal's size, whole, or refuses it
-whole when the program's queue is full; and `send` hands the program text of any length in
-frames the decoder takes, whose payloads are the text, in order. A program that enabled focus
-reporting hears that it gained focus when a writable client attaches to a session nobody could
-type into, whatever its size, and that it lost it when the last one leaves. -/
+end, unless output may ask to erase it. Here: linger writes to a session's terminal exactly the
+input it accepted for the program, in order, whatever mode the program set, and a program whose
+terminal is in raw mode reads exactly that, when the kernel hands raw input on unchanged
+(`Pty.Delivers`, which the agent suite exercises byte for byte); linger accepts each frame a
+writable client sends, whatever its terminal's size, whole, or refuses it whole when the
+program's queue is full; and `send` hands the program text of any length in frames the decoder
+takes, whose payloads are the text, in order. A program that enabled focus reporting hears that
+it gained focus when a writable client attaches to a session nobody could type into, whatever
+its size, and that it lost it when the last one leaves. Not claimed: what a program reads in any
+other mode, such as the cooked mode a terminal starts in, whose line discipline edits lines and
+turns ^C into a signal. -/
 
 theorem step_input_exact (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {inputs : List (List UInt8)} (hc : s.client? id = some c)
@@ -303,22 +307,24 @@ theorem step_input_exact_rejects_drop :
             inputs.map Effect.writePty := by
   sorry
 
-theorem input_exact (reads : ByteArray → ByteArray) (delivers : Pty.Delivers reads) {cap : Nat}
-    {accepted written : ByteArray} {b : Buf.Buf}
+theorem input_exact (reads : Pty.Mode → ByteArray → ByteArray) (delivers : Pty.Delivers reads)
+    {cap : Nat} {accepted written : ByteArray} {b : Buf.Buf}
     (life :
       Buf.InputLife Buf.Buf.empty Buf.bufOffer Buf.bufAdvance Buf.writeFrom cap accepted written
         b) :
-    reads written ++ Buf.writeFrom b = accepted ∧
+    written ++ Buf.writeFrom b = accepted ∧
+      reads .raw written ++ Buf.writeFrom b = accepted ∧
       ∀ more, (Buf.bufOffer cap b more).2 = true ↔ cap < Buf.owedLen b + more.size := by
   sorry
 
 theorem input_exact_rejects_lost :
-    ¬∀ (reads : ByteArray → ByteArray),
+    ¬∀ (reads : Pty.Mode → ByteArray → ByteArray),
         Pty.Delivers reads →
           ∀ {cap : Nat} {accepted written : ByteArray} {b : Buf.Buf},
             Buf.InputLife Buf.Buf.empty (fun (_ : Nat) (b : Buf.Buf) (_ : ByteArray) => (b, false))
                 Buf.bufAdvance Buf.writeFrom cap accepted written b →
-              reads written ++ Buf.writeFrom b = accepted ∧
+              written ++ Buf.writeFrom b = accepted ∧
+                reads .raw written ++ Buf.writeFrom b = accepted ∧
                 ∀ more,
                   ((fun (_ : Nat) (b : Buf.Buf) (_ : ByteArray) => (b, false)) cap b more).2 =
                       true ↔
@@ -1016,8 +1022,11 @@ theorem start_clean_rejects_inherited :
 
 A session ends one way, whether its program ends by itself or a kill stops it: the daemon hands
 a stopped program's end back to the session, everyone attached or waiting hears how the program
-ended before the daemon exits, and only a kill discards the session. A name's end record keeps how its last session's program ended, for whoever asks later,
-when the file system keeps what linger saves (`Record.Kept`, which the agent suite exercises).
+ended before the daemon exits, and only a kill discards the session. When the file system keeps
+what linger saves (`Record.Kept`, which the agent suite exercises), a name's end record keeps how
+its last session's program ended, for whoever asks later, a record its session left while the
+program still ran answers that the ending is unknown, and only a name with no record answers
+nothing (`record_answer`).
 `wait` answers with how the program ended when its daemon or the end record says, and that it
 could not find out only when that is so: the ending is unknown, or the name stays held, with no
 daemon answering, from the look that first found it so for longer than a daemon's ending lasts.
@@ -1121,32 +1130,25 @@ theorem step_childExited_keeps_rejects_drop :
             s.terminal := by
   sorry
 
-theorem record_answer (o : Outcome) (file : Option (List UInt8)) :
-    Record.answer (some (Record.encode (.ended o))) = some o ∧
+theorem record_answer (afterSave : List UInt8 → Option (List UInt8)) (kept : Record.Kept afterSave)
+    (o : Outcome) (seen : Option Seen) (file : Option (List UInt8)) :
+    Record.answer (afterSave (Record.encode (.ended o))) = some o ∧
+      Record.answer (afterSave (Record.encode (.running seen))) = some .unknown ∧
       (Record.answer file).isSome = file.isSome := by
   sorry
 
 theorem record_answer_rejects_unknown :
-    ¬∀ (o : Outcome) (file : Option (List UInt8)),
-        (fun (_ : Option (List UInt8)) => some Outcome.unknown) (some (Record.encode (.ended o))) =
-            some o ∧
-          ((fun (_ : Option (List UInt8)) => some Outcome.unknown) file).isSome = file.isSome := by
-  sorry
-
-theorem record_kept (afterSave : List UInt8 → Option (List UInt8)) (kept : Record.Kept afterSave)
-    (o : Outcome) (seen : Option Seen) :
-    Record.answer (afterSave (Record.encode (.ended o))) = some o ∧
-      Record.answer (afterSave (Record.encode (.running seen))) = some .unknown := by
-  sorry
-
-theorem record_kept_rejects_blank :
     ¬∀ (afterSave : List UInt8 → Option (List UInt8)),
         Record.Kept afterSave →
-          ∀ (o : Outcome) (seen : Option Seen),
-            Record.answer (afterSave ((fun (_ : Record) => ([] : List UInt8)) (.ended o))) =
+          ∀ (o : Outcome) (seen : Option Seen) (file : Option (List UInt8)),
+            (fun (_ : Option (List UInt8)) => some Outcome.unknown)
+                  (afterSave (Record.encode (.ended o))) =
                 some o ∧
-              Record.answer (afterSave ((fun (_ : Record) => ([] : List UInt8)) (.running seen))) =
-                some .unknown := by
+              (fun (_ : Option (List UInt8)) => some Outcome.unknown)
+                  (afterSave (Record.encode (.running seen))) =
+                some .unknown ∧
+              ((fun (_ : Option (List UInt8)) => some Outcome.unknown) file).isSome =
+                file.isSome := by
   sorry
 
 theorem wait_ending (deadline heldSince : Option Nat) (now : Nat) (o : Outcome) :
@@ -1355,9 +1357,12 @@ theorem run_stop_exits_rejects_jump :
 `run_total_safe` keeps the session's clients, labels, frame decoders and pty scanner within their
 caps. When a session ends, the daemon sends SIGHUP to its program and the rest of the program's
 terminal session, then SIGKILL to those still running a second later, and reaps the program last,
-so the program's pid, which is the session's id, stays reserved until then: no process of the
-terminal session that SIGKILL reaches remains (`ending_clean`, over the world claim
-`Signal.Ends`, which the attach suite exercises and whose comment names what it cannot reach). -/
+so the program's pid, which is the session's id, stays reserved until then: of the processes of
+the terminal session its signals reach, none still runs once the ending is over (`ending_clean`),
+when SIGKILL ends within a second each process it reaches (`Signal.Ends`, which the attach suite
+exercises and a process stuck in the kernel falsifies). Not claimed: the processes linger's
+signals miss, as the claim's comment names them: one that left the terminal session with
+`setsid`, one of another user and one forked after the daemon looked. -/
 
 theorem reachableIn_bound {cap : Nat} {b : Buf.Buf}
     (h : Buf.InputReach Buf.Buf.empty Buf.bufOffer Buf.bufAdvance cap b) : Buf.owedLen b ≤ cap := by
@@ -1422,21 +1427,22 @@ theorem captureBytes_bounded_rejects_unbounded :
           2 * Import.Resurrect.captureLimit := by
   sorry
 
-theorem ending_clean (after : UInt32 → Nat → List Nat → List Nat) (ends : Signal.Ends after)
+theorem ending_clean (gone : UInt32 → Nat → Nat → Bool) (ends : Signal.Ends gone)
     (alive : List Nat) :
     (Session.ending.head?.map (·.1)) = some 1 ∧
-      Session.ending.foldl (fun still (signal : UInt32 × Nat) => after signal.1 signal.2 still)
-          alive =
+      Session.ending.foldl
+          (fun still (signal : UInt32 × Nat) => still.filter (!gone signal.1 signal.2 ·)) alive =
         [] := by
   sorry
 
 theorem ending_clean_rejects_hangup :
-    ¬∀ (after : UInt32 → Nat → List Nat → List Nat),
-        Signal.Ends after →
+    ¬∀ (gone : UInt32 → Nat → Nat → Bool),
+        Signal.Ends gone →
           ∀ (alive : List Nat),
             (([(1, 1000)] : List (UInt32 × Nat)).head?.map (·.1)) = some 1 ∧
               ([(1, 1000)] : List (UInt32 × Nat)).foldl
-                  (fun still (signal : UInt32 × Nat) => after signal.1 signal.2 still) alive =
+                  (fun still (signal : UInt32 × Nat) => still.filter (!gone signal.1 signal.2 ·))
+                  alive =
                 [] := by
   sorry
 
@@ -1590,11 +1596,13 @@ theorem writes_clean_rejects_reset :
 /-! ## 9. Work follows events
 
 A daemon's state holds its own session alone, so no event's work depends on how many sessions
-exist. Program output costs work only for the clients attached to its session, and a daemon
-sleeps until the earliest deadline it holds, or until an event when it holds none, when poll(2)
-sleeps as asked (`Poll.Sleeps`, which the quiet suite exercises by counting the wakeups of idle
-sessions). `scripts/gates.sh` lists every timer the program sets, with its bound. Not claimed
-yet: that an event's work follows its size. -/
+exist. Program output costs work only for the clients attached to its session, and a daemon's
+poll that no event or signal ends returns no sooner than the earliest deadline the daemon holds,
+and never when it holds none (`poll_wakes`), when poll(2) waits out its timeout (`Poll.Sleeps`,
+which the quiet suite exercises by timing quiet polls; it also counts the wakeups of idle
+sessions). `scripts/gates.sh` lists every timer the program sets, with its bound. Not claimed:
+how much later than its deadline a loaded host lets a daemon wake. Not claimed yet: that an
+event's work follows its size. -/
 
 theorem ticks_settle (s : State) (now t₁ t₂ : Nat)
     (h₁ : (Session.trace Session.step s [.tick now]).1.nextTick = some t₁)
@@ -1613,17 +1621,19 @@ theorem ticks_settle_rejects_poll :
             none := by
   sorry
 
-theorem poll_wakes (returns : Int32 → Option Nat) (sleeps : Poll.Sleeps returns) (now : Nat)
-    (deadlines : List Nat) (fit : ∀ d ∈ deadlines, d - now ≤ 2147483647) :
-    returns (Session.pollTimeout now deadlines) = deadlines.min?.map (· - now) := by sorry
+theorem poll_wakes (quiet : Int32 → Nat → Prop) (sleeps : Poll.Sleeps quiet) (now : Nat)
+    (deadlines : List Nat) (fit : ∀ d ∈ deadlines, d - now ≤ 2147483647) (ms : Nat)
+    (woke : quiet (Session.pollTimeout now deadlines) ms) :
+    ∃ due, deadlines.min? = some due ∧ due - now ≤ ms := by sorry
 
 theorem poll_wakes_rejects_polling :
-    ¬∀ (returns : Int32 → Option Nat),
-        Poll.Sleeps returns →
+    ¬∀ (quiet : Int32 → Nat → Prop),
+        Poll.Sleeps quiet →
           ∀ (now : Nat) (deadlines : List Nat),
             (∀ d ∈ deadlines, d - now ≤ 2147483647) →
-              returns ((fun (_ : Nat) (_ : List Nat) => (100 : Int32)) now deadlines) =
-                deadlines.min?.map (· - now) := by
+              ∀ (ms : Nat),
+                quiet ((fun (_ : Nat) (_ : List Nat) => (100 : Int32)) now deadlines) ms →
+                  ∃ due, deadlines.min? = some due ∧ due - now ≤ ms := by
   sorry
 
 theorem step_output_audience (s : State) (chunk : List UInt8) :

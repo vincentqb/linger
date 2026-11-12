@@ -515,6 +515,30 @@ def failureFeedback (dir : String) : IO Unit :=
     expect (!rt.exiting && retry.length == 2 && retry.all correctState)
         "delivery/feedback/retry-at-later-cadence"
 
+/-- A write that fails for a reason other than its peer leaving loses that client, as a peer that
+left does, and nothing more (`Driver.Responds`): a client attaches over a descriptor every write
+refuses, a listener, and the driver hears its repaint fail as a disconnect instead of an error
+raised out of the daemon's loop. The other client keeps its connection, and the listener refuses
+connections afterwards: the failed write, and no other path, retired it. -/
+def unwritable (dir : String) : IO Unit :=
+  withPair dir "unwritable" (Vt.Vt.init 20 5) fun rt _peer fd => do
+    let path := s!"{dir}/unwritable-client.sock"
+    let bad ← unixListen path
+    let id := bad.toNat
+    let rt := { rt with conns := rt.conns ++ [{ fd := bad }] }
+    let rt ← pump rt [.connected id, .bytes id (Wire.encode (.attach .readOnly 0 0))]
+    let probe ← unixConnect path
+    let retired := probe < 0
+    unless retired do
+      close probe.toUInt64.toUInt32
+      close bad
+    expect
+        (!rt.exiting && retired && (rt.conn? bad).isNone && (rt.st.client? id).isNone &&
+          (rt.conn? fd).isSome &&
+          (rt.st.client? fd.toNat).isSome)
+        "delivery/unwritable/client-lost"
+    IO.FS.removeFile path
+
 /-- The delivery suite, or only the check named `only`. -/
 @[exercises Linger.Session.Driver.Responds]
 def run (only : Option String := none) : IO UInt32 := do
@@ -526,7 +550,7 @@ def run (only : Option String := none) : IO UInt32 := do
       ("close-grace", fun dir => closeGrace dir false),
       ("shutdown-grace", fun dir => closeGrace dir true), ("closing-bound", closingBound),
       ("close-order", closeOrder), ("large-batch", largeBatch),
-      ("failure-feedback", failureFeedback), ("serve", serveTail)]
+      ("failure-feedback", failureFeedback), ("unwritable", unwritable), ("serve", serveTail)]
   if let some name := only then
     if !(checks.any (·.1 == name)) then
       throw (IO.userError s!"unknown delivery check '{name}'")

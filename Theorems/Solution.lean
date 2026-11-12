@@ -100,24 +100,27 @@ theorem step_input_exact_rejects_drop :
       (Session.feed_encode_fresh (.input [0x61]) (by simp [Wire.Msg.Fits, Wire.maxPayload])) rfl
   simp at wrote
 
-theorem input_exact (reads : ByteArray → ByteArray) (delivers : Pty.Delivers reads) {cap : Nat}
-    {accepted written : ByteArray} {b : Buf.Buf}
+theorem input_exact (reads : Pty.Mode → ByteArray → ByteArray) (delivers : Pty.Delivers reads)
+    {cap : Nat} {accepted written : ByteArray} {b : Buf.Buf}
     (life :
       Buf.InputLife Buf.Buf.empty Buf.bufOffer Buf.bufAdvance Buf.writeFrom cap accepted written
         b) :
-    reads written ++ Buf.writeFrom b = accepted ∧
+    written ++ Buf.writeFrom b = accepted ∧
+      reads .raw written ++ Buf.writeFrom b = accepted ∧
       ∀ more, (Buf.bufOffer cap b more).2 = true ↔ cap < Buf.owedLen b + more.size := by
-  refine ⟨?_, fun more => Buf.bufOffer_refuses_iff cap b more⟩
+  have exact := Buf.inputLife_exact life
+  refine ⟨exact, ?_, fun more => Buf.bufOffer_refuses_iff cap b more⟩
   rw [delivers written]
-  exact Buf.inputLife_exact life
+  exact exact
 
 theorem input_exact_rejects_lost :
-    ¬∀ (reads : ByteArray → ByteArray),
+    ¬∀ (reads : Pty.Mode → ByteArray → ByteArray),
         Pty.Delivers reads →
           ∀ {cap : Nat} {accepted written : ByteArray} {b : Buf.Buf},
             Buf.InputLife Buf.Buf.empty (fun (_ : Nat) (b : Buf.Buf) (_ : ByteArray) => (b, false))
                 Buf.bufAdvance Buf.writeFrom cap accepted written b →
-              reads written ++ Buf.writeFrom b = accepted ∧
+              written ++ Buf.writeFrom b = accepted ∧
+                reads .raw written ++ Buf.writeFrom b = accepted ∧
                 ∀ more,
                   ((fun (_ : Nat) (b : Buf.Buf) (_ : ByteArray) => (b, false)) cap b more).2 =
                       true ↔
@@ -128,7 +131,8 @@ theorem input_exact_rejects_lost :
       fun (_ : Nat) (b : Buf.Buf) (_ : ByteArray) => (b, false)) (advance := Buf.bufAdvance)
       (pending := Buf.writeFrom) (cap := 1) ByteArray.empty ByteArray.empty Buf.Buf.empty ⟨#[0x61]⟩
       .empty
-  have lost := congrArg ByteArray.size (h id (fun _ => rfl) life).1
+  -- the kernel of this world hands a raw program every byte, as the claim says
+  have lost := congrArg ByteArray.size (h (fun _ written => written) (fun _ => rfl) life).1
   simp [Buf.writeFrom_empty] at lost
   exact absurd lost (by decide)
 
@@ -1094,37 +1098,29 @@ theorem step_childExited_keeps_rejects_drop :
   rw [← List.append_cancel_right dropped] at kept
   exact kept (List.mem_singleton_self _)
 
-theorem record_answer (o : Outcome) (file : Option (List UInt8)) :
-    Record.answer (some (Record.encode (.ended o))) = some o ∧
-      (Record.answer file).isSome = file.isSome :=
-  ⟨Record.answer_ended o, Record.answer_isSome file⟩
+theorem record_answer (afterSave : List UInt8 → Option (List UInt8)) (kept : Record.Kept afterSave)
+    (o : Outcome) (seen : Option Seen) (file : Option (List UInt8)) :
+    Record.answer (afterSave (Record.encode (.ended o))) = some o ∧
+      Record.answer (afterSave (Record.encode (.running seen))) = some .unknown ∧
+      (Record.answer file).isSome = file.isSome := by
+  rw [kept, kept]
+  exact ⟨Record.answer_ended o, Record.answer_running seen, Record.answer_isSome file⟩
 
 theorem record_answer_rejects_unknown :
-    ¬∀ (o : Outcome) (file : Option (List UInt8)),
-        (fun (_ : Option (List UInt8)) => some Outcome.unknown) (some (Record.encode (.ended o))) =
-            some o ∧
-          ((fun (_ : Option (List UInt8)) => some Outcome.unknown) file).isSome = file.isSome := by
-  intro h
-  exact absurd (h (.exited 0) none).1 (by simp)
-
-theorem record_kept (afterSave : List UInt8 → Option (List UInt8)) (kept : Record.Kept afterSave)
-    (o : Outcome) (seen : Option Seen) :
-    Record.answer (afterSave (Record.encode (.ended o))) = some o ∧
-      Record.answer (afterSave (Record.encode (.running seen))) = some .unknown := by
-  rw [kept, kept]
-  exact ⟨Record.answer_ended o, Record.answer_running seen⟩
-
-theorem record_kept_rejects_blank :
     ¬∀ (afterSave : List UInt8 → Option (List UInt8)),
         Record.Kept afterSave →
-          ∀ (o : Outcome) (seen : Option Seen),
-            Record.answer (afterSave ((fun (_ : Record) => ([] : List UInt8)) (.ended o))) =
+          ∀ (o : Outcome) (seen : Option Seen) (file : Option (List UInt8)),
+            (fun (_ : Option (List UInt8)) => some Outcome.unknown)
+                  (afterSave (Record.encode (.ended o))) =
                 some o ∧
-              Record.answer (afterSave ((fun (_ : Record) => ([] : List UInt8)) (.running seen))) =
-                some .unknown := by
+              (fun (_ : Option (List UInt8)) => some Outcome.unknown)
+                  (afterSave (Record.encode (.running seen))) =
+                some .unknown ∧
+              ((fun (_ : Option (List UInt8)) => some Outcome.unknown) file).isSome =
+                file.isSome := by
   intro h
-  have blank := (h some (fun _ => rfl) (.exited 0) none).1
-  simp [Record.answer, Record.decode] at blank
+  -- a file system that keeps every record whole, as the claim says
+  exact absurd (h some (fun _ => rfl) (.exited 0) none none).1 (by simp)
 
 theorem wait_ending (deadline heldSince : Option Nat) (now : Nat) (o : Outcome) :
     App.Wait.decide deadline heldSince now (.ended o) = .answer (App.Answer.ofOutcome o) ∧
@@ -1480,29 +1476,30 @@ theorem captureBytes_bounded_rejects_unbounded :
   intro h
   exact absurd (h "") (by simp)
 
-theorem ending_clean (after : UInt32 → Nat → List Nat → List Nat) (ends : Signal.Ends after)
+theorem ending_clean (gone : UInt32 → Nat → Nat → Bool) (ends : Signal.Ends gone)
     (alive : List Nat) :
     (Session.ending.head?.map (·.1)) = some 1 ∧
-      Session.ending.foldl (fun still (signal : UInt32 × Nat) => after signal.1 signal.2 still)
-          alive =
+      Session.ending.foldl
+          (fun still (signal : UInt32 × Nat) => still.filter (!gone signal.1 signal.2 ·)) alive =
         [] := by
   rw [Session.ending_eq]
-  exact ⟨rfl, ends.2 1000 _ (Nat.le_refl _)⟩
+  refine ⟨rfl, List.filter_eq_nil_iff.mpr fun pid _ => ?_⟩
+  simp [ends pid 1000 (Nat.le_refl _)]
 
 theorem ending_clean_rejects_hangup :
-    ¬∀ (after : UInt32 → Nat → List Nat → List Nat),
-        Signal.Ends after →
+    ¬∀ (gone : UInt32 → Nat → Nat → Bool),
+        Signal.Ends gone →
           ∀ (alive : List Nat),
             (([(1, 1000)] : List (UInt32 × Nat)).head?.map (·.1)) = some 1 ∧
               ([(1, 1000)] : List (UInt32 × Nat)).foldl
-                  (fun still (signal : UInt32 × Nat) => after signal.1 signal.2 still) alive =
+                  (fun still (signal : UInt32 × Nat) => still.filter (!gone signal.1 signal.2 ·))
+                  alive =
                 [] := by
   intro h
-  have ends : Signal.Ends fun sig _ alive => if sig = 9 then [] else alive := by
-    refine ⟨fun sig ms alive p hp => ?_, fun ms alive _ => by simp⟩
-    by_cases h9 : sig = 9 <;> simp_all
+  -- an operating system where SIGKILL ends every process at once and no other signal ends any
+  have ends : Signal.Ends fun sig _ _ => sig == 9 := fun _ _ _ => rfl
   have survives := (h _ ends [1]).2
-  simp at survives
+  exact absurd survives (by decide)
 
 theorem loadBytes_saveBytes_live (c : Checkpoint.Ckpt Vt.Vt)
     (h :
@@ -1701,31 +1698,38 @@ theorem ticks_settle_rejects_poll :
   intro h
   exact absurd (h (State.boot (Vt.Vt.init 1 1) [] []) 0 0 0 rfl rfl) (by simp)
 
-theorem poll_wakes (returns : Int32 → Option Nat) (sleeps : Poll.Sleeps returns) (now : Nat)
-    (deadlines : List Nat) (fit : ∀ d ∈ deadlines, d - now ≤ 2147483647) :
-    returns (Session.pollTimeout now deadlines) = deadlines.min?.map (· - now) := by
-  rw [Session.pollTimeout_eq]
+theorem poll_wakes (quiet : Int32 → Nat → Prop) (sleeps : Poll.Sleeps quiet) (now : Nat)
+    (deadlines : List Nat) (fit : ∀ d ∈ deadlines, d - now ≤ 2147483647) (ms : Nat)
+    (woke : quiet (Session.pollTimeout now deadlines) ms) :
+    ∃ due, deadlines.min? = some due ∧ due - now ≤ ms := by
+  have waited := sleeps _ _ woke
+  rw [Session.pollTimeout_eq] at waited
   cases h : deadlines.min? with
-  | none => simpa using sleeps.1
+  | none =>
+    simp only [h, Option.map_none, Option.getD_none] at waited
+    exact absurd waited.1 (by decide)
   | some due =>
     have near : due - now ≤ 2147483647 := fit due (List.min?_mem h)
-    simp only [Option.map_some, Option.getD_some, Nat.min_eq_left near]
-    exact sleeps.2 _ near
+    have small : due - now < 2 ^ 31 := by omega
+    rw [h] at waited
+    simp only [Option.map_some, Option.getD_some, Nat.min_eq_left near,
+      Int32.toInt_ofNat_of_lt small] at waited
+    exact ⟨due, rfl, by omega⟩
 
 theorem poll_wakes_rejects_polling :
-    ¬∀ (returns : Int32 → Option Nat),
-        Poll.Sleeps returns →
+    ¬∀ (quiet : Int32 → Nat → Prop),
+        Poll.Sleeps quiet →
           ∀ (now : Nat) (deadlines : List Nat),
             (∀ d ∈ deadlines, d - now ≤ 2147483647) →
-              returns ((fun (_ : Nat) (_ : List Nat) => (100 : Int32)) now deadlines) =
-                deadlines.min?.map (· - now) := by
+              ∀ (ms : Nat),
+                quiet ((fun (_ : Nat) (_ : List Nat) => (100 : Int32)) now deadlines) ms →
+                  ∃ due, deadlines.min? = some due ∧ due - now ≤ ms := by
   intro h
-  have sleeps :
-    Poll.Sleeps fun (t : Int32) => if t.toInt < 0 then none else some t.toNatClampNeg := by
-    refine ⟨by decide, fun ms near => ?_⟩
-    have small : ms < 2 ^ 31 := by omega
-    simp [Int32.toInt_ofNat_of_lt small, Int32.toNatClampNeg_ofNat_of_lt small]
-  exact absurd (h _ sleeps 0 [] (by simp)) (by decide)
+  -- a poll that waits out its timeout and then returns, as the claim allows
+  have sleeps : Poll.Sleeps fun (t : Int32) (ms : Nat) => 0 ≤ t.toInt ∧ t.toInt ≤ ms :=
+    fun _ _ waited => waited
+  obtain ⟨_, none_due, -⟩ := h _ sleeps 0 [] (by simp) 100 ⟨by decide, by decide⟩
+  simp at none_due
 
 theorem step_output_audience (s : State) (chunk : List UInt8) :
     ∀ eff ∈ (Session.step s (.ptyOut chunk)).2,

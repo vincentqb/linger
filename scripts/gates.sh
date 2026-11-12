@@ -1066,9 +1066,10 @@ for tie in \
 done
 # A session's end sends its program and the rest of the program's terminal session the signals
 # of `Session.ending`, SIGHUP and then SIGKILL (`ending_clean`, over the world claim
-# `Signal.Ends`, which the attach suite exercises), both while the program is unreaped.
+# `Signal.Ends`, which the attach suite exercises), both while the program is unreaped. A stop
+# that cannot send a signal reports it and sends the next all the same.
 for tie in \
-  'for [(]sig, ms[)] in Linger[.]Session[.]ending do if ← ended then break kill pid sig discard <[|] signalSession pid sig if ← within ms 10 ended then break' \
+  'for [(]sig, ms[)] in Linger[.]Session[.]ending do if ← ended then break try kill pid sig catch err => report s!"[^"]*" try discard <[|] signalSession pid sig catch err => report s!"[^"]*" if ← within ms 10 ended then break' \
   'for [(]sig, ms[)] in Linger[.]Session[.]ending do if ← gone then return discard <[|] signalSession pid sig if ← within ms 50 gone then return'; do
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "a session's processes end other than by Session.ending: $tie"
@@ -1130,10 +1131,16 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def report [(]message : Str
 
 # The shared driver proves feedback order, termination and invariant preservation.
 # Its IO adapter must forward the actual state and retain the returned state/exit.
-printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def pump [(]rt : Rt[)] [(]evs : List Event[)] : IO Rt := do let result ← Driver[.]run executeEffect [{] st := rt[.]st, world := rt, exiting := rt[.]exiting [}] evs return [{] result[.]world with st := result[.]st, exiting := result[.]exiting [}]' awk "$CODE_AWK" >/dev/null \
+printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def pump [(]rt : Rt[)] [(]evs : List Event[)] : BaseIO Rt := do let result ← Driver[.]run executeEffect [{] st := rt[.]st, world := rt, exiting := rt[.]exiting [}] evs return [{] result[.]world with st := result[.]st, exiting := result[.]exiting [}]' awk "$CODE_AWK" >/dev/null \
   || fail "daemon pump must use the proved driver with its actual state and exit flag"
-code_grep '^private def executeEffect [(]st : State[)] [(]rt : Rt[)] : [(]eff : Effect Plan[)] → IO [(]Rt × Driver[.]Reply eff[)]$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^private def perform [(]st : State[)] [(]rt : Rt[)] : [(]eff : Effect Plan[)] → IO [(]Rt × Driver[.]Reply eff[)]$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "effect interpreter must implement the driver's dependent reply type"
+# The executor the driver runs answers every effect and raises nothing (`run_total_safe`, over
+# the world claim `Driver.Responds`, which the delivery suite exercises): `BaseIO` has no error to
+# raise, and an error `perform` raises all the same is reported and answered as its effect's
+# failure.
+printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])private def executeEffect [(]st : State[)] [(]rt : Rt[)] [(]eff : Effect Plan[)] : BaseIO [(]Rt × Driver[.]Reply eff[)] := [(]perform st rt eff[)][.]catchExceptions fun err => do discard <[|] [(]report s!"[^"]*"[)][.]toBaseIO failed rt eff([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "the driver's effect executor must answer every effect with its reply and raise nothing"
 for tie in \
   '[|] [.]checkpoint => do return [(][{] rt with saves := ← rt[.]saves[.]ask [(]rt[.]saveCkpt st[)] [}], false[)]' \
   '[|] some write => return [(][{] running := some [(]← IO[.]asTask write Task[.]Priority[.]dedicated[)] [}], some ended[)]' \
@@ -1291,7 +1298,7 @@ for tie in \
     || fail "daemon resource cleanup escaped its ownership lifetime: $tie"
 done
 # A name's end record is replaced whole, through a temporary sibling renamed over it, the
-# protocol the world claim `Record.Kept` (`record_kept`) takes the file system to honor; the
+# protocol the world claim `Record.Kept` (`record_answer`) takes the file system to honor; the
 # agent suite reads records after their sessions end.
 record_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Record.lean)"
 for tie in \
@@ -1755,9 +1762,9 @@ grep -q 'workflow_dispatch' "$ci_yml" \
 # windows, fixture pacing, poll intervals and waits not yet converted. Both ratchets count
 # the suites suites, under Verify/ and each component's Suites/, but not lingertest's shim smoke
 # test, which they never counted.
-# The quiet suite adds two negative-assertion windows: a daemon must stay asleep, and only
-# time passing without an event can show it.
-SUITE_SLEEP_CAP=36
+# The quiet suite adds three negative-assertion windows: a daemon must stay asleep, and a poll
+# with no timeout must keep waiting, and only time passing without an event can show either.
+SUITE_SLEEP_CAP=37
 es_n="$(code_count 'IO[.]sleep([^[:alnum:]_]|$)' 'Verify/*' 'Linger/*/Suites/*' \
   ':!Linger/Os/Suites/Shim.lean')"
 [ "$es_n" -le "$SUITE_SLEEP_CAP" ] \

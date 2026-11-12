@@ -319,7 +319,8 @@ what is still owed in `Buf.writeFrom` (`Buf.bufSize_eq_owedLen`,
 and physical heap footprint are outside that bound. The two write reactions are the
 reason this is not shared with `flushPty`: here `n < 0` means the peer is gone and
 the caller must close the fd and feed `.closed` back into the machine, while
-`n == 0` is EAGAIN and POLLOUT resumes. -/
+`n == 0` is EAGAIN and POLLOUT resumes. A write that fails for any other reason loses the peer
+the same way, reported: a client's broken transport costs that client alone, never the session. -/
 def flushConn (c : Conn) : IO (Option Conn) := do
   let mut c := c
   let mut filled := false
@@ -355,7 +356,12 @@ def flushConn (c : Conn) : IO (Option Conn) := do
     let mut wrote := 0
     let owed := owedLen c.out
     while wrote < owed do
-      let n ← writeBuf c.fd c.out wrote
+      let n ←
+        try
+          writeBuf c.fd c.out wrote
+        catch err =>
+          report s!"linger: writing to a client failed; dropping it: {err}"
+          pure (-1)
       if n < 0 then
         return none
       if n == 0 then
@@ -434,8 +440,10 @@ private def within (ms step : Nat) (done : IO Bool) : IO Bool := do
 
 /-- How the program ended, ending it first if it still runs: each signal of `Session.ending`, to
 it and to the rest of its terminal session, until it ends, SIGHUP first and then SIGKILL, and
-`unknown` if it has not ended once the last wait is over. The program stays unreaped
-(`programEnd`). -/
+`unknown` if it has not ended once the last wait is over. A signal that cannot be sent, as to a
+program that became another user, is reported, and the next one is sent all the same; a stop that
+cannot even look whether the program ended is reported and answers `unknown`. The program stays
+unreaped (`programEnd`). -/
 private def stopProgram (rt : Rt) : IO Outcome := do
   if let some outcome := rt.ending then
     return outcome
@@ -449,8 +457,14 @@ private def stopProgram (rt : Rt) : IO Outcome := do
     for (sig, ms) in Linger.Session.ending do
       if ← ended then
         break
-      kill pid sig
-      discard <| signalSession pid sig
+      try
+        kill pid sig
+      catch err =>
+        report s!"linger: signalling the program failed: {err}"
+      try
+        discard <| signalSession pid sig
+      catch err =>
+        report s!"linger: signalling the program's terminal session failed: {err}"
       if ← within ms 10 ended then
         break
   catch err =>
@@ -459,8 +473,11 @@ private def stopProgram (rt : Rt) : IO Outcome := do
 
 /-- Execute one effect against the world. Its result type admits only the
 feedback that the total driver has proved will terminate. Session state is
-read-only here; the driver supplies the state after the current event. -/
-private def executeEffect (st : State) (rt : Rt) : (eff : Effect Plan) → IO (Rt × Driver.Reply eff)
+read-only here; the driver supplies the state after the current event. Each failure it can meet
+is answered as its effect's reply says: a client whose transport fails is gone (`flushConn`), a
+resize or a delete that fails changes nothing, and a stop whose signals fail answers how the
+program ended as far as it saw (`stopProgram`). -/
+private def perform (st : State) (rt : Rt) : (eff : Effect Plan) → IO (Rt × Driver.Reply eff)
   | .send id m => do
     match rt.conn? (UInt32.ofNat id) with
     | none =>
@@ -539,16 +556,43 @@ private def executeEffect (st : State) (rt : Rt) : (eff : Effect Plan) → IO (R
   | .exit => do
     return (rt, ())
 
+/-- An effect's failure, as its reply says it: its client gone, its transport closed if the daemon
+still owns it; its checkpoint unsaved; its program's ending unknown. -/
+private def failed (rt : Rt) : (eff : Effect Plan) → BaseIO (Rt × Driver.Reply eff)
+  | .send id _ | .replay id _ | .close id => do
+    let fd := UInt32.ofNat id
+    match ← (rt.closeConn fd).toBaseIO with
+    | .ok rt =>
+      return (rt, true)
+    | .error _ =>
+      return ({ rt with conns := rt.conns.filter (·.fd != fd) }, true)
+  | .checkpoint => do
+    return (rt, true)
+  | .stopProgram => do
+    return ({ rt with ending := some .unknown }, .unknown)
+  | .writePty _ | .resizePty .. | .dropCheckpoint | .exit => do
+    return (rt, ())
+
+/-- The executor the driver runs, which answers every effect and raises nothing
+(`Driver.Responds`): `perform`, whose own answers cover each failure it can meet, and for an
+error it raises all the same, a report and the effect's failure (`failed`). -/
+private def executeEffect (st : State) (rt : Rt) (eff : Effect Plan) :
+    BaseIO (Rt × Driver.Reply eff) :=
+  (perform st rt eff).catchExceptions fun err => do
+    discard <| (report s!"linger: an effect failed: {err}").toBaseIO
+    failed rt eff
+
 /-- Execute an isolated effect, using the driver's typed feedback policy. -/
-def runEffect (rt : Rt) (eff : Effect Plan) : IO (Rt × List Event) := do
+def runEffect (rt : Rt) (eff : Effect Plan) : BaseIO (Rt × List Event) := do
   let (next, reply) ← executeEffect rt.st rt eff
   return ({ next with exiting := rt.exiting || eff == .exit }, Driver.feedback eff reply)
 
 /-- Feed events through the machine until quiescent or exited. Events queued
 behind exit must not checkpoint a session whose recovery state was deleted.
 Effect feedback precedes the next queued event, in effect order: a close must
-remove its client before already-read bytes from that client are considered. -/
-def pump (rt : Rt) (evs : List Event) : IO Rt := do
+remove its client before already-read bytes from that client are considered. Nothing it runs
+raises, since its executor answers every effect. -/
+def pump (rt : Rt) (evs : List Event) : BaseIO Rt := do
   let result ← Driver.run executeEffect { st := rt.st, world := rt, exiting := rt.exiting } evs
   return { result.world with
       st := result.st, exiting := result.exiting }

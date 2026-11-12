@@ -72,6 +72,8 @@ def main (args : List String) : IO UInt32 := do
     Linger.Display.Suites.Title.attachProbe name
   | ["--paths-probe"] =>
     Linger.Session.Suites.Paths.probe
+  | ["--poll-probe", path, ready] =>
+    Linger.Session.Suites.Quiet.pollProbe path ready
   | ["--malformed-server", socketPath, readyPath] =>
     Linger.Session.Suites.Agent.malformedServer socketPath readyPath
   | ["--info-server", socketPath, readyPath, mode] =>

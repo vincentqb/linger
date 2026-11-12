@@ -4,6 +4,7 @@ public import Verify.Harness
 import Linger.Session.Shell.Inventory
 import Linger.Session.Shell.Client
 import Linger.Session.Checkpoint
+import Linger.Session.Record
 import Terminal.Mediation
 public import Linger.Session.Spec
 import SoftwareChallenge.Commands
@@ -63,6 +64,22 @@ def sendStdin (e : Env) (name payload : String) : IO UInt32 := do
     IO.Process.output { cmd := e.bin, args := #["send", name, "-"], env := e.procEnv }
         (some payload)
   return out.exitCode
+
+/-- `linger send <name> -` with any bytes on its stdin, as `sendStdin` with a string: its exit
+status, `none` if it outlived `hangMs`. The pipe's handle goes out of scope once written and
+flushed, which closes it, so the sender reads its input's end. -/
+def sendBytes (e : Env) (name : String) (payload : ByteArray) : IO (Option UInt32) := do
+  let sender0 ←
+    IO.Process.spawn
+        { cmd := e.bin, args := #["send", name, "-"], env := e.procEnv, stdin := .piped,
+          stdout := .null, stderr := .null }
+  let sender ←
+    do
+      let (input, child) ← sender0.takeStdin
+      input.write payload
+      input.flush
+      pure child
+  waitOrKill sender hangMs
 
 /-- One fake daemon: accept a connection, send an over-cap frame header, close.
 The CLI must report protocol loss rather than a successful request. -/
@@ -421,6 +438,16 @@ private def endedChecks (e : Env) : IO Unit := do
         (← e.field "end-sig" "signal") == some "15" &&
         (← e.field "end-ok" "state") == some "resumable")
       "an ended session stays listed, saved, with how its program ended"
+  -- a reader of each name's end record reads the last record its daemon saved, whole
+  let recordOf (name : String) : IO (Option (List UInt8)) := do
+    return ((← (IO.FS.readBinFile s!"{e.dir}/{name}.end").toBaseIO).toOption.map (·.toList))
+  let records ← ["end-ok", "end-bad", "end-sig"].mapM recordOf
+  let saved :=
+    [Linger.Session.Outcome.exited 0, .exited 3, .signaled 15].map fun o =>
+      some (Linger.Session.Record.encode (.ended o))
+  expect (ended && records == saved)
+      s!"each ended session's end record holds exactly the record of its ending, byte for byte \
+        ({records})"
   let human := lines (← e.out #["ls"])
   let says := fun (name detail : String) =>
     human.any fun row => has row s!" {name} " && has row detail
@@ -460,10 +487,68 @@ private def endedChecks (e : Env) : IO Unit := do
   expect ((← listed e).all fun name => !name.startsWith "end-")
       "kill discards every ended session it names"
 
-/-- The agent suite: the one-shot verbs that see and drive a session. `send -` checks that the
-program reads the bytes it is sent, byte for byte, and `start` that it runs with its words, in the
+/-- A program whose terminal is in raw mode reads every byte linger writes to it, one for one and
+in order (`Pty.Delivers`): the program sets raw mode, says so, and copies each byte it reads to a
+file, and `send -` sends it every byte value, the control bytes, DEL and bytes that are no UTF-8
+among them, then the same in reverse order. -/
+private def rawChecks (e : Env) : IO Unit := do
+  let file := s!"{e.dir}/raw.input"
+  let (rc, _, _) ←
+    e.cli
+        #["start", "raw", "/bin/sh", "-c", "stty raw -echo; printf ready; exec cat > \"$1\"", "sh",
+          file]
+  let ready ← waitFor patienceMs (return has (← e.out #["capture", "raw"]) "ready")
+  let every := (List.range 256).map UInt8.ofNat
+  let payload := ByteArray.mk (every ++ every.reverse).toArray
+  let sent ← sendBytes e "raw" payload
+  let readBack : IO ByteArray := do
+    return ((← (IO.FS.readBinFile file).toBaseIO).toOption).getD ByteArray.empty
+  let arrived ← waitFor patienceMs (return (← readBack).size ≥ payload.size)
+  let got := (← readBack).toList
+  let differs :=
+    ((got.zip payload.toList).findIdx? fun (a, b) => a != b).getD (min got.length payload.size)
+  expect (rc == 0 && ready && sent == some 0 && arrived && got == payload.toList)
+      s!"a program in raw mode reads every byte send - sends it, one for one ({got.length} of \
+        {payload.size} bytes, the same up to byte {differs})"
+  e.killAll #["raw"]
+
+/-- In the cooked mode a terminal starts in, the line discipline turns ^C into SIGINT for the
+foreground job, which never reads it: what an interactive shell relies on, and which the claim
+the raw check exercises, `Pty.Delivers`, says nothing of. `send -` of ^C to the session `name`
+interrupts its shell's foreground child, after which the line queued next is read and runs: the
+typed line says `INTER""RUPTED-OK`, and only the executed output says `INTERRUPTED-OK`.
+
+The child ANNOUNCES itself and the check waits for that rather than sleeping a fixed second, so a
+slow host cannot make this look like a broken ^C. The extra check is a discriminator: "the child
+never started" and "^C did not reach it" are different bugs, and separating them is what
+identified the one environment that broke this assertion: a `&`-launched `./scripts/verify.sh`,
+whose disabled SIGINT the session's program inherited until linger reset it (`cleanChecks` starts
+a session from such a command). `scripts/verify.sh` still refuses that environment for the
+processes the suites start themselves: see its "SIGINT must be deliverable" check, which holds
+the probe, the measurement and the reasoning. -/
+private def cookedChecks (e : Env) (name : String) : IO Unit := do
+  let _ ← e.typeIn name #["sh -c 'echo RUN\"\"NING-NOW; sleep 100'"]
+  expect
+      (←
+        waitFor 5000
+            (do
+              return has (← e.out #["capture", name]) "RUNNING-NOW"))
+      "send - the foreground child is up (the ^C below has something to interrupt)"
+  let _ ← sendStdin e name "\x03"
+  IO.sleep 500
+  let _ ← e.typeIn name #["echo", "INTER\"\"RUPTED-OK"]
+  expect
+      (←
+        waitFor 5000
+            (do
+              return has (← e.out #["capture", name]) "INTERRUPTED-OK"))
+      "send - carries ^C to a cooked terminal, whose line discipline interrupts the foreground \
+        child, and the shell comes back"
+
+/-- The agent suite: the one-shot verbs that see and drive a session. A program in raw mode reads
+every byte `send -` sends it, one for one, `start` runs its program with its words, in the
 caller's directory and with the caller's environment, and with none of the caller's ignored
-signals or open descriptors. -/
+signals or open descriptors, and an ended session's end record holds how its program ended. -/
 @[exercises Linger.Session.Pty.Delivers, exercises Linger.Session.Spawn.Runs,
   exercises Linger.Session.Spawn.Clean, exercises Linger.Session.Record.Kept]
 def run : IO UInt32 :=
@@ -581,35 +666,7 @@ def run : IO UInt32 :=
                 (do
                   return has (← e.out #["capture", "ag"]) "GOT-42")))
         "send - delivers bytes verbatim (newline included: it ran)"
-    -- a control byte works: ^C interrupts a foreground child, after which the
-    -- queued next line is read and runs (same trick: the typed line says
-    -- INTER""RUPTED-OK, only the executed output says INTERRUPTED-OK)
-    --
-    -- The child ANNOUNCES itself and the suite waits for that rather than sleeping a
-    -- fixed second, so a slow host cannot make this look like a broken `^C`. The
-    -- extra check is a discriminator: "the child never started" and "^C did not reach
-    -- it" are different bugs, and separating them is what identified the one
-    -- environment that broke this assertion — a `&`-launched `./scripts/verify.sh`, whose
-    -- disabled SIGINT the session's program inherited until linger reset it (`cleanChecks`
-    -- starts a session from such a command). `scripts/verify.sh` still refuses that
-    -- environment for the processes the suites start themselves: see its "SIGINT must be
-    -- deliverable" check, which holds the probe, the measurement and the reasoning.
-    let _ ← e.typeIn "ag" #["sh -c 'echo RUN\"\"NING-NOW; sleep 100'"]
-    expect
-        (←
-          waitFor 5000
-              (do
-                return has (← e.out #["capture", "ag"]) "RUNNING-NOW"))
-        "send - the foreground child is up (the ^C below has something to interrupt)"
-    let _ ← sendStdin e "ag" "\x03"
-    IO.sleep 500
-    let _ ← e.typeIn "ag" #["echo", "INTER\"\"RUPTED-OK"]
-    expect
-        (←
-          waitFor 5000
-              (do
-                return has (← e.out #["capture", "ag"]) "INTERRUPTED-OK"))
-        "send - carries ^C (the foreground child died, the shell came back)"
+    cookedChecks e "ag"
     expect ((← sendStdin e "ag" "") == 0) "send - with empty stdin exits 0"
     expect ((← sendStdin e "nosuch" "x") == 127) "send - on a missing session exits 127"
     -- Keep stdin open and idle, then crash the daemon. The sender must observe the
@@ -651,6 +708,7 @@ def run : IO UInt32 :=
         s!"send of {bulk.size} bytes, more than one frame carries, reaches the program whole and \
           in order ({bulkRc}, {(← readBulk).size} bytes{bulkWhy})"
     e.killAll #["bulk"]
+    rawChecks e
     -- ── Step 4: resize ────────────────────────────────────────────────────────
     let _ ← e.typeIn "rz" #["true"]
     let rzCols : UInt32 := 120
