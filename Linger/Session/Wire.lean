@@ -34,15 +34,19 @@ private def readU32 (l : List UInt8) : UInt32 :=
   let b := fun i => (l[i]?.getD 0).toNat
   UInt32.ofNat (b 0 + 256 * (b 1 + 256 * (b 2 + 256 * b 3)))
 
-/-! ## Tag assignment (frozen; new tags append, old values never reused) -/
+/-! ## Tag assignment (frozen; new tags append, old values never reused)
 
-/-- A message's frame tag: 0 to 17 for the assigned messages, and an `unknown` message's
-own tag. -/
+Tag 3 was the attach of levels 1 and 2, which carried only a size and made a client that gave
+none read-only. It is retired, so this version reads it as a message it does not know, and
+refuses it, as an older daemon refuses tag 18, the attach that carries a mode. -/
+
+/-- A message's frame tag: 0 to 18 for the assigned messages, but 3, which is retired, and an
+`unknown` message's own tag. -/
 private def Msg.tag : Msg → UInt8
   | .input _ => 0
   | .output _ => 1
   | .resize _ _ => 2
-  | .attach _ _ => 3
+  | .attach _ _ _ => 18
   | .detachAll => 4
   | .kill => 5
   | .info => 6
@@ -60,7 +64,18 @@ private def Msg.tag : Msg → UInt8
   | .unknown t _ => t
 
 /-- Tags with an assigned meaning in this version. -/
-private def knownTag (t : UInt8) : Bool := t ≤ 17
+private def knownTag (t : UInt8) : Bool := t ≤ 18 && t != 3
+
+/-- A mode as one byte: 0 writable, 1 read-only. `readMode` inverts it (`readMode_modeByte`). -/
+def modeByte : Mode → UInt8
+  | .writable => 0
+  | .readOnly => 1
+
+/-- The mode a byte names, if this version knows it. An attach whose mode it does not know, as a
+newer client's could be, is a message it cannot serve, so it is refused rather than read as
+another mode. -/
+def readMode (b : UInt8) : Option Mode :=
+  if b = 0 then some .writable else if b = 1 then some .readOnly else none
 
 /-- An ending as two bytes: its kind (0 exited, 1 signalled, 2 unknown) and its code or signal
 number. `readOutcome` inverts it (`readOutcome_outcomeBytes`). -/
@@ -77,19 +92,27 @@ def readOutcome : List UInt8 → Outcome
   | _ => .unknown
 
 /-- A message's frame payload: the raw bytes it carries, its sizes or exit status through
-`writeU32`, an ending's two bytes, or nothing. `decodeMsg` recovers a well-formed message from
-its tag and payload (`decodeMsg_roundtrip`). -/
+`writeU32`, after an attach's mode byte, an ending's two bytes, or nothing. `decodeMsg` recovers
+a well-formed message from its tag and payload (`decodeMsg_roundtrip`). -/
 private def Msg.payload : Msg → List UInt8
   | .input b | .output b | .infoReply b | .err b | .labelSet b | .labelUnset b => b
-  | .resize c r | .attach c r => writeU32 c ++ writeU32 r
+  | .resize c r => writeU32 c ++ writeU32 r
+  | .attach m c r => modeByte m :: (writeU32 c ++ writeU32 r)
   | .exited s => writeU32 s
   | .ended o => outcomeBytes o
   | .detachAll | .kill | .info | .history | .wait | .labelClear | .done | .screen => []
   | .unknown _ p => p
 
+/-- The attach a tag-18 payload carries: its mode byte, then the size, or `unknown` when the
+payload names no mode this version knows. -/
+private def decodeAttach (p : List UInt8) : Msg :=
+  match p.head?.bind readMode with
+  | some mode => .attach mode (readU32 (p.drop 1)) (readU32 (p.drop 5))
+  | none => .unknown 18 p
+
 /-- Interpret one frame. Total: every (tag, payload) is some `Msg`.
 An if-chain rather than a literal match so fall-through to `unknown`
-is provable by `t ≠ 0, …, t ≠ 17` instead of match-compilation facts. -/
+is provable by `t ≠ 0, …, t ≠ 18` instead of match-compilation facts. -/
 private def decodeMsg (tag : UInt8) (p : List UInt8) : Msg :=
   if tag = 0 then .input p
   else
@@ -97,34 +120,34 @@ private def decodeMsg (tag : UInt8) (p : List UInt8) : Msg :=
     else
       if tag = 2 then .resize (readU32 p) (readU32 (p.drop 4))
       else
-        if tag = 3 then .attach (readU32 p) (readU32 (p.drop 4))
+        if tag = 4 then .detachAll
         else
-          if tag = 4 then .detachAll
+          if tag = 5 then .kill
           else
-            if tag = 5 then .kill
+            if tag = 6 then .info
             else
-              if tag = 6 then .info
+              if tag = 7 then .infoReply p
               else
-                if tag = 7 then .infoReply p
+                if tag = 8 then .history
                 else
-                  if tag = 8 then .history
+                  if tag = 9 then .exited (readU32 p)
                   else
-                    if tag = 9 then .exited (readU32 p)
+                    if tag = 10 then .wait
                     else
-                      if tag = 10 then .wait
+                      if tag = 11 then .labelSet p
                       else
-                        if tag = 11 then .labelSet p
+                        if tag = 12 then .labelUnset p
                         else
-                          if tag = 12 then .labelUnset p
+                          if tag = 13 then .labelClear
                           else
-                            if tag = 13 then .labelClear
+                            if tag = 14 then .done
                             else
-                              if tag = 14 then .done
+                              if tag = 15 then .err p
                               else
-                                if tag = 15 then .err p
+                                if tag = 16 then .screen
                                 else
-                                  if tag = 16 then .screen
-                                  else if tag = 17 then .ended (readOutcome p) else .unknown tag p
+                                  if tag = 17 then .ended (readOutcome p)
+                                  else if tag = 18 then decodeAttach p else .unknown tag p
 
 /-- A message the encoder may legally emit: payload within §Bound, and
 `unknown` only for genuinely unassigned tags (an `unknown` wearing a

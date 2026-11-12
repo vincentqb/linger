@@ -193,9 +193,9 @@ private def State.dropClient (s : State) (id : Nat) : State :=
 its window gains focus (`CSI I`) or loses it (`CSI O`). -/
 def focusReport (focused : Bool) : List UInt8 := [0x1B, 0x5B, if focused then 0x49 else 0x4F]
 
-/-- Whether someone can type into the session: a client is attached with a terminal of its own,
+/-- Whether someone can type into the session: a writable client is attached, whatever its size,
 as a window has focus while it gets the keys. A watcher cannot type, so it never counts. -/
-def State.focused (s : State) : Bool := s.clients.any (fun c => c.attached && c.sizer)
+def State.focused (s : State) : Bool := s.clients.any (fun c => c.attached && c.mode == .writable)
 
 /-- What a client that can type owes the program when it attaches or leaves, from focus `before`:
 its focus report, when focus changed and the program enabled focus reporting. A watcher, which
@@ -212,7 +212,7 @@ finds decides whether the leaver could type, as it does for every message. -/
 private def closeClient (s : State) (id : Nat) : State × List (Effect Plan) :=
   let hadAttached := s.clients.any (fun c => c.id == id && c.attached)
   let s' := s.dropClient id
-  let focus := focusEffects ((s.client? id).any (·.sizer)) s.focused s'
+  let focus := focusEffects ((s.client? id).any (·.mode == .writable)) s.focused s'
   if s.dirty && hadAttached && s'.clients.all (fun c => !c.attached) then
     ({ s' with dirty := false }, focus ++ [.checkpoint])
   else (s', focus)
@@ -313,11 +313,16 @@ def infoText (s : State) : List UInt8 :=
         Render.utf8s (v.toList.map Render.textChar) ++
         [0x0A])
 
-/-- Resize the pty only on behalf of the size owner: the most recently
-attached client with a real terminal (a read-only observer or an older
-mirror must not fight the active user's size). -/
+/-- Whether a client sizes the session: attached, writable, and with a terminal that has a size.
+A watcher never does, and nor does a terminal that has no size yet, whose 0 must not reach the
+pty. -/
+private def Client.sizes (c : Client) : Bool :=
+  c.attached && c.mode == .writable && c.cols != 0 && c.rows != 0
+
+/-- Resize the pty only on behalf of the size owner: of the clients that size the session, the
+most recently attached (a watcher or an older mirror must not fight the active user's size). -/
 private def sizeOwner (s : State) : Option Client :=
-  (s.clients.filter (fun c => c.attached && c.sizer)).foldl
+  (s.clients.filter (·.sizes)).foldl
     (fun best c =>
       match best with
       | none => some c
@@ -340,20 +345,19 @@ private def resize (s : State) (cols rows : UInt32) : State × List (Effect Plan
         vt, dirty := true },
       [.resizePty (UInt32.ofNat vt.colCount) (UInt32.ofNat vt.rowCount)])
 
-/-- Only the newest attached sizer can apply a client resize. -/
+/-- Only the size owner applies its size, and only a real one. -/
 private def resizeOwned (s : State) (c : Client) : State × List (Effect Plan) :=
-  if c.sizer && (sizeOwner s).any (·.id == c.id) then resize s c.cols c.rows else (s, [])
+  if c.sizes && (sizeOwner s).any (·.id == c.id) then resize s c.cols c.rows else (s, [])
 
 /-- The control-resize decision (`linger resize`, from a NON-attached
 connection — agent-cli Decision 3). The size-owner rule extends rather than
-bends: while an attached sizer exists it always wins (refuse, loudly — a
+bends: while an attached client sizes the session it always wins (refuse, loudly — a
 silent drop would let an agent believe a size it never got); with nobody
-attached there is nobody to fight, and the requested size applies. The
+sizing it there is nobody to fight, and the requested size applies. The
 same-size branch leaves the emulator alone for the attach guard's reason:
 `Vt.resize` resets the scroll region and tab ruler unconditionally, and at an
 unchanged winsize no SIGWINCH nudges the child to re-establish them
-(restore-conformance Step 0 ledger 1). Zero is refused — 0×0 is the observer
-marker on attach, and a zero dimension is never a size. -/
+(restore-conformance Step 0 ledger 1). Zero is refused: a zero dimension is never a size. -/
 private def controlResize (s : State) (c : Client) (cols rows : UInt32) :
     State × List (Effect Plan) :=
   if (sizeOwner s).isSome then
@@ -391,35 +395,36 @@ private def broadcast (s : State) (bytes : List UInt8) : List (Effect Plan) :=
 
 /-! ## Message handling (client → daemon) -/
 
-/-- Handle one client message; one query per read is answered (`Client.answered`). A watcher, an
-attached client that gave no size, may look and leave: its keystrokes are dropped and its
-requests to disconnect every client, end the session or change labels are refused. -/
+/-- Handle one client message; one query per read is answered (`Client.answered`). A connection's
+rights are its mode alone: a watcher, a client that attached read-only, may look and leave,
+whatever its size: its keystrokes are dropped and its requests to disconnect every client, end
+the session or change labels are refused. -/
 private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Plan) :=
   match m with
-  | .attach cols rows =>
+  | .attach mode cols rows =>
     if c.attached then (s, [.send c.id (.err "already attached".toUTF8.toList)])
     else
-      -- 0×0 marks a read-only observer: it mirrors output
-      -- but never owns the size and its input is dropped.
-      let sizer := cols != 0 && rows != 0
+      -- the rights are the mode asked for, whatever the size; a watcher mirrors output, and its
+      -- keystrokes are dropped
+      let typist := mode == .writable
       let before := s.focused
       let c :=
         { c with
-          attached := true, sizer, seq := s.attachSeq, cols, rows }
+          attached := true, mode, seq := s.attachSeq, cols, rows }
       let s :=
         { s.setClient c with
           attachSeq := s.attachSeq + 1, lookSeq := s.outSeq }
       let (s, effs) := resizeOwned s c
       -- Capture here: feedMsgs can change the VT again before effects run.
       (s,
-        effs ++ focusEffects sizer before s ++ [.replay c.id (Replay.start s.vt)] ++
+        effs ++ focusEffects typist before s ++ [.replay c.id (Replay.start s.vt)] ++
           (match s.exited with
           | some outcome => [.send c.id (.ended outcome), .send c.id (.exited outcome.status)]
           | none => []))
   | .input bytes =>
-    -- attached observers are read-only; control connections (not
-    -- attached, e.g. `linger send`) keep their input rights
-    if c.attached && !c.sizer then (s, []) else (s, [.writePty bytes])
+    -- a watcher's keystrokes are dropped; a control connection (not attached, as `linger send`
+    -- opens) is writable
+    if c.mode == .readOnly then (s, []) else (s, [.writePty bytes])
   | .resize cols rows =>
     let c :=
       { c with
@@ -434,14 +439,14 @@ private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Pla
         let c := { c with answered := true }
         controlResize (s.setClient c) c cols rows
   | .detachAll =>
-    if c.attached && !c.sizer then (s, [.send c.id (.err "read-only".toUTF8.toList)])
+    if c.mode == .readOnly then (s, [.send c.id (.err "read-only".toUTF8.toList)])
     else
       (s,
         (s.clients.filter (·.attached) |>.map (fun c' => Effect.close c'.id)) ++ [.send c.id .done])
   | .kill =>
     -- the program's end, which the runtime answers, ends the session (`.stopped`); the kill's
     -- connection closes, so nothing it sent after the kill takes effect
-    if c.attached && !c.sizer then (s, [.send c.id (.err "read-only".toUTF8.toList)])
+    if c.mode == .readOnly then (s, [.send c.id (.err "read-only".toUTF8.toList)])
     else (s, [.stopProgram, .close c.id])
   | .info =>
     if c.answered then (s, [.send c.id (.err "one request per read".toUTF8.toList)])
@@ -467,7 +472,7 @@ private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Pla
     | some outcome => (s, [.send c.id (.ended outcome), .send c.id (.exited outcome.status)])
     | none => (s.setClient { c with waiting := true }, [])
   | .labelSet kv =>
-    if c.attached && !c.sizer then (s, [.send c.id (.err "read-only".toUTF8.toList)])
+    if c.mode == .readOnly then (s, [.send c.id (.err "read-only".toUTF8.toList)])
     else
       let parts := (labelText kv).splitOn "="
       let k := parts.headD ""
@@ -481,14 +486,14 @@ private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Pla
               labels, dirty := true },
             [.send c.id .done])
   | .labelUnset k =>
-    if c.attached && !c.sizer then (s, [.send c.id (.err "read-only".toUTF8.toList)])
+    if c.mode == .readOnly then (s, [.send c.id (.err "read-only".toUTF8.toList)])
     else
       let txt := labelText k
       ({ s with
           labels := s.labels.filter (·.1 != txt), dirty := true },
         [.send c.id .done])
   | .labelClear =>
-    if c.attached && !c.sizer then (s, [.send c.id (.err "read-only".toUTF8.toList)])
+    if c.mode == .readOnly then (s, [.send c.id (.err "read-only".toUTF8.toList)])
     else
       ({ s with
           labels := [], dirty := true },
@@ -640,7 +645,7 @@ create more transport work. Used by the driver's termination argument. -/
 theorem closed_effects (s : State) (id : Nat) :
     ∀ eff ∈ (step s (.closed id)).2, eff = .checkpoint ∨ eff = .writePty (focusReport false) := by
   have hfocus :
-    ∀ eff ∈ focusEffects ((s.client? id).any (·.sizer)) s.focused (s.dropClient id),
+    ∀ eff ∈ focusEffects ((s.client? id).any (·.mode == .writable)) s.focused (s.dropClient id),
       eff = .writePty (focusReport false) := by
     intro eff h
     unfold focusEffects at h

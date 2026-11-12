@@ -46,6 +46,17 @@ structure Seen where
   unseen : Bool
   deriving Repr, DecidableEq
 
+/-- What a connection may do, as it asks when it attaches: type into the session, or only watch
+it. A connection that never attached, as `send`, `kill` and the label commands open, is
+writable. -/
+inductive Mode where
+  /-- Its keystrokes reach the program, and it may end the session, disconnect every client and
+  change the labels. -/
+  | writable
+  /-- It watches: its keystrokes are dropped, and its requests to change the session refused. -/
+  | readOnly
+  deriving Repr, DecidableEq, Inhabited
+
 /-- What a name's end record says. -/
 inductive Record where
   /-- A session took the name, and its program had not ended when this was written; with
@@ -150,10 +161,13 @@ namespace Linger.Session.Wire
 
 /-- The protocol level a daemon speaks, which `info` reports as `protocol`, so a client can
 refuse a request an older daemon cannot serve before sending it. Level 1 refuses a message it
-does not know; level 2 also says how a program ended (`Msg.ended`). A daemon that reports no
-level predates the field and drops an unknown message silently. -/
+does not know; level 2 also says how a program ended (`Msg.ended`); level 3 attaches with the
+mode the client asks for (`Msg.attach`, tag 18) and reads the attach of levels 1 and 2, tag 3,
+which carried only a size, as a message it does not know, so across a mismatch either side
+refuses the other's attach. A daemon that reports no level predates the field and drops an
+unknown message silently. -/
 @[expose]
-def protocol : Nat := 2
+def protocol : Nat := 3
 
 /-- Largest payload a frame may carry. Reads from the OS are ≤ 64 KiB, so honest senders stay
 far below; a frame claiming more is either corruption or an attack, and the decoder turns it
@@ -169,10 +183,11 @@ inductive Msg where
   | input (bytes : List UInt8)
   /-- daemon → client: bytes from the pty (also used for history/restore). -/
   | output (bytes : List UInt8)
-  /-- client → daemon: my terminal is now cols×rows. -/
+  /-- client → daemon: my terminal is now cols×rows, 0 in either for a terminal with no size. -/
   | resize (cols rows : UInt32)
-  /-- client → daemon: I am a live client; stream output to me. -/
-  | attach (cols rows : UInt32)
+  /-- client → daemon: I am a live client with these rights, on a cols×rows terminal; stream
+  output to me. -/
+  | attach (mode : Mode) (cols rows : UInt32)
   /-- client → daemon: disconnect every attached client (incl. me). -/
   | detachAll
   /-- client → daemon: terminate the session. -/
@@ -219,12 +234,13 @@ structure Decoder where
   deriving Repr, DecidableEq, Inhabited
 
 /-- A message the encoder may send: its bytes fit one frame's payload, and an `unknown` message
-carries a tag this version leaves unassigned, so that it cannot read back as a known one. -/
+carries a tag this version leaves unassigned, 3, the attach of levels 1 and 2, or one above 18,
+so that it cannot read back as a known one. -/
 @[expose]
 def Msg.Fits : Msg → Prop
   | .input bytes | .output bytes | .infoReply bytes | .labelSet bytes | .labelUnset bytes |
     .err bytes => bytes.length ≤ maxPayload
-  | .unknown tag payload => payload.length ≤ maxPayload ∧ 17 < tag.toNat
+  | .unknown tag payload => payload.length ≤ maxPayload ∧ (tag = 3 ∨ 18 < tag.toNat)
   | _ => True
 
 /-- A request to change a session's labels: set one, remove one, or remove them all. -/
@@ -261,21 +277,22 @@ first this many restored labels. -/
 @[expose]
 def maxLabels : Nat := 64
 
-/-- One connection's record: its identity, terminal size, attach and request state, and
+/-- One connection's record: its identity, rights, terminal size, attach and request state, and
 its undecoded input. -/
 structure Client where
   /-- The connection's identifier, as in `Event.connected`. -/
   id : Nat
-  /-- Terminal width from the latest attach or resize message. -/
+  /-- Terminal width from the latest attach or resize message, 0 for a terminal with no size. -/
   cols : UInt32 := 80
-  /-- Terminal height from the latest attach or resize message. -/
+  /-- Terminal height from the latest attach or resize message, 0 for a terminal with no size. -/
   rows : UInt32 := 24
   /-- The connection attached and receives the session's output. -/
   attached : Bool := false
-  /-- attached with a real size (read-only observers attach 0×0 and
-  never influence the pty size). -/
-  sizer : Bool := false
-  /-- attach order; the highest attached sizer owns the size. -/
+  /-- What the connection may do: the mode it attached with, and `writable` before it attaches.
+  Its rights come from this alone, never from its size. -/
+  mode : Mode := .writable
+  /-- Attach order: of the attached writable clients whose terminals have a size, the newest
+  sizes the session. -/
   seq : Nat := 0
   /-- `linger wait` parked here until the child exits. -/
   waiting : Bool := false

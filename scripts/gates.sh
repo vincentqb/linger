@@ -963,7 +963,7 @@ shim_n="$(code_count 'LEAN_EXPORT' 'packages/os/c/shim.c')"
 # The cursor proofs describe pure values. These ties keep the runtime on the
 # captured snapshot, bounded advances and shared byte allowance. The delivery
 # suite separately observes framing, prior/replay/live ordering and exit tails.
-code_grep '^[[:space:]]+effs [+][+] focusEffects sizer before s [+][+] [[][.]replay c[.]id [(]Replay[.]start s[.]vt[)][]] [+][+]$' 'Linger/Session.lean' > /dev/null \
+code_grep '^[[:space:]]+effs [+][+] focusEffects typist before s [+][+] [[][.]replay c[.]id [(]Replay[.]start s[.]vt[)][]] [+][+]$' 'Linger/Session.lean' > /dev/null \
   || fail "attach no longer captures its resulting snapshot"
 code_grep '^[[:space:]]+replay : Option Replay[.]Plan := none$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "each connection must retain one optional replay cursor"
@@ -1346,19 +1346,21 @@ code_grep '^[[:space:]]+let vt0 := Linger[.]Session[.]bootVt [(]restore[.]map [(
   || fail "Daemon.serve no longer boots from Session.bootVt, which resume_restores covers"
 
 # Read-only attachment's client-side guards (pin-the-gaps item 1). Read-only
-# is enforced DAEMON-side: the 0x0 attach geometry sets `sizer := false` and
-# `onMsg .input`/`onMsg .resize` then drop a non-sizer's traffic
-# (`onMsg_input_readonly`). So these two `!readOnly` call sites are defence in
-# depth and a pty test CANNOT see them — remove either and not one observable
-# byte changes. That makes a grep the only honest oracle, the same species as
-# SHIM_CAP above; faking it as a pty assertion would be decoration.
-# `Linger/Session/Suites/Watch.lean` covers guard A (the 0x0 attach), which IS observable.
+# is enforced DAEMON-side: the attach carries the mode, `onMsg .attach` records it
+# whatever the size, and `onMsg .input`/`onMsg .resize` then drop a watcher's
+# keystrokes and never let it size the session (`onMsg_input_readonly`). So these
+# two `!readOnly` call sites are defence in depth and a pty test CANNOT see them —
+# remove either and not one observable byte changes. That makes a grep the only
+# honest oracle, the same species as SHIM_CAP above; faking it as a pty assertion
+# would be decoration. `Linger/Session/Suites/Watch.lean` covers guard A (the mode
+# the attach carries), which IS observable.
 code_grep 'if size != lastSize && !readOnly' 'Linger/Session/Shell/Client.lean' > /dev/null \
   || fail "Client.attach lost its read-only resize guard (a watcher would fight the user's size)"
 code_grep 'if !out.isEmpty && !readOnly' 'Linger/Session/Shell/Client.lean' > /dev/null \
   || fail "Client.attach lost its read-only input guard (a watcher would forward keystrokes)"
-code_grep 'sendMsg fd [(][.]attach 0 0[)]' 'Linger/Session/Shell/Client.lean' > /dev/null \
-  || fail "Client.attach no longer marks a read-only client with a 0x0 attach (the wire's only read-only bit)"
+code_grep '^[[:space:]]+let mode : Linger[.]Session[.]Mode := if readOnly then [.]readOnly else [.]writable$' 'Linger/Session/Shell/Client.lean' > /dev/null \
+  && code_grep '^[[:space:]]+sendMsg fd [(][.]attach mode cols rows[)]$' 'Linger/Session/Shell/Client.lean' > /dev/null \
+  || fail "Client.attach no longer sends the mode its caller asked for (the wire's only read-only bit)"
 # The detach key follows Env.detachEnabled: always in a read-only view, whose saved
 # form passes that value, true, directly (detachEnabled_readOnly), and for writable
 # attach only while LINGER_NO_DETACH_KEY is unset. Linger.Session.Suites.Watch and Linger.Session.Suites.Attach observe both.

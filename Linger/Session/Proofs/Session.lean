@@ -126,8 +126,7 @@ key is the payload through `labelText` (invalid bytes → `""`, which matches no
 `.labelSet` can store since it rejects an empty key), the store is filtered, and
 the only effect is `.done`. `rfl`, so a smuggled side effect — a vt touch, a
 `.err`, an append — breaks it. -/
-theorem onMsg_labelUnset (s : State) (c : Client) (k : List UInt8)
-    (control : (c.attached && !c.sizer) = false) :
+theorem onMsg_labelUnset (s : State) (c : Client) (k : List UInt8) (control : c.mode = .writable) :
     onMsg s c (.labelUnset k) =
       ({ s with
           labels := s.labels.filter (fun kv => kv.1 != labelText k), dirty := true },
@@ -137,7 +136,7 @@ theorem onMsg_labelUnset (s : State) (c : Client) (k : List UInt8)
 /-- …and the consequence, stated where a reader looks for it: after an unset, no
 label carries that key. This is the promise; the shape above is how it is kept. -/
 theorem onMsg_labelUnset_gone (s : State) (c : Client) (k : List UInt8)
-    (control : (c.attached && !c.sizer) = false) :
+    (control : c.mode = .writable) :
     ∀ kv ∈ (onMsg s c (.labelUnset k)).1.labels, kv.1 ≠ labelText k := by
   intro kv hkv
   rw [onMsg_labelUnset s c k control] at hkv
@@ -148,14 +147,14 @@ theorem onMsg_labelUnset_gone (s : State) (c : Client) (k : List UInt8)
 `onMsg_labelUnset_gone` is satisfied by an arm that clears the whole store — the
 vacuity that makes a removal claim worthless. -/
 theorem onMsg_labelUnset_keeps (s : State) (c : Client) (k : List UInt8) (kv : String × String)
-    (control : (c.attached && !c.sizer) = false) (hmem : kv ∈ s.labels) (hne : kv.1 ≠ labelText k) :
+    (control : c.mode = .writable) (hmem : kv ∈ s.labels) (hne : kv.1 ≠ labelText k) :
     kv ∈ (onMsg s c (.labelUnset k)).1.labels := by
   rw [onMsg_labelUnset s c k control]
   simp only [List.mem_filter, bne_iff_ne]
   exact ⟨hmem, hne⟩
 
 /-- **`linger clear` empties the store and marks it for checkpointing.** -/
-theorem onMsg_labelClear (s : State) (c : Client) (control : (c.attached && !c.sizer) = false) :
+theorem onMsg_labelClear (s : State) (c : Client) (control : c.mode = .writable) :
     onMsg s c .labelClear =
       ({ s with
           labels := [], dirty := true },
@@ -163,9 +162,8 @@ theorem onMsg_labelClear (s : State) (c : Client) (control : (c.attached && !c.s
   simp [onMsg, control]
 
 /-- …the consequence, so the name a reader greps for states the fact. -/
-theorem onMsg_labelClear_empty (s : State) (c : Client)
-    (control : (c.attached && !c.sizer) = false) : (onMsg s c .labelClear).1.labels = [] := by
-  rw [onMsg_labelClear s c control]
+theorem onMsg_labelClear_empty (s : State) (c : Client) (control : c.mode = .writable) :
+    (onMsg s c .labelClear).1.labels = [] := by rw [onMsg_labelClear s c control]
 
 /-! ## §Detach -/
 
@@ -177,7 +175,7 @@ theorem closeClient_last_dirty (s : State) (id : Nat) (hd : s.dirty = true)
     (hl : (s.dropClient id).clients.all (fun c => !c.attached) = true) :
     closeClient s id =
       ({ s.dropClient id with dirty := false },
-        focusEffects ((s.client? id).any (·.sizer)) s.focused (s.dropClient id) ++
+        focusEffects ((s.client? id).any (·.mode == .writable)) s.focused (s.dropClient id) ++
           [.checkpoint]) := by
   simp [closeClient, hd, ha, hl]
 
@@ -187,12 +185,16 @@ theorem closeClient_effects (s : State) (id : Nat) :
     ∀ e ∈ (closeClient s id).2, e = .checkpoint ∨ e = .writePty (focusReport false) :=
   closed_effects s id
 
+/-- Comparing two modes with `==` decides whether they are equal. -/
+@[simp]
+theorem mode_beq (a b : Mode) : (a == b) = decide (a = b) := rfl
+
 /-- A watcher's disconnect owes the program no focus report: it could not type. -/
 theorem closeClient_watcher (s : State) (id : Nat) {c : Client} (hc : s.client? id = some c)
-    (hs : c.sizer = false) : ∀ e ∈ (closeClient s id).2, e = .checkpoint := by
+    (hs : c.mode = .readOnly) : ∀ e ∈ (closeClient s id).2, e = .checkpoint := by
   unfold closeClient focusEffects
-  simp only [hc, Option.any_some, hs, Bool.false_and, Bool.false_eq_true, ↓reduceIte,
-    List.nil_append]
+  simp only [hc, Option.any_some, hs, mode_beq, reduceCtorEq, decide_false, Bool.false_and,
+    Bool.false_eq_true, ↓reduceIte, List.nil_append]
   split <;> simp
 
 @[simp]
@@ -224,9 +226,9 @@ theorem step_closed_frame (s : State) (id : Nat) :
         { s with
           clients := s.clients.filter (·.id != id), dirty := (step s (.closed id)).1.dirty } ∧
       ((step s (.closed id)).2 =
-          focusEffects ((s.client? id).any (·.sizer)) s.focused (s.dropClient id) ∨
+          focusEffects ((s.client? id).any (·.mode == .writable)) s.focused (s.dropClient id) ∨
         (step s (.closed id)).2 =
-          focusEffects ((s.client? id).any (·.sizer)) s.focused (s.dropClient id) ++
+          focusEffects ((s.client? id).any (·.mode == .writable)) s.focused (s.dropClient id) ++
             [.checkpoint]) := by
   unfold step closeClient
   dsimp only
@@ -404,7 +406,7 @@ theorem step_stopped_discards (s : State) (o : Outcome) :
 takes effect; a watcher's is refused and changes nothing. -/
 theorem onMsg_kill (s : State) (c : Client) :
     onMsg s c .kill =
-      if c.attached && !c.sizer then (s, [.send c.id (.err "read-only".toUTF8.toList)])
+      if c.mode == .readOnly then (s, [.send c.id (.err "read-only".toUTF8.toList)])
       else (s, [.stopProgram, .close c.id]) := rfl
 
 /-- What a function makes of one member is a block of what it makes of the whole list. -/
@@ -443,7 +445,7 @@ did not ask for — and a `.done` to the requester last, after the closes, so th
 caller's own socket is not shut before its reply is queued. `rfl`, so dropping
 the filter, reordering the `.done`, or closing the roster instead of the
 attached subset each break it. -/
-theorem onMsg_detachAll (s : State) (c : Client) (control : (c.attached && !c.sizer) = false) :
+theorem onMsg_detachAll (s : State) (c : Client) (control : c.mode = .writable) :
     onMsg s c .detachAll =
       (s,
         (s.clients.filter (·.attached) |>.map (fun c' => Effect.close c'.id)) ++
@@ -457,9 +459,9 @@ the kernel sends no `SIGWINCH` at an unchanged winsize, so the child never re-em
 them. The attach handler now resizes only on a genuine change, and this is why it is
 safe: the whole `vt`, region and ruler included, is preserved (restore-conformance
 Step 0 ledger 1). -/
-theorem onMsg_attach_same_size_vt (s : State) (c : Client) (cols rows : UInt32)
+theorem onMsg_attach_same_size_vt (s : State) (c : Client) (mode : Mode) (cols rows : UInt32)
     (hc : s.vt.cols = cols.toNat) (hr : s.vt.rows = rows.toNat) :
-    (onMsg s c (.attach cols rows)).1.vt = s.vt := by
+    (onMsg s c (.attach mode cols rows)).1.vt = s.vt := by
   unfold onMsg resizeOwned resize
   dsimp only
   split
@@ -470,20 +472,22 @@ theorem onMsg_attach_same_size_vt (s : State) (c : Client) (cols rows : UInt32)
 
 /-- A connection gets one replay. Refusing a second attach keeps a decoded
 message batch from building a backlog of immutable snapshots. -/
-theorem onMsg_attach_already (s : State) (c : Client) (cols rows : UInt32) (h : c.attached = true) :
-    onMsg s c (.attach cols rows) = (s, [.send c.id (.err "already attached".toUTF8.toList)]) := by
+theorem onMsg_attach_already (s : State) (c : Client) (mode : Mode) (cols rows : UInt32)
+    (h : c.attached = true) :
+    onMsg s c (.attach mode cols rows) =
+      (s, [.send c.id (.err "already attached".toUTF8.toList)]) := by
   simp [onMsg, h]
 
 /-- Capture exactly the resulting attach snapshot, after any owned resize.
 Later messages may change the runtime's state before it executes this plan. -/
-theorem onMsg_attach_snapshot (s : State) (c : Client) (cols rows : UInt32)
+theorem onMsg_attach_snapshot (s : State) (c : Client) (mode : Mode) (cols rows : UInt32)
     (h : c.attached = false) :
-    ((onMsg s c (.attach cols rows)).2.filterMap
+    ((onMsg s c (.attach mode cols rows)).2.filterMap
         (fun e =>
           match e with
           | .replay id plan => some (id, plan)
           | _ => none)) =
-      [(c.id, Replay.start (onMsg s c (.attach cols rows)).1.vt)] := by
+      [(c.id, Replay.start (onMsg s c (.attach mode cols rows)).1.vt)] := by
   unfold onMsg
   simp only [h, Bool.false_eq_true, ↓reduceIte]
   unfold resizeOwned resize focusEffects
@@ -491,17 +495,17 @@ theorem onMsg_attach_snapshot (s : State) (c : Client) (cols rows : UInt32)
   repeat' split
   all_goals simp
 
-/-- Keystrokes from a full client go to the pty, not the emulator:
-echo is the shell's job, so the machine's screen cannot drift. -/
-theorem onMsg_input (s : State) (c : Client) (bs : List UInt8)
-    (h : ¬(c.attached && !c.sizer) = true) : onMsg s c (.input bs) = (s, [.writePty bs]) := by
+/-- Keystrokes from a writable client, whatever its terminal's size, go to the pty, not the
+emulator: echo is the shell's job, so the machine's screen cannot drift. -/
+theorem onMsg_input (s : State) (c : Client) (bs : List UInt8) (h : c.mode = .writable) :
+    onMsg s c (.input bs) = (s, [.writePty bs]) := by
   unfold onMsg
   simp [h]
 
-/-- A read-only observer's keyboard goes nowhere:
-neither state nor pty sees it. -/
-theorem onMsg_input_readonly (s : State) (c : Client) (bs : List UInt8)
-    (h : (c.attached && !c.sizer) = true) : onMsg s c (.input bs) = (s, []) := by
+/-- A watcher's keyboard goes nowhere, whatever its terminal's size: neither state nor pty sees
+it. -/
+theorem onMsg_input_readonly (s : State) (c : Client) (bs : List UInt8) (h : c.mode = .readOnly) :
+    onMsg s c (.input bs) = (s, []) := by
   unfold onMsg
   simp [h]
 
@@ -537,7 +541,7 @@ theorem step_connected_refused (s : State) (id : Nat) (h : maxClients ≤ s.clie
   rw [ite_eq_left (show s.clients.length ≥ maxClients from h)]
 
 /-- **Below the cap it is admitted, and appended.** Append rather than prepend is the whole
-of attach ordering: `attachSeq` hands out the sizer role by arrival, so a prepend would
+of attach ordering: `attachSeq` hands out the size owner role by arrival, so a prepend would
 silently make the newest client the oldest. -/
 theorem step_connected_admitted (s : State) (id : Nat) (h : s.clients.length < maxClients) :
     step s (.connected id) = ({ s with clients := s.clients ++ [{ id }] }, []) := by
@@ -1395,8 +1399,8 @@ theorem run_boot_wf (vt : Vt.Vt) (labels metaKv : List (String × String)) (evs 
 
 /-- **Only the size owner resizes the pty** — as a theorem rather than a
 convention. `resizeOwned` emits a `resizePty` only for the client the size-ownership
-cascade (`sizeOwner`: newest attached real-terminal attacher) actually selected — a
-read-only observer or an older mirror never moves the pty out from under the active
+cascade (`sizeOwner`: the newest attached writable client whose terminal has a size) actually
+selected — a watcher or an older mirror never moves the pty out from under the active
 user. -/
 theorem resizeOwned_owner_only (s : State) (c : Client) :
     (resizeOwned s c).2 ≠ [] → (sizeOwner s).any (·.id == c.id) = true := by
@@ -1472,12 +1476,12 @@ theorem onMsg_labels_changed_dirty (s : State) (c : Client) (m : Msg)
   unfold onMsg at *
   grind
 
-/-! ## §Size — a control resize never overrides an attached sizer
+/-! ## §Size — a control resize never overrides an attached client that sizes the session
 
 `linger resize` (agent-cli Decision 3) lets an agent size a *detached* session
 so wrap is deterministic before a capture. The size-owner rule extends rather than
-bends: an attached sizer always wins, and the refusal is loud — an agent must
-not believe a size it never got. -/
+bends: an attached client that sizes the session always wins, and the refusal is loud — an
+agent must not believe a size it never got. -/
 
 /-- **The invariant.** While anybody attached owns the size, a control resize
 changes nothing — not the emulator, not the pty — and says so. -/
@@ -1611,34 +1615,34 @@ theorem resizeOwned_frame (s : State) (c : Client) :
 
 /-- Attaching a record that can type, under an identifier the roster holds, focuses the session. -/
 theorem focused_setClient {s : State} {c c0 : Client} (h : s.client? c.id = some c0)
-    (ha : c.attached = true) (hs : c.sizer = true) : (s.setClient c).focused = true := by
+    (ha : c.attached = true) (hs : c.mode = .writable) : (s.setClient c).focused = true := by
   have h1 := client?_setClient (c := c) h
   unfold State.client? at h1
   simp only [State.focused, List.any_eq_true]
   exact ⟨c, List.mem_of_find?_eq_some h1, by simp [ha, hs]⟩
 
-/-- **Focus follows typing**: when a client with a terminal of its own attaches to a session
-nobody could type into, a program that enabled focus reporting hears that it gained focus. -/
+/-- **Focus follows typing**: when a writable client attaches to a session nobody could type
+into, whatever its terminal's size, a program that enabled focus reporting hears that it gained
+focus. -/
 theorem onMsg_attach_focus (s : State) (c : Client) (cols rows : UInt32)
-    (hc : s.client? c.id = some c) (h : c.attached = false)
-    (hsize : (cols != 0 && rows != 0) = true) (hunfocused : s.focused = false)
+    (hc : s.client? c.id = some c) (h : c.attached = false) (hunfocused : s.focused = false)
     (hmode : s.vt.getModes.focusEvents = true) :
-    Effect.writePty (focusReport true) ∈ (onMsg s c (.attach cols rows)).2 := by
+    Effect.writePty (focusReport true) ∈ (onMsg s c (.attach .writable cols rows)).2 := by
   let c' : Client :=
     { c with
-      attached := true, sizer := cols != 0 && rows != 0, seq := s.attachSeq, cols, rows }
+      attached := true, mode := .writable, seq := s.attachSeq, cols, rows }
   let s1 : State :=
     { s.setClient c' with
       attachSeq := s.attachSeq + 1, lookSeq := s.outSeq }
   have hfocused : (resizeOwned s1 c').1.focused = true := by
-    have hf : s1.focused = true := focused_setClient (c := c') hc rfl hsize
+    have hf : s1.focused = true := focused_setClient (c := c') hc rfl rfl
     simp only [State.focused, (resizeOwned_frame s1 c').1]
     exact hf
   have hmodes : (resizeOwned s1 c').1.vt.getModes = s.vt.getModes := (resizeOwned_frame s1 c').2
   have key :
-    focusEffects (cols != 0 && rows != 0) s.focused (resizeOwned s1 c').1 =
+    focusEffects (Mode.writable == .writable) s.focused (resizeOwned s1 c').1 =
       [.writePty (focusReport true)] := by
-    simp only [focusEffects, hsize, hunfocused, hfocused, hmodes, hmode]
+    simp only [focusEffects, hunfocused, hfocused, hmodes, hmode]
     rfl
   unfold onMsg
   dsimp only
@@ -1646,7 +1650,7 @@ theorem onMsg_attach_focus (s : State) (c : Client) (cols rows : UInt32)
   show
     Effect.writePty (focusReport true) ∈
       (resizeOwned s1 c').2 ++
-        focusEffects (cols != 0 && rows != 0) s.focused (resizeOwned s1 c').1 ++
+        focusEffects (Mode.writable == .writable) s.focused (resizeOwned s1 c').1 ++
         _ ++
         _
   rw [key]
@@ -1654,14 +1658,14 @@ theorem onMsg_attach_focus (s : State) (c : Client) (cols rows : UInt32)
 
 /-- …and when the last client that could type leaves, the program hears that it lost focus. -/
 theorem closeClient_focus (s : State) (id : Nat) {c : Client} (hc : s.client? id = some c)
-    (hs : c.sizer = true) (hfocused : s.focused = true) (hlast : (s.dropClient id).focused = false)
-    (hmode : s.vt.getModes.focusEvents = true) :
+    (hs : c.mode = .writable) (hfocused : s.focused = true)
+    (hlast : (s.dropClient id).focused = false) (hmode : s.vt.getModes.focusEvents = true) :
     Effect.writePty (focusReport false) ∈ (closeClient s id).2 := by
   have key :
-    focusEffects ((s.client? id).any (·.sizer)) s.focused (s.dropClient id) =
+    focusEffects ((s.client? id).any (·.mode == .writable)) s.focused (s.dropClient id) =
       [.writePty (focusReport false)] := by
     have hm : (s.dropClient id).vt.getModes.focusEvents = true := hmode
-    simp only [focusEffects, hc, Option.any_some, hs, hfocused, hlast, hm]
+    simp only [focusEffects, hc, Option.any_some, hs, beq_self_eq_true, hfocused, hlast, hm]
     rfl
   unfold closeClient
   dsimp only
@@ -1682,9 +1686,10 @@ theorem onMsg_sender (s : State) (c : Client) (m : Msg) (hc : s.client? c.id = s
     ∃ c',
       (onMsg s c m).1.client? c.id = some c' ∧
         c'.answered = (c.answered || costly c m) ∧
-        (c'.attached = false → c.attached = false ∧ ∀ cols rows, m ≠ .attach cols rows) := by
+        (c'.attached = false →
+          c.attached = false ∧ ∀ mode cols rows, m ≠ .attach mode cols rows) := by
   cases m with
-  | attach cols rows =>
+  | attach mode cols rows =>
     unfold onMsg
     dsimp only
     split
@@ -1692,7 +1697,7 @@ theorem onMsg_sender (s : State) (c : Client) (m : Msg) (hc : s.client? c.id = s
       exact ⟨c, hc, by simp [costly], by simp [ha]⟩
     · let c' : Client :=
         { c with
-          attached := true, sizer := cols != 0 && rows != 0, seq := s.attachSeq, cols, rows }
+          attached := true, mode, seq := s.attachSeq, cols, rows }
       have h1 : (s.setClient c').client? c.id = some c' := client?_setClient (c := c') hc
       refine ⟨c', ?_, by simp [c', costly], by simp [c']⟩
       unfold resizeOwned
@@ -1767,9 +1772,9 @@ theorem onMsg_unrendered (s : State) (c : Client) (m : Msg)
 /-- …and, from a connection that is neither attached nor attaching, no pty resize. -/
 theorem onMsg_unresized (s : State) (c : Client) (m : Msg)
     (h : c.answered = true ∨ costly c m = false) (ha : c.attached = false)
-    (hm : ∀ cols rows, m ≠ .attach cols rows) : (onMsg s c m).2.all (!·.resizes) := by
+    (hm : ∀ mode cols rows, m ≠ .attach mode cols rows) : (onMsg s c m).2.all (!·.resizes) := by
   cases m
-  case attach cols rows => exact absurd rfl (hm cols rows)
+  case attach mode cols rows => exact absurd rfl (hm mode cols rows)
   all_goals
     simp only [costly, ha, or_true] at h
     unfold onMsg resizeOwned resize controlResize focusEffects
@@ -1846,7 +1851,7 @@ every pty resize when the connection is still unattached afterwards, lies in one
 in `t`; without such an answer the read emits none of them. So one read builds at most
 one info answer, history or screen capture, or control resize, however many requests it
 decodes; the rest are refused (`onMsg_answered`, `onMsg_resize_answered`). An attached
-sizer's resizes follow its terminal and are outside this bound, and an attach replays
+client's resizes follow its terminal and are outside this bound, and an attach replays
 once per connection (`onMsg_attach_already`). -/
 theorem step_bytes_one_reply (s : State) (id : Nat) (chunk : List UInt8) :
     ∃ pre ans post,
@@ -2248,11 +2253,11 @@ theorem events_observed (s : State) (id : Nat) (chunk : List UInt8) :
 
 /-! ## Read-only clients
 
-An attached client that did not give a size is a watcher. Whatever bytes it sends, however
-chunked, leave the terminal and the labels alone, and every effect they cause is a message to
-it, its own disconnection or a checkpoint: it can look and leave, and nothing else. Its records
-stay watchers' across the trace: no message detaches it or makes it a sizer, and a decoder error
-removes every record with its identifier. -/
+A client that attached read-only is a watcher, whatever its terminal's size. Whatever bytes it
+sends, however chunked, leave the terminal and the labels alone, and every effect they cause is a
+message to it, its own disconnection or a checkpoint: it can look and leave, and nothing else.
+Its records stay watchers' across the trace: no message detaches it or makes it writable, and a
+decoder error removes every record with its identifier. -/
 
 /-- An effect a watcher's bytes may cause: a message to it, its own disconnection, or a
 checkpoint. -/
@@ -2261,13 +2266,13 @@ def watcherEffect (id : Nat) : Effect Plan → Bool
   | .checkpoint => true
   | _ => false
 
-/-- Every record the identifier finds is attached and gave no size. -/
+/-- Every record the identifier finds is attached read-only. -/
 def Watches (s : State) (id : Nat) : Prop :=
-  ∀ c, s.client? id = some c → c.attached = true ∧ c.sizer = false
+  ∀ c, s.client? id = some c → c.attached = true ∧ c.mode = .readOnly
 
 /-- The record an identifier finds decides `Watches` for it. -/
 theorem watches_of_client? {s : State} {c : Client} (hc : s.client? c.id = some c)
-    (ha : c.attached = true) (hs : c.sizer = false) : Watches s c.id := by
+    (ha : c.attached = true) (hs : c.mode = .readOnly) : Watches s c.id := by
   intro c' h
   rw [hc] at h
   cases h
@@ -2275,21 +2280,20 @@ theorem watches_of_client? {s : State} {c : Client} (hc : s.client? c.id = some 
 
 /-- Rewriting a found record with a watcher's makes the identifier a watcher's. -/
 theorem watches_setClient {s : State} {c c0 : Client} {id : Nat} (hid : c.id = id)
-    (hc : s.client? id = some c0) (ha : c.attached = true) (hs : c.sizer = false) :
+    (hc : s.client? id = some c0) (ha : c.attached = true) (hs : c.mode = .readOnly) :
     Watches (s.setClient c) id := by
   subst hid
   exact watches_of_client? (client?_setClient hc) ha hs
 
-/-- A message from an attached sender keeps its record attached and its sizer flag as it was. -/
+/-- A message from an attached sender keeps its record attached and its mode as it was. -/
 theorem onMsg_watcher_record (s : State) (c : Client) (m : Msg) (hc : s.client? c.id = some c)
     (ha : c.attached = true) :
-    ∃ c',
-      (onMsg s c m).1.client? c.id = some c' ∧ c'.attached = c.attached ∧ c'.sizer = c.sizer := by
+    ∃ c', (onMsg s c m).1.client? c.id = some c' ∧ c'.attached = c.attached ∧ c'.mode = c.mode := by
   cases m with
-  | attach cols rows =>
+  | attach mode cols rows =>
     exact
       ⟨c, by
-        rw [onMsg_attach_already s c cols rows ha]; exact hc, rfl, rfl⟩
+        rw [onMsg_attach_already s c mode cols rows ha]; exact hc, rfl, rfl⟩
   | resize cols rows =>
     unfold onMsg
     dsimp only
@@ -2333,33 +2337,33 @@ theorem onMsg_watcher_record (s : State) (c : Client) (m : Msg) (hc : s.client? 
 
 /-- Every effect of a watcher's message is a message to it. -/
 theorem onMsg_watcher_own (s : State) (c : Client) (m : Msg) (ha : c.attached = true)
-    (hs : c.sizer = false) : (onMsg s c m).2.all (watcherEffect c.id) = true := by
+    (hs : c.mode = .readOnly) : (onMsg s c m).2.all (watcherEffect c.id) = true := by
   cases m
   all_goals
     unfold onMsg resizeOwned resize controlResize infoMsgs
     dsimp only
     repeat' split
-  all_goals simp_all [watcherEffect, outputMsgs]
+  all_goals simp_all [watcherEffect, outputMsgs, Client.sizes]
 
 /-- A message from a watcher leaves the terminal alone. -/
 theorem onMsg_watcher_vt (s : State) (c : Client) (m : Msg) (ha : c.attached = true)
-    (hs : c.sizer = false) : (onMsg s c m).1.vt = s.vt := by
+    (hs : c.mode = .readOnly) : (onMsg s c m).1.vt = s.vt := by
   cases m
   all_goals
     unfold onMsg resizeOwned resize
     dsimp only
     repeat' split
-  all_goals simp_all [State.setClient]
+  all_goals simp_all [State.setClient, Client.sizes]
 
 /-- A message from a watcher leaves the labels alone. -/
 theorem onMsg_watcher_labels (s : State) (c : Client) (m : Msg) (ha : c.attached = true)
-    (hs : c.sizer = false) : (onMsg s c m).1.labels = s.labels := by
+    (hs : c.mode = .readOnly) : (onMsg s c m).1.labels = s.labels := by
   cases m
   all_goals
     unfold onMsg resizeOwned resize
     dsimp only
     repeat' split
-  all_goals simp_all [State.setClient]
+  all_goals simp_all [State.setClient, Client.sizes]
 
 /-- A message batch from a watcher keeps its records watchers', leaves the terminal and the
 labels alone, and adds only effects a watcher may cause. -/
@@ -2442,10 +2446,10 @@ theorem run_bytes_watcher (s : State) (id : Nat) (chunks : List (List UInt8)) (h
     exact ⟨hvt'.trans hvt, hlb'.trans hlb, by simp [List.all_append, hq, hq']⟩
 
 /-- **A watcher can look and leave, and nothing else**: whatever bytes it sends, however
-chunked, leave the terminal and the labels unchanged, and every effect they cause is a message to
-the watcher, its own disconnection or a checkpoint. -/
+chunked, and whatever its terminal's size, leave the terminal and the labels unchanged, and every
+effect they cause is a message to the watcher, its own disconnection or a checkpoint. -/
 theorem run_readonly (s : State) (id : Nat) (chunks : List (List UInt8)) {c : Client}
-    (hc : s.client? id = some c) (attached : c.attached = true) (watcher : c.sizer = false) :
+    (hc : s.client? id = some c) (attached : c.attached = true) (watcher : c.mode = .readOnly) :
     (run s (chunks.map (Event.bytes id))).1.terminal = s.terminal ∧
       (run s (chunks.map (Event.bytes id))).1.labelList = s.labelList ∧
       ∀ eff ∈ (run s (chunks.map (Event.bytes id))).2,
@@ -2511,7 +2515,8 @@ theorem resizeOwned_effects (s : State) (c : Client) :
 /-- Recording a connection that is not attached leaves someone able to type exactly when someone
 under another identifier could. -/
 theorem focused_setClient_unattached (s : State) (c : Client) (ha : c.attached = false) :
-    (s.setClient c).focused = s.clients.any (fun x => x.id != c.id && (x.attached && x.sizer)) := by
+    (s.setClient c).focused =
+      s.clients.any (fun x => x.id != c.id && (x.attached && x.mode == .writable)) := by
   unfold State.focused State.setClient
   dsimp only
   generalize s.clients = l
@@ -2526,24 +2531,23 @@ theorem focused_setClient_unattached (s : State) (c : Client) (ha : c.attached =
       simp only [hbeq, Bool.false_eq_true, ↓reduceIte, hne, Bool.true_and]
 
 /-- An attach writes to the program only the focus report it owes. -/
-theorem onMsg_attach_writePty (t : State) (c : Client) (cols rows : UInt32) (bytes : List UInt8) :
-    Effect.writePty bytes ∈ (onMsg t c (.attach cols rows)).2 ↔
+theorem onMsg_attach_writePty (t : State) (c : Client) (mode : Mode) (cols rows : UInt32)
+    (bytes : List UInt8) :
+    Effect.writePty bytes ∈ (onMsg t c (.attach mode cols rows)).2 ↔
       c.attached = false ∧
         Effect.writePty bytes ∈
-          focusEffects (cols != 0 && rows != 0) t.focused
+          focusEffects (mode == .writable) t.focused
             (resizeOwned
                 {
                   t.setClient
                     { c with
-                      attached := true, sizer := cols != 0 && rows != 0, seq := t.attachSeq, cols,
-                      rows } with
+                      attached := true, mode, seq := t.attachSeq, cols, rows } with
                   attachSeq := t.attachSeq + 1, lookSeq := t.outSeq }
                 { c with
-                  attached := true, sizer := cols != 0 && rows != 0, seq := t.attachSeq, cols,
-                  rows }).1 := by
+                  attached := true, mode, seq := t.attachSeq, cols, rows }).1 := by
   let c' : Client :=
     { c with
-      attached := true, sizer := cols != 0 && rows != 0, seq := t.attachSeq, cols, rows }
+      attached := true, mode, seq := t.attachSeq, cols, rows }
   let t1 : State :=
     { t.setClient c' with
       attachSeq := t.attachSeq + 1, lookSeq := t.outSeq }
@@ -2555,7 +2559,7 @@ theorem onMsg_attach_writePty (t : State) (c : Client) (cols rows : UInt32) (byt
     show
       Effect.writePty bytes ∈
           (resizeOwned t1 c').2 ++
-            focusEffects (cols != 0 && rows != 0) t.focused (resizeOwned t1 c').1 ++
+            focusEffects (mode == .writable) t.focused (resizeOwned t1 c').1 ++
             _ ++
             _ ↔
         _
@@ -2571,17 +2575,19 @@ theorem onMsg_attach_writePty (t : State) (c : Client) (cols rows : UInt32) (byt
 
 /-- **Focus follows typing, on attach**: a read that completes exactly one attach writes to the
 program only `CSI I`, and exactly when the program enabled focus reporting, the attach comes from
-a connection not yet attached and has a terminal of its own, and nobody else could type. -/
+a connection not yet attached and asks to be writable, whatever its terminal's size, and nobody
+else could type. -/
 theorem step_attach_focus (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
-    {dec : Wire.Decoder} {cols rows : UInt32} (hc : s.client? id = some c)
-    (read : c.decoder.feed chunk = (dec, [.attach cols rows])) (healthy : dec.errored = false)
+    {dec : Wire.Decoder} {mode : Mode} {cols rows : UInt32} (hc : s.client? id = some c)
+    (read : c.decoder.feed chunk = (dec, [.attach mode cols rows])) (healthy : dec.errored = false)
     (bytes : List UInt8) :
     Effect.writePty bytes ∈ (step s (.bytes id chunk)).2 ↔
       bytes = [0x1B, 0x5B, 0x49] ∧
         s.terminal.getModes.focusEvents = true ∧
         c.attached = false ∧
-        cols ≠ 0 ∧
-        rows ≠ 0 ∧ ∀ other ∈ s.roster, other.id ≠ id → (other.attached && other.sizer) = false := by
+        mode = .writable ∧
+        ∀ other ∈ s.roster,
+          other.id ≠ id → (other.attached && other.mode == .writable) = false := by
   have hid : c.id = id := client?_id hc
   have hc' : s.client? c.id = some c := by
     rw [hid]; exact hc
@@ -2592,85 +2598,74 @@ theorem step_attach_focus (s : State) (id : Nat) (chunk : List UInt8) {c : Clien
   let t := s.setClient c1
   let c' : Client :=
     { c1 with
-      attached := true, sizer := cols != 0 && rows != 0, seq := t.attachSeq, cols, rows }
+      attached := true, mode, seq := t.attachSeq, cols, rows }
   let t1 : State :=
     { t.setClient c' with
       attachSeq := t.attachSeq + 1, lookSeq := t.outSeq }
   show
     (c1.attached = false ∧
-        Effect.writePty bytes ∈
-          focusEffects (cols != 0 && rows != 0) t.focused (resizeOwned t1 c').1) ↔
+        Effect.writePty bytes ∈ focusEffects (mode == .writable) t.focused (resizeOwned t1 c').1) ↔
       _
   have h1 : t.client? c'.id = some c1 := client?_setClient (c := c1) hc'
   have hmodes : (resizeOwned t1 c').1.vt.getModes = s.vt.getModes := (resizeOwned_frame t1 c').2
-  have hafter (hs : (cols != 0 && rows != 0) = true) : (resizeOwned t1 c').1.focused = true := by
+  have hafter (hs : mode = .writable) : (resizeOwned t1 c').1.focused = true := by
     have hf : (t.setClient c').focused = true := focused_setClient (c := c') h1 rfl hs
     simp only [State.focused, (resizeOwned_frame t1 c').1]
     exact hf
   cases ha : c.attached
-  · have hbefore : t.focused = s.clients.any (fun x => x.id != id && (x.attached && x.sizer)) := by
+  · have hbefore :
+      t.focused = s.clients.any (fun x => x.id != id && (x.attached && x.mode == .writable)) := by
       rw [focused_setClient_unattached s c1 ha]
       simp only [c1, hid]
     unfold focusEffects
     rw [hbefore]
-    cases hs : (cols != 0 && rows != 0)
-    · have hz : ¬(cols ≠ 0 ∧ rows ≠ 0) := by simpa using hs
-      simp only [Bool.false_and, Bool.false_eq_true, ↓reduceIte, List.not_mem_nil, and_false,
-        false_iff]
-      exact fun ⟨_, _, _, h, h', _⟩ => hz ⟨h, h'⟩
-    · rw [hafter hs, hmodes]
-      have hnz : cols ≠ 0 ∧ rows ≠ 0 := by simpa using hs
-      simp only [Bool.true_and, focusReport, ↓reduceIte, State.terminal, State.roster]
-      constructor
-      · intro ⟨_, hm⟩
-        split at hm
-        · rename_i hcond
-          simp only [List.mem_singleton, Effect.writePty.injEq] at hm
-          simp only [Bool.and_eq_true, bne_iff_ne, ne_eq, Bool.not_eq_true] at hcond
-          refine ⟨hm, hcond.2, by simp, hnz.1, hnz.2, fun other hother hne => ?_⟩
-          have := hcond.1
-          simp only [List.any_eq_false] at this
-          have := this other hother
-          cases h : other.attached && other.sizer
-          · rfl
-          · simp_all
-        · simp at hm
-      · rintro ⟨rfl, hmode, -, -, -, hnobody⟩
-        refine ⟨by simp, ?_⟩
-        have hnone : s.clients.any (fun x => x.id != id && (x.attached && x.sizer)) = false := by
-          simp only [List.any_eq_false]
-          intro x hx
-          by_cases hxid : x.id = id
-          · simp [hxid]
-          · have := hnobody x hx hxid
-            simp_all
-        simp [hnone]
-        exact hmode
+    rcases (by cases mode <;> simp : mode = .readOnly ∨ mode = .writable) with hm | hm
+    · simp only [hm, mode_beq, reduceCtorEq, decide_false, Bool.false_and, Bool.false_eq_true,
+        ↓reduceIte, List.not_mem_nil, and_false, false_and]
+    · rw [hafter hm, hmodes, hm]
+      have key :
+        s.clients.any (fun x => x.id != id && (x.attached && x.mode == .writable)) = false ↔
+          ∀ other ∈ s.clients,
+            other.id ≠ id → (other.attached && other.mode == .writable) = false := by
+        rw [List.any_eq_false]
+        constructor
+        · intro h other hother hne
+          simpa [bne_iff_ne, hne] using h other hother
+        · intro h other hother
+          by_cases hne : other.id = id
+          · simp [hne]
+          · simpa [bne_iff_ne, hne] using h other hother hne
+      simp only [State.terminal, State.roster]
+      rw [← key]
+      generalize s.clients.any (fun x => x.id != id && (x.attached && x.mode == .writable)) = A
+      generalize s.vt.getModes.focusEvents = fe
+      cases A <;> cases fe <;> simp [focusReport]
   · simp
 
 /-- **…and on close**: closing a connection writes to the program only `CSI O`, and exactly when
-the program enabled focus reporting and the connection, which had a terminal of its own, was the
-last through which someone could type. -/
+the program enabled focus reporting and the connection, which was writable, was the last
+through which someone could type. -/
 theorem step_closed_focus (s : State) (id : Nat) (bytes : List UInt8) :
     Effect.writePty bytes ∈ (step s (.closed id)).2 ↔
       bytes = [0x1B, 0x5B, 0x4F] ∧
         s.terminal.getModes.focusEvents = true ∧
-        (s.client? id).any (·.sizer) = true ∧
-        s.roster.any (fun c => c.attached && c.sizer) = true ∧
-        (step s (.closed id)).1.roster.any (fun c => c.attached && c.sizer) = false := by
+        (s.client? id).any (·.mode == .writable) = true ∧
+        s.roster.any (fun c => c.attached && c.mode == .writable) = true ∧
+        (step s (.closed id)).1.roster.any (fun c => c.attached && c.mode == .writable) =
+          false := by
   have hroster : (step s (.closed id)).1.roster = s.clients.filter (·.id != id) :=
     closeClient_clients s id
   rw [hroster]
   have hsub :
-    (s.clients.filter (·.id != id)).any (fun c => c.attached && c.sizer) = true →
-      s.clients.any (fun c => c.attached && c.sizer) = true := by
+    (s.clients.filter (·.id != id)).any (fun c => c.attached && c.mode == .writable) = true →
+      s.clients.any (fun c => c.attached && c.mode == .writable) = true := by
     simp only [List.any_eq_true, List.mem_filter]
     rintro ⟨x, ⟨hx, -⟩, h⟩
     exact ⟨x, hx, h⟩
   have hfx :
     Effect.writePty bytes ∈ (step s (.closed id)).2 ↔
       Effect.writePty bytes ∈
-        focusEffects ((s.client? id).any (·.sizer)) s.focused (s.dropClient id) := by
+        focusEffects ((s.client? id).any (·.mode == .writable)) s.focused (s.dropClient id) := by
     show Effect.writePty bytes ∈ (closeClient s id).2 ↔ _
     unfold closeClient
     dsimp only
@@ -2720,8 +2715,8 @@ connection, whatever the read holds after the kill, and the session's terminal a
 as they were. -/
 theorem step_kill_stops (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {rest : List Msg} (hc : s.client? id = some c)
-    (writable : c.attached = false ∨ c.sizer = true)
-    (read : c.decoder.feed chunk = (dec, .kill :: rest)) (healthy : dec.errored = false) :
+    (writable : c.mode = .writable) (read : c.decoder.feed chunk = (dec, .kill :: rest))
+    (healthy : dec.errored = false) :
     (step s (.bytes id chunk)).2 = [.stopProgram, .close id] ∧
       (step s (.bytes id chunk)).1.terminal = s.terminal ∧
       (step s (.bytes id chunk)).1.labelList = s.labelList := by
@@ -2753,7 +2748,7 @@ theorem step_kill_stops (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
             decoder := dec, answered := false },
         [.stopProgram, .close id]) := by
     rw [onMsg_kill]
-    rcases writable with h | h <;> simp [h, ← he]
+    simp [writable, ← he]
   have first :
     step s (.bytes id chunk) =
       feedMsgs id rest
@@ -2971,7 +2966,7 @@ theorem step_labels_sources (s : State) (ev : Event)
     ∃ id chunk c,
       ev = .bytes id chunk ∧
         s.client? id = some c ∧
-        (c.attached = false ∨ c.sizer = true) ∧
+        (c.attached = false ∨ c.mode = .writable) ∧
         ∃ m ∈ (c.decoder.feed chunk).2, m.ChangesLabels := by
   cases ev with
   | bytes id chunk =>
@@ -2979,14 +2974,14 @@ theorem step_labels_sources (s : State) (ev : Event)
     | none => exact absurd (by simp [step, hc, State.labelList]) changed
     | some c =>
       refine ⟨id, chunk, c, rfl, hc, ?_, ?_⟩
-      · by_cases hw : c.attached = true ∧ c.sizer = false
+      · by_cases hw : c.attached = true ∧ c.mode = .readOnly
         · have hwatch : Watches s id := by
             intro c' h'
             rw [hc] at h'
             cases h'
             exact hw
           exact absurd (step_bytes_watcher s id chunk hwatch).2.2.1 changed
-        · cases ha : c.attached <;> cases hs : c.sizer <;> simp_all
+        · cases ha : c.attached <;> cases hs : c.mode <;> simp_all
       · apply Classical.byContradiction
         intro hnone
         apply changed
@@ -3136,16 +3131,14 @@ theorem foldl_resize_origin (v : Vt.Vt) (h : v.cursorPos = (0, 0)) (sizes : List
 
 /-- Input messages from a client that may type become one write each, in order. -/
 theorem feedMsgs_inputs (id : Nat) (inputs : List (List UInt8)) (t : State) (c : Client)
-    (hc : t.client? id = some c) (typist : c.attached = false ∨ c.sizer = true)
-    (effs : List (Effect Plan)) (clean : Effect.close id ∉ effs ∧ Effect.exit ∉ effs) :
+    (hc : t.client? id = some c) (typist : c.mode = .writable) (effs : List (Effect Plan))
+    (clean : Effect.close id ∉ effs ∧ Effect.exit ∉ effs) :
     feedMsgs id (inputs.map Msg.input) (t, effs) = (t, effs ++ inputs.map Effect.writePty) := by
   induction inputs generalizing effs with
   | nil => simp [feedMsgs]
   | cons bytes inputs
     ih =>
-    have stays : onMsg t c (.input bytes) = (t, [.writePty bytes]) := by
-      unfold onMsg
-      rcases typist with h | h <;> simp [h]
+    have stays : onMsg t c (.input bytes) = (t, [.writePty bytes]) := onMsg_input t c bytes typist
     have next := ih (effs ++ [.writePty bytes]) (by simpa using clean)
     simp only [feedMsgs, List.map_cons, List.foldl_cons] at next ⊢
     simp only [List.contains_eq_mem, decide_eq_true_eq, clean.1, clean.2, Bool.or_self, ↓reduceIte,
@@ -3156,8 +3149,8 @@ theorem feedMsgs_inputs (id : Nat) (inputs : List (List UInt8)) (t : State) (c :
 type is one write per message, its bytes, in order, and nothing else. -/
 theorem step_input_exact (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {inputs : List (List UInt8)} (hc : s.client? id = some c)
-    (typist : c.attached = false ∨ c.sizer = true)
-    (read : c.decoder.feed chunk = (dec, inputs.map Msg.input)) (healthy : dec.errored = false) :
+    (typist : c.mode = .writable) (read : c.decoder.feed chunk = (dec, inputs.map Msg.input))
+    (healthy : dec.errored = false) :
     (step s (.bytes id chunk)).2 = inputs.map Effect.writePty := by
   have he :
     ({ c with
@@ -3183,6 +3176,429 @@ theorem step_input_exact (s : State) (id : Nat) (chunk : List UInt8) {c : Client
         decoder := dec, answered := false }
       h1 typist [] (by simp)
   simp only [step, hc, read, healthy, Bool.false_eq_true, ↓reduceIte, this, List.nil_append]
+
+/-! ## Rights follow the mode, and only a real size reaches the pty
+
+A connection's rights are the mode it attached with: an attach records the mode it asks for,
+whatever size it gives, and a resize records its size and leaves the mode alone. A client sizes
+the session only while its terminal has a size, so every pty resize has positive dimensions. -/
+
+/-- An attach from a connection not yet attached records the mode, size and attach order it
+gives, whatever that size. -/
+theorem onMsg_attach_record (s : State) (c : Client) (mode : Mode) (cols rows : UInt32)
+    (hc : s.client? c.id = some c) (fresh : c.attached = false) :
+    (onMsg s c (.attach mode cols rows)).1.client? c.id =
+      some
+        { c with
+          attached := true, mode, seq := s.attachSeq, cols, rows } := by
+  let c' : Client :=
+    { c with
+      attached := true, mode, seq := s.attachSeq, cols, rows }
+  have h1 : (s.setClient c').client? c.id = some c' := client?_setClient (c := c') hc
+  unfold onMsg
+  dsimp only
+  simp only [fresh, Bool.false_eq_true, ↓reduceIte]
+  unfold resizeOwned
+  split
+  · simp only [State.client?, resize_clients]; exact h1
+  · exact h1
+
+/-- **The rights after an attach are the mode asked for, whatever the size**: a read that
+completes exactly one attach, from a connection not yet attached, leaves its record attached with
+the mode and size the attach gives, the next attach order, its decoder advanced and its read not
+yet answered. -/
+theorem step_attach_record {s : State} {id : Nat} {chunk : List UInt8} {c : Client}
+    {dec : Wire.Decoder} {mode : Mode} {cols rows : UInt32} (hc : s.client? id = some c)
+    (fresh : c.attached = false) (read : c.decoder.feed chunk = (dec, [.attach mode cols rows]))
+    (healthy : dec.errored = false) :
+    (step s (.bytes id chunk)).1.client? id =
+      some
+        { c with
+          decoder := dec, answered := false, attached := true, mode, seq := s.attachSeq, cols,
+          rows } := by
+  have he :
+    ({ c with
+            decoder := dec, answered := false } :
+          Client).id =
+      id :=
+    (client?_id hc : c.id = id)
+  have h1 :
+    (s.setClient
+            { c with
+              decoder := dec, answered := false }).client?
+        ({ c with
+              decoder := dec, answered := false } :
+            Client).id =
+      some
+        { c with
+          decoder := dec, answered := false } :=
+    client?_setClient (he ▸ hc)
+  rw [step_bytes_single hc read healthy, ← he]
+  exact onMsg_attach_record _ _ mode cols rows h1 fresh
+
+/-- The rights after an attach are exactly the mode it asks for, for every size. -/
+theorem step_attach_mode (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
+    {dec : Wire.Decoder} {mode : Mode} {cols rows : UInt32} (hc : s.client? id = some c)
+    (fresh : c.attached = false) (read : c.decoder.feed chunk = (dec, [.attach mode cols rows]))
+    (healthy : dec.errored = false) :
+    ∃ c', (step s (.bytes id chunk)).1.client? id = some c' ∧ c'.attached = true ∧ c'.mode = mode :=
+  ⟨_, step_attach_record hc fresh read healthy, rfl, rfl⟩
+
+/-- A resize records its size, 0 included, and keeps the sender's mode, whether its connection
+is attached or not. -/
+theorem onMsg_resize_mode (s : State) (c : Client) (cols rows : UInt32)
+    (hc : s.client? c.id = some c) :
+    ∃ c', (onMsg s c (.resize cols rows)).1.client? c.id = some c' ∧ c'.mode = c.mode := by
+  unfold onMsg
+  dsimp only
+  let c1 : Client :=
+    { c with
+      cols, rows }
+  let c2 : Client := { c1 with answered := true }
+  have h1 : (s.setClient c1).client? c.id = some c1 := client?_setClient (c := c1) hc
+  have h2 : ((s.setClient c1).setClient c2).client? c.id = some c2 := client?_setClient (c := c2) h1
+  split
+  · refine ⟨c1, ?_, rfl⟩
+    unfold resizeOwned
+    split
+    · simp only [State.client?, resize_clients]; exact h1
+    · exact h1
+  · split
+    · exact ⟨c1, h1, rfl⟩
+    · refine ⟨c2, ?_, rfl⟩
+      unfold controlResize
+      split
+      · exact h2
+      · split
+        · exact h2
+        · simp only [State.client?, resize_clients]; exact h2
+
+/-- An attached client's resize records the size it gives, 0 included, and changes nothing else
+of its record. -/
+theorem onMsg_resize_record (s : State) (c : Client) (cols rows : UInt32)
+    (hc : s.client? c.id = some c) (attached : c.attached = true) :
+    (onMsg s c (.resize cols rows)).1.client? c.id =
+      some
+        { c with
+          cols, rows } := by
+  have h1 :
+    (s.setClient
+            { c with
+              cols, rows }).client?
+        c.id =
+      some
+        { c with
+          cols, rows } :=
+    client?_setClient hc
+  unfold onMsg
+  dsimp only
+  split
+  · unfold resizeOwned
+    split
+    · simp only [State.client?, resize_clients]; exact h1
+    · exact h1
+  · rename_i detached
+    exact absurd attached detached
+
+/-- A read that completes exactly one resize, from an attached client, records the size it gives,
+0 included, and leaves the rest of the record as it was, its decoder advanced. -/
+theorem step_resize_record {s : State} {id : Nat} {chunk : List UInt8} {c : Client}
+    {dec : Wire.Decoder} {cols rows : UInt32} (hc : s.client? id = some c)
+    (attached : c.attached = true) (read : c.decoder.feed chunk = (dec, [.resize cols rows]))
+    (healthy : dec.errored = false) :
+    (step s (.bytes id chunk)).1.client? id =
+      some
+        { c with
+          decoder := dec, answered := false, cols, rows } := by
+  have he :
+    ({ c with
+            decoder := dec, answered := false } :
+          Client).id =
+      id :=
+    (client?_id hc : c.id = id)
+  have h1 :
+    (s.setClient
+            { c with
+              decoder := dec, answered := false }).client?
+        ({ c with
+              decoder := dec, answered := false } :
+            Client).id =
+      some
+        { c with
+          decoder := dec, answered := false } :=
+    client?_setClient (he ▸ hc)
+  rw [step_bytes_single hc read healthy, ← he]
+  exact onMsg_resize_record _ _ cols rows h1 attached
+
+/-- **A resize never changes a client's rights**: a read of resize messages, whatever sizes they
+give, 0 included, leaves the sender's mode as it was. -/
+theorem step_resize_mode (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
+    {dec : Wire.Decoder} {sizes : List (UInt32 × UInt32)} (hc : s.client? id = some c)
+    (read : c.decoder.feed chunk = (dec, sizes.map fun size => .resize size.1 size.2))
+    (healthy : dec.errored = false) :
+    ((step s (.bytes id chunk)).1.client? id).map (·.mode) = some c.mode := by
+  have he :
+    ({ c with
+            decoder := dec, answered := false } :
+          Client).id =
+      id :=
+    (client?_id hc : c.id = id)
+  have h1 :
+    (s.setClient
+            { c with
+              decoder := dec, answered := false }).client?
+        id =
+      some
+        { c with
+          decoder := dec, answered := false } := by
+    rw [← he]; exact client?_setClient (he ▸ hc)
+  have kept :
+    ∃ c',
+      (feedMsgs id (sizes.map fun size => .resize size.1 size.2)
+                (s.setClient
+                    { c with
+                      decoder := dec, answered := false },
+                  [])).1.client?
+            id =
+          some c' ∧
+        c'.mode = c.mode := by
+    refine
+      feedMsgs_induct id _ _ (P := fun acc => ∃ c', acc.1.client? id = some c' ∧ c'.mode = c.mode)
+        ?_ ⟨_, h1, rfl⟩
+    intro acc c0 m hm _ _ hc0 ⟨c', hc', hmode⟩
+    obtain ⟨size, -, rfl⟩ := List.mem_map.mp hm
+    have same : c0 = c' := Option.some.inj (hc0.symm.trans hc')
+    subst same
+    have hid0 : c0.id = id := client?_id hc0
+    obtain ⟨c'', h'', hmode''⟩ := onMsg_resize_mode acc.1 c0 size.1 size.2 (hid0 ▸ hc0)
+    exact ⟨c'', hid0 ▸ h'', hmode''.trans hmode⟩
+  obtain ⟨c', hc', hmode⟩ := kept
+  have first :
+    step s (.bytes id chunk) =
+      feedMsgs id (sizes.map fun size => .resize size.1 size.2)
+        (s.setClient
+            { c with
+              decoder := dec, answered := false },
+          []) := by
+    simp only [step, hc, read, healthy, Bool.false_eq_true, ↓reduceIte]
+  rw [first, hc', Option.map_some, hmode]
+
+/-- A resize asks the pty for the size it is given, clamped by `Vt.clampDim`. -/
+theorem resize_source (s : State) (cols rows ec er : UInt32)
+    (h : Effect.resizePty ec er ∈ (resize s cols rows).2) :
+    ec.toNat = Vt.clampDim cols.toNat ∧ er.toNat = Vt.clampDim rows.toNat := by
+  have agrees := resize_agrees s cols rows ec er h
+  revert h agrees
+  unfold resize
+  split
+  · simp
+  · intro _ agrees
+    exact agrees
+
+/-- The size owner's resize is its own size, clamped, and a real one. -/
+theorem resizeOwned_source (s : State) (c : Client) (ec er : UInt32)
+    (h : Effect.resizePty ec er ∈ (resizeOwned s c).2) :
+    c.cols ≠ 0 ∧
+      c.rows ≠ 0 ∧ ec.toNat = Vt.clampDim c.cols.toNat ∧ er.toNat = Vt.clampDim c.rows.toNat := by
+  unfold resizeOwned at h
+  split at h
+  · rename_i owner
+    obtain ⟨hc, hr⟩ := resize_source s c.cols c.rows ec er h
+    refine ⟨fun zero => ?_, fun zero => ?_, hc, hr⟩ <;> simp [Client.sizes, zero] at owner
+  · simp at h
+
+/-- A control resize asks the pty for the size it gives, clamped, and only a real one. -/
+theorem controlResize_source (s : State) (c : Client) (cols rows ec er : UInt32)
+    (h : Effect.resizePty ec er ∈ (controlResize s c cols rows).2) :
+    cols ≠ 0 ∧
+      rows ≠ 0 ∧ ec.toNat = Vt.clampDim cols.toNat ∧ er.toNat = Vt.clampDim rows.toNat := by
+  unfold controlResize at h
+  split at h
+  · simp at h
+  · split at h
+    · simp at h
+    · rename_i real
+      dsimp only at h
+      rcases List.mem_append.mp h with h | h
+      · obtain ⟨hc, hr⟩ := resize_source s cols rows ec er h
+        refine ⟨fun zero => ?_, fun zero => ?_, hc, hr⟩ <;> simp [zero] at real
+      · simp at h
+
+/-- **Every pty resize a message asks for is a real size it gives, clamped**: only an attach or a
+resize asks for one, and only with no zero in its size. -/
+theorem onMsg_resizePty_source (s : State) (c : Client) (m : Msg) (ec er : UInt32)
+    (h : Effect.resizePty ec er ∈ (onMsg s c m).2) :
+    ∃ mode width height,
+      (m = .attach mode width height ∨ m = .resize width height) ∧
+        width ≠ 0 ∧
+        height ≠ 0 ∧ ec.toNat = Vt.clampDim width.toNat ∧ er.toNat = Vt.clampDim height.toNat := by
+  cases m with
+  | attach mode cols
+    rows =>
+    let c' : Client :=
+      { c with
+        attached := true, mode, seq := s.attachSeq, cols, rows }
+    let s1 : State :=
+      { s.setClient c' with
+        attachSeq := s.attachSeq + 1, lookSeq := s.outSeq }
+    revert h
+    unfold onMsg
+    dsimp only
+    cases ha : c.attached
+    · simp only [Bool.false_eq_true, ↓reduceIte]
+      show
+        Effect.resizePty ec er ∈
+            (resizeOwned s1 c').2 ++
+              focusEffects (mode == .writable) s.focused (resizeOwned s1 c').1 ++
+              _ ++
+              _ →
+          _
+      intro h
+      simp only [List.mem_append] at h
+      rcases h with ((h | h) | h) | h
+      · obtain ⟨hc, hr, hec, her⟩ := resizeOwned_source s1 c' ec er h
+        exact ⟨mode, cols, rows, .inl rfl, hc, hr, hec, her⟩
+      · unfold focusEffects at h
+        split at h <;> simp at h
+      · simp at h
+      · split at h <;> simp at h
+    · simp
+  | resize cols rows =>
+    revert h
+    unfold onMsg
+    dsimp only
+    split
+    · intro h
+      obtain ⟨hc, hr, hec, her⟩ := resizeOwned_source _ _ ec er h
+      exact ⟨.writable, cols, rows, .inr rfl, hc, hr, hec, her⟩
+    · split
+      · simp
+      · intro h
+        obtain ⟨hc, hr, hec, her⟩ := controlResize_source _ _ cols rows ec er h
+        exact ⟨.writable, cols, rows, .inr rfl, hc, hr, hec, her⟩
+  | _ =>
+    revert h
+    unfold onMsg outputMsgs
+    dsimp only
+    repeat' split
+    all_goals simp
+
+/-- An ending asks for no pty resize but, perhaps, its last effect. -/
+theorem conclude_no_resize (s : State) (o : Outcome) (last : Effect Plan) (cols rows : UInt32)
+    (h : Effect.resizePty cols rows ∈ (conclude s o last).2) : last = .resizePty cols rows := by
+  rw [conclude_effects] at h
+  dsimp only at h
+  rcases List.mem_append.mp h with h | h
+  · rcases List.mem_append.mp h with h | h
+    · rcases List.mem_append.mp h with h | h
+      · obtain ⟨_, _, he⟩ := broadcast_sends _ _ _ h
+        cases he
+      · obtain ⟨_, -, h⟩ := List.mem_flatMap.mp h
+        simp at h
+    · obtain ⟨_, -, h⟩ := List.mem_map.mp h
+      cases h
+  · simp only [List.mem_cons, List.not_mem_nil, or_false] at h
+    rcases h with h | h
+    · exact h.symm
+    · cases h
+
+/-- Only a read asks for a pty resize, and each is a real size an attach or a resize in it gives,
+clamped. -/
+theorem step_resizePty_source (s : State) (ev : Event) (cols rows : UInt32)
+    (resized : Effect.resizePty cols rows ∈ (step s ev).2) :
+    ∃ id chunk c,
+      ev = .bytes id chunk ∧
+        s.client? id = some c ∧
+        ∃ m ∈ (c.decoder.feed chunk).2,
+          ∃ mode width height,
+            (m = .attach mode width height ∨ m = .resize width height) ∧
+              width ≠ 0 ∧
+              height ≠ 0 ∧
+              cols.toNat = Vt.clampDim width.toNat ∧ rows.toNat = Vt.clampDim height.toNat := by
+  cases ev with
+  | bytes id chunk =>
+    cases hc : s.client? id with
+    | none => simp [step, hc] at resized
+    | some c =>
+      refine ⟨id, chunk, c, rfl, hc, ?_⟩
+      revert resized
+      simp only [step, hc]
+      split
+      · intro h
+        rcases List.mem_cons.mp h with h | h
+        · cases h
+        · rcases closed_effects s id _ (by simpa only [step] using h) with h | h <;> cases h
+      · intro h
+        exact
+          feedMsgs_induct _ _ _ (P := fun acc =>
+            Effect.resizePty cols rows ∈ acc.2 →
+              ∃ m ∈ (c.decoder.feed chunk).2,
+                ∃ mode width height,
+                  (m = .attach mode width height ∨ m = .resize width height) ∧
+                    width ≠ 0 ∧
+                    height ≠ 0 ∧
+                    cols.toNat = Vt.clampDim width.toNat ∧ rows.toNat = Vt.clampDim height.toNat)
+            (fun acc c' m hm _ _ _ hacc h => by
+              rcases List.mem_append.mp h with h | h
+              · exact hacc h
+              · exact ⟨m, hm, onMsg_resizePty_source acc.1 c' m cols rows h⟩)
+            (by simp) h
+  | connected id =>
+    simp only [step] at resized
+    split at resized <;> simp at resized
+  | closed id => rcases closed_effects s id _ resized with h | h <;> cases h
+  | ptyOut chunk =>
+    rw [step_ptyOut_effects] at resized
+    dsimp only at resized
+    rcases List.mem_append.mp resized with h | h
+    · split at h <;> simp at h
+    · obtain ⟨_, _, he⟩ := broadcast_sends _ _ _ h
+      cases he
+  | childExited o => cases conclude_no_resize s o .checkpoint cols rows resized
+  | stopped o => cases conclude_no_resize s o .dropCheckpoint cols rows resized
+  | tick now =>
+    simp only [step] at resized
+    split at resized <;> simp at resized
+  | checkpointFailed => simp [checkpointFailed_effects] at resized
+
+/-- **No pty resize has a zero dimension**: whatever event arrives, every resize the session asks
+for has positive dimensions, and is the size, clamped, of an attach or resize in the read that
+asked for it, a size with no zero, so a terminal with no size yet never reaches the pty. -/
+theorem step_resizes_sized (s : State) (ev : Event) (cols rows : UInt32)
+    (resized : Effect.resizePty cols rows ∈ (step s ev).2) :
+    0 < cols ∧
+      0 < rows ∧
+      ∃ id chunk c,
+        ev = .bytes id chunk ∧
+          s.client? id = some c ∧
+          ∃ m ∈ (c.decoder.feed chunk).2,
+            ∃ mode width height,
+              (m = .attach mode width height ∨ m = .resize width height) ∧
+                width ≠ 0 ∧
+                height ≠ 0 ∧
+                cols.toNat = Vt.clampDim width.toNat ∧ rows.toNat = Vt.clampDim height.toNat := by
+  have source := step_resizePty_source s ev cols rows resized
+  have sized : 0 < cols ∧ 0 < rows := by
+    obtain ⟨_, _, _, _, _, _, _, _, width, height, _, _, _, hcols, hrows⟩ := source
+    have lc := (Vt.clampDim_range width.toNat).1
+    have lr := (Vt.clampDim_range height.toNat).1
+    constructor <;> rw [UInt32.lt_iff_toNat_lt] <;> simp only [UInt32.toNat_zero] <;> omega
+  exact ⟨sized.1, sized.2, source⟩
+
+/-- A booted session's first connection, once it attached writable at 80×24, holds that record:
+the witness the kill of a resize that drops typing starts from. -/
+theorem attached_client_witness :
+    (trace step (State.boot (Vt.Vt.init 1 1) [] [])
+            [.connected 1, .bytes 1 (Wire.encode (.attach .writable 80 24))]).1.client?
+        1 =
+      some { id := 1, attached := true, cols := 80, rows := 24 } := by
+  change
+    (step (trace step (State.boot (Vt.Vt.init 1 1) [] []) [.connected 1]).1
+            (.bytes 1 (Wire.encode (.attach .writable 80 24)))).1.client?
+        1 =
+      _
+  rw [step_attach_record connected_client_witness.1 rfl (feed_encode_fresh _ trivial) rfl]
+  rfl
 
 /-! ## How a session's processes end -/
 

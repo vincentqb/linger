@@ -18,8 +18,37 @@ different byte layout would break every deployed peer — this test is
 the freeze. -/
 example : encode (.input [0x68, 0x69]) = [0, 2, 0, 0, 0, 0x68, 0x69] := by decide
 
-/-- Golden frame: `attach 80×24`. cols/rows are LE u32s in the payload. -/
-example : encode (.attach 80 24) = [3, 8, 0, 0, 0, 80, 0, 0, 0, 24, 0, 0, 0] := by decide
+/-- Golden frames: a writable and a read-only `attach 80×24` are tag 18, the mode byte, then
+cols and rows as LE u32s. -/
+example : encode (.attach .writable 80 24) = [18, 9, 0, 0, 0, 0, 80, 0, 0, 0, 24, 0, 0, 0] := by
+  decide
+
+example : encode (.attach .readOnly 80 24) = [18, 9, 0, 0, 0, 1, 80, 0, 0, 0, 24, 0, 0, 0] := by
+  decide
+
+/-- The attach of levels 1 and 2, tag 3 with only a size, is a message this version does not
+know, as is an attach whose mode byte it does not know: both are refused, never read as an
+attach. -/
+example :
+    ((decode [3, 8, 0, 0, 0, 80, 0, 0, 0, 24, 0, 0, 0]).2 ==
+        [.unknown 3 [80, 0, 0, 0, 24, 0, 0, 0]]) =
+      true := by
+  native_decide
+
+example :
+    ((decode [18, 9, 0, 0, 0, 2, 80, 0, 0, 0, 24, 0, 0, 0]).2 ==
+        [.unknown 18 [2, 80, 0, 0, 0, 24, 0, 0, 0]]) =
+      true := by
+  native_decide
+
+/-- A tag-18 frame with no mode byte at all names no mode either. -/
+example : ((decode [18, 0, 0, 0, 0]).2 == [.unknown 18 []]) = true := by native_decide
+
+/-- Both modes, and a 0×0 size, survive the trip. -/
+example : (decode (encode (.attach .writable 0 0))).2 == [.attach .writable 0 0] := by native_decide
+
+example : (decode (encode (.attach .readOnly 213 58))).2 == [.attach .readOnly 213 58] := by
+  native_decide
 
 /-- Nullary verb: header only. -/
 example : encode .kill = [5, 0, 0, 0, 0] := by decide
@@ -27,7 +56,7 @@ example : encode .kill = [5, 0, 0, 0, 0] := by decide
 /-- Byte-by-byte feeding (the worst chunking a socket can produce)
 delivers exactly the same messages as one-shot decoding. -/
 example :
-    (let bytes := encode (.attach 80 24) ++ encode (.input [1, 2, 3]) ++ encode .kill
+    (let bytes := encode (.attach .writable 80 24) ++ encode (.input [1, 2, 3]) ++ encode .kill
      let oneShot := (decode bytes).2
       let byteWise :=
         bytes.foldl
@@ -39,8 +68,8 @@ example :
       true := by
   native_decide
 
-/-- Fixed-size chunker for the §Stream test (7 never divides a frame
-boundary in the stream below). -/
+/-- Fixed-size chunker for the §Stream test: every 7 bytes, which cuts each frame but the last
+of the stream below. -/
 def chop7 (l : List UInt8) : List (List UInt8) :=
   if l.length ≤ 7 then [l] else l.take 7 :: chop7 (l.drop 7)
 termination_by l.length
@@ -50,7 +79,7 @@ decreasing_by simp only [List.length_drop]; omega
 frame across boundaries delivers exactly the one-shot decode: same
 messages, same order, clean final state. -/
 example :
-    (let bytes := encode (.attach 80 24) ++ encode (.input [1, 2, 3])
+    (let bytes := encode (.attach .readOnly 80 24) ++ encode (.input [1, 2, 3])
                     ++ encode (.labelSet [107, 61, 118]) ++ encode .kill
      let (d, ms) := Decoder.feedAll {} (chop7 bytes)
      ms == (decode bytes).2 && d.buf.isEmpty && !d.errored) = true := by native_decide

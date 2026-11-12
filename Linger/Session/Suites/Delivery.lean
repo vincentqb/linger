@@ -141,7 +141,7 @@ private def largeReplay (dir : String) (marks : Bool) : IO Unit := do
   let expected := repaint ++ live
   withPair dir label vt fun rt peer fd => do
       expect (repaint.size > outbufCap) s!"delivery/{label}/exceeds-cap"
-      let request := Wire.encode (.attach 0 0)
+      let request := Wire.encode (.attach .readOnly 0 0)
       writeAll peer (ByteArray.mk request.toArray)
       let (rt, events) ← pollRound rt (limitMs := some 100)
       let rt ← pump rt events
@@ -164,7 +164,7 @@ private def largeReplay (dir : String) (marks : Bool) : IO Unit := do
 
 private def exitTail (dir : String) : IO Unit :=
   withPair dir "exit" (Terminal.Vt.Vt.init 20 5) fun rt peer fd => do
-    let st := (Session.step rt.st (.bytes fd.toNat (Wire.encode (.attach 20 5)))).1
+    let st := (Session.step rt.st (.bytes fd.toNat (Wire.encode (.attach .writable 20 5)))).1
     let mut rt := { rt with st }
     let mut expected := ByteArray.empty
     for i in [:16] do
@@ -188,7 +188,9 @@ def snapshotOrder (dir : String) : IO Unit := do
   let vt := (Terminal.Vt.Vt.init 20 5).feed "snapshot".toUTF8.toList
   let expected := ByteArray.mk (Render.restore vt).toArray
   withPair dir "snapshot" vt fun rt peer fd => do
-      let rt ← pump rt [.bytes fd.toNat (Wire.encode (.attach 20 5) ++ Wire.encode (.resize 21 6))]
+      let rt ←
+        pump rt
+            [.bytes fd.toNat (Wire.encode (.attach .writable 20 5) ++ Wire.encode (.resize 21 6))]
       let (_, got) ← collect rt peer expected.size
       expect (got.bytes == expected && rt.st.vt.colCount == 21 && rt.st.vt.rowCount == 6)
           "delivery/snapshot/attach-event-point"
@@ -205,7 +207,8 @@ def pendingWrap (dir : String) : IO Unit := do
       let live := after.toUTF8
       let expected := ByteArray.mk (Render.restore vt).toArray ++ live
       withPair dir s!"pending-{slot}-{glyph}" vt fun rt peer fd => do
-          let rt ← pump rt [.bytes fd.toNat (Wire.encode (.attach 0 0)), .ptyOut live.toList]
+          let rt ←
+            pump rt [.bytes fd.toNat (Wire.encode (.attach .readOnly 0 0)), .ptyOut live.toList]
           let (_, got) ← collect rt peer expected.size
           let received := (Vt.Vt.init 4 2).feed got.bytes.toList
           let continued := vt.feed live.toList
@@ -219,7 +222,7 @@ private def repeatedAttach (dir : String) : IO Unit := do
   let vt := Terminal.Vt.Vt.init 20 5
   let expected := ByteArray.mk (Render.restore vt).toArray
   withPair dir "repeat" vt fun rt peer fd => do
-      let request := Wire.encode (.attach 20 5)
+      let request := Wire.encode (.attach .writable 20 5)
       let rt ← pump rt [.bytes fd.toNat (request ++ request)]
       -- An error is behind the repaint, so collect until the connection has
       -- produced both responses rather than stopping at the first frame.
@@ -235,7 +238,7 @@ throwing out of the serving loop. Ordinary repeated attach never emits it. -/
 def duplicateEffect (dir : String) : IO Unit := do
   let vt := Terminal.Vt.Vt.init 20 5
   withPair dir "duplicate-effect" vt fun rt _peer fd => do
-      let rt ← pump rt [.bytes fd.toNat (Wire.encode (.attach 0 0))]
+      let rt ← pump rt [.bytes fd.toNat (Wire.encode (.attach .readOnly 0 0))]
       let cleaned ←
         try
           let (rt, feedback) ← runEffect rt (.replay fd.toNat (Replay.start vt))
@@ -259,7 +262,7 @@ def prefixOrder (dir : String) : IO Unit := do
         let (rt', events) ←
           runEffect rt (.send fd.toNat (.output (List.replicate Session.outputChunk 0x41)))
         rt ← pump rt' events
-      rt ← pump rt [.bytes fd.toNat (Wire.encode (.attach 0 0)), .ptyOut [0x5A]]
+      rt ← pump rt [.bytes fd.toNat (Wire.encode (.attach .readOnly 0 0)), .ptyOut [0x5A]]
       let expected := preceding ++ ByteArray.mk (Render.restore vt).toArray ++ "Z".toUTF8
       let (_, got) ← collect rt peer expected.size
       expect (got.bytes == expected && !got.eof && !got.decoder.errored)
@@ -271,7 +274,7 @@ def titleChunks (dir : String) : IO Unit := do
   let some vt := Linger.Session.Tests.Delivery.acceptedTitle
     | throw (IO.userError "delivery title fixture was refused")
   withPair dir "title" vt fun rt peer fd => do
-      let rt ← pump rt [.bytes fd.toNat (Wire.encode (.attach 0 0))]
+      let rt ← pump rt [.bytes fd.toNat (Wire.encode (.attach .readOnly 0 0))]
       let expected := ByteArray.mk (Render.restore vt).toArray
       let (_, got) ← collect rt peer expected.size
       expect (got.bytes == expected && !got.decoder.errored && got.bounded)
@@ -283,7 +286,7 @@ def liveBound (dir : String) : IO Unit := do
   let some vt := Linger.Session.Tests.Delivery.acceptedScreen false
     | throw (IO.userError "large delivery fixture was refused")
   withPair dir "bound" vt fun rt _peer fd => do
-      let mut rt ← pump rt [.bytes fd.toNat (Wire.encode (.attach 0 0))]
+      let mut rt ← pump rt [.bytes fd.toNat (Wire.encode (.attach .readOnly 0 0))]
       rt ← stall rt fd
       let mut bounded := true
       let mut queued := false
@@ -328,7 +331,7 @@ def closingBound (dir : String) : IO Unit := do
       let peers ← IO.mkRef ([] : List UInt32)
       let latest ← IO.mkRef rt
       try
-        let mut rt ← pump rt [.bytes fd.toNat (Wire.encode (.attach 0 0))]
+        let mut rt ← pump rt [.bytes fd.toNat (Wire.encode (.attach .readOnly 0 0))]
         rt ← stall rt fd
         let (rt', more) ← runEffect rt (.close fd.toNat)
         rt ← pump rt' more
@@ -343,7 +346,7 @@ def closingBound (dir : String) : IO Unit := do
           rt ← pump rt' events
           let added := rt.conns.filter (fun c => !old.contains c.fd)
           for c in added do
-            rt ← pump rt [.bytes c.fd.toNat (Wire.encode (.attach 0 0))]
+            rt ← pump rt [.bytes c.fd.toNat (Wire.encode (.attach .readOnly 0 0))]
             rt ← stall rt c.fd
             let (rt', more) ← runEffect rt (.close c.fd.toNat)
             rt ← pump rt' more
@@ -400,7 +403,7 @@ private def serveTail (dir : String) : IO Unit := do
     let fd := fd.toUInt64.toUInt32
     peer.set (some fd)
     setNonblock fd
-    writeAll fd (ByteArray.mk (Wire.encode (.attach 0 0)).toArray)
+    writeAll fd (ByteArray.mk (Wire.encode (.attach .readOnly 0 0)).toArray)
     let repaint := ByteArray.mk (Render.restore (Terminal.Vt.Vt.init 20 5)).toArray
     let mut got : Received := {}
     let attachedBy := (← IO.monoMsNow) + 10000
@@ -441,7 +444,7 @@ def closeOrder (dir : String) : IO Unit := do
     withPair dir s!"close-order-{variant}" (Vt.Vt.init 20 5) fun rt _ fd => do
         let id := fd.toNat
         let control := id + 1
-        let attached := (Session.step rt.st (.bytes id (Wire.encode (.attach 20 5)))).1
+        let attached := (Session.step rt.st (.bytes id (Wire.encode (.attach .writable 20 5)))).1
         let dirty := (Session.step attached (.ptyOut [0x41])).1
         let st :=
           if variant == "other-client" then (Session.step dirty (.connected control)).1 else dirty
@@ -479,7 +482,7 @@ def largeBatch (dir : String) : IO Unit :=
 must settle before stale client input, leaving persistence eligible to retry. -/
 def failureFeedback (dir : String) : IO Unit :=
   withPair dir "failure-feedback" (Vt.Vt.init 20 5) fun rt peer fd => do
-    let st := (Session.step rt.st (.bytes fd.toNat (Wire.encode (.attach 20 5)))).1
+    let st := (Session.step rt.st (.bytes fd.toNat (Wire.encode (.attach .writable 20 5)))).1
     let saved ← IO.mkRef ([] : List (List (String × String)))
     let rt :=
       { rt with

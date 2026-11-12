@@ -54,7 +54,8 @@ def closeFeedback (e : Env) : IO Unit := do
       let dropped ← IO.mkRef (0 : Nat)
       let st :=
         (Linger.Session.run (.boot (Terminal.Vt.Vt.init 20 5) [] [])
-            [.connected fd.toNat, .bytes fd.toNat (Linger.Session.Wire.encode (.attach 20 5)),
+            [.connected fd.toNat,
+              .bytes fd.toNat (Linger.Session.Wire.encode (.attach .writable 20 5)),
               .ptyOut "pending checkpoint".toUTF8.toList]).1
       let rt : Linger.Session.Shell.Daemon.Rt :=
         { st, listenFd := listener, ptyFd := 0, childPid := 0, conns := [{ fd }],
@@ -199,6 +200,47 @@ def focusChecks (e : Env) : IO Unit := do
       s!"a program that did not enable focus reporting reads no focus report ({← read "nofocus"})"
   e.killAll #["focus", "nofocus"]
 
+/-- A terminal with no size yet, as `ssh -tt`, `docker exec -t` and a new `pty.openpty` give
+before their first resize, attaches writable: the program reads what it types, the session takes
+its size once it has one, and a terminal whose size drops back to 0×0 types on and leaves the
+session's size alone. Each check reads the expansion, not the typed text, which the terminal
+echoes whether or not the shell ran it. -/
+def unsizedChecks (e : Env) : IO Unit := do
+  let name := "unsized"
+  let (startRc, _, _) ← e.cli #["start", name, "/bin/sh"]
+  let ran (marker : String) : IO Bool :=
+    waitFor patienceMs (return has (← e.out #["capture", "--history", name]) marker)
+  let size : IO (Option String × Option String) := do
+    return (← e.info name "cols", ← e.info name "rows")
+  let typist ← e.spawn #["attach", name] 0 0
+  try
+    let joined ← waitFor patienceMs (return (← e.info name "clients") == some "1")
+    typist.type "echo unsized-$((21+21))\r"
+    -- its own terminal shows the answer too, and reading it keeps the client's output flowing
+    let shown ← typist.awaitText (← IO.mkRef ByteArray.empty) (hasText · "unsized-42")
+    expect (startRc == 0 && joined && shown && (← ran "unsized-42"))
+        "a writable attach from a terminal with no size yet types into the session"
+    typist.resize 100 30
+    expect (← waitFor patienceMs (return (← size) == (some "100", some "30")))
+        "a terminal that attached with no size sizes the session once it has one"
+    let sized ← e.spawn #["attach", name] 90 25
+    try
+      let resized ← waitFor patienceMs (return (← size) == (some "90", some "25"))
+      sized.resize 0 0
+      -- Each round the client reads its size before its input and its daemon's output, so once
+      -- its terminal shows the answer to a line typed after the resize, it has sent the 0×0, and
+      -- the next line follows it on the same connection.
+      sized.type "echo first-$((1+1))\r"
+      let answered ← sized.awaitText (← IO.mkRef ByteArray.empty) (hasText · "first-2")
+      sized.type "echo zero-$((20+22))\r"
+      expect (resized && answered && (← ran "zero-42") && (← size) == (some "90", some "25"))
+          "a terminal whose size drops to 0x0 types on and leaves the session's size alone"
+    finally
+      sized.bye
+  finally
+    typist.bye
+  e.killAll #[name]
+
 /-- The attach suite: attach, detach, reattach, mirroring, waiting, hand-back and
 scrollback, and that nothing of an ended session's terminal session outlives it. -/
 @[exercises Linger.Session.Signal.Ends]
@@ -206,6 +248,7 @@ def run : IO UInt32 :=
   Env.suite "attach" fun e => do
     closeFeedback e
     focusChecks e
+    unsizedChecks e
     -- one source for the pty geometry and for the off-the-screen window below
     let cols : UInt32 := 80
     let rows : UInt32 := 24

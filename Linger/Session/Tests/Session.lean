@@ -35,7 +35,7 @@ def run (evs : List Event) (s : State := s0) : State × List (Effect Plan) :=
 /-- Attach: client connects, sends attach frame, gets a restore
 (output frames) and the pty is resized. -/
 example :
-    (let (s, effs) := run [.connected 1, .bytes 1 (encode (.attach 100 30))]
+    (let (s, effs) := run [.connected 1, .bytes 1 (encode (.attach .writable 100 30))]
      (s.client? 1).any (·.attached)
        && effs.contains (.resizePty 100 30)
        && effs.any (fun e => match e with | .replay 1 _ => true | _ => false)
@@ -44,7 +44,9 @@ example :
 /-- Keystrokes are forwarded to the pty verbatim, not interpreted. -/
 example :
     (let (_, effs) :=
-        run [.connected 1, .bytes 1 (encode (.attach 80 24)), .bytes 1 (encode (.input [104, 105]))]
+        run
+          [.connected 1, .bytes 1 (encode (.attach .writable 80 24)),
+            .bytes 1 (encode (.input [104, 105]))]
      effs.contains (.writePty [104, 105])) =
       true := by
   native_decide
@@ -52,7 +54,7 @@ example :
 /-- pty output reaches the emulator AND every attached client — but a
 detached session still advances (§Detach, executable form). -/
 example :
-    (let (s1, effs1) := run [.connected 1, .bytes 1 (encode (.attach 80 24)),
+    (let (s1, effs1) := run [.connected 1, .bytes 1 (encode (.attach .writable 80 24)),
                              .ptyOut "hello".toUTF8.toList]
      let (s2, effs2) := run [.ptyOut "hello".toUTF8.toList]
      effs1.any (fun e => match e with | .send 1 (.output _) => true | _ => false)
@@ -122,7 +124,7 @@ example :
 /-- A client closing changes nothing but the roster (a checkpoint
 effect is permitted — that's the reboot-resume save point). -/
 example :
-    (let (sA, _) := run [.connected 1, .bytes 1 (encode (.attach 80 24)),
+    (let (sA, _) := run [.connected 1, .bytes 1 (encode (.attach .writable 80 24)),
                          .ptyOut "x".toUTF8.toList]
      let (sB, effsB) := step sA (.closed 1)
      sB.clients.isEmpty && effsB.all (· == .checkpoint)
@@ -264,8 +266,8 @@ Clients 1 and 2 attach; client 3 never does — it is the `linger detach` contro
 connection, and it is the one asking. The `.attached` filter is the claim: drop it
 and client 3 closes its own socket before its `.done` is read. -/
 example :
-    (let (_, effs) := run [.connected 1, .bytes 1 (encode (.attach 80 24)),
-                           .connected 2, .bytes 2 (encode (.attach 80 24)),
+    (let (_, effs) := run [.connected 1, .bytes 1 (encode (.attach .writable 80 24)),
+                           .connected 2, .bytes 2 (encode (.attach .writable 80 24)),
                            .connected 3, .bytes 3 (encode .detachAll)]
      effs.contains (.close 1) && effs.contains (.close 2)
        && !effs.contains (.close 3)
@@ -274,7 +276,7 @@ example :
 /-- A close requested by an attached sender stops the rest of its decoded
 packet before it can change labels, write input or resize the child. -/
 example :
-    (let s := (run [.connected 1, .bytes 1 (encode (.attach 20 5))]).1
+    (let s := (run [.connected 1, .bytes 1 (encode (.attach .writable 20 5))]).1
      let packet :=
         encode .detachAll ++ encode (.labelSet "after=detach".toUTF8.toList) ++
           encode (.input [0x78]) ++
@@ -287,7 +289,7 @@ example :
 
 /-- Detaching someone else does not stop a control connection's next command. -/
 example :
-    (let s := (run [.connected 1, .bytes 1 (encode (.attach 20 5)), .connected 2]).1
+    (let s := (run [.connected 1, .bytes 1 (encode (.attach .writable 20 5)), .connected 2]).1
      let r := step s (.bytes 2 (encode .detachAll ++ encode (.labelSet "after=control".toUTF8.toList)))
      r.1.labels == [("after", "control")] &&
        r.2 == [.close 1, .send 2 .done, .send 2 .done]) = true := by
@@ -521,7 +523,7 @@ example :
 /-- A malformed final attacher still reaches the last-detach save point.
 The decoder must be removed immediately, before runtime close feedback. -/
 example :
-    (let (s, _) := run [.connected 1, .bytes 1 (encode (.attach 20 5)), .ptyOut [65]]
+    (let (s, _) := run [.connected 1, .bytes 1 (encode (.attach .writable 20 5)), .ptyOut [65]]
      let (s, effs) := step s (.bytes 1 [255, 255, 255, 255, 255])
      s.clients.isEmpty && effs == [.close 1, .checkpoint] &&
        (step s (.closed 1)).2.isEmpty) = true := by
@@ -530,21 +532,22 @@ example :
 /-- Attach after exit tells the client immediately. -/
 example :
     (let (s1, _) := run [.childExited (.exited 3)]
-     let (_, effs) := run [.connected 9, .bytes 9 (encode (.attach 80 24))] s1
+     let (_, effs) := run [.connected 9, .bytes 9 (encode (.attach .writable 80 24))] s1
      effs.contains (.send 9 (.ended (.exited 3))) && effs.contains (.send 9 (.exited 3)))
       = true := by native_decide
 
-/-! ### Observer and size owner
+/-! ### Watchers and the size owner
 
-The read-only observer and size-owner rules: an observer mirrors output but never
-owns the size, and the newest attached sizer wins. -/
+A watcher mirrors output, whatever its terminal's size, but never types or sizes the session; a
+writable client types whatever its size, and of the writable clients whose terminals have a size,
+the newest sizes the session. -/
 
-/-- An observer (attach 0×0) sees output but its keys go nowhere. -/
+/-- A watcher with a terminal of its own sees output but its keys go nowhere. -/
 example :
     (let (_, effs) :=
         run
-          [.connected 1, .bytes 1 (encode (.attach 0 0)), .bytes 1 (encode (.input [120])),
-            .ptyOut [104, 105]]
+          [.connected 1, .bytes 1 (encode (.attach .readOnly 100 30)),
+            .bytes 1 (encode (.input [120])), .ptyOut [104, 105]]
      (!effs.any
             (fun e =>
               match e with
@@ -563,8 +566,8 @@ is recorded but does not touch the pty. -/
 example :
     (let (_, effs) :=
         run
-          [.connected 1, .bytes 1 (encode (.attach 80 24)), .connected 2,
-            .bytes 2 (encode (.attach 100 30)), .bytes 1 (encode (.resize 120 40))]
+          [.connected 1, .bytes 1 (encode (.attach .writable 80 24)), .connected 2,
+            .bytes 2 (encode (.attach .writable 100 30)), .bytes 1 (encode (.resize 120 40))]
      ptyResizes effs == [(80, 24), (100, 30)]) =
       true := by
   native_decide
@@ -575,9 +578,9 @@ wipe a child's `DECSTBM` and tab stops, and no `SIGWINCH` fires at an unchanged
 winsize to make it re-emit them (restore-conformance Step 0 ledger 1). -/
 example :
     (let dirty := "\x1b[2;4r\x1b[3g".toUTF8.toList  -- DECSTBM top=1 bot=3, clear all tabs
-     let (s, _) := run [.connected 1, .bytes 1 (encode (.attach 20 5)),
+     let (s, _) := run [.connected 1, .bytes 1 (encode (.attach .writable 20 5)),
                         .ptyOut dirty,
-                        .connected 2, .bytes 2 (encode (.attach 20 5))]
+                        .connected 2, .bytes 2 (encode (.attach .writable 20 5))]
      s.vt.top == 1 && s.vt.bot == 3 && s.vt.tabs == Array.replicate 20 false) = true := by
   native_decide
 
@@ -585,33 +588,67 @@ example :
 so the same-size guard is what preserves it above, not a dead resize. -/
 example :
     (let dirty := "\x1b[2;4r".toUTF8.toList
-     let (s, _) := run [.connected 1, .bytes 1 (encode (.attach 20 5)),
+     let (s, _) := run [.connected 1, .bytes 1 (encode (.attach .writable 20 5)),
                         .ptyOut dirty,
-                        .connected 2, .bytes 2 (encode (.attach 40 10))]
+                        .connected 2, .bytes 2 (encode (.attach .writable 40 10))]
      s.vt.top == 0 && s.vt.bot == 9) = true := by native_decide
 
-/-- An observer never owns the size, even as the newest attacher. -/
+/-- A watcher never owns the size, even as the newest attacher with a size of its own. -/
 example :
     (let (_, effs) :=
         run
-          [.connected 1, .bytes 1 (encode (.attach 80 24)), .connected 2,
-            .bytes 2 (encode (.attach 0 0)), .bytes 2 (encode (.resize 5 5))]
+          [.connected 1, .bytes 1 (encode (.attach .writable 80 24)), .connected 2,
+            .bytes 2 (encode (.attach .readOnly 100 30)), .bytes 2 (encode (.resize 5 5))]
      ptyResizes effs == [(80, 24)]) =
+      true := by
+  native_decide
+
+/-- A writable client whose terminal has no size yet types: its keys reach the pty, and its 0×0
+reaches no resize. -/
+example :
+    (let (_, effs) :=
+        run
+          [.connected 1, .bytes 1 (encode (.attach .writable 0 0)),
+            .bytes 1 (encode (.input [120]))]
+     effs.contains (.writePty [120]) && ptyResizes effs == []) =
+      true := by
+  native_decide
+
+/-- …it sizes the session once its terminal has a size, and a size that drops back to 0 in
+either dimension reaches no resize, while its keys still reach the pty. -/
+example :
+    (let (s, effs) :=
+        run
+          [.connected 1, .bytes 1 (encode (.attach .writable 0 0)),
+            .bytes 1 (encode (.resize 100 30)), .bytes 1 (encode (.resize 0 0)),
+            .bytes 1 (encode (.resize 0 24)), .bytes 1 (encode (.input [121]))]
+     ptyResizes effs == [(100, 30)] && s.vt.cols == 100 && effs.contains (.writePty [121])) =
+      true := by
+  native_decide
+
+/-- Once the newest writable client has no size, the older one's resize applies again. -/
+example :
+    (let (_, effs) :=
+        run
+          [.connected 1, .bytes 1 (encode (.attach .writable 80 24)), .connected 2,
+            .bytes 2 (encode (.attach .writable 100 30)), .bytes 2 (encode (.resize 0 0)),
+            .bytes 1 (encode (.resize 90 25))]
+     ptyResizes effs == [(80, 24), (100, 30), (90, 25)]) =
       true := by
   native_decide
 
 /-! ### control resize (specs/archive/agent-cli.md Step 4)
 
 `linger resize` from a non-attached connection: applies to a detached
-session, is refused — loudly — while an attached sizer exists, and leaves the
+session, is refused — loudly — while an attached client sizes it, and leaves the
 emulator alone at an unchanged size. -/
 
 /-- Every resize path sends the model's effective dimensions, even when a wire
 dimension exceeds both the emulator cap and the kernel's winsize field. -/
 example :
-    ([[Event.connected 1, .bytes 1 (encode (.attach 65536 5))],
+    ([[Event.connected 1, .bytes 1 (encode (.attach .writable 65536 5))],
             [.connected 1, .bytes 1 (encode (.resize 65536 5))],
-            [.connected 1, .bytes 1 (encode (.attach 20 5)),
+            [.connected 1, .bytes 1 (encode (.attach .writable 20 5)),
               .bytes 1 (encode (.resize 65536 5))]].all
         fun evs =>
         let (s, effs) := run evs
@@ -629,7 +666,7 @@ example :
     ([20, 65536].all fun width =>
         let (s, _) :=
           run
-            [.connected 1, .bytes 1 (encode (.attach width 5)),
+            [.connected 1, .bytes 1 (encode (.attach .writable width 5)),
               .ptyOut "\x1b[2;4r\x1b[3g".toUTF8.toList, .bytes 1 (encode (.resize width 5))]
         s.vt.top == 1 && s.vt.bot == 3 && s.vt.tabs == Array.replicate s.vt.colCount false) =
       true := by
@@ -657,12 +694,12 @@ example :
      ptyResizes effs == [(100, 30)] && s.vt.cols == 100 && s.vt.rows == 30
        && effs.contains (.send 1 .done)) = true := by native_decide
 
-/-- While a sizer is attached, the control resize is refused with an `.err`,
+/-- While an attached client sizes the session, the control resize is refused with an `.err`,
 no `resizePty` is emitted beyond the attach's own, and the emulator keeps the
 attached client's size. -/
 example :
     (let (s, effs) := run [
-        .connected 1, .bytes 1 (encode (.attach 80 24)),
+        .connected 1, .bytes 1 (encode (.attach .writable 80 24)),
         .connected 2, .bytes 2 (encode (.resize 100 30))]
      ptyResizes effs == [(80, 24)] && s.vt.cols == 80 && s.vt.rows == 24
        && effs.any (fun e => match e with
@@ -673,7 +710,7 @@ fact that decides, not history. -/
 example :
     (let (s, effs) :=
         run
-          [.connected 1, .bytes 1 (encode (.attach 80 24)), .closed 1, .connected 2,
+          [.connected 1, .bytes 1 (encode (.attach .writable 80 24)), .closed 1, .connected 2,
             .bytes 2 (encode (.resize 100 30))]
      ptyResizes effs == [(80, 24), (100, 30)] && s.vt.cols == 100) =
       true := by
@@ -691,7 +728,7 @@ example :
             | .resizePty _ _ => true | _ => false)
        && effs.contains (.send 5 .done)) = true := by native_decide
 
-/-- A zero dimension is never a size (0×0 is the observer marker on attach). -/
+/-- A zero dimension is never a size. -/
 example :
     (let (s, effs) := run [.connected 1, .bytes 1 (encode (.resize 0 30))]
      s.vt.cols == 20 &&
@@ -707,7 +744,9 @@ example :
 as data). -/
 example :
     (let (_, effs) :=
-        run [.connected 1, .bytes 1 (encode (.attach 80 24)), .connected 2, .bytes 2 (encode .info)]
+        run
+          [.connected 1, .bytes 1 (encode (.attach .writable 80 24)), .connected 2,
+            .bytes 2 (encode .info)]
      effs.any
         (fun e =>
           match e with
@@ -743,14 +782,14 @@ example :
   native_decide
 
 /-- Focus reports: a program that enabled focus reporting hears `CSI I` when the first client
-that can type attaches, nothing from a watcher or a second typist, and `CSI O` when the last
-typist leaves. -/
+that can type attaches, here one whose terminal has no size yet, nothing from a watcher or a
+second typist, and `CSI O` when the last typist leaves. -/
 example :
     (let focusOn := [0x1B, 0x5B, 0x3F, 0x31, 0x30, 0x30, 0x34, 0x68]
      let (s1, _) := run [.ptyOut focusOn, .connected 1, .connected 2, .connected 3]
-      let (s2, watch) := step s1 (.bytes 1 (encode (.attach 0 0)))
-      let (s3, first) := step s2 (.bytes 2 (encode (.attach 80 24)))
-      let (s4, second) := step s3 (.bytes 3 (encode (.attach 80 24)))
+      let (s2, watch) := step s1 (.bytes 1 (encode (.attach .readOnly 80 24)))
+      let (s3, first) := step s2 (.bytes 2 (encode (.attach .writable 0 0)))
+      let (s4, second) := step s3 (.bytes 3 (encode (.attach .writable 80 24)))
       let (s5, leaveOne) := step s4 (.closed 2)
       let (s6, leaveLast) := step s5 (.closed 3)
       let (_, leaveWatcher) := step s6 (.closed 1)
@@ -766,7 +805,7 @@ example :
 
 /-- A program that did not enable focus reporting hears no focus report. -/
 example :
-    (let (_, effs) := run [.connected 1, .bytes 1 (encode (.attach 80 24)), .closed 1]
+    (let (_, effs) := run [.connected 1, .bytes 1 (encode (.attach .writable 80 24)), .closed 1]
      !effs.any fun e => e == .writePty (focusReport true) || e == .writePty (focusReport false)) =
       true := by
   native_decide

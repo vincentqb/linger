@@ -39,14 +39,29 @@ theorem readU32_writeU32 (n : UInt32) : readU32 (writeU32 n) = n := by
 /-! ## Single-message round-trip (§Frame) -/
 
 /-- An unassigned tag decodes to `unknown`, carrying its bytes forward untouched:
-the skip-don't-fail half of §Frame, naming the predicate that defines it. -/
+the skip-don't-fail half of §Frame, naming the predicate that defines it. The retired tag 3
+is one: the attach of levels 1 and 2 reads as a message this version does not know. -/
 theorem decodeMsg_unknown_of_not_knownTag (t : UInt8) (p : List UInt8) (h : knownTag t = false) :
     decodeMsg t p = .unknown t p := by
-  have ht : ¬t ≤ 17 := by simpa [knownTag] using h
   fun_cases decodeMsg t p <;>
     first
     | rfl
-    | (exfalso; apply ht; subst_vars; decide)
+    | (exfalso; subst_vars; revert h; decide)
+
+/-- A mode's byte reads back as the same mode. -/
+@[simp]
+theorem readMode_modeByte (m : Mode) : readMode (modeByte m) = some m := by cases m <;> decide
+
+/-- An attach's payload reads back as the same attach. -/
+@[simp]
+theorem decodeAttach_payload (m : Mode) (cols rows : UInt32) :
+    decodeAttach (modeByte m :: (writeU32 cols ++ writeU32 rows)) = .attach m cols rows := by
+  simp [decodeAttach, List.drop_append_of_le_length]
+
+/-- A tag-18 payload that names no mode this version knows is a message it does not know, so a
+newer client's mode is refused rather than read as another. -/
+theorem decodeAttach_unknown (p : List UInt8) (h : p.head?.bind readMode = none) :
+    decodeAttach p = .unknown 18 p := by simp [decodeAttach, h]
 
 /-- An ending's two bytes read back as the same ending. -/
 @[simp]
@@ -223,11 +238,18 @@ theorem Decoder.feed_buf_le (d : Decoder) (chunk : List UInt8) (hd : ¬d.errored
 allocation. -/
 theorem decodeMsg_payload_le (t : UInt8) (p : List UInt8) (hp : p.length ≤ maxPayload) :
     (decodeMsg t p).payload.length ≤ maxPayload := by
-  have h8 : (8 : Nat) ≤ maxPayload := by simp [maxPayload]
+  have h9 : (9 : Nat) ≤ maxPayload := by simp [maxPayload]
+  have attach : (decodeAttach p).payload.length ≤ maxPayload := by
+    unfold decodeAttach
+    split <;> simp only [Msg.payload, List.length_cons, List.length_append, writeU32_length] <;>
+      omega
   fun_cases decodeMsg t p <;>
-    simp only [Msg.payload, List.length_append, writeU32_length, outcomeBytes_length,
-      List.length_nil] <;>
-    omega
+    first
+    | exact attach
+    |
+      (simp only [Msg.payload, List.length_append, writeU32_length, outcomeBytes_length,
+         List.length_nil];
+       omega)
 
 theorem takeFrames_msgs_payload_le (bytes : List UInt8) :
     ∀ m ∈ (takeFrames bytes).2.2, m.payload.length ≤ maxPayload := by
@@ -323,9 +345,12 @@ theorem fits_wf (m : Msg) (h : m.Fits) : m.WF := by
   | unknown t p =>
     obtain ⟨short, unassigned⟩ := h
     refine ⟨short, ?_⟩
-    simp only [knownTag, decide_eq_false_iff_not, UInt8.le_iff_toNat_le]
-    simp only [UInt8.reduceToNat]
-    omega
+    rcases unassigned with rfl | above
+    · exact (by decide : knownTag 3 = false)
+    · have high : ¬t ≤ 18 := by
+        simp only [UInt8.le_iff_toNat_le, UInt8.reduceToNat]
+        omega
+      simp [knownTag, high]
   | input
   | output
   | infoReply

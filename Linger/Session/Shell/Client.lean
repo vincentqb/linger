@@ -258,11 +258,11 @@ private def converse (name : String) (fd : UInt32) (sample : IO String) (readOnl
     (pending : IO.Ref (Option (Task (Except IO.Error String)))) : IO Outcome := do
   try
     let detachEnabled := Linger.Os.Env.detachEnabled readOnly (← IO.getEnv "LINGER_NO_DETACH_KEY")
+    -- the rights travel as the mode, and the size, 0×0 for a terminal that has none yet, as
+    -- itself: a writable client types whatever its size
+    let mode : Linger.Session.Mode := if readOnly then .readOnly else .writable
     let (cols, rows) ← winsizeGet stdinFd
-    if readOnly then
-      sendMsg fd (.attach 0 0)
-    else
-      sendMsg fd (.attach cols rows)
+    sendMsg fd (.attach mode cols rows)
     let saved ← termRaw stdinFd
     let mut lastSize := (cols, rows)
     let mut dec : Decoder := {}
@@ -355,8 +355,8 @@ private def converse (name : String) (fd : UInt32) (sample : IO String) (readOnl
   finally
     close fd
 
-/-- Interactive attach. `readOnly` attaches as a 0×0 observer: output
-mirrors, keyboard is not forwarded, detach key still works. The title appends
+/-- Interactive attach. `readOnly` attaches read-only: output mirrors, keyboard is not
+forwarded, detach key still works. The title appends
 `sample`'s attention summary. An outstanding sample is joined after the socket
 closes, so the daemon sees a detach at once and no sample outlives the attachment. -/
 def attach (name : String) (fd : UInt32) (sample : IO String) (readOnly : Bool := false) :

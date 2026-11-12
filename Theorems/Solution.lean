@@ -77,8 +77,7 @@ open Linger.Display Linger.Session Linger.Target Terminal
 
 theorem step_input_exact (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {inputs : List (List UInt8)} (hc : s.client? id = some c)
-    (typist : c.attached = false ∨ c.sizer = true)
-    (read : c.decoder.feed chunk = (dec, inputs.map Wire.Msg.input))
+    (typist : c.mode = .writable) (read : c.decoder.feed chunk = (dec, inputs.map Wire.Msg.input))
     (healthy : dec.errored = false) :
     (Session.step s (.bytes id chunk)).2 = inputs.map Effect.writePty :=
   Session.step_input_exact s id chunk hc typist read healthy
@@ -87,7 +86,7 @@ theorem step_input_exact_rejects_drop :
     ¬∀ (s : State) (id : Nat) (chunk : List UInt8) {c : Client} {dec : Wire.Decoder}
         {inputs : List (List UInt8)},
         s.client? id = some c →
-          (c.attached = false ∨ c.sizer = true) →
+          c.mode = .writable →
           c.decoder.feed chunk = (dec, inputs.map Wire.Msg.input) →
           dec.errored = false →
           ((fun (s : State) (_ : Event) => (s, ([] : List (Effect Replay.Plan)))) s
@@ -97,7 +96,7 @@ theorem step_input_exact_rejects_drop :
   obtain ⟨joined, -⟩ := Session.connected_client_witness
   have wrote :=
     @h (Session.trace Session.step (State.boot (Vt.Vt.init 1 1) [] []) [.connected 1]).1 1
-      (Wire.encode (.input [0x61])) { id := 1 } {} [[0x61]] joined (.inl rfl)
+      (Wire.encode (.input [0x61])) { id := 1 } {} [[0x61]] joined rfl
       (Session.feed_encode_fresh (.input [0x61]) (by simp [Wire.Msg.Fits, Wire.maxPayload])) rfl
   simp at wrote
 
@@ -168,22 +167,22 @@ theorem inputFrames_exact_rejects_one :
   omega
 
 theorem step_attach_focus (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
-    {dec : Wire.Decoder} {cols rows : UInt32} (hc : s.client? id = some c)
-    (read : c.decoder.feed chunk = (dec, [.attach cols rows])) (healthy : dec.errored = false)
+    {dec : Wire.Decoder} {mode : Mode} {cols rows : UInt32} (hc : s.client? id = some c)
+    (read : c.decoder.feed chunk = (dec, [.attach mode cols rows])) (healthy : dec.errored = false)
     (bytes : List UInt8) :
     Effect.writePty bytes ∈ (Session.step s (.bytes id chunk)).2 ↔
       bytes = [0x1B, 0x5B, 0x49] ∧
         s.terminal.getModes.focusEvents = true ∧
         c.attached = false ∧
-        cols ≠ 0 ∧
-        rows ≠ 0 ∧ ∀ other ∈ s.roster, other.id ≠ id → (other.attached && other.sizer) = false :=
+        mode = .writable ∧
+        ∀ other ∈ s.roster, other.id ≠ id → (other.attached && other.mode == .writable) = false :=
   Session.step_attach_focus s id chunk hc read healthy bytes
 
 theorem step_attach_focus_rejects_eager :
-    ¬∀ (s : State) (id : Nat) (chunk : List UInt8) {c : Client} {dec : Wire.Decoder}
+    ¬∀ (s : State) (id : Nat) (chunk : List UInt8) {c : Client} {dec : Wire.Decoder} {mode : Mode}
         {cols rows : UInt32},
         s.client? id = some c →
-          c.decoder.feed chunk = (dec, [.attach cols rows]) →
+          c.decoder.feed chunk = (dec, [.attach mode cols rows]) →
           dec.errored = false →
           ∀ (bytes : List UInt8),
             Effect.writePty bytes ∈
@@ -193,26 +192,26 @@ theorem step_attach_focus_rejects_eager :
               bytes = [0x1B, 0x5B, 0x49] ∧
                 s.terminal.getModes.focusEvents = true ∧
                 c.attached = false ∧
-                cols ≠ 0 ∧
-                rows ≠ 0 ∧
-                ∀ other ∈ s.roster, other.id ≠ id → (other.attached && other.sizer) = false := by
+                mode = .writable ∧
+                ∀ other ∈ s.roster,
+                  other.id ≠ id → (other.attached && other.mode == .writable) = false := by
   intro h
   obtain ⟨joined, -⟩ := Session.connected_client_witness
   have heard :=
     (@h (Session.trace Session.step (State.boot (Vt.Vt.init 1 1) [] []) [.connected 1]).1 1
-          (Wire.encode (.attach 0 0)) { id := 1 } {} 0 0 joined
-          (Session.feed_encode_fresh (.attach 0 0) trivial) rfl [0x1B, 0x5B, 0x49]).mp
+          (Wire.encode (.attach .readOnly 80 24)) { id := 1 } {} .readOnly 80 24 joined
+          (Session.feed_encode_fresh (.attach .readOnly 80 24) trivial) rfl [0x1B, 0x5B, 0x49]).mp
       (by simp)
-  exact heard.2.2.2.1 rfl
+  exact absurd heard.2.2.2.1 (by decide)
 
 theorem step_closed_focus (s : State) (id : Nat) (bytes : List UInt8) :
     Effect.writePty bytes ∈ (Session.step s (.closed id)).2 ↔
       bytes = [0x1B, 0x5B, 0x4F] ∧
         s.terminal.getModes.focusEvents = true ∧
-        (s.client? id).any (·.sizer) = true ∧
-        s.roster.any (fun c => c.attached && c.sizer) = true ∧
-        (Session.step s (.closed id)).1.roster.any (fun c => c.attached && c.sizer) = false :=
-  Session.step_closed_focus s id bytes
+        (s.client? id).any (·.mode == .writable) = true ∧
+        s.roster.any (fun c => c.attached && c.mode == .writable) = true ∧
+        (Session.step s (.closed id)).1.roster.any (fun c => c.attached && c.mode == .writable) =
+          false := Session.step_closed_focus s id bytes
 
 theorem step_closed_focus_rejects_eager :
     ¬∀ (s : State) (id : Nat) (bytes : List UInt8),
@@ -222,12 +221,12 @@ theorem step_closed_focus_rejects_eager :
                 s (.closed id)).2 ↔
           bytes = [0x1B, 0x5B, 0x4F] ∧
             s.terminal.getModes.focusEvents = true ∧
-            (s.client? id).any (·.sizer) = true ∧
-            s.roster.any (fun c => c.attached && c.sizer) = true ∧
+            (s.client? id).any (·.mode == .writable) = true ∧
+            s.roster.any (fun c => c.attached && c.mode == .writable) = true ∧
             ((fun (s : State) (_ : Event) =>
                       (s, ([.writePty [0x1B, 0x5B, 0x4F]] : List (Effect Replay.Plan))))
                     s (.closed id)).1.roster.any
-                (fun c => c.attached && c.sizer) =
+                (fun c => c.attached && c.mode == .writable) =
               false := by
   intro h
   obtain ⟨-, none⟩ := Session.connected_client_witness
@@ -273,7 +272,7 @@ theorem step_labels_requested (s : State) (ev : Event)
     ∃ id chunk c,
       ev = .bytes id chunk ∧
         s.client? id = some c ∧
-        (c.attached = false ∨ c.sizer = true) ∧
+        (c.attached = false ∨ c.mode = .writable) ∧
         ∃ m ∈ (c.decoder.feed chunk).2, m.ChangesLabels := Session.step_labels_sources s ev changed
 
 theorem step_labels_requested_rejects_reset :
@@ -285,7 +284,7 @@ theorem step_labels_requested_rejects_reset :
           ∃ id chunk c,
             ev = .bytes id chunk ∧
               s.client? id = some c ∧
-              (c.attached = false ∨ c.sizer = true) ∧
+              (c.attached = false ∨ c.mode = .writable) ∧
               ∃ m ∈ (c.decoder.feed chunk).2, m.ChangesLabels := by
   intro h
   obtain ⟨-, -, -, -, labelled, -⟩ := Session.boot_observed (Vt.Vt.init 1 1) [("a", "b")] []
@@ -404,7 +403,7 @@ theorem run_bytes_isolates_rejects_reset :
   cases forgot
 
 theorem run_readonly (s : State) (id : Nat) (chunks : List (List UInt8)) {c : Client}
-    (hc : s.client? id = some c) (attached : c.attached = true) (watcher : c.sizer = false) :
+    (hc : s.client? id = some c) (attached : c.attached = true) (watcher : c.mode = .readOnly) :
     (Session.trace Session.step s (chunks.map (Event.bytes id))).1.terminal = s.terminal ∧
       (Session.trace Session.step s (chunks.map (Event.bytes id))).1.labelList = s.labelList ∧
       ∀ eff ∈ (Session.trace Session.step s (chunks.map (Event.bytes id))).2,
@@ -414,9 +413,12 @@ theorem run_readonly (s : State) (id : Nat) (chunks : List (List UInt8)) {c : Cl
 
 theorem run_readonly_rejects_kill :
     ¬∀ (s : State) (id : Nat) (chunks : List (List UInt8)) {c : Client},
-        (fun (_ : State) (i : Nat) => some ({ id := i, attached := true } : Client)) s id = some c →
+        (fun (_ : State) (i : Nat) =>
+                some ({ id := i, attached := true, mode := .readOnly } : Client))
+              s id =
+            some c →
           c.attached = true →
-          c.sizer = false →
+          c.mode = .readOnly →
           (Session.trace (fun s _ => (s, ([.stopProgram] : List (Effect Replay.Plan)))) s
                   (chunks.map (Event.bytes id))).1.terminal =
               s.terminal ∧
@@ -430,11 +432,125 @@ theorem run_readonly_rejects_kill :
               (∃ m, eff = .send id m) ∨ eff = .close id ∨ eff = .checkpoint := by
   intro h
   obtain ⟨-, -, effects⟩ :=
-    @h (State.boot (Vt.Vt.init 1 1) [] []) 0 [[]] { id := 0, attached := true } rfl rfl rfl
+    @h (State.boot (Vt.Vt.init 1 1) [] []) 0 [[]] { id := 0, attached := true, mode := .readOnly }
+      rfl rfl rfl
   rcases effects .stopProgram (by simp [Session.trace]) with ⟨_, sent⟩ | closed | saved
   · cases sent
   · cases closed
   · cases saved
+
+theorem step_attach_mode (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
+    {dec : Wire.Decoder} {mode : Mode} {cols rows : UInt32} (hc : s.client? id = some c)
+    (fresh : c.attached = false) (read : c.decoder.feed chunk = (dec, [.attach mode cols rows]))
+    (healthy : dec.errored = false) :
+    ∃ c',
+      (Session.step s (.bytes id chunk)).1.client? id = some c' ∧
+        c'.attached = true ∧ c'.mode = mode :=
+  Session.step_attach_mode s id chunk hc fresh read healthy
+
+theorem step_attach_mode_rejects_unsized :
+    ¬∀ (s : State) (id : Nat) (chunk : List UInt8) {c : Client} {dec : Wire.Decoder} {mode : Mode}
+        {cols rows : UInt32},
+        (fun (s : State) (i : Nat) =>
+                (s.client? i).map fun c =>
+                  { c with mode := if c.cols = 0 ∨ c.rows = 0 then .readOnly else c.mode })
+              s id =
+            some c →
+          c.attached = false →
+          c.decoder.feed chunk = (dec, [.attach mode cols rows]) →
+          dec.errored = false →
+          ∃ c',
+            (fun (s : State) (i : Nat) =>
+                    (s.client? i).map fun c =>
+                      { c with mode := if c.cols = 0 ∨ c.rows = 0 then .readOnly else c.mode })
+                  (Session.step s (.bytes id chunk)).1 id =
+                some c' ∧
+              c'.attached = true ∧ c'.mode = mode := by
+  intro h
+  -- a writable attach from a terminal with no size: today's rule would make it read-only
+  obtain ⟨joined, -⟩ := Session.connected_client_witness
+  obtain ⟨c', seen, -, writable⟩ :=
+    @h (Session.trace Session.step (State.boot (Vt.Vt.init 1 1) [] []) [.connected 1]).1 1
+      (Wire.encode (.attach .writable 0 0)) { id := 1 } {} .writable 0 0 (by simp [joined]) rfl
+      (Session.feed_encode_fresh (.attach .writable 0 0) trivial) rfl
+  dsimp only at seen
+  rw [Session.step_attach_record joined rfl (Session.feed_encode_fresh _ trivial) rfl] at seen
+  simp only [Option.map_some, Option.some.injEq] at seen
+  rw [← seen] at writable
+  simp at writable
+
+theorem step_resize_mode (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
+    {dec : Wire.Decoder} {sizes : List (UInt32 × UInt32)} (hc : s.client? id = some c)
+    (read : c.decoder.feed chunk = (dec, sizes.map fun size => .resize size.1 size.2))
+    (healthy : dec.errored = false) :
+    ((Session.step s (.bytes id chunk)).1.client? id).map (·.mode) = some c.mode :=
+  Session.step_resize_mode s id chunk hc read healthy
+
+theorem step_resize_mode_rejects_unsized :
+    ¬∀ (s : State) (id : Nat) (chunk : List UInt8) {c : Client} {dec : Wire.Decoder}
+        {sizes : List (UInt32 × UInt32)},
+        (fun (s : State) (i : Nat) =>
+                (s.client? i).map fun c =>
+                  { c with mode := if c.cols = 0 ∨ c.rows = 0 then .readOnly else c.mode })
+              s id =
+            some c →
+          c.decoder.feed chunk = (dec, sizes.map fun size => .resize size.1 size.2) →
+          dec.errored = false →
+          ((fun (s : State) (i : Nat) =>
+                    (s.client? i).map fun c =>
+                      { c with mode := if c.cols = 0 ∨ c.rows = 0 then .readOnly else c.mode })
+                  (Session.step s (.bytes id chunk)).1 id).map
+              (·.mode) =
+            some c.mode := by
+  intro h
+  -- a writable client at 80×24 whose terminal loses its size: today's rule would drop its typing
+  have joined := Session.attached_client_witness
+  have kept :=
+    @h
+      (Session.trace Session.step (State.boot (Vt.Vt.init 1 1) [] [])
+          [.connected 1, .bytes 1 (Wire.encode (.attach .writable 80 24))]).1
+      1 (Wire.encode (.resize 0 0)) { id := 1, attached := true, cols := 80, rows := 24 } {}
+      [(0, 0)] (by simp [joined]) (Session.feed_encode_fresh (.resize 0 0) trivial) rfl
+  dsimp only at kept
+  rw [Session.step_resize_record joined rfl (Session.feed_encode_fresh (.resize 0 0) trivial)
+      rfl] at kept
+  simp at kept
+
+theorem step_resizes_sized (s : State) (ev : Event) (cols rows : UInt32)
+    (resized : Effect.resizePty cols rows ∈ (Session.step s ev).2) :
+    0 < cols ∧
+      0 < rows ∧
+      ∃ id chunk c,
+        ev = .bytes id chunk ∧
+          s.client? id = some c ∧
+          ∃ m ∈ (c.decoder.feed chunk).2,
+            ∃ mode width height,
+              (m = .attach mode width height ∨ m = .resize width height) ∧
+                width ≠ 0 ∧
+                height ≠ 0 ∧
+                cols.toNat = Vt.clampDim width.toNat ∧ rows.toNat = Vt.clampDim height.toNat :=
+  Session.step_resizes_sized s ev cols rows resized
+
+theorem step_resizes_sized_rejects_zero :
+    ¬∀ (s : State) (ev : Event) (cols rows : UInt32),
+        Effect.resizePty cols rows ∈
+            ((fun (s : State) (_ : Event) => (s, ([.resizePty 0 0] : List (Effect Replay.Plan)))) s
+                ev).2 →
+          0 < cols ∧
+            0 < rows ∧
+            ∃ id chunk c,
+              ev = .bytes id chunk ∧
+                s.client? id = some c ∧
+                ∃ m ∈ (c.decoder.feed chunk).2,
+                  ∃ mode width height,
+                    (m = .attach mode width height ∨ m = .resize width height) ∧
+                      width ≠ 0 ∧
+                      height ≠ 0 ∧
+                      cols.toNat = Vt.clampDim width.toNat ∧
+                      rows.toNat = Vt.clampDim height.toNat := by
+  intro h
+  have zero := h (State.boot (Vt.Vt.init 1 1) [] []) (.tick 0) 0 0 (by simp)
+  exact absurd zero.1 (by decide)
 
 theorem remotesFile_home (home : Option String) :
     Os.Env.remotesFile home = none ↔ home = none ∨ home = some "" :=
@@ -863,8 +979,8 @@ theorem start_clean_rejects_inherited :
 
 theorem step_kill_stops (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {rest : List Wire.Msg} (hc : s.client? id = some c)
-    (writable : c.attached = false ∨ c.sizer = true)
-    (read : c.decoder.feed chunk = (dec, .kill :: rest)) (healthy : dec.errored = false) :
+    (writable : c.mode = .writable) (read : c.decoder.feed chunk = (dec, .kill :: rest))
+    (healthy : dec.errored = false) :
     (Session.step s (.bytes id chunk)).2 = [.stopProgram, .close id] ∧
       (Session.step s (.bytes id chunk)).1.terminal = s.terminal ∧
       (Session.step s (.bytes id chunk)).1.labelList = s.labelList :=
@@ -874,7 +990,7 @@ theorem step_kill_stops_rejects_exit :
     ¬∀ (s : State) (id : Nat) (chunk : List UInt8) {c : Client} {dec : Wire.Decoder}
         {rest : List Wire.Msg},
         s.client? id = some c →
-          (c.attached = false ∨ c.sizer = true) →
+          c.mode = .writable →
           c.decoder.feed chunk = (dec, .kill :: rest) →
           dec.errored = false →
           ((fun (s : State) (_ : Event) => (s, ([.exit] : List (Effect Replay.Plan)))) s
@@ -890,7 +1006,7 @@ theorem step_kill_stops_rejects_exit :
   obtain ⟨joined, -⟩ := Session.connected_client_witness
   have stopped :=
     (@h (Session.trace Session.step (State.boot (Vt.Vt.init 1 1) [] []) [.connected 1]).1 1
-        (Wire.encode .kill) { id := 1 } {} [] joined (.inl rfl)
+        (Wire.encode .kill) { id := 1 } {} [] joined rfl
         (Session.feed_encode_fresh .kill (by simp [Wire.Msg.Fits])) rfl).1
   simp at stopped
 
@@ -1273,7 +1389,7 @@ theorem run_stop_exits_rejects_jump :
   intro h
   obtain ⟨joined, -⟩ := Session.connected_client_witness
   have stops :=
-    (Session.step_kill_stops _ 1 (Wire.encode .kill) joined (.inl rfl)
+    (Session.step_kill_stops _ 1 (Wire.encode .kill) joined rfl
         (Session.feed_encode_fresh .kill (by simp [Wire.Msg.Fits])) rfl).1
   have jumped :=
     @h Unit (fun _ world eff => (world, Driver.success eff))

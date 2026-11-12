@@ -11,15 +11,16 @@ public section
 /-! # Linger.Session.Suites.Watch — read-only live and saved attachment
 
 WHAT THIS CAN AND CANNOT CATCH — read before adding a check. Read-only is enforced
-DAEMON-side, not by `Client.attach`'s three `!readOnly` guards:
+DAEMON-side, not by `Client.attach`'s guards:
 
-* guard A, `sendMsg fd (.attach 0 0)` — the 0×0 geometry IS the read-only marker
-  on the wire. `onMsg .attach` derives `sizer := cols != 0 && rows != 0` from it
-  and everything else follows. Removing A is observable three ways; break-verified,
-  checks 3, 6 and 8 below each catch it.
+* guard A, `sendMsg fd (.attach mode cols rows)` with the mode `readOnly` gives — the mode IS
+  the read-only bit on the wire, beside the terminal's own size, and `onMsg .attach` records
+  it whatever that size; everything else follows. A watcher that attached writable instead
+  would own the size: checks 3 and 8 below catch it. The raw watcher of 6b attaches read-only
+  with a size of its own, so its check catches a daemon whose rights follow the size.
 * guard B (resize suppression) and guard C (keystroke suppression) — BOTH are
-  semantic no-ops. `onMsg .resize` drops a non-sizer's resize and `onMsg .input`
-  drops a non-sizer's input (`onMsg_input_readonly`), so removing either changes
+  semantic no-ops. `onMsg .resize` never lets a watcher size the session and `onMsg .input`
+  drops a watcher's input (`onMsg_input_readonly`), so removing either changes
   no observable byte. They are defence in depth, held by grep gates in
   `scripts/gates.sh` — the `SHIM_CAP` species of oracle.
 
@@ -243,13 +244,14 @@ def run : IO UInt32 :=
     IO.sleep 800
     expect ((← e.info "w" "cols") == some "80")
         "resizing the watcher's terminal does not resize the session"
-    -- 6b. a watcher may look and leave, nothing more. On its own connection, its
-    -- requests to end the session, disconnect every client or change labels are
+    -- 6b. a watcher may look and leave, nothing more, whatever its size. This one attaches
+    -- read-only with a size of its own. On its own connection, what it types never reaches the
+    -- program, its requests to end the session, disconnect every client or change labels are
     -- refused, and the session keeps its program, its clients and its labels.
     let raw ← Os.Shell.unixConnect s!"{e.dir}/w.sock"
     expect (raw ≥ 0) "a raw watcher connects to the session"
     let watcherFd := raw.toUInt64.toUInt32
-    Linger.Session.Shell.Client.sendMsg watcherFd (.attach 0 0)
+    Linger.Session.Shell.Client.sendMsg watcherFd (.attach .readOnly 100 30)
     expect (← waitFor patienceMs (return (← e.info "w" "clients") == some "3"))
         "the raw watcher is attached"
     -- Everything the connection receives, decoded from its first byte.
@@ -267,6 +269,8 @@ def run : IO UInt32 :=
               stream.modify (· ++ bytes)
           return (← errors why) == before + 1
     let refused := refusedWith "read-only"
+    -- the daemon handles the line before it refuses the request that follows it
+    Linger.Session.Shell.Client.sendMsg watcherFd (.input "echo rawmark-$((21+21))\r".toUTF8.toList)
     expect (← refused .detachAll) "a watcher's request to disconnect every client is refused"
     expect (← refused (.labelSet "owner=watcher".toUTF8.toList))
         "a watcher's request to set a label is refused"
@@ -275,6 +279,14 @@ def run : IO UInt32 :=
         "a message the daemon does not know is refused"
     expect ((← e.info "w" "protocol") == some (toString Linger.Session.Wire.protocol))
         "info reports the protocol level"
+    -- a line sent after the refusals were heard runs, so the watcher's, before them, would have
+    let _ ← e.cli #["send", "w", "echo after-$((1+1))\n"]
+    let ranAfter ←
+      waitFor patienceMs (return has (← e.out #["capture", "--history", "w"]) "after-2")
+    expect
+        (ranAfter && !has (← e.out #["capture", "--history", "w"]) "rawmark-42" &&
+          (← e.info "w" "cols") == some "80")
+        "a read-only attach with a size of its own can neither type nor size the session"
     expect
         ((← e.info "w" "clients") == some "3" && (← e.info "w" "label.owner") == none &&
           has (← e.out #["ls"]) "w")
