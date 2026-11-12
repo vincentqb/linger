@@ -8,8 +8,8 @@ public section
 
 /-! # Linger.Display.Listing — a `list` row's identity
 
-§Row (THEOREMS.md): a listed session's *identity* is a function of its
-socket filename alone, never of the `info` reply the daemon returns. A
+§Row, the headline `rowFields_name` (Challenge.lean, part 2): a listed session's *identity* is
+a function of its socket filename alone, never of the `info` reply the daemon returns. A
 daemon too busy to answer within the poll window still lists under its
 real name; and — because that same row set is the porcelain a remote
 `-r` parses — a peer cannot rename or blank another session's row by

@@ -16,7 +16,7 @@ module is the *entire* decision logic: `step : State → Event → State ×
 List Effect`. The runtime (Step 6) is a dumb poll loop that turns fds
 into `Event`s and `Effect`s into syscalls.
 
-Tensions carried (THEOREMS.md):
+Tensions carried:
 * §Detach — a session with zero clients still advances; detach never
   touches the screen; attach touches only the dimensions (resize).
 * §Bound — clients ≤ `maxClients`, labels ≤ `maxLabels`, every stored

@@ -18,8 +18,9 @@ import all Terminal.Proofs.Vt
 
 /-! # §Restore — the reboot-resume codec theorems
 
-THEOREMS.md's Checkpoints row cites `loadBytes_saveBytes_live` and `loadBytes_resave`,
-the byte-array forms (§What the runtime calls) of `load_save_live` and `load_resave`. A
+The headlines `loadBytes_saveBytes_live` and `loadBytes_resave` (Challenge.lean, part 7) rest
+on the theorems of those names below, the byte-array forms (§What the runtime calls) of
+`load_save_live` and `load_resave`. A
 checkpoint round-trips modulo `Vt.quiesce`; the round trip is exact when the parser is
 already quiescent (`load_save_exact`), as every decoded checkpoint's is, since the codec
 deliberately forgets partial escape sequences. Totality of `load` on arbitrary bytes is by
@@ -1044,8 +1045,8 @@ theorem loadBytes_eq (b : ByteArray) : loadBytes b = load b.data.toList := by
 
 The runtime writes with `saveBytes` and reads with `loadBytes`; `saveBytes_eq` and
 `loadBytes_eq` carry `load_save_live`, `load_resave` and `load_live` over to them below.
-`THEOREMS.md` cites `loadBytes_saveBytes_live` and `loadBytes_resave`, and
-`Session.liveReachableVt_resumeVt` rests on `loadBytes_live`. -/
+The headlines `loadBytes_saveBytes_live` and `loadBytes_resave` (Challenge.lean, part 7) rest on
+the first two, and `Session.liveReachableVt_resumeVt` rests on `loadBytes_live`. -/
 
 /-- What `saveBytes` writes of a live state, `loadBytes` reads back with its parser quiesced. -/
 theorem loadBytes_saveBytes_live (c : Ckpt Vt.Vt) (h : LiveReachableVt c.vt) :

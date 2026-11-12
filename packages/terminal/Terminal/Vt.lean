@@ -10,7 +10,7 @@ The daemon feeds every pty byte here (a passive observer: clients get
 the raw bytes; this state exists so a *re*-attaching client can be shown
 what it missed, and so `linger capture --history` can dump it).
 
-Design for the theorems (see THEOREMS.md):
+Design for the theorems:
 * §Total — everything is one byte-at-a-time `step : Vt → UInt8 → Vt`
   built from total operations (`getD`/`setIfInBounds`/`modify`/`min`/clamps);
   `feed = List.foldl step` — no `partial`, no panic path.
@@ -1475,8 +1475,7 @@ def Vt.quiesce (v : Vt) :
 **Test-facing, and named as such**: the daemon's pty path is
 `Mediation.feed s.vt s.scan chunk` on a `List UInt8` (`Linger/Session.lean`), and
 this definition has no runtime caller. It is kept because test and suite fixtures use
-it, and a convenience with callers is reachable code, not the unproved-and-unreachable
-state `Theorems/Coverage.lean` rejects. -/
+it, and a convenience with callers is reachable code, not unproved and unreachable code. -/
 def Vt.feedBytes (v : Vt) (bytes : ByteArray) : Vt := v.feed bytes.toList
 
 /-- The states a live session can hold: `Live` (`packages/terminal/Terminal/Spec.lean`) over this

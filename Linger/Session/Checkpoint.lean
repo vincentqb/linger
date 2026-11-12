@@ -33,7 +33,7 @@ Serializes the resumable part of a session — screen, scrollback,
 cursor, pen, modes, title, labels, and working directory — to bytes
 and back. The parser state is reset on load.
 
-§Restore (THEOREMS.md):
+§Restore, which recovery rests on (Challenge.lean, part 7):
 * The default `read* ∘ write*` round-trips **unconditionally** — every length is
   encoded as an arbitrary-precision little-endian `Nat`, so there is
   no "fits in u32" side condition anywhere.

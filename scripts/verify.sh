@@ -186,13 +186,13 @@ git ls-files -z 'Linger/*.lean' ':!Linger/*/Proofs/*' ':!Linger/*/Tests/*' \
     > "$logs/docs.log" 2>&1 \
   || { grep 'missing doc' "$logs/docs.log" | head -20; fail "a public declaration under Linger/ has no docstring"; }
 
-say "2b. semantic coverage of pure code + runtime emitter classification"
-# Verify.Coverage calls the shared exact-constant theorem census, then classifies
-# resolved references from the program just built above. Invoke Lean directly
-# so source-only changes cannot reuse a cached census.
+say "2b. pure code's csimp replacements + runtime emitter classification"
+# Verify.Coverage repeats the shared csimp check, then classifies resolved references
+# from the program just built above against the pure definitions read from the sources.
+# Invoke Lean directly so source-only changes cannot reuse a cached inventory.
 ./lake env lean Verify/Coverage.lean > "$logs/coverage.log" 2>&1 \
-  || { cat "$logs/coverage.log"; fail "semantic coverage and emitter classification"; }
-grep '^pure semantic coverage:' "$logs/coverage.log" || true
+  || { cat "$logs/coverage.log"; fail "csimp check and emitter classification"; }
+grep '^pure code:' "$logs/coverage.log" || true
 tail -1 "$logs/coverage.log" | grep -q '^FAILURES: 0$' || fail "coverage gate"
 printf '  coverage and emitter checks: OK (details: %s/coverage.log)\n' "$logs"
 

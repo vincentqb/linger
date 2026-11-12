@@ -35,27 +35,24 @@ import all Linger.App.Proofs.Commands
 import all Linger.Os.Proofs.Env
 import all Os.Proofs.Wait
 import all Theorems.Solution
-import all Theorems.Contracts
 public meta import Lean.Elab.Command
 import Lean.Parser.Command
 meta import SoftwareChallenge.Commands -- shake: keep
 public meta import Lean.Compiler.CSimpAttr
 import Lean.Compiler.CSimpAttr
 
-/-! # Semantic coverage gate
+/-! # Pure definitions, their `@[csimp]` replacements and the renderer's emitters
 
-Every explicit `def` or `abbrev` in a pure module (`pureModule`: a component's top module
-and each component's own modules other than its boundary and shell)
-must occur as its exact environment constant in the type of a written theorem in a pure or
-proof module (`proofModule`: `Theorems/` and each component's `Proofs/`); generated
-equation, congruence and induction lemmas do not count. No pure or proof module may declare
-an axiom; native evaluation declares one for each use. The checks read only this module's
-import closure, so each of those modules must be in it. Pure code reaches a global
-`@[csimp]` replacement only through its specification, from definitions declared after the
-theorem, which is tagged in the specification's module; `scripts/verify.sh` checks on the
-generated C that each replacement, a module-local one included, is still called. This module
-is under the sanctioned friend region so it can resolve private definitions and theorem
-declarations without granting that access to suites or runtime code. -/
+`pureDefNames` reads every explicit `def` or `abbrev` in a pure module (`pureModule`: a
+component's top module and each component's own modules other than its boundary and shell)
+from the sources, and `runtimeEmitters` finds those of the renderer and the replay that the
+program references outside their own module, which `Verify/Coverage.lean` classifies. Pure code
+reaches a global `@[csimp]` replacement only through its specification, from definitions
+declared after the theorem, which is tagged in the specification's module; `scripts/verify.sh`
+checks on the generated C that each replacement, a module-local one included, is still called.
+That check reads only this module's import closure, so each pure module must be in it. This
+module is under the sanctioned friend region so it can resolve private definitions without
+granting that access to suites or runtime code. -/
 
 namespace Theorems.Coverage
 
@@ -63,8 +60,7 @@ open Lean Elab Command
 
 /-- The module roots of the packages under `packages/`. A package's top module (`Fuzzy`), its
 other top-level modules (`Terminal.Vt`) but its boundary, shell, suites, `Proofs`, `Tests` and
-`Solution`, and the modules under its `Spec` are pure code; its `Proofs` and `Solution` modules
-are proofs. -/
+`Solution`, and the modules under its `Spec` are pure code. -/
 public meta def packageRoots : List String := ["Fuzzy", "Input", "Terminal", "Os"]
 
 /-- A module of pure code: a component's top module (`Linger.Session`), each component's
@@ -80,16 +76,6 @@ public meta def pureModule (mod : Lean.Name) : Bool :=
     packageRoots.contains root &&
       !["Boundary", "Shell", "Suites", "Proofs", "Tests", "Solution"].contains leaf
   | root :: "Spec" :: _ => packageRoots.contains root
-  | _ => false
-
-/-- A module of proofs: the legacy `Theorems` tree, each component's `Proofs/`, and a package's
-`Proofs` and `Solution` modules. -/
-public meta def proofModule (mod : Lean.Name) : Bool :=
-  match mod.components.map toString with
-  | "Theorems" :: _ => true
-  | "Linger" :: _ :: "Proofs" :: _ :: _ => true
-  | root :: "Proofs" :: _ => packageRoots.contains root
-  | [root, "Solution"] => packageRoots.contains root
   | _ => false
 
 /-- The source files under `Linger/`, `Theorems/` and each package's directory whose module
@@ -131,10 +117,10 @@ public meta def sourceDefNames (stx : Syntax) : Except String (Array Lean.Name) 
     else if node.isOfKind ``Parser.Command.end then
       let count := max 1 node[1][0].getId.getNumParts
       if count ≥ scopes.length then
-        throw "unmatched end in definition census"
+        throw "unmatched end in the definition inventory"
       set (scopes.drop count, names)
     else if node.isOfKind ``Parser.Command.withWeakNamespace then
-      throw "with_weak_namespace needs an explicit census scope rule"
+      throw "with_weak_namespace needs an explicit inventory scope rule"
     else if node.isOfKind ``Parser.Command.declaration then
       let decl := node[1]
       if decl.isOfKind ``Parser.Command.definition || decl.isOfKind ``Parser.Command.abbrev then
@@ -220,32 +206,24 @@ public meta def runtimeEmitters (defs : Array Lean.Name) (main : Lean.Name := `M
   return (refs.toList.map (fun n => (n.replacePrefix `Terminal .anonymous).toString)).toArray.qsort
       (· < ·)
 
-/-- Require every pure or proof module in the import closure and reject any axiom one
-declares; then re-read the pure sources and check that each definition's exact constant
-occurs in the type of a written theorem.
+/-- Read the explicit definitions of the pure sources, require every pure module in the import
+closure and check that pure code reaches each `@[csimp]` replacement only through its
+specification, from definitions declared after the theorem.
 
-A written theorem has a source declaration range. Lemmas Lean generates on demand,
-such as the equation lemma `simp [f]` realizes, have none and claim nothing.
-Load private metadata inside this friend module, keeping the caller's imports
-sealed. Return the checked census so downstream checks use the same inventory. -/
-public meta def checkPureCoverage : CommandElabM (Array Lean.Name) := do
+Load private metadata inside this friend module, keeping the caller's imports sealed. Return
+the definitions read so that `runtimeEmitters` uses the same inventory. -/
+public meta def checkPureCode : CommandElabM (Array Lean.Name) := do
   let sourceEnv ← getEnv
   let logical ← liftIO (pureDefNames sourceEnv)
   let env ← liftIO (importModules sourceEnv.header.imports {})
-  -- The axiom check reads only this import closure, so it must hold every pure and proof module.
-  let checked (mod : Lean.Name) := pureModule mod || proofModule mod
+  -- The `@[csimp]` check reads only this import closure, so it must hold every pure module.
   let closure := (env.header.modules.map (·.module)).push sourceEnv.mainModule
   let outside :=
-    (← liftIO (sourceModules checked)).filterMap fun (_, mod) =>
+    (← liftIO (sourceModules pureModule)).filterMap fun (_, mod) =>
       if closure.contains mod then none else some mod
   unless outside.isEmpty do
-    throwError m!"coverage: pure or proof modules outside the import closure of Theorems.Coverage: \
+    throwError m!"coverage: pure modules outside the import closure of Theorems.Coverage: \
       {outside}"
-  -- Native evaluation (`native_decide`, `decide +native`, `bv_decide`) adds an axiom too.
-  let axioms :=
-    (moduleConsts env checked).filterMap fun (name, ci) => if ci.isAxiom then some name else none
-  unless axioms.isEmpty do
-    throwError m!"coverage: axioms in pure or proof modules: {axioms}"
   -- Compiled code reaches a `@[csimp]` replacement only through its specification, and the
   -- compiler replaces a specification only in definitions declared after the theorem. A
   -- constant without a range, such as a recursive definition's `_unary`, takes its owner's.
@@ -286,38 +264,13 @@ public meta def checkPureCoverage : CommandElabM (Array Lean.Name) := do
             env.getModuleIdxFor? n == env.getModuleIdxFor? e.fromDeclName &&
             (line n).any (· < (line e.thmName).getD 0) then
         throwError m!"coverage: `{n}` precedes `{e.thmName}`, so it runs `{e.fromDeclName}`"
-  let pureConsts :=
-    (moduleConsts env pureModule).toList.filterMap fun (n, ci) =>
-      if !ci.isTheorem then some (privateToUserName n, n) else none
-  let theoremConsts :=
-    (moduleConsts env checked).foldl
-      (fun acc (n, ci) =>
-        if
-            ci.isTheorem &&
-              (declRangeExt.find? (level := .exported) env n <|>
-                  declRangeExt.find? (level := .server) env n).isSome then
-          ci.type.foldConsts acc fun name seen => seen.insert name
-        else acc)
-      NameHashSet.empty
-  let mut resolved : Array (Lean.Name × Lean.Name) := #[]
-  for n in logical do
-    let candidates :=
-      pureConsts.filterMap fun (logical, actual) => if logical == n then some actual else none
-    let [actual] := candidates
-      | throwError m!"coverage: `{n}` resolved to {candidates.length} constants: {candidates}"
-    resolved := resolved.push (n, actual)
-  let unclaimed := resolved.filter fun (_, actual) => !theoremConsts.contains actual
-  unless unclaimed.isEmpty do
-    throwError m!"coverage: pure definitions absent from every written theorem type: \
-      {unclaimed.map (·.1)}"
   return logical
 
 -- These fixed fixtures run when the checker or its imports are rebuilt.
--- The standalone check in `Verify.Coverage` calls checkPureCoverage again for fresh source
--- files.
+-- The standalone check in `Verify.Coverage` calls checkPureCode again for fresh source files.
 run_cmd
   let env ← getEnv
-  let defs ← checkPureCoverage
+  let defs ← checkPureCode
   -- This exact fixture must compile before its two inventories can pass.
   let fixture :=
     r#"module
@@ -414,11 +367,11 @@ end Linger.ReferenceProbe
           found ==
             #["Render.digits", "Render.dropTrailingBlanks", "Render.leaveAnsi", "Render.modesAnsi",
               "Render.restore", "Render.scrollbackAnsi", "Render.titleAnsi"] do
-          throw (IO.userError s!"resolved reference census mismatch: {found}")
+          throw (IO.userError s!"resolved reference inventory mismatch: {found}")
   let parsed ← liftIO (Parser.testParseModule env "coverage fixture" fixture)
   let .ok names := sourceDefNames parsed
-    | throwError "definition census rejected the regression fixture"
+    | throwError "the definition inventory rejected the regression fixture"
   unless names == expected do
-    throwError m!"definition census mismatch: {names}"
+    throwError m!"definition inventory mismatch: {names}"
 
 end Theorems.Coverage

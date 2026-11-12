@@ -11,7 +11,7 @@ The overview (`linger -r <hosts>`) folds in sessions from configured
 remote hosts by running `ssh <host> linger ls --porcelain` and parsing
 stdout here.
 
-§Remote (THEOREMS.md): the parser is total (any bytes → some rows,
+§Remote: the parser is total (any bytes → some rows,
 never ⊥), garbage-tolerant (a malformed line or record is dropped, not
 fatal), and §Name carries through — every name in the result is
 validated without rewriting, so a hostile remote cannot inject a path or control bytes

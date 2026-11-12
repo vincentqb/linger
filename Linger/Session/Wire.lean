@@ -11,7 +11,7 @@ works on `List UInt8` so the theorems in `Linger/Session/Proofs/Wire.lean` are
 schema-level inductions, not fixtures; the runtime converts to/from
 `ByteArray` at the socket boundary only.
 
-Tensions carried here (see THEOREMS.md):
+Tensions carried here:
 * §Frame — round-trip, and unknown tags are *values*, not errors.
 * §Chunk — `Decoder.feed` is invariant under re-chunking.
 * §Bound — a decoder never holds more than `4 + maxPayload` bytes; an

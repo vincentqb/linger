@@ -157,8 +157,8 @@ example :
 into a fresh emulator of the session's size installs the session's history above the screen —
 oldest first, each row at the session's width, trimmed from the oldest end to the byte budget.
 
-This is the row `THEOREMS.md`'s A5 anchor could not claim while the scrollback rested on the
-round-trip fixtures alone. `.toList`, not `.sb`: a ring that has wrapped and a ring built from
+This is the claim that could not be made while the scrollback rested on the round-trip
+fixtures alone. `.toList`, not `.sb`: a ring that has wrapped and a ring built from
 index 0 are the same history in different records, and `Render.restore_sb_any` explains why
 comparing the records instead would be a false claim about a true capability.
 

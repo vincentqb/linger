@@ -12,7 +12,7 @@ import all Terminal.Proofs.Render.Scrollback
 `Render.restore` is the byte stream a re-attaching client's terminal is fed, and
 this ladder proves what it does to that terminal. The proof is one file per rung,
 imported in dependency order. Most modules in `Theorems/` that use the ladder import
-this one; `Theorems/Contracts.lean`, `packages/terminal/Terminal/Proofs/Replay.lean` and
+this one; `Theorems/Solution.lean`, `packages/terminal/Terminal/Proofs/Replay.lean` and
 `packages/terminal/Terminal/Proofs/Title.lean` instead import rungs directly.
 
 The rungs, in dependency order:

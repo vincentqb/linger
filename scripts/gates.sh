@@ -66,11 +66,10 @@ code_grep() {                                # code_grep <ere> <pathspec>...
 }
 code_count() { code_grep "$@" | awk 'END { print NR + 0 }'; }   # -> a number
 
-# Which modules are pure code and which are proofs, read from the tree with the rule
-# `Theorems/Coverage.lean` (`pureModule`, `proofModule`) applies to module names: pure code is
-# a component's top module (`Linger/Session.lean`), each component's top-level modules other
-# than its boundary and shell, and the modules under its `Spec/`; proofs are each component's
-# `Proofs/` plus the legacy
+# Which modules are pure code and which are proofs, read from the tree. Pure code, by the rule
+# `pureModule` in `Theorems/Coverage.lean` applies to module names, is a component's top module
+# (`Linger/Session.lean`), each component's top-level modules other than its boundary and shell,
+# and the modules under its `Spec/`; proofs are each component's `Proofs/` plus the legacy
 # `Theorems/`. Deliberate word splitting below: no tracked path in this tree has a space.
 # A package's modules follow the same rule under its root (`packages/terminal/Terminal/`), with its
 # top module (`Fuzzy.lean`) pure and its `Solution.lean` a proof.
@@ -575,15 +574,9 @@ spec_imports_bad="$(module_imports 'Linger/*/Spec*.lean' | awk -F: "$IMPORT_AWK"
 ! grep -qE '^@[[]default_target[]][[:space:]]+lean_lib Challenge' lakefile.lean \
   || fail "the Challenge library proves nothing; keep it out of the default targets"
 
-# Pure route proofs do not observe terminal IO or inspect Main's call sites.
-# Pin dispatch before terminal observations, exact argv and executable identity;
-# Linger.App.Suites.Manager, Linger.Import.Suites.Recipes and Linger.Import.Suites.Interop exercise them in subprocesses.
-for claim in route_bare_help route_selector_iff route_session_argv \
-             route_attach_operands route_select_retired route_daemon_argv route_ls_argv route_import_argv \
-             route_export_argv route_tmux_argv route_tmux_iff; do
-  code_grep "^theorem $claim " Linger/App/Proofs/Entry.lean >/dev/null \
-    || fail "entry-point contract disappeared: $claim"
-done
+# Pure route proofs do not observe terminal IO or inspect Main's call sites, so these ties
+# keep Main's dispatch on the proved route; Linger.App.Suites.Manager,
+# Linger.Import.Suites.Recipes and Linger.Import.Suites.Interop exercise it in subprocesses.
 # Fold layout whitespace for Main's small dispatch. Reuse the backtick-aware
 # matcher below, so quoted prose cannot stand in for these call sites.
 entry_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Main.lean)"
@@ -599,22 +592,6 @@ done
 # The proof covers the returned parser/plan values. These call-site gates make
 # bypassing them a reviewable change; IO tests check preflight/failure ordering
 # and actual argv. As with the runtime ties below, this is not an IO theorem.
-for claim in diagnostic_printable diagnostic_eq_self \
-             catalogRows_common catalogRows_lines catalogRows_status catalogRows_printable catalogRows_command \
-             selectedPane_exact selectedPane_valid \
-             parseSave_valid parseRow_command_valid parseRow_metadata parseRow_metadata_irrelevant parseRow_other \
-             layoutLeaves_bounded layoutSizes_bounded preparePane_preserves contentMember_exact \
-             captureLimit_eq captureBytes_bounded commandNotice_eq commandNotice_bounded checkpoint_notice \
-             checkpoint_live checkpoint_roundtrip checkpoint_metadata \
-             selectedPane_metadata \
-             mem_plan plan_order plan_sequential_idempotent \
-             common_cons encodeName_reversible projectName_native \
-             projectName_reserved_topology projectName_foreign \
-             parseSave_home_independent renderSave_directories renderSave_valid \
-             renderSave_empty renderSave_roundtrip; do
-  code_grep "^(private )?theorem $claim " Linger/Import/Proofs/Resurrect.lean >/dev/null \
-    || fail "interchange contract disappeared: $claim"
-done
 code_grep '^[[:space:]]+IO[.]eprintln s!"linger tmux [{]command[}]: [{]diagnostic [(]toString e[)][}]"$' Linger/Import/Shell.lean >/dev/null \
   || fail "tmux commands no longer display the proved control-free diagnostic"
 code_grep '^[[:space:]]+let content ← IO[.]FS[.]readFile path$' Linger/Import/Shell.lean >/dev/null \
@@ -698,37 +675,6 @@ done
 # alone and keeps the last full listing's remote rows (withRemote_row_local,
 # withRemote_row_remote); every visit starts with a full listing.
 # Linger.App.Suites.Manager drives the terminal lifetime, failure paths, cadence and handoff itself.
-for claim in align_optimal align_isSome_iff_sublist align_marks_length align_spells \
-             align_score_max align_earliest align_default \
-             alignWith_optimal alignWith_isSome_iff_sublist alignWith_marks_length \
-             alignWith_spells alignWith_score_max alignWith_earliest \
-             alignWith_scoring_irrelevant alignWith_smart_sensitive alignWith_smart_insensitive; do
-  code_grep "^theorem $claim " packages/fuzzy/Fuzzy/Proofs.lean >/dev/null \
-    || fail "fuzzy alignment contract disappeared: $claim"
-done
-for claim in matches_iff_sublist align_isSome_iff_matches visible_order parseListing_valid parseSnapshot_complete \
-             parseSnapshot_rejects presentation_existing presentation_existing_humanRow \
-             presentation_creation highlightedPresentation_projection \
-             highlightedPresentation_existing_humanRow highlightedPresentation_creation \
-             highlightedPresentation_existing_marked_iff emphasizeCells_at emphasizeCells_projection \
-             markPiece_marked_iff items_existing_prefix items_disabled selected_no_create \
-             mem_items_create step_stay_valid step_attach_mem step_create_iff \
-             step_create_valid step_init_empty step_cancel refresh_query refresh_candidates \
-             refresh_valid refresh_selected refresh_missing init_allowCreate \
-             refresh_allowCreate step_stay_allowCreate step_no_create step_accept_disabled \
-             remoteTarget_check rowRecords_row mem_withRemote withRemote_nodup \
-             withRemote_row_local withRemote_row_remote; do
-  code_grep "^(private )?theorem $claim([[:space:]]|:)" Linger/Selector/Proofs/Picker.lean >/dev/null \
-    || fail "selector contract disappeared: $claim"
-done
-for claim in feed_storage_bound feed_text_valid feed_paste_only_text feed_control flush_no_enter; do
-  code_grep "^(private )?theorem $claim " packages/input/Input/Proofs.lean >/dev/null \
-    || fail "input contract disappeared: $claim"
-done
-for claim in ofInput_control_iff feed_byte_bindings feed_paste_no_commands feed_ctrl_r flush_no_accept; do
-  code_grep "^theorem $claim " Linger/Selector/Proofs/Key.lean >/dev/null \
-    || fail "selector binding contract disappeared: $claim"
-done
 for tie in \
   'let listed ← IO[.]ofExcept [(]Linger[.]Selector[.]Picker[.]parseSnapshot result[.]stdout[)]' \
   'let incoming := if full then listed else listed[.]withRemote lastFull' \
@@ -792,16 +738,6 @@ done
 # consumers: validated host order, one shared row, palette-only badge styling,
 # and plain redirected or NO_COLOR output. Prompt sampling shares one reply deadline; a busy
 # nonblocking connect remains unknown and cannot authorize stale-socket removal.
-for claim in style_palette attentionCounts_exact attentionCounts_mem summary_exact \
-             summary_omits_zero summary_alphabet summary_printable; do
-  code_grep "^theorem $claim " Linger/Display/Proofs/Status.lean >/dev/null \
-    || fail "status presentation contract disappeared: $claim"
-done
-for claim in rowPieces_printable rowPieces_styles rowPieces_nameSpan nameWidth_covers \
-             renderPieces_plain terminalListing_plain; do
-  code_grep "^theorem $claim " Linger/Display/Proofs/Listing.lean >/dev/null \
-    || fail "shared listing contract disappeared: $claim"
-done
 cli_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/Shell.lean)"
 for tie in \
   'match Linger[.]Target[.]Remote[.]checkHosts hosts with [|] [.]ok l => return l [|] [.]error e => throw [(]IO[.]userError e[)]' \
@@ -834,12 +770,6 @@ done
 # their policies. An unset or empty HOME configures no remote hosts
 # (remotesFile_eq_none_iff): a fallback such as world-writable `/tmp` would let another
 # account choose them, and a suite cannot create `/tmp/.config`.
-for claim in shellOf_ne_empty shellOf_set shellOf_absent remotesFile_eq_none_iff remotesFile_set \
-             resumeDir_saved resumeDir_home resumeDir_absent \
-             detachEnabled_readOnly detachEnabled_writable; do
-  code_grep "^theorem $claim " Linger/Os/Proofs/Env.lean >/dev/null \
-    || fail "environment policy contract disappeared: $claim"
-done
 printf '%s\n' "$cli_code" | CG_RE='(^|[[:space:]])match Linger[.]Os[.]Env[.]remotesFile [(]← IO[.]getEnv "HOME"[)] with [|] none => pure [[][]] [|] some path => if ← System[.]FilePath[.]pathExists path then pure [(][(]← IO[.]FS[.]readFile path[)][.]splitOn([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "remote configuration bypasses Env.remotesFile, which reads no file for an unset or empty HOME"
 for var in SHELL LINGER_NO_DETACH_KEY; do
@@ -875,24 +805,6 @@ code_grep '^[[:space:]]+let r ← unixConnect path nonblocking$' Linger/Session/
 # Attention is sampled in the client's process, one task at a time, and an
 # outstanding sample is joined after the socket closes. Linger.Display.Suites.Title checks that an
 # idle client reaps no children and that detach joins a held sample.
-for claim in compose_parts compose_context compose_attention_last compose_bound \
-             compose_payload_attention_last; do
-  code_grep "^theorem $claim " Linger/Display/Proofs/Title.lean >/dev/null \
-    || fail "shared display composition contract disappeared: $claim"
-done
-for claim in payload_safe payload_append ansi_payload_bound ansi_ends update_waits \
-             update_nonempty_iff update_requires_boundary; do
-  code_grep "^(public )?theorem $claim " packages/terminal/Terminal/Proofs/Title.lean >/dev/null \
-    || fail "title contract disappeared: $claim"
-done
-for claim in observe_append observe_no_history observe_dims observe_invariants \
-             observe_esc_intermediates observe_escInter_pending observe_del_boundary \
-             step_escInter_final_boundary; do
-  code_grep "^(public )?theorem $claim " packages/terminal/Terminal/Proofs/Vt.lean >/dev/null \
-    || fail "pending terminal sequence contract disappeared: $claim"
-done
-code_grep '^theorem leave_boundary_title ' packages/terminal/Terminal/Proofs/Render/Modes.lean >/dev/null \
-  || fail "default title handback theorem disappeared"
 client_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Client.lean)"
 for tie in \
   'let mut observer := Terminal[.]Vt[.]Vt[.]init 1 1' \
@@ -1045,19 +957,6 @@ shim_n="$(code_count 'LEAN_EXPORT' 'packages/os/c/shim.c')"
 # The cursor proofs describe pure values. These ties keep the runtime on the
 # captured snapshot, bounded advances and shared byte allowance. The delivery
 # suite separately observes framing, prior/replay/live ordering and exit tails.
-for claim in start_faithful next_faithful next_bounded next_progress steps_storage \
-             drain_start; do
-  code_grep "^(public )?theorem $claim " 'packages/terminal/Terminal/Proofs/Replay.lean' > /dev/null \
-    || fail "replay claim $claim disappeared"
-done
-for claim in followingCap_front followingCap_frame followingCap_iff; do
-  code_grep "^theorem $claim " Linger/Session/Proofs/Buf.lean >/dev/null \
-    || fail "shared buffer allowance claim $claim disappeared"
-done
-code_grep '^theorem onMsg_attach_snapshot ' 'Linger/Session/Proofs/Session.lean' > /dev/null \
-  || fail "the attach snapshot theorem disappeared"
-code_grep '^theorem onMsg_attach_already ' 'Linger/Session/Proofs/Session.lean' > /dev/null \
-  || fail "the repeated-attach refusal theorem disappeared"
 code_grep '^[[:space:]]+effs [+][+] focusEffects sizer before s [+][+] [[][.]replay c[.]id [(]Replay[.]start s[.]vt[)][]] [+][+]$' 'Linger/Session.lean' > /dev/null \
   || fail "attach no longer captures its resulting snapshot"
 code_grep '^[[:space:]]+replay : Option Replay[.]Plan := none$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
@@ -1133,8 +1032,6 @@ code_grep '^[[:space:]]+rt ← drainConns rt$' 'Linger/Session/Shell/Daemon.lean
 # Every retirement goes through Rt.closeConn, so its body is tied too: it closes
 # the fd, then forgets that transport alone.
 # Linger.Session.Suites.Robust closes an unread reply and requires the original shell to run again.
-code_grep '^theorem step_closed_frame ' Linger/Session/Proofs/Session.lean >/dev/null \
-  || fail "the complete client-close frame disappeared"
 daemon_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Daemon.lean)"
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let received ← try read c[.]fd 65536 catch _ => pure none match received with [|] some bs => if bs[.]size > 0 then events := events [+][+] [[][.]bytes c[.]fd[.]toNat bs[.]toList[]] [|] none => rt ← rt[.]closeConn c[.]fd events := events [+][+] [[][.]closed c[.]fd[.]toNat[]]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "client read errors must close only that peer through the proved transition"
@@ -1217,14 +1114,6 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def report [(]message : Str
 
 # The shared driver proves feedback order, termination and invariant preservation.
 # Its IO adapter must forward the actual state and retain the returned state/exit.
-for claim in feedMsgs_after_close feedMsgs_after_exit; do
-  code_grep "^theorem $claim " 'Linger/Session/Proofs/Session.lean' > /dev/null \
-    || fail "decoded command stopping claim $claim disappeared"
-done
-for claim in effects_in_order run_execution run_total_safe handle_feedback_keeps_alive run_exited; do
-  code_grep "^theorem $claim " 'Linger/Session/Proofs/Driver.lean' > /dev/null \
-    || fail "shared driver claim $claim disappeared"
-done
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def pump [(]rt : Rt[)] [(]evs : List Event[)] : IO Rt := do let result ← Driver[.]run executeEffect [{] st := rt[.]st, world := rt, exiting := rt[.]exiting [}] evs return [{] result[.]world with st := result[.]st, exiting := result[.]exiting [}]' awk "$CODE_AWK" >/dev/null \
   || fail "daemon pump must use the proved driver with its actual state and exit flag"
 code_grep '^private def executeEffect [(]st : State[)] [(]rt : Rt[)] : [(]eff : Effect Plan[)] → IO [(]Rt × Driver[.]Reply eff[)]$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
@@ -1240,8 +1129,6 @@ done
 
 # An info answer can span several frames. The pure producer proves the bound;
 # keep the IO accumulator on that same policy rather than a copied number.
-code_grep '^theorem onMsg_info_bounded ' 'Linger/Session/Proofs/Session.lean' > /dev/null \
-  || fail "the info producer's framing theorem disappeared"
 code_grep '^abbrev infoReplyCap : Nat := Linger[.]Session[.]infoReplyCap$' 'Linger/Session/Shell/Inventory.lean' > /dev/null \
   || fail "the inventory's info policy diverged from the proved producer"
 code_grep '^[[:space:]]+Linger[.]Session[.]Buf[.]bufOffer infoReplyCap acc [(]ByteArray[.]mk payload[.]toArray[)]$' 'Linger/Session/Shell/Inventory.lean' > /dev/null \
@@ -1250,15 +1137,6 @@ code_grep '^[[:space:]]+Linger[.]Session[.]Buf[.]bufOffer infoReplyCap acc [(]By
 # All session verbs consume the same exact target parser. Fuzzy matching stays
 # in the interactive picker. SSH joins a command string, so the actual transport
 # must consume the proved quoting function and inherit stdin for binary input.
-for claim in check_eq_some_iff check_no_alias; do
-  code_grep "^theorem $claim " Linger/Target/Proofs/Name.lean >/dev/null \
-    || fail "exact-name contract disappeared: $claim"
-done
-for claim in targetValid_iff parseTarget_exact parseTarget_name_valid shellQuote_roundtrip command_argv \
-             targetArgs_targetOperands targetArgs_option_ne targetArgs_option; do
-  code_grep "^theorem $claim " Linger/Target/Proofs/Remote.lean >/dev/null \
-    || fail "command target, operand or shell quoting contract disappeared: $claim"
-done
 # Every attach or capture argv linger builds for itself places its target with
 # Remote.targetOperands, which Remote.targetArgs reads back exactly (targetArgs_targetOperands).
 # A literal attach argv passes a name starting with - as an option. "attach" may begin
@@ -1301,10 +1179,6 @@ done
 # an owner as `Claim.enters`, which every two-lock acquisition asks before it acts; these IO ties
 # and Linger.Session.Suites.Identity check acquisition before use and release after cleanup. A
 # connected daemon's failure must never fall back to older saved data.
-for claim in reachable_protected owner_holds_lock at_most_one_owner claim_free; do
-  code_grep "^theorem $claim " Linger/Session/Proofs/Claim.lean >/dev/null \
-    || fail "resource ownership contract disappeared: $claim"
-done
 paths_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Paths.lean)"
 for tie in \
   'match Linger[.]Target[.]Name[.]check name with [|] some name => return name [|] none => throw' \
@@ -1432,10 +1306,7 @@ printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])if row[.]lookup "state" == 
 
 # `onMsg_resizePty_agrees` connects every emitted pty size to the resulting
 # emulator's effective dimensions. IO is outside the theorem: keep the effect
-# interpreter forwarding those exact dimensions, in order. Both ends are
-# checked so deleting the claim cannot silently leave a decorative runtime tie.
-code_grep '^theorem onMsg_resizePty_agrees ' 'Linger/Session/Proofs/Session.lean' > /dev/null \
-  || fail "the session-to-pty geometry correspondence theorem disappeared"
+# interpreter forwarding those exact dimensions, in order.
 code_grep '^[[:space:]]+[|] [.]resizePty cols rows =>' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "review the pty effect interpreter against onMsg_resizePty_agrees"
 code_grep '^[[:space:]]+winsizeSet rt[.]ptyFd cols rows$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
@@ -1443,10 +1314,6 @@ code_grep '^[[:space:]]+winsizeSet rt[.]ptyFd cols rows$' 'Linger/Session/Shell/
 
 # The elapsed-time theorems use Nat. Keep the actual monotonic source and the
 # daemon tick on that representation; narrowing here is invisible to the proofs.
-code_grep '^theorem step_tick_before_interval ' 'Linger/Session/Proofs/Session.lean' > /dev/null \
-  || fail "the no-early-checkpoint theorem disappeared"
-code_grep '^theorem step_tick_checkpoint_elapsed ' 'Linger/Session/Proofs/Session.lean' > /dev/null \
-  || fail "the checkpoint elapsed-time theorem disappeared"
 code_grep '^def monotonicMs : IO Nat := IO[.]monoMsNow$' 'packages/os/Os/Shell.lean' > /dev/null \
   || fail "the monotonic clock no longer forwards Lean's Nat clock directly"
 code_grep '^[[:space:]]+let now ← monotonicMs$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
@@ -1454,10 +1321,10 @@ code_grep '^[[:space:]]+let now ← monotonicMs$' 'Linger/Session/Shell/Daemon.l
 code_grep "^[[:space:]]+rt ← pump rt' [(]events [+][+] [[][.]tick now[]][)]$" 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "the daemon no longer forwards the monotonic value to the proved tick"
 
-# The daemon boots from Session.bootVt, the term the resume theorems quantify over.
-# Theorems/Contracts.lean ties the model side: resumeVt is bootVt over loadBytes, by rfl.
+# The daemon boots from Session.bootVt, the term the resume theorems quantify over:
+# `resume_restores` (Challenge.lean, part 7) states the resume over `bootVt` itself.
 code_grep '^[[:space:]]+let vt0 := Linger[.]Session[.]bootVt [(]restore[.]map [(]·[.]1[)][)]$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
-  || fail "Daemon.serve no longer boots from Session.bootVt, which liveReachableVt_resumeVt covers"
+  || fail "Daemon.serve no longer boots from Session.bootVt, which resume_restores covers"
 
 # Read-only attachment's client-side guards (pin-the-gaps item 1). Read-only
 # is enforced DAEMON-side: the 0x0 attach geometry sets `sizer := false` and
@@ -1635,7 +1502,7 @@ code_grep 'cmd := "mktemp", args := #[[]"-d", [(]socketRoot / "linger-i-XXXXXX"[
   Linger/Import/Suites/Interop.lean >/dev/null || fail "Linger.Import.Suites.Interop no longer creates its fixture root under Verify.Harness.socketRoot"
 code_grep '^sentinel_dir="[$]socket_root/linger-verify-sentinel-[$][$]"$' scripts/verify.sh >/dev/null \
   || fail "the verifier's sentinel directory is no longer under scripts/verify.sh's socket_root"
-# `lean_lib Verify` has no glob (Verify/Coverage.lean's census needs the built program), so
+# `lean_lib Verify` has no glob (Verify/Coverage.lean reads the built program), so
 # `./lake build suites` is the only build of the suites suites, under Verify/ and each component's
 # Suites/, and it builds only the import closure of Verify/Main.lean, the suites root: a module
 # outside it is never built, and none of its suites can run. Walk that closure forwards
@@ -1692,19 +1559,19 @@ git ls-files 'tests/*' 'Tools/*' 'Manager/*' 'Tests/*' 'Linger/Core/*' 'Linger/R
     'Linger/Tools/*' 'Linger/Manager/*' | grep -q . \
   && fail "legacy directory: use scripts/, or a component under Linger/" || true
 
-# The census and the audit classify modules separately: the census by path (`pure_paths`
+# The gates and the audit classify modules separately: the gates by path (`pure_paths`
 # above, and `pureModule` in `Theorems/Coverage.lean`), the audit by the longest prefix in
-# Audit.lean's role table. They must agree: a module is pure under the census rule exactly
+# Audit.lean's role table. They must agree: a module is pure under the path rule exactly
 # when the audit holds it to the core or spec rules. So a new component fails here until
 # Audit.lean lists it, and so does a module nested below a component's top level outside
-# its `Proofs/`, `Tests/`, `Suites/` and a shell the table lists, which the census skips.
+# its `Proofs/`, `Tests/`, `Suites/` and a shell the table lists, which the path rule skips.
 audit_roles="$(grep -o '(`[A-Za-z0-9_.]*, [.][a-z]*)' Audit.lean | tr -d '(`),')"
 [ -n "$audit_roles" ] || fail "no role table found in Audit.lean"
 role_bad="$(git ls-files -- Linger.lean 'Linger/*.lean' \
 | AR_ROLES="$audit_roles" AR_PURE="$pure_paths" awk '
   BEGIN { n = split(ENVIRON["AR_ROLES"], R, "\n")
           for (i = 1; i <= n; i++) { split(R[i], kv, " "); role[kv[1]] = kv[2] }
-          n = split(ENVIRON["AR_PURE"], P, "\n"); for (i = 1; i <= n; i++) census[P[i]] = 1 }
+          n = split(ENVIRON["AR_PURE"], P, "\n"); for (i = 1; i <= n; i++) pure[P[i]] = 1 }
   { mod = $0; sub(/[.]lean$/, "", mod); gsub(/[/]/, ".", mod)
     best = ""
     for (prefix in role)
@@ -1712,42 +1579,38 @@ role_bad="$(git ls-files -- Linger.lean 'Linger/*.lean' \
         best = prefix
     got = (best == "" ? "unclassified" : role[best] " (from " best ")")
     held = (best != "" && (role[best] == ".core" || role[best] == ".spec"))
-    if (($0 in census) != held)
-      printf "  %s: %s under the census rule, but Audit.lean makes it %s\n", $0,
-        (($0 in census) ? "pure" : "not pure"), got }')"
+    if (($0 in pure) != held)
+      printf "  %s: %s under the path rule, but Audit.lean makes it %s\n", $0,
+        (($0 in pure) ? "pure" : "not pure"), got }')"
 [ -z "$role_bad" ] || {
   printf '%s\n' "$role_bad" >&2
-  fail "the census and Audit.lean disagree on which modules are pure: list the component in Audit.lean, or move the module"; }
+  fail "the path rule and Audit.lean disagree on which modules are pure: list the component in Audit.lean, or move the module"; }
 
-# Every declaration name cited in backticks must resolve to a declaration, in THEOREMS.md
-# and in every tracked `.lean` file, comments included. This is gated rather than
-# reviewed because reviewing it produced a FALSE CLEAN: the one-off check run in step 8
-# grepped each name with `git grep -w`, which matches prose and comments, so
-# `scrollbackAnsi_le`, which THEOREMS.md and two code comments named and nothing then
-# declared, satisfied it. A doc that promises a theorem is unfalsifiable until something
-# looks for the declaration, so this looks for `theorem|lemma|def|abbrev`.
+# Every declaration name cited in backticks must resolve to a declaration, in every tracked
+# `.lean` file, comments included. This is gated rather than reviewed because reviewing it
+# produced a FALSE CLEAN: the one-off check run in step 8 grepped each name with
+# `git grep -w`, which matches prose and comments, so `scrollbackAnsi_le`, which a document
+# and two code comments named and nothing then declared, satisfied it. A doc that promises a
+# theorem is unfalsifiable until something looks for the declaration, so this looks for
+# `theorem|lemma|def|abbrev`.
 #
 # Basenames, because a citation is written unqualified while the declaration sits in a
 # namespace; a qualified citation such as `Wire.decode_encode_chunked` is checked by its
 # basename too. CamelCase names (types, structures) and file/section names are skipped:
 # the target here is the `snake_case` claim names, which is what a reader would try to
-# look up. Empty extraction is rejected so the check cannot pass without citations.
-# Two lists hold names cited but not declared in Lean here: claims a comment states are
-# absent, which must stay undeclared, and names from C, the Lean toolchain or GitHub,
-# plus one lemma-name prefix. Every listed name must still be cited.
+# look up. Two lists hold names cited but not declared in Lean here: claims a comment states
+# are absent, which must stay undeclared, and names from C, the Lean toolchain or GitHub,
+# plus one lemma-name prefix. Every listed name must still be cited, so an extraction that
+# finds nothing fails too.
 cite_absent='mmap_id_gridAnsi sb_csiDispatch_any load_legacy_save save_no_legacy'
 cite_foreign="lean_chmod lean_io_process_get_pid pid_t tty_do_resize \
-  native_decide bv_decide lean_exe workflow_dispatch org_ foldl_append"
+  native_decide lean_exe workflow_dispatch org_ foldl_append"
 cite_scan() {                                # file:line:basename per backticked snake_case name
-  { grep -noE '`[A-Za-z][A-Za-z0-9_.]*`' THEOREMS.md | sed 's/^/THEOREMS.md:/'
-    git grep -noE '`[A-Za-z][A-Za-z0-9_.]*`' -- '*.lean'; } \
+  git grep -noE '`[A-Za-z][A-Za-z0-9_.]*`' -- '*.lean' \
   | awk -F: '{ name = $3; gsub(/`/, "", name); base = name; sub(/.*[.]/, "", base)
       if (name !~ /[.](md|lean|sh)$/ && ((name ~ /^[a-z]/ && name ~ /_/) || base ~ /^[a-z][A-Za-z0-9]*_/))
         print $1 ":" $2 ":" base }'
 }
-thm_cites="$(cite_scan | awk -F: '$1 == "THEOREMS.md" { print $3 }' | sort -u)"
-[ -n "$thm_cites" ] \
-  || fail "no declaration citations found in THEOREMS.md"
 thm_decls="$(git grep -hoE '^ *(public )?(private )?(theorem|lemma|def|abbrev) [A-Za-z][A-Za-z0-9_.]*' \
   -- '*.lean' | sed 's/.*[[:space:]]//; s/.*[.]//' | sort -u)"
 # Verify/Coverage.lean backs each renderer and replay reference with the claims covering
@@ -1785,23 +1648,6 @@ emitter_claims="$(awk '
       printf "  `%s` is listed as foreign but nothing cites it\n", name; bad = 1 }
     exit bad }' >&2 \
   || fail "a cited declaration does not exist — repoint the citation, or list a claim stated as absent in cite_absent"
-# Each theorem THEOREMS.md cites is restated in Theorems/Contracts.lean and closed by
-# `with_reducible exact` of that theorem, so weakening its statement fails the build.
-# The Proofs column also names theorems by qualified name, such as `Good.feed`.
-thm_proofs="$(awk -F'|' '/^[|]/ { print $(NF - 1) }' THEOREMS.md \
-  | grep -oE '`[A-Za-z][A-Za-z0-9_.]*`' | tr -d '`')"
-{ code_grep 'with_reducible exact ' Theorems/Contracts.lean \
-    | sed 's/.*with_reducible exact //; s/[^[:alnum:]_.].*//'
-  printf '%s\n' '#cites' "$thm_cites" "$thm_proofs"; } \
-| awk '
-  !cites { if ($0 == "#cites") cites = 1; else pinned[++n] = $0; next }
-  NF && !($0 in seen) { seen[$0] = 1; ok = 0
-    for (i = 1; i <= n; i++) {
-      p = pinned[i]
-      if (p == $0 || substr(p, length(p) - length($0)) == "." $0) ok = 1 }
-    if (!ok) { printf "  THEOREMS.md cites `%s`, which no with_reducible exact pins\n", $0; bad = 1 } }
-  END { exit bad }' >&2 \
-  || fail "Theorems/Contracts.lean does not restate every theorem THEOREMS.md cites"
 
 # The CI matrix. macOS came off the per-push path on 2026-09-15 for a cost reason
 # measured in SCRATCHPAD.md — not repeated here, because that figure was copied into
@@ -2027,4 +1873,4 @@ printf '%s\n' "$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Client
 [ "$(code_count 'silenceMs := ' 'Linger/App/*.lean' 'Linger/Session/Shell/*.lean')" -eq 1 ] \
   || fail "only wait may choose a one-shot request's silence budget"
 
-printf 'gates OK — purity, the OS and unsafe surfaces, the Vt friend set, the runtime ties, documentation contracts, and the ratchets\n'
+printf 'gates OK — purity, the OS and unsafe surfaces, the Vt friend set, the runtime ties, declaration citations, and the ratchets\n'

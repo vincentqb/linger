@@ -22,11 +22,11 @@ what lets these statements name `State`'s sealed bookkeeping fields —
 `clients`, the `outSeq`/`lookSeq` pair, `scan`, `dirty` — which every plain
 importer, the daemon included, can no longer read, poke or forge. No blanket
 `public section`, for the Buf-friend reasons: statements naming private fields
-cannot be public, `Linger/Session/Proofs/Driver.lean` and `Theorems/Contracts.lean` import
+cannot be public, `Linger/Session/Proofs/Driver.lean` and `Theorems/Solution.lean` import
 them with `import all`, and module-private is what keeps the `:= rfl`
 proofs elaborating in the private scope.
 
-THEOREMS.md rows:
+Proved here:
 * §Detach — sessions outlive clients. A session with zero clients still
   advances (output is never gated on attachment); a client detaching
   (or `detach-all`) cannot change the screen; attach touches only the
@@ -1233,8 +1233,7 @@ ranges over every byte string that could be on disk.
 **Named rather than inlined**, for the reason `Vt.decodedOk` and `stripMagic` are named:
 the two claims below repeat it six times between them and would be unreadable spelled out.
 The daemon calls `bootVt` itself, so the model and the runtime share the fallback by
-construction: `scripts/gates.sh` ties the daemon's call, and `Theorems/Contracts.lean` ties
-this definition to `bootVt` over `Checkpoint.loadBytes`. -/
+construction: `scripts/gates.sh` ties the daemon's call. -/
 def resumeVt (b : ByteArray) : Vt.Vt := bootVt ((Checkpoint.loadBytes b).map (·.vt))
 
 /-- **Both doors, in one step.** `bootVt`'s two branches are exactly the daemon's two
@@ -1875,8 +1874,7 @@ The fix is also what makes them provable at all: the old shape ended in
 `packages/terminal/Terminal/Render.lean`'s header makes, and the same reason `Render.history` was the
 last byte stream to acquire a proof rather than merely a *bound*: it too was assembled
 through `String` until `rowText` was rebuilt on `List UInt8`, which is what earned it
-`history_framing`/`history_lines`. `Theorems/Coverage.lean` now requires exact
-constant occurrences in theorem types; `Verify/Coverage.lean` classifies emitted streams.
+`history_framing`/`history_lines`. `Verify/Coverage.lean` classifies emitted streams.
 `infoText` now builds
 `List UInt8` directly for the same reason. -/
 

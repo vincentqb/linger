@@ -794,10 +794,9 @@ one.
 **Plain text only, and there is deliberately no colour variant.** This took a
 `withAnsi : Bool` and an unreachable `rowAnsi` branch behind it: the only call site
 passed `false`, all four claims below were stated at `false`, and `Cli.lean` had no flag
-to reach it — so the branch was dead *and* unproved, which is the state
-`Theorems/Coverage.lean` now rejects by exact constant occurrence (verified by
-mutation: replacing that branch's body with four junk bytes left `./lake build`
-and `./lake build Theorems Tests` green).
+to reach it — so the branch was dead *and* unproved (verified by mutation: replacing that
+branch's body with four junk bytes left `./lake build` and `./lake build Theorems Tests`
+green).
 Deleted rather than wired up, because a colour transcript is not a stated requirement
 and reaching it costs a wire tag: `Msg.history` carries no payload and the tag
 assignment is frozen, so adding colour means a new tag plus a case in each

@@ -4,7 +4,7 @@ import all Linger.Session.Wire
 
 /-! # §Frame / §Chunk / §Bound — the wire protocol theorems
 
-THEOREMS.md rows: §Frame (round-trip; unknown tags are data),
+Proved here: §Frame (round-trip; unknown tags are data),
 §Chunk (re-chunking cannot change what a peer sees), §Bound (a decoder
 holds at most `4 + maxPayload` bytes whatever a peer sends — the bound
 at the wire layer).

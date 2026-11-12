@@ -7,10 +7,10 @@ meta section
 
 /-! # Verify.Coverage — coverage of code by claims
 
-`Theorems.Coverage` checks exact theorem-type coverage and its fixed regression
-fixtures at build time. This standalone check repeats the semantic check against
-fresh sources, even with cached imports, then requires an explicit backing entry
-for renderer/replay operations referenced outside their own module.
+`Theorems.Coverage` checks the pure code's `@[csimp]` replacements and its fixed regression
+fixtures at build time. This standalone check repeats that check and reads the pure
+definitions from fresh sources, even with cached imports, then requires an explicit backing
+entry for renderer/replay operations referenced outside their own module.
 Build the program first; `scripts/verify.sh` runs this after its build. -/
 
 namespace Verify.Coverage
@@ -52,10 +52,9 @@ def emitters : List (String × String) :=
     ("Render.screenText", "screenText_framing / screenText_lines / screenText_records")]
 
 run_cmd
-  let defs ← checkPureCoverage
+  let defs ← checkPureCode
   let mut fails : Array String := #[]
-  IO.println
-      s!"pure semantic coverage: {defs.size} explicit definitions, all in written theorem types"
+  IO.println s!"pure code: {defs.size} explicit definitions, csimp replacements checked"
   let found ← liftIO (runtimeEmitters defs)
   IO.println s!"program renderer/replay references: {String.intercalate " " found.toList}"
   for name in found do

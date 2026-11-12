@@ -1183,10 +1183,9 @@ theorem stick_step_so {v : Vt} (hg : v.pstate = .ground) :
 
 Three pure-core values the tree *used* everywhere and *stated* nowhere: every proof that
 needed them re-derived them inline, which is why the old source scanner counted
-them as unclaimed. `Theorems/Coverage.lean` now checks exact constants in theorem
-types. The clamp's own range (`clampDim_range`, `clampDim_eq_self_iff`) is stated beside
-`Good` in `packages/terminal/Terminal/Proofs/Vt/State.lean`; each theorem below is the postcondition its callers
-were already assuming. -/
+them as unclaimed. The clamp's own range (`clampDim_range`, `clampDim_eq_self_iff`) is
+stated beside `Good` in `packages/terminal/Terminal/Proofs/Vt/State.lean`; each theorem
+below is the postcondition its callers were already assuming. -/
 
 /-- **`Vt.init` applies the clamp, and the grid it builds is the clamped height.** -/
 theorem init_shape (cols rows : Nat) :

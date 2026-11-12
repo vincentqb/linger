@@ -67,8 +67,9 @@ in the foreground, as the verifier.
 - `Audit.lean`: the Lean Software Challenge role of each module prefix; `./lake build` runs the audit.
   List a new component there: a module no entry covers is tooling, which program code
   cannot import.
-- `Theorems/`: the headline proofs (`Solution.lean`), the cross-component contracts and the
-  coverage census; `Verify/`: the verifier's harness, runner and own suites.
+- `Theorems/`: the headline proofs (`Solution.lean`) and `Coverage.lean`, which checks the
+  pure code's `@[csimp]` replacements and lists its definitions for the emitter check in
+  `Verify/Coverage.lean`; `Verify/`: the verifier's harness, runner and own suites.
 - `packages/`: Lake packages linger requires by path, each with its own `Challenge`, solution,
   `comparator.json` and audit: `fuzzy`, the fuzzy matcher (module and namespace `Fuzzy`),
   `input`, the bounded terminal key decoder (`Input`), `terminal`, the VT toolkit
@@ -94,10 +95,8 @@ Lean erases proofs regardless of file placement.
 - Pure modules have no `IO`, `partial def` or `sorry`: a component's top module and each
   component's modules other than `Boundary.lean` and `Shell.lean`. Model effects as data;
   execute them in `Shell.lean` or `Shell/`.
-- Every `def` or `abbrev` in a pure module needs a written
-  theorem whose type contains its exact fully qualified constant in the same
-  commit, checked by `Theorems/Coverage.lean`; generated lemmas do not count.
-  State invariants in `THEOREMS.md` and design code for provability.
+- State invariants in `Challenge.lean` and the `Spec.lean` files, and design code for
+  provability.
 - The files the audit lists as `Owned:` (`Challenge.lean`, `comparator.json`, `Audit.lean`,
   each `Spec.lean`, `packages/os/Os/Boundary.lean`, the Lake configuration and the toolchain) say
   what linger claims. Change them to change a claim, never to make a proof pass, and restate a
@@ -154,11 +153,10 @@ Lean erases proofs regardless of file placement.
   `Linger/Session/Suites/Paths.lean` and `Linger/Display/Suites/Overview.lean`, which
   assert product defaults.
 - No `partial def`, fuel parameter or `set_option` in any Lean file (`scripts/gates.sh`):
-  options come from `lakefile.lean`. Proofs add no axioms:
-  `Theorems/Coverage.lean` rejects every axiom declared in pure or proof
-  modules, including those native evaluation (`native_decide`,
-  `decide +native`, `bv_decide`) adds, and fails unless its imports reach
-  every such module. In comments, quote code in backticks; source gates skip
+  options come from `lakefile.lean`. Proofs add no axioms: each audit, linger's and each
+  package's, rejects a declaration in a module its default targets build that uses an axiom
+  beyond `propext`, `Quot.sound` and `Classical.choice`, as native evaluation (`native_decide`,
+  `decide +native`, `bv_decide`) does. In comments, quote code in backticks; source gates skip
   backticked spans.
 
 ## Scope and maintenance

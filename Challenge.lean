@@ -60,7 +60,14 @@ the declared type, and that no axiom beyond `propext`, `Quot.sound` and `Classic
 used. Changing a statement or a hole here changes what linger claims.
 
 Not claimed: that the IO executors, the C shim and the operating system behave as the world
-claims say, which the suites named with each claim exercise instead. -/
+claims say, which the suites named with each claim exercise instead; scheduling, file system
+durability, allocation failure, termination by the operating system and failures of the
+compiler, the runtime or the C shim; memory beyond the logical bytes the buffers retain;
+ownership among processes that do not cooperate or replace the lock files; fidelity beyond
+linger's own terminal model, which stands in for every receiver; the incoming title content and
+the saved cursor slot, which fixtures cover; processes or images, since recovery restores
+screens; for tmux imports, captures other than the latest save's archive; and that an import
+never runs a pane's saved command, which a gate checks. -/
 
 public section
 

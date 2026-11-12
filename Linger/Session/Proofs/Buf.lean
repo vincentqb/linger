@@ -9,17 +9,16 @@ This file is the tree's first **friend module**: `import all Linger.Session.Buf`
 is what lets these statements and proofs see a representation that is sealed to
 every plain importer (`Buf.bytes` is `private`; the runtime cannot read, write,
 or forge it — specs/archive/lean-modules.md Step 2). There is deliberately no blanket
-`public section` here: these theorems are leaves — `Theorems/Contracts.lean` restates
-`reachableIn_bound` and `reachableOut_bound`, and nothing else uses them as lemmas — and
-being CHECKED at build is their whole job, so module-private is their honest visibility. It also
-lets the `rfl` proofs elaborate where the sealed definitions still reduce;
-`Theorems/Coverage.lean` imports this friend scope and checks the resulting theorem
-types semantically.
+`public section` here: these theorems are leaves — `Theorems/Solution.lean` proves headlines
+from them (`input_exact`, Challenge.lean part 1, and `reachableIn_bound` and
+`reachableOut_bound`, part 6), and nothing else uses them as lemmas — and being CHECKED at
+build is their whole job, so module-private is their honest visibility. It also lets the `rfl`
+proofs elaborate where the sealed definitions still reduce.
 
 `Session.run_wf` bounds the *machine*: no event trace grows a client roster, a
 label store or the screen. One layer below, the daemon's two byte queues were
-bounded only by code review — `THEOREMS.md`'s §Bound bullet said so in as many
-words. These are that bullet, turned into theorems about `Linger.Session.Buf`.
+bounded only by code review. These are their bounds, turned into theorems about
+`Linger.Session.Buf`.
 
 **What is proved here is the arithmetic, not the daemon.** The runtime shells are
 `IO`; no theorem can see that it calls these functions rather than open-coding the
@@ -53,9 +52,8 @@ namespace Linger.Session.Buf
 owed. Nothing else in this file means anything without it. -/
 theorem owedLen_eq (b : Buf) : (writeFrom b).size = owedLen b := rfl
 
-/-- The one public door in starts with zero debt — `empty`'s anchor, and one of the
-theorems that claim it in the census: an importer can begin a queue, never forge one
-mid-debt (the constructor is private with the field). -/
+/-- The one public door in starts with zero debt — `empty`'s anchor: an importer can begin a
+queue, never forge one mid-debt (the constructor is private with the field). -/
 theorem writeFrom_empty : writeFrom Buf.empty = ByteArray.empty := rfl
 
 theorem owedLen_empty : owedLen Buf.empty = 0 := rfl

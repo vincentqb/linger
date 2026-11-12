@@ -9,8 +9,9 @@ public section
 The daemon's socket output buffers and pty input backlog share this value type.
 It carries the cap, the policy when it is reached, and the discipline that keeps
 the stored byte sequence equal to the unwritten debt. Those decisions lived in
-`Linger/Session/Shell/Daemon.lean`, where nothing could prove them; the runtime half of
-§Bound was a paragraph in THEOREMS.md ending "not proved".
+`Linger/Session/Shell/Daemon.lean`, where nothing could prove them, and the queues' bounds,
+which `reachableIn_bound` and `reachableOut_bound` (Challenge.lean, part 6) now state, were
+documented as not proved.
 
 This module is the value; `Linger/Session/Proofs/Buf.lean` is the proof; the daemon is the
 interpreter. That is the same split `Session.step` already uses one layer up (the
@@ -32,8 +33,7 @@ once when it stops. Same single copy per flush as before, and the leak is now
 **The field is `private` (2026-08-19, the module system).** The 2026-08-18
 measurement said "not adoptable yet" for two reasons, and the module system
 retired both: proofs no longer have to move here — `Linger/Session/Proofs/Buf.lean` is a
-`module` with `import all Linger.Session.Buf`, the friend import, so the semantic
-census in `Theorems/Coverage.lean` sees its private theorem types — and
+`module` with `import all Linger.Session.Buf`, the friend import — and
 the write hole is closed, because a private field makes the *constructor*
 private, so structure-instance notation can no longer write or forge where it
 cannot read (all three refuse from the runtime, break-verified). The
