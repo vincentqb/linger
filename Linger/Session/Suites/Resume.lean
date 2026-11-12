@@ -15,7 +15,9 @@ Ported from `tests/resume_test.py`.
 Checkpoint on last detach, daemon SIGKILLed (simulated crash/reboot), session
 listed as resumable, attach restores the old screen and labels and starts a fresh
 shell in the saved cwd. The resumable row is compared as a `Status`, not as a
-substring of the listing, which some *other* row's `(resumable)` could also match. -/
+substring of the listing, which some *other* row's `(resumable)` could also match. A daemon
+killed while it saves leaves the previous checkpoint or the new one, whole, and a checkpoint that
+does not decode is refused and kept, never replaced by a fresh session. -/
 
 namespace Linger.Session.Suites.Resume
 
@@ -246,8 +248,163 @@ private def answerChecks (e : Env) : IO Unit := do
         and its daemon starts nothing once it could ({resumed.map (·.1)}, {waitedMs} ms, \
         settled={settled}, left {left.map (·.fileName)})"
 
+/-- A checkpoint whose bytes do not decode is never taken for no checkpoint: `resume` and
+`attach` refuse it, say why, start nothing and leave the file as it is, and `kill` still
+discards it. The damage is what a crash or a failing disk leaves at a saved session's path: an
+empty file, the session's own checkpoint cut short, and a body that runs off its end behind a
+valid tag. That last one is deterministic: written with `Checkpoint.magic`, it passes the version
+gate, 80 and 24 read back as the geometry, and the grid's length is an `rNat` over a run of 0xFF,
+all continuation bytes, which runs off the end. -/
+private def damagedChecks (e : Env) : IO Unit := do
+  let name := "damaged"
+  let path := s!"{e.dir}/{name}.ckpt"
+  -- a saved session: its daemon saves its first change at its first tick, and then crashes
+  let _ ← e.typeIn name #["true"]
+  let saved ←
+    waitFor patienceMs do
+        match ← (IO.FS.readBinFile path).toBaseIO with
+        | .ok bytes =>
+          return (Linger.Session.Checkpoint.loadBytes bytes).isSome
+        | .error _ =>
+          return false
+  unless saved && (← e.crashDaemon name) do
+    throw (IO.userError s!"no saved session '{name}' to damage")
+  let real ← IO.FS.readBinFile path
+  let corrupt := Linger.Session.Checkpoint.magic ++ [80, 24] ++ List.replicate 198 (0xFF : UInt8)
+  for (what, bytes) in
+    [("an empty checkpoint", ByteArray.empty),
+      ("a checkpoint cut short", real.extract 0 (real.size / 2)),
+      ("a checkpoint whose body runs off its end", ByteArray.mk corrupt.toArray)] do
+    -- what a command that started nothing leaves: the file as it was, and no daemon answering;
+    -- the crashed daemon's socket stays, as a crash leaves it
+    let untouched : IO Bool := do
+      let kept ← (IO.FS.readBinFile path).toBaseIO
+      return kept.toOption.map (·.toList) == some bytes.toList && (← e.info name "pid").isNone
+    IO.FS.writeBinFile path bytes
+    let (rc, _, err) ← e.cli #["resume", name]
+    expect (rc == 1 && has err "does not decode" && (← untouched))
+        s!"resume refuses {what}, says why, starts nothing and keeps it (rc={rc}, {err})"
+    let client ← e.spawn #["attach", name]
+    let said ← IO.mkRef ByteArray.empty
+    let told ← client.awaitText said (hasText · "does not decode")
+    let attachRc ← client.reap patienceMs
+    client.bye (sendDetach := false)
+    let kept ← untouched
+    -- a session that started over the file is ended before the next file is written
+    if (← e.info name "pid").isSome then
+      e.killAll #[name]
+    expect (told && attachRc == 1 && kept)
+        s!"attach refuses {what}, says why, starts nothing and keeps it (rc={attachRc})"
+  let (killRc, _, _) ← e.cli #["kill", name]
+  expect (killRc == 0 && !(← System.FilePath.pathExists path))
+      s!"kill discards a checkpoint that does not decode (rc={killRc})"
+
+/-- The value the checkpoint at `path` holds for the label `key`, or `none` when the file does not
+decode. -/
+private def savedLabel (path key : String) : IO (Option String) := do
+  match ← (IO.FS.readBinFile path).toBaseIO with
+  | .ok bytes =>
+    return (Linger.Session.Checkpoint.loadBytes bytes).bind (·.labels.lookup key)
+  | .error _ =>
+    return none
+
+/-- Whether `p` holds within `ms`, looked at every millisecond: a kill that must land inside a
+save cannot wait out `waitFor`'s 50 ms between looks. -/
+private def soon (ms : Nat) (p : IO Bool) : IO Bool := do
+  let deadline := (← Os.Shell.monotonicMs) + ms
+  repeat
+    if ← p then
+      return true
+    unless ← Os.Shell.nap deadline 1 do
+      return ← p
+  return false
+
+/-- A crash while the daemon saves leaves the previous checkpoint or the new one at the path,
+whole, and an end record that decodes (`Disk.Durable`, whose flushes only a power cut could
+test, which no suite makes). Each save is the one a last detach asks for once the label `gen`
+changed. The daemon is killed with SIGKILL while a FIFO at the temporary sibling holds a save
+open before it writes a byte, and then, over a checkpoint of a full history ring, at three points
+of a save: just after it is asked for, once its temporary sibling appears, and once the new
+checkpoint is in place, when only the directory's flush may remain. -/
+private def durableChecks (e : Env) : IO Unit := do
+  let name := "durable"
+  let path := s!"{e.dir}/{name}.ckpt"
+  let tmp := path ++ ".tmp"
+  -- attach, change the label, and detach: the last detach asks for a save
+  let askSave (gen : Nat) : IO Unit := do
+    let client ← e.spawn #["attach", name]
+    let _ ← waitFor patienceMs (return (← e.info name "clients") == some "1")
+    let _ ← e.cli #["set", name, s!"gen={gen}"]
+    client.detach
+    client.bye (sendDetach := false)
+  let recordDecodes : IO Bool := do
+    match ← (IO.FS.readBinFile s!"{e.dir}/{name}.end").toBaseIO with
+    | .ok bytes =>
+      return (Linger.Session.Record.decode bytes.toList).isSome
+    | .error _ =>
+      return false
+  let _ ← e.typeIn name #["true"]
+  askSave 1
+  let first ← waitFor patienceMs (return (← savedLabel path "gen") == some "1")
+  let made ← IO.Process.output { cmd := "mkfifo", args := #[tmp] }
+  askSave 2
+  -- the save waits to open the FIFO, off the daemon's loop, so the daemon still answers
+  let answered ← waitFor patienceMs (return (← e.info name "clients") == some "0")
+  let crashed ← e.crashDaemon name
+  IO.FS.removeFile tmp
+  expect
+      (first && made.exitCode == 0 && answered && crashed &&
+        (← savedLabel path "gen") == some "1" &&
+        (← recordDecodes))
+      "a crash while a save waits to write leaves the previous checkpoint whole, and the daemon \
+        answers meanwhile"
+  -- a full history ring of varied text, so that a save takes a while to write and flush
+  let _ ←
+    e.typeIn name
+        #["awk 'BEGIN { for (i = 0; i < 12000; i++) { s = \"\"; for (j = 0; j < 7; j++) s = s sprintf(\"%09d \", 7 * i + j); print s } }'; echo DURABLE-$((40+2))"]
+  let filled ← waitFor hangMs (return has (← e.out #["capture", name]) "DURABLE-42")
+  let mut kept ← savedLabel path "gen"
+  let mut whole := filled
+  let mut during := 0
+  for (gen, point) in
+    [(3, "asked"), (4, "writing"), (5, "placed"), (6, "writing"), (7, "writing")] do
+    let client ← e.spawn #["attach", name]
+    let _ ← waitFor patienceMs (return (← e.info name "clients") == some "1")
+    let _ ← e.cli #["set", name, s!"gen={gen}"]
+    let dpid ← e.daemonPid name
+    client.detach
+    let _ ←
+      match point with
+      | "writing" =>
+        soon patienceMs (System.FilePath.pathExists tmp)
+      | "placed" =>
+        soon patienceMs (return (← savedLabel path "gen") == some (toString gen))
+      | _ =>
+        pure true
+    if let some pid := dpid then
+      Os.Shell.kill pid 9
+    let gone ←
+      waitFor patienceMs do
+          match dpid with
+          | some pid =>
+            return !(← Os.Shell.alive pid)
+          | none =>
+            return false
+    client.bye (sendDetach := false)
+    -- a temporary sibling still there was being written or flushed when the kill landed
+    if ← System.FilePath.pathExists tmp then
+      during := during + 1
+      IO.FS.removeFile tmp
+    let now ← savedLabel path "gen"
+    whole := whole && gone && (now == kept || now == some (toString gen)) && (← recordDecodes)
+    kept := now
+  expect whole
+      s!"a crash at each point of a save leaves the previous checkpoint or the new one whole, \
+        and an end record that decodes ({during} of 5 kills landed while a save wrote)"
+  e.killAll #[name]
+
 /-- The resume suite: checkpoint, crash and restore, and where a resume runs. -/
-@[exercises Linger.Session.Spawn.Runs]
+@[exercises Linger.Session.Spawn.Runs, exercises Linger.Session.Disk.Durable]
 def run : IO UInt32 :=
   Env.suite "resume" fun e => do
     directoryChecks e
@@ -374,38 +531,8 @@ def run : IO UInt32 :=
     let ckpts3 ← e.dirNames ".ckpt"
     expect (ckpts3 == [] && !has (← e.out #["ls"]) "boot")
         s!"kill discards an ended session's checkpoint ({ckpts3})"
-    -- corrupt checkpoint: daemon must start fresh, not crash.
-    --
-    -- Written with `Checkpoint.magic`: a foreign tag would only reach `stripMagic`'s
-    -- reject, the shallowest branch there is. With the real tag the file gets past
-    -- the version gate and dies in the body, which is the branch a torn write takes.
-    --
-    -- The body is deterministic: 80 and 24 read back as the geometry (LEB128,
-    -- single bytes under 128), then the grid's length is an `rNat` over a run of
-    -- 0xFF — all continuation bytes, so it runs off the end of the list and `load`
-    -- is `none` for certain. A random body is a random branch, and a flake here
-    -- would be unreproducible.
-    let corrupt := Linger.Session.Checkpoint.magic ++ [80, 24] ++ List.replicate 198 (0xFF : UInt8)
-    IO.FS.writeBinFile s!"{e.dir}/corrupt.ckpt" (ByteArray.mk corrupt.toArray)
-    -- a resume runs a saved session's program again or nothing, so it refuses what it cannot
-    -- read and leaves it where it is
-    let (refusedRc, _, refusedErr) ← e.cli #["resume", "corrupt"]
-    let kept ← (IO.FS.readBinFile s!"{e.dir}/corrupt.ckpt").toBaseIO
-    expect
-        (refusedRc == 1 && has refusedErr "cannot be read" &&
-          kept.toOption.map (·.toList) == some corrupt &&
-          (← e.info "corrupt" "pid").isNone)
-        s!"corrupt checkpoint: resume refuses it and leaves it (rc={refusedRc})"
-    -- …while attach starts fresh
-    let fresh ← e.spawn #["attach", "corrupt"] cols rows
-    let _ ← waitFor 4000 (return (← e.info "corrupt" "clients") == some "1")
-    fresh.type "echo fresh-start-$((40+2))\r"
-    expect
-        (←
-          waitFor 4000 (return has (← e.out #["capture", "--history", "corrupt"]) "fresh-start-42"))
-        "corrupt checkpoint: attach starts fresh, no crash"
-    fresh.bye
-    e.killAll #["corrupt"]
+    damagedChecks e
+    durableChecks e
     -- ── the resumed pty is born at the CHECKPOINT's size, not a fixed 80x24 ────
     -- Measured with NO sizing attach: `resume` and `send` never send `.attach`,
     -- so nothing reconciles the pty with the restored Vt. With an attach the
@@ -506,12 +633,16 @@ def run : IO UInt32 :=
     e.killAll #["read-fail"]
     IO.FS.removeDirAll readPath
     -- A daemon that holds its locks but needs longer than the 3 s floor to listen still
-    -- serves the attach that started it; a FIFO checkpoint holds its load for 4 s.
+    -- serves the attach that started it; a FIFO checkpoint holds its load for 4 s, and then
+    -- passes a checkpoint the daemon resumes.
     let slowPath := s!"{e.dir}/slow.ckpt"
+    let slowSource := s!"{e.dir}/slow.src"
+    IO.FS.writeBinFile slowSource
+        (Linger.Session.Checkpoint.saveBytes ⟨Terminal.Vt.Vt.init 40 5, e.dir, []⟩)
     let made ← IO.Process.output { cmd := "mkfifo", args := #[slowPath] }
     let release ←
       IO.Process.spawn
-          { cmd := "sh", args := #["-c", s!"sleep 4; printf not-a-checkpoint > '{slowPath}'"],
+          { cmd := "sh", args := #["-c", s!"sleep 4; cat '{slowSource}' > '{slowPath}'"],
             stdin := .null, stdout := .null, stderr := .null }
     let slowStart ← Os.Shell.monotonicMs
     let slow ← e.spawn #["attach", "slow"] cols rows

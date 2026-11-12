@@ -473,7 +473,7 @@ module_imports Linger/Session.lean ':(glob)Linger/Session/*.lean' 'Linger/Sessio
     packages/terminal/Terminal/Replay.lean Linger.lean \
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
-    if (mod !~ /^(Linger[.]Session|Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](Shell|Commands|Answer|Wait|Spec)|Std[.]Async[.](System|Signal))$/ \
+    if (mod !~ /^(Linger[.]Session|Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](Shell|Commands|Answer|Wait|Recovery|Spec)|Std[.]Async[.](System|Signal))$/ \
         && mod != "SoftwareChallenge.Commands") {
       print "  " $0; bad = 1
     }
@@ -748,7 +748,7 @@ for tie in \
   'let withColor := [(]← [(]← IO[.]getStdout[)][.]isTty[)] && [(]← IO[.]getEnv "NO_COLOR"[)][.]isNone let ordered := Linger[.]Display[.]View[.]sort [(]fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD ""[)][)] rows writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor ordered[)][.]toArray[)]' \
   'def summaryText : IO String := do let rows ← localRows [(]some [(][(]← monotonicMs[)] [+] 250[)][)] [(]statusOnly := true[)] return Linger[.]Display[.]Status[.]summary [(]rows[.]map fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD "unknown"[)][)]' \
   'def cmdSummary : IO Answer := do let summary ← summaryText if !summary[.]isEmpty then IO[.]println summary return [.]done' \
-  'let fd ← connectUpsert name cmd some <[$]> attachSpoken name fd false' \
+  'match ← connectUpsert name cmd with [|] [.]ok fd => attachSpoken name fd false' \
   '[|] [[]"ls", "--summary"[]] [|] [[]"list", "--summary"[]] [|] [[]"l", "--summary"[]] => cmdSummary'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "listing or prompt bypassed its shared policy: $tie"
@@ -944,7 +944,7 @@ code_grep "$VT_ALL_RE" '*.lean' \
 # deliberate, reviewable act — the checkpoint for "does this genuinely
 # need a syscall wrapper, or does Lean core already have it?" (see the
 # C-vs-Rust and shrink-the-shim notes in SCRATCHPAD.md).
-SHIM_CAP=23
+SHIM_CAP=24
 shim_n="$(code_count 'LEAN_EXPORT' 'packages/os/c/shim.c')"
 [ "$shim_n" -le "$SHIM_CAP" ] \
   || fail "shim grew to $shim_n wrappers (cap $SHIM_CAP); justify the new syscall and bump the cap"
@@ -1248,15 +1248,28 @@ printf '%s\n' "$client_code" | CG_RE='(^|[[:space:]])try Paths[.]checkSpelling p
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])IO Unit := do let deadline := [(]← monotonicMs[)] [+] claimWaitMs let reported ← IO[.]mkRef false let retry := claimRetry name [(]← Paths[.]socketPath name[)] deadline reported Paths[.]withSessionLockRetrying name retry do ignoreSighup let sockPath ← Paths[.]socketPath name([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "daemon recovery and lifetime must execute inside both ownership locks"
 # A start takes a name only by Start.plan, decided holding the name, and never loads a checkpoint;
-# a resume runs only a saved session's program, by Start.resumePlan, or nothing.
+# a resume runs only a saved session's program, by Start.resumePlan, or nothing. Every other
+# daemon starts from what the name's checkpoint holds as `Recovery.decide` says (`recovery_exact`),
+# holding the name: a refusal starts nothing over a checkpoint that does not decode, and the
+# command's daemon, the offline readers and an attach whose daemon refused all ask it of the
+# file's bytes. Linger.Session.Suites.Resume writes damaged checkpoints at a saved session's path.
 for tie in \
   'if let some req := start then let saved ← System[.]FilePath[.]pathExists [(]← Paths[.]ckptPath name[)] if resume then match Start[.]resumePlan live saved with' \
   'else match Start[.]plan live saved with' \
-  'let saved ← if start[.]isSome && !resume then pure none else loadCkpt' \
-  'if resume && saved[.]isNone then if let some req := start then req[.]tell [(][.]failed 1 "its saved session cannot be read"[.]toUTF8[.]toList[)] return'; do
+  'let recovered ← if start[.]isSome && !resume then pure [(][.]ok none[)] else recover !resume if let [.]error [(]status, why[)] := recovered then match start with [|] some req => req[.]tell [(][.]failed status why[.]toUTF8[.]toList[)] [|] none => report s!"linger: session .[{]name[}]. did not start: [{]why[}]" return let saved := recovered[.]toOption[.]join'; do
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "a start took a name outside Start.plan, or a resume started anything but a saved session: $tie"
 done
+for tie in \
+  'private def recoverFor [(]name : String[)] [(]create : Bool[)] : IO Daemon[.]Recovered := do match Linger[.]App[.]Recovery[.]decide create [(]← Resume[.]readCkpt name[)] with [|] [.]fresh => return [.]ok none [|] [.]resume ck => return [.]ok [(]some [(]ck[.]vt, ck[.]cwd, ck[.]labels[)][)] [|] [.]refuse answer =>' \
+  'match Linger[.]App[.]Recovery[.]decide true file with [|] [.]refuse answer => return some answer'; do
+  printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "a command started from a checkpoint other than as Recovery.decide says: $tie"
+done
+[ "$(code_count '[(]recoverFor name[)]' Linger/App/Shell.lean)" -eq 3 ] \
+  || fail "every daemon a command begins, for attach, start and resume, recovers through recoverFor"
+! code_grep '(^|[^[:alnum:]_])loadBytes([^[:alnum:]_]|$)' Linger/App/Shell.lean Linger/Session/Shell/Resume.lean \
+  || fail "a command decodes a checkpoint itself: ask Recovery.decide, which never takes bytes that do not decode for no checkpoint"
 # A request's answer is true (`start_answer_true`). The command makes the request's ticket before
 # it begins the daemon. The daemon takes it once, before its first report and at the commit point
 # just before its socket listens, and starts nothing when the command took it (`Start.proceeds`);
@@ -1306,19 +1319,26 @@ for tie in \
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "daemon resource cleanup escaped its ownership lifetime: $tie"
 done
-# A name's end record is replaced whole, through a temporary sibling renamed over it, the
-# protocol the world claim `Record.Kept` (`record_answer`) takes the file system to honor; the
-# agent suite reads records after their sessions end.
+# A name's end record and a session's checkpoint are replaced whole and durably
+# (`Os.Shell.replaceFile`): a temporary sibling written and flushed, renamed over the file, and
+# the directory flushed, the protocol the world claims `Record.Kept` (`record_answer`) and
+# `Disk.Durable` (`crash_resumes`) take the file system to honor. The agent suite reads records
+# after their sessions end, and the resume suite reads both after a daemon killed while it saves.
 record_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Record.lean)"
 for tie in \
-  'def save [(]name : String[)] [(]record : Linger[.]Session[.]Record[)] : IO Unit := do let path ← Paths[.]recordPath name let tmp := path [+][+] "[.]tmp" IO[.]FS[.]writeBinFile tmp [(]ByteArray[.]mk [(]Linger[.]Session[.]Record[.]encode record[)][.]toArray[)] IO[.]FS[.]rename tmp path' \
-  '[|] some bytes => let tmp := path [+][+] "[.]tmp" IO[.]FS[.]writeBinFile tmp [(]ByteArray[.]mk bytes[.]toArray[)] IO[.]FS[.]rename tmp path'; do
+  'def save [(]name : String[)] [(]record : Linger[.]Session[.]Record[)] : IO Unit := do Os[.]Shell[.]replaceFile [(]← Paths[.]recordPath name[)] [(]ByteArray[.]mk [(]Linger[.]Session[.]Record[.]encode record[)][.]toArray[)]' \
+  '[|] some bytes => Os[.]Shell[.]replaceFile path [(]ByteArray[.]mk bytes[.]toArray[)]'; do
   printf '%s\n' "$record_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
-    || fail "an end record is written other than whole, through a renamed temporary file: $tie"
+    || fail "an end record is written other than whole and durably, through Os.Shell.replaceFile: $tie"
 done
+os_shell_code="$(awk '{ $1 = $1; printf "%s ", $0 }' packages/os/Os/Shell.lean)"
+printf '%s\n' "$os_shell_code" | CG_RE='(^|[[:space:]])def replaceFile [(]path : String[)] [(]bytes : ByteArray[)] : IO Unit := do let tmp := path [+][+] "[.]tmp" IO[.]FS[.]writeBinFile tmp bytes let _ ← fsyncPath tmp IO[.]FS[.]rename tmp path let dir := [(][(]System[.]FilePath[.]mk path[)][.]parent[.]map [(]·[.]toString[)][)][.]getD "" let _ ← fsyncPath [(]if dir[.]isEmpty then "[.]" else dir[)] [(]directory := true[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "Os.Shell.replaceFile no longer flushes the temporary file before its rename and the directory after it"
+[ "$(code_count 'IO[.]FS[.]rename' 'Linger/Session/Shell/*')" -eq 0 ] \
+  || fail "a session file is renamed into place outside Os.Shell.replaceFile, which flushes it"
 for tie in \
-  'requestStatus name result [|] none => Paths[.]withSessionLock name do match ← Resume[.]loadCkpt name with [|] some [(]vt, _, _[)] => writeAll stdoutFd [(]ByteArray[.]mk [(]render vt[)][.]toArray[)]' \
-  'if readOnly then match ← Client[.]connect name with [|] some fd => some <[$]> attachSpoken name fd true [|] none => let [(]checkpoint, record[)] ← Paths[.]withSessionLock name do return [(]← Resume[.]loadCkpt name, ← [(]Record[.]load name[)][.]toBaseIO[)] let status := Linger[.]Display[.]Listing[.]rowStatus [(]savedRow record[)][.]1 checkpoint[.]mapM fun [(]vt, _, _[)] => [.]ok <[$]> Client[.]viewSaved name vt status'; do
+  'requestStatus name result [|] none => Paths[.]withSessionLock name do match Linger[.]App[.]Recovery[.]decide false [(]← Resume[.]readCkpt name[)] with [|] [.]resume ck => writeAll stdoutFd [(]ByteArray[.]mk [(]render ck[.]vt[)][.]toArray[)]' \
+  'if readOnly then match ← Client[.]connect name with [|] some fd => attachSpoken name fd true [|] none => let [(]recovery, record[)] ← Paths[.]withSessionLock name do return [(]Linger[.]App[.]Recovery[.]decide false [(]← Resume[.]readCkpt name[)], ← [(]Record[.]load name[)][.]toBaseIO[)] let status := Linger[.]Display[.]Listing[.]rowStatus [(]savedRow record[)][.]1 match recovery with [|] [.]resume ck => pure [(][.]ok [(]← Client[.]viewSaved name ck[.]vt status[)][)]'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "offline reading or listing bypassed ownership: $tie"
 done
@@ -1336,7 +1356,7 @@ for tie in \
   printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "saved viewer bypassed bounded replay, snapshot preservation or terminal ownership: $tie"
 done
-printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])if row[.]lookup "state" == some "resumable" then Paths[.]withSessionLock name do let some [(]_, cwd, _[)] ← Resume[.]loadCkpt name [|] throw' awk "$CODE_AWK" >/dev/null \
+printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])if row[.]lookup "state" == some "resumable" then Paths[.]withSessionLock name do let some saved := [(]← Resume[.]readCkpt name[)][.]bind Linger[.]Session[.]Checkpoint[.]loadBytes [|] throw' awk "$CODE_AWK" >/dev/null \
   || fail "exporter must establish offline ownership before reading saved state"
 
 # `onMsg_resizePty_agrees` connects every emitted pty size to the resulting
@@ -1465,12 +1485,12 @@ for bound in \
 done
 # The checkpoint hooks are `IO`, so no theorem sees them use the proved codec: write the
 # session's terminal and labels, read through the observers the headline theorems name,
-# through `saveBytes` (`saveBytes_eq`), and return what `loadBytes` read from the file's bytes
-# (`loadBytes_eq`).
+# through `saveBytes` (`saveBytes_eq`), replacing the file whole and durably, and hand the file's
+# bytes to `Recovery.decide`, which decodes them with `loadBytes` (`recovery_exact`).
 resume_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Resume.lean)"
 for tie in \
-  'let ck : Ckpt Terminal[.]Vt[.]Vt := [{] vt := st[.]terminal, cwd, labels := st[.]labelList [}] let bytes := saveBytes ck' \
-  'match loadBytes bytes with [|] some ck => return some [(]ck[.]vt, ck[.]cwd, ck[.]labels[)]'; do
+  'let ck : Ckpt Terminal[.]Vt[.]Vt := [{] vt := st[.]terminal, cwd, labels := st[.]labelList [}] let bytes := saveBytes ck Os[.]Shell[.]replaceFile path bytes' \
+  'if ![(]← System[.]FilePath[.]pathExists path[)] then return none try return some [(]← IO[.]FS[.]readBinFile path[)]'; do
   printf '%s\n' "$resume_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "checkpoint hooks bypassed the proved codec: $tie"
 done
@@ -1863,7 +1883,7 @@ term_writes="$(code_grep 'stdoutFd' 'Main.lean' 'Linger/*.lean' \
   | sed -E 's/^([^:]+):[0-9]+:[[:space:]]*/\1: /')"
 expected_term_writes='Linger/App/Shell.lean: writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
 Linger/App/Shell.lean: writeAll stdoutFd
-Linger/App/Shell.lean: writeAll stdoutFd (ByteArray.mk (render vt).toArray)
+Linger/App/Shell.lean: writeAll stdoutFd (ByteArray.mk (render ck.vt).toArray)
 Linger/Import/Shell.lean: Os.Shell.writeAll Os.Shell.stdoutFd
 Linger/Selector/Shell.lean: writeAll stdoutFd (ByteArray.mk Linger.Selector.Picker.enterAnsi.toArray)
 Linger/Selector/Shell.lean: writeAll stdoutFd (ByteArray.mk (Terminal.Title.ansi "linger").toArray)

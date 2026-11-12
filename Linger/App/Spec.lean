@@ -7,8 +7,8 @@ public section
 /-! # What command-line headlines are stated in
 
 The executor a command line reaches, where a command line of plain words goes, one row of the
-command table, the answers a command's exit status gives, and what `wait` hears on each look at
-a name and does next. -/
+command table, the answers a command's exit status gives, what a command does with a name's
+saved session, and what `wait` hears on each look at a name and does next. -/
 
 namespace Linger.App.Entry
 
@@ -97,6 +97,18 @@ did not see the end, that linger could not find out. -/
 def Answer.ofOutcome : Linger.Session.Outcome → Answer
   | .unknown => .failed
   | outcome => .program outcome.status
+
+/-- What a command does with a name no live session holds, from what the name's checkpoint
+file holds, given what a checkpoint holds: start a new session, resume the saved one, or start
+nothing, leave the file as it is and answer why. -/
+inductive Recovery (C : Type) where
+  /-- Start a new session under the name. -/
+  | fresh
+  /-- Resume the session this checkpoint saved. -/
+  | resume (c : C)
+  /-- Start nothing, leave the file as it is, and answer this. -/
+  | refuse (answer : Answer)
+  deriving Repr, DecidableEq
 
 end Linger.App
 

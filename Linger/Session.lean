@@ -148,10 +148,6 @@ def State.boot (vt : Vt.Vt) (labels : List (String × String)) (metaKv : List (S
 /-- The emulator a daemon boots with: a restored checkpoint's, else a fresh 80×24 screen. -/
 def bootVt (restored : Option Vt.Vt) : Vt.Vt := restored.getD (Vt.Vt.init 80 24)
 
-/-- Checkpoint cadence (§ reboot-resume): at most one periodic save per minute.
-Natural-number milliseconds keep deadline addition from wrapping. -/
-def ckptIntervalMs : Nat := 60000
-
 /-- How long output counts as happening right now (`⣷`): from the tick that saw it. -/
 def freshMs : Nat := 1000
 

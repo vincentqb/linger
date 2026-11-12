@@ -9,21 +9,23 @@ public section
 
 /-! # Linger.Session.Shell.Resume — checkpoint hooks
 
-The daemon decides *when*; this module serializes with the proven codec,
-writes by tmp+rename, distinguishes corrupt bytes from read failure, and
-surfaces save/delete errors for the daemon to log without exiting.
+The daemon decides *when*; this module serializes with the proven codec and replaces the file
+whole and durably (`Os.Shell.replaceFile`, the world claim `Disk.Durable`), reads the file's
+bytes for `Linger.App.Recovery.decide` to judge, and surfaces save, read and delete errors for
+the daemon to log without exiting.
 -/
 
 namespace Linger.Session.Shell.Resume
 
-open Linger.Session.Checkpoint (Ckpt saveBytes loadBytes)
+open Linger.Session.Checkpoint (Ckpt saveBytes)
 open Linger.Session (State)
 
 /-- The checkpoint hook of one daemon: write the session's terminal state, labels and working
-directory to its checkpoint through a temporary sibling moved into place, so the file is
-replaced whole. The directory is the program's live cwd when readable; else the last one this
-hook read, as for the save after the program has ended, whose directory can no longer be read;
-else the start directory the daemon recorded. -/
+directory to its checkpoint, replacing the file whole and durably (`Os.Shell.replaceFile`): a
+crash leaves the previous checkpoint or this one, and this one once the hook returns. The
+directory is the program's live cwd when readable; else the last one this hook read, as for the
+save after the program has ended, whose directory can no longer be read; else the start
+directory the daemon recorded. -/
 def saver (name : String) : IO (State → IO Unit) := do
   let lastDir ← IO.mkRef ""
   return fun st => do
@@ -42,9 +44,7 @@ def saver (name : String) : IO (State → IO Unit) := do
     let cwd := if known.isEmpty then (st.metaKv.lookup "start_dir").getD "" else known
     let ck : Ckpt Terminal.Vt.Vt := { vt := st.terminal, cwd, labels := st.labelList }
     let bytes := saveBytes ck
-    let tmp := path ++ ".tmp"
-    IO.FS.writeBinFile tmp bytes
-    IO.FS.rename tmp path
+    Os.Shell.replaceFile path bytes
 
 /-- Delete the session's checkpoint if it exists; a missing file is not an error. -/
 def dropCkpt (name : String) : IO Unit := do
@@ -52,22 +52,16 @@ def dropCkpt (name : String) : IO Unit := do
   if ← System.FilePath.pathExists path then
     IO.FS.removeFile path
 
-/-- The session's saved terminal state, working directory and labels. `none` when there is
-no checkpoint or its bytes do not decode (`loadBytes`); an existing file that cannot be
-read throws. -/
-def loadCkpt (name : String) : IO (Option (Terminal.Vt.Vt × String × List (String × String))) := do
+/-- The bytes of the session's checkpoint, `none` when there is no file; a file that exists
+and cannot be read throws. Whether the bytes decode is `Linger.App.Recovery.decide`'s to say:
+bytes that do not are never taken for no file. -/
+def readCkpt (name : String) : IO (Option ByteArray) := do
   let path ← Paths.ckptPath name
   if !(← System.FilePath.pathExists path) then
     return none
-  let bytes ←
-    try
-      IO.FS.readBinFile path
-    catch err =>
-      throw (IO.userError s!"checkpoint read failed for '{name}': {err}")
-  match loadBytes bytes with
-  | some ck =>
-    return some (ck.vt, ck.cwd, ck.labels)
-  | none =>
-    return none -- corrupt/foreign bytes are a cache miss; I/O failure is not
+  try
+    return some (← IO.FS.readBinFile path)
+  catch err =>
+    throw (IO.userError s!"checkpoint read failed for '{name}': {err}")
 
 end Linger.Session.Shell.Resume

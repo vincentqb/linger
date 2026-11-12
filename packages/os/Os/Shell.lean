@@ -222,6 +222,31 @@ def flock (path : String) : IO Int64 := do
   checkCString "flock path" path
   Boundary.flock path
 
+/-- Ask the device to keep what the file system holds of the file at `path`, or with
+`directory` of the directory there, which must be one: open it read-only, flush it and close
+it. That is fsync(2), and on macOS fcntl(F_FULLFSYNC), since fsync there leaves the data in the
+drive's own cache, with fsync where the file system does not offer it. A directory's flush
+keeps the names a rename made in it. `true` once flushed; `false` only for a directory on a file
+system that cannot flush one, as some network and FUSE ones cannot. A path that cannot be opened,
+or any other failed flush, throws, as does a FIFO, which is never waited on. -/
+def fsyncPath (path : String) (directory : Bool := false) : IO Bool := do
+  checkCString "fsyncPath path" path
+  Boundary.fsyncPath path directory
+
+/-- Replace the file at `path` with `bytes`, whole and durably: write them to the temporary
+sibling `path ++ ".tmp"`, flush it (`fsyncPath`), rename it over `path` and flush the directory
+that holds them. A crash leaves the old file or the new one at `path`, never part of either,
+and the new one once this returns, as far as the device keeps what it flushed; on a file system
+that cannot flush a directory, as far as it keeps the rename. A failure throws; one before the
+rename leaves `path` as it was. -/
+def replaceFile (path : String) (bytes : ByteArray) : IO Unit := do
+  let tmp := path ++ ".tmp"
+  IO.FS.writeBinFile tmp bytes
+  let _ ← fsyncPath tmp
+  IO.FS.rename tmp path
+  let dir := ((System.FilePath.mk path).parent.map (·.toString)).getD ""
+  let _ ← fsyncPath (if dir.isEmpty then "." else dir) (directory := true)
+
 /-- Double-fork + setsid + exec, with stdin on /dev/null and stdout and stderr appended
 to `logPath` (created 0600), or on /dev/null when it is empty, every signal at its default
 action but SIGHUP, which it ignores, none blocked and no other descriptor open, so the program

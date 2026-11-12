@@ -849,6 +849,12 @@ structure Request where
   nobody has, and tells nothing when the command took it. -/
   tell : Start.Report → IO Unit
 
+/-- What a daemon may start from, as its command decided from the name's checkpoint
+(`Linger.App.Recovery.decide`): the saved terminal, directory and labels to resume, `none` for a
+new session, or, when it may do neither, the status its command answers and why. -/
+abbrev Recovered : Type :=
+  Except (UInt8 × String) (Option (Terminal.Vt.Vt × String × List (String × String)))
+
 /-- The spec's name for the operating system's report of a program that could not start. -/
 private def failureOf : SpawnFailure → Linger.Session.Spawn.Failure
   | .directory why => .directory why
@@ -873,15 +879,18 @@ out an offline reader (`claimRetry`) but not a live owner. The name's end record
 program runs before it starts and how it ended before the locks are released; a program that
 cannot start leaves the record as it was.
 
-With `start`, the daemon takes the name only when no live or saved session holds it, never
-resumes one (`Start.plan`), runs the program in `cwd` or not at all, and tells `start` what it
-did. With `resume` as well, it runs only a saved session's program again, an ended one included,
-and starts nothing for a live session or a name no session holds (`Start.resumePlan`). Either way
-it takes the request's ticket before the session is visible, and starts nothing when the command
-took it first (`Start.proceeds`). -/
+Without `start`, as `attach` asks, the daemon resumes the saved session, or starts a new one
+when none is saved: `recover true` says which, and a checkpoint that does not decode starts
+nothing and stays as it is. With `start`, it takes the name only when no live or saved session
+holds it, never resumes one (`Start.plan`), runs the program in `cwd` or not at all, and tells
+`start` what it did. With `resume` as well, it runs only a saved session's program again, an
+ended one included, as `recover false` decides, and starts nothing for a live session, a name no
+session holds (`Start.resumePlan`) or a checkpoint that does not decode. Either way it takes the
+request's ticket before the session is visible, and starts nothing when the command took it
+first (`Start.proceeds`). -/
 def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State → IO Unit)
-    (dropCkpt : IO Unit) (loadCkpt : IO (Option (Terminal.Vt.Vt × String × List (String × String))))
-    (record : RecordFile) (start : Option Request := none) (resume : Bool := false) : IO Unit := do
+    (dropCkpt : IO Unit) (recover : Bool → IO Recovered) (record : RecordFile)
+    (start : Option Request := none) (resume : Bool := false) : IO Unit := do
   let deadline := (← monotonicMs) + claimWaitMs
   let reported ← IO.mkRef false
   let retry := claimRetry name (← Paths.socketPath name) deadline reported
@@ -916,17 +925,22 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
             pure ()
       if live then
         throw (IO.userError s!"session '{name}' already running")
-      let saved ←
+      -- a start loads no checkpoint; anything else resumes the saved session or, when a new one
+      -- may start, starts one when none is saved, and starts nothing over a checkpoint that does
+      -- not decode, which stays as it is
+      let recovered ←
         if start.isSome && !resume then
-          pure none
+          pure (.ok none)
         else
-          loadCkpt
-      -- a resume runs a saved session's program again or none: a checkpoint it cannot read
-      -- starts nothing
-      if resume && saved.isNone then
-        if let some req := start then
-          req.tell (.failed 1 "its saved session cannot be read".toUTF8.toList)
+          recover !resume
+      if let .error (status, why) := recovered then
+        match start with
+        | some req =>
+          req.tell (.failed status why.toUTF8.toList)
+        | none =>
+          report s!"linger: session '{name}' did not start: {why}"
         return
+      let saved := recovered.toOption.join
       -- A new session runs in `cwd` or not at all. A resume runs in its saved directory, or in
       -- $HOME when that is gone (`Env.resumeDir`), and then says so in the log and, through
       -- `Start.metadata`, in the info field saved_dir.

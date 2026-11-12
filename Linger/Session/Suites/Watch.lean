@@ -150,8 +150,8 @@ def checkpointChecks (e : Env) : IO Unit := do
   let bad ← e.spawn #["attach", "--read-only", "bad"]
   try
     let err ← drainStr bad.fd hangMs
-    expect ((← bad.reap patienceMs) == 1 && has err "no live session or readable checkpoint")
-        "read-only attach rejects corrupt checkpoint bytes"
+    expect ((← bad.reap patienceMs) == 1 && has err "does not decode")
+        "read-only attach rejects corrupt checkpoint bytes, and says so"
   finally
     bad.bye
   IO.FS.writeBinFile s!"{e.dir}/--read-only.ckpt" bytes
@@ -208,8 +208,7 @@ def run : IO UInt32 :=
     let rc ← missing.reap
     missing.bye (sendDetach := false)
     expect (rc == 127) "read-only attach to a missing session exits 127"
-    expect (has err "no live session or readable checkpoint for 'nosuch'")
-        "read-only attach reports the exact missing session"
+    expect (has err "no session 'nosuch'") "read-only attach reports the exact missing session"
     expect (!has (← e.out #["ls"]) "nosuch") "read-only attach creates no session"
     -- the session under test: one real client at 80x24
     let real ← e.spawn #["attach", "w"] 80 24

@@ -527,9 +527,9 @@ restored screen would be `Good` and **not** `Renderable` — and `Renderable` is
 every `Render.restore` theorem needs. Establishing it by clamping means rebuilding
 the grid, i.e. `Vt.resize`, which the resume path deliberately refuses (it resets the
 scroll region and the tab ruler — see `Linger/Session/Shell/Daemon.lean`). Rejecting costs
-nothing new: `load` is already `Option`-valued and a checkpoint that fails to parse
-already means "start fresh". One rule, uniformly — *a record that does not describe a
-`Good` and `Renderable` state is not a checkpoint*.
+nothing new: `load` is already `Option`-valued and a checkpoint that fails to parse is
+already refused and kept, never resumed. One rule, uniformly — *a record that does not
+describe a `Good` and `Renderable` state is not a checkpoint*.
 
 `private`, which is the whole point: `Linger/Session/Checkpoint.lean` reaches it through
 the friend import it already has, and no module outside the toolkit gains the power to

@@ -12,6 +12,7 @@ import Linger.Display.Listing
 import Linger.Display.View
 import Linger.App.Answer
 public import Linger.App.Spec
+import Linger.App.Recovery
 import Linger.App.Commands
 import Linger.App.Wait
 import Os.Shell.Command
@@ -92,6 +93,43 @@ private abbrev socketWaitCapMs : Nat := 30000
 private def recordFile (name : String) : Daemon.RecordFile :=
   { load := Record.load name, save := Record.save name, restore := Record.restore name }
 
+/-- A command named a session that does not exist: say so and answer `notFound`, as a shell
+does for a command it cannot find. -/
+private def noSession (name : String) : IO Answer := do
+  IO.eprintln s!"linger: no session '{name}'"
+  return .notFound
+
+/-- Why nothing starts over the name's checkpoint when its bytes do not decode
+(`Recovery.decide`): it stays as it is, and `kill` discards it. -/
+private def undecodedText (name : String) : IO String := do
+  return s!"its checkpoint {← Paths.ckptPath name} does not decode, so it stays as it is; \
+    kill the session to discard it"
+
+/-- Say why a command that found no live session starts nothing, as `Recovery.decide`
+answered, and give that answer: no session holds the name, or its checkpoint does not decode. -/
+private def refused (name : String) (answer : Answer) : IO Answer := do
+  if answer == .notFound then
+    return ← noSession name
+  IO.eprintln s!"linger: session '{name}': {← undecodedText name}"
+  return answer
+
+/-- What the daemon of `name` starts from, as `Recovery.decide` says from the name's checkpoint
+file, `create` when a new session may start: a refusal is the status its command answers, and
+why. -/
+private def recoverFor (name : String) (create : Bool) : IO Daemon.Recovered := do
+  match Linger.App.Recovery.decide create (← Resume.readCkpt name) with
+  | .fresh =>
+    return .ok none
+  | .resume ck =>
+    return .ok (some (ck.vt, ck.cwd, ck.labels))
+  | .refuse answer =>
+    let why ←
+      if answer == .notFound then
+        pure s!"no session '{name}'"
+      else
+        undecodedText name
+    return .error (answer.code.toUInt8, why)
+
 /-- Write what the daemon did to the report `start` named, whole, through a temporary sibling. -/
 private def writeReport (path : String) (report : Linger.Session.Start.Report) : IO Unit := do
   IO.FS.writeBinFile s!"{path}.tmp" (ByteArray.mk report.encode.toArray)
@@ -136,7 +174,7 @@ private def serveStart (report name cwd : String) (argv : List String) : IO Unit
     told.set true
     req.tell r
   try
-    Daemon.serve name cwd argv (← Resume.saver name) (Resume.dropCkpt name) (Resume.loadCkpt name)
+    Daemon.serve name cwd argv (← Resume.saver name) (Resume.dropCkpt name) (recoverFor name)
         (recordFile name) (some { req with tell })
   catch err =>
     unless ← told.get do
@@ -158,12 +196,6 @@ private def takeReport (path : String) : IO (Option (Option Linger.Session.Start
   let bytes ← IO.FS.readBinFile path
   IO.FS.removeFile path
   return some (Linger.Session.Start.Report.decode bytes.toList)
-
-/-- A command named a session that does not exist: say so and answer `notFound`, as a shell
-does for a command it cannot find. -/
-private def noSession (name : String) : IO Answer := do
-  IO.eprintln s!"linger: no session '{name}'"
-  return .notFound
 
 /-- How a command's wait for the daemon it began ended. -/
 private inductive Waited where
@@ -302,7 +334,7 @@ private def serveResume (report name cwd : String) : IO Unit := do
     told.set true
     req.tell r
   try
-    Daemon.serve name cwd [] (← Resume.saver name) (Resume.dropCkpt name) (Resume.loadCkpt name)
+    Daemon.serve name cwd [] (← Resume.saver name) (Resume.dropCkpt name) (recoverFor name)
         (recordFile name) (some { req with tell }) (resume := true)
   catch err =>
     unless ← told.get do
@@ -393,13 +425,29 @@ private def cmdResume (name : String) : IO Answer := do
     let pid ← beginRequest report log ["__resume", report, name, cwd]
     resumeStatus name log (← awaitReport pid report)
 
+/-- The answer of an attach whose daemon ended without listening, when the name's checkpoint
+does not decode, so that daemon started nothing over it (`Recovery.decide`). `none` when there
+is no checkpoint, it decodes or it cannot be read, which the daemon's log tells. -/
+private def undecoded (name : String) : IO (Option Answer) := do
+  let file ←
+    try
+      Resume.readCkpt name
+    catch _ =>
+      pure none
+  match Linger.App.Recovery.decide true file with
+  | .refuse answer =>
+    return some answer
+  | _ =>
+    return none
+
 /-- Connect, spawning the daemon first if needed (attach-is-upsert). Without a socket it
 gives up no sooner than `socketWaitFloorMs`; after that it keeps waiting only while the
-spawned daemon lives, never past `socketWaitCapMs`. -/
-private def connectUpsert (name : String) (cmd : List String) : IO UInt32 := do
+spawned daemon lives, never past `socketWaitCapMs`. A daemon that ends without listening over
+a checkpoint that does not decode is answered at once, with the refusal (`undecoded`). -/
+private def connectUpsert (name : String) (cmd : List String) : IO (Except Answer UInt32) := do
   match ← Client.connect name with
   | some fd =>
-    return fd
+    return .ok fd
   | none =>
     -- Recovery, including its saved cwd, happens only after the daemon owns
     -- both resources. A parent-side load would race another runtime namespace.
@@ -407,14 +455,19 @@ private def connectUpsert (name : String) (cmd : List String) : IO UInt32 := do
     let pid ← spawnDaemon name cwd cmd
     let start ← monotonicMs
     let mut fdOpt : Option UInt32 := none
+    let mut looked := false
     while fdOpt.isNone && ((← monotonicMs) < start + socketWaitFloorMs || (← alive pid)) do
       unless ← nap (start + socketWaitCapMs) 30 do
         break
       fdOpt ← Client.connect name
+      if fdOpt.isNone && !looked && !(← alive pid) then
+        looked := true
+        if let some answer← undecoded name then
+          return .error answer
     match fdOpt with
     | some fd =>
       sayMoved name
-      return fd
+      return .ok fd
     | none =>
       let log ← Paths.logPath name
       throw (IO.userError s!"daemon for '{name}' did not come up (see {log})")
@@ -583,11 +636,6 @@ private def cmdSummary : IO Answer := do
     IO.println summary
   return .done
 
-/-- The answer when no daemon answered for `name` and nothing saved could be read: `notDone` if
-a checkpoint exists that will not load, else `notFound`, as for a session that does not exist. -/
-private def missingOrUnreadable (name : String) : IO Answer := do
-  return if ← System.FilePath.pathExists (← Paths.ckptPath name) then .notDone else .notFound
-
 /-- The answer that tells how a session's program ended, as its daemon reported it
 (`Answer.ofOutcome`); an older daemon's status is the program's. -/
 private def endingAnswer : Client.Ending → Answer
@@ -626,26 +674,33 @@ private def attachSpoken (name : String) (fd : UInt32) (readOnly : Bool) :
 (`attachSpoken`). Only read-only attachment can view an offline checkpoint, loaded with its end
 record while owning both resources and displayed after releasing them, under the status the
 listing shows for it. Writable attachment keeps the create/resume path, which resumes an ended
-session too. Live titles sample `summaryText` in this process. -/
+session too. Either refuses a checkpoint that does not decode, which stays as it is
+(`Recovery.decide`). Live titles sample `summaryText` in this process. -/
 private def cmdAttach (name : String) (cmd : List String) (readOnly : Bool) : IO Answer := do
-  let result : Option (Except Answer Client.Outcome) ←
+  let result : Except Answer Client.Outcome ←
     if readOnly then
       match ← Client.connect name with
       | some fd =>
-        some <$> attachSpoken name fd true
+        attachSpoken name fd true
       | none =>
-        let (checkpoint, record) ←
+        let (recovery, record) ←
           Paths.withSessionLock name do
-              return (← Resume.loadCkpt name, ← (Record.load name).toBaseIO)
+              return (Linger.App.Recovery.decide false (← Resume.readCkpt name),
+                  ← (Record.load name).toBaseIO)
         let status := Linger.Display.Listing.rowStatus (savedRow record).1
-        checkpoint.mapM fun (vt, _, _) => .ok <$> Client.viewSaved name vt status
+        match recovery with
+        | .resume ck =>
+          pure (.ok (← Client.viewSaved name ck.vt status))
+        | .refuse answer =>
+          .error <$> refused name answer
+        | .fresh =>
+          .error <$> refused name .notFound
     else
-      let fd ← connectUpsert name cmd
-      some <$> attachSpoken name fd false
-  let some result := result
-    |
-    IO.eprintln s!"linger: no live session or readable checkpoint for '{name}'"
-    return ← missingOrUnreadable name
+      match ← connectUpsert name cmd with
+      | .ok fd =>
+        attachSpoken name fd false
+      | .error answer =>
+        .error <$> refused name answer
   match result with
   | .error answer =>
     return answer
@@ -767,13 +822,14 @@ private def cmdRead (name : String) (m : Msg) (render : Terminal.Vt.Vt → List 
     requestStatus name result
   | none =>
     Paths.withSessionLock name do
-        match ← Resume.loadCkpt name with
-        | some (vt, _, _) =>
-          writeAll stdoutFd (ByteArray.mk (render vt).toArray)
+        match Linger.App.Recovery.decide false (← Resume.readCkpt name) with
+        | .resume ck =>
+          writeAll stdoutFd (ByteArray.mk (render ck.vt).toArray)
           return .done
-        | none =>
-          IO.eprintln s!"linger: no live session or readable checkpoint for '{name}'"
-          missingOrUnreadable name
+        | .refuse answer =>
+          refused name answer
+        | .fresh =>
+          refused name .notFound
 
 /-- `send <name> -`: stdin to the session's pty, byte-exact, each read (≤ 64 KiB) in the
 frames `Wire.inputFrames` cuts, each within the decoder's cap (`inputFrames_exact`). The agent's
@@ -1112,7 +1168,7 @@ tmux interchange elsewhere; `__daemon` runs a session's daemon in this process. 
 def main (args : List String) : IO Answer := do
   match args with
   | "__daemon" :: name :: cwd :: cmd =>
-    Daemon.serve name cwd cmd (← Resume.saver name) (Resume.dropCkpt name) (Resume.loadCkpt name)
+    Daemon.serve name cwd cmd (← Resume.saver name) (Resume.dropCkpt name) (recoverFor name)
         (recordFile name)
     return .done
   | "__start" :: report :: name :: cwd :: argv =>

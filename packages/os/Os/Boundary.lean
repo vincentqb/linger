@@ -62,6 +62,9 @@ private opaque accept (fd : UInt32) : IO Int64
 @[extern "linger_flock"]
 private opaque flock (path : @& String) : IO Int64
 
+@[extern "linger_fsync_path"]
+private opaque fsyncPath (path : @& String) (directory : Bool) : IO Bool
+
 @[extern "linger_spawn_detached"]
 private opaque spawnDetached (prog : @& String) (args : @& Array String) (logPath : @& String) :
     IO UInt32

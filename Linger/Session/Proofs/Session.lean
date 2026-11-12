@@ -3803,4 +3803,228 @@ theorem offloop_coalesces {R W : Type} (start : W → R) (ws : List W) :
     | nil => simp
     | cons x xs => simp [List.getLast?_cons]
 
+/-! ## What a crash costs
+
+What a save holds of a session is its terminal and its labels. Every change to either marks the
+session unsaved; only a step that asks for a save clears the mark, and only a periodic save moves
+the save clock, to its tick's time. So once a session holds a change no save holds, a save falls
+due within `ckptIntervalMs` of the clock at that change, and the session wakes for it. -/
+
+/-- A message keeps the save clock and never clears the unsaved mark. -/
+theorem onMsg_unsaved_kept (s : State) (c : Client) (m : Msg) :
+    (onMsg s c m).1.lastCkptMs = s.lastCkptMs ∧
+      (s.dirty = true → (onMsg s c m).1.dirty = true) := by
+  unfold onMsg
+  grind
+
+/-- A message that changes the terminal marks the session unsaved. -/
+theorem onMsg_vt_changed_dirty (s : State) (c : Client) (m : Msg) (h : (onMsg s c m).1.vt ≠ s.vt) :
+    (onMsg s c m).1.dirty = true := by
+  unfold onMsg at *
+  grind
+
+/-- A batch of messages keeps the save clock and never clears the unsaved mark, and one that
+changes the terminal or the labels marks the session unsaved. -/
+theorem feedMsgs_unsaved (id : Nat) (msgs : List Msg) (acc : State × List (Effect Plan)) :
+    (feedMsgs id msgs acc).1.lastCkptMs = acc.1.lastCkptMs ∧
+      ((feedMsgs id msgs acc).1.dirty = true ∨
+        acc.1.dirty = false ∧
+          (feedMsgs id msgs acc).1.vt = acc.1.vt ∧
+          (feedMsgs id msgs acc).1.labels = acc.1.labels) := by
+  apply
+    feedMsgs_preserves id msgs acc (P := fun t =>
+      t.lastCkptMs = acc.1.lastCkptMs ∧
+        (t.dirty = true ∨ acc.1.dirty = false ∧ t.vt = acc.1.vt ∧ t.labels = acc.1.labels))
+  · intro t c m _ ⟨clock, mark⟩
+    obtain ⟨kept, mono⟩ := onMsg_unsaved_kept t c m
+    refine ⟨kept.trans clock, ?_⟩
+    rcases mark with dirty | ⟨clean, vt, labels⟩
+    · exact .inl (mono dirty)
+    · by_cases hv : (onMsg t c m).1.vt = t.vt
+      · by_cases hl : (onMsg t c m).1.labels = t.labels
+        · cases hd : (onMsg t c m).1.dirty
+          · exact .inr ⟨clean, hv.trans vt, hl.trans labels⟩
+          · exact .inl rfl
+        · exact .inl (onMsg_labels_changed_dirty t c m hl)
+      · exact .inl (onMsg_vt_changed_dirty t c m hv)
+  · cases hd : acc.1.dirty
+    · exact ⟨rfl, .inr ⟨rfl, rfl, rfl⟩⟩
+    · exact ⟨rfl, .inl rfl⟩
+
+/-- An event that changes what a save holds, the terminal or the labels, marks the session
+unsaved. -/
+theorem step_changed_dirty (s : State) (ev : Event)
+    (h : (step s ev).1.vt ≠ s.vt ∨ (step s ev).1.labels ≠ s.labels) :
+    (step s ev).1.dirty = true := by
+  cases ev with
+  | ptyOut chunk => rfl
+  | checkpointFailed => rfl
+  | connected id =>
+    simp only [step] at h ⊢
+    split at h <;> simp_all
+  | closed id =>
+    simp only [step, closeClient_vt, closeClient_labels] at h
+    simp at h
+  | childExited o =>
+    simp only [step, conclude] at h
+    simp at h
+  | stopped o =>
+    simp only [step, conclude] at h
+    simp at h
+  | tick now =>
+    simp only [step] at h
+    split at h <;> simp [State.ticked] at h
+  | bytes id chunk =>
+    simp only [step] at h ⊢
+    split at h
+    · simp at h
+    · rename_i c _
+      split at h
+      · simp [closeClient_vt, closeClient_labels] at h
+      · rename_i hok
+        simp only [hok] at ⊢
+        rcases
+          (feedMsgs_unsaved id (c.decoder.feed chunk).2
+              (s.setClient
+                  { c with
+                    decoder := (c.decoder.feed chunk).1, answered := false },
+                [])).2 with
+          dirty | ⟨-, vt, labels⟩
+        · exact dirty
+        · simp only [State.setClient] at vt labels
+          rcases h with h | h
+          · exact absurd vt h
+          · exact absurd labels h
+
+/-- A step that asks for no save keeps the save clock and does not clear the unsaved mark. -/
+theorem step_unsaved_kept (s : State) (ev : Event) (h : Effect.checkpoint ∉ (step s ev).2) :
+    (step s ev).1.lastCkptMs = s.lastCkptMs ∧ (s.dirty = true → (step s ev).1.dirty = true) := by
+  cases ev with
+  | ptyOut chunk => exact ⟨rfl, fun _ => rfl⟩
+  | checkpointFailed => exact ⟨rfl, fun _ => rfl⟩
+  | connected i =>
+    simp only [step]
+    split <;> exact ⟨rfl, fun d => d⟩
+  | childExited o => exact ⟨rfl, fun d => d⟩
+  | stopped o => exact ⟨rfl, fun d => d⟩
+  | tick now =>
+    simp only [step] at h ⊢
+    split <;> simp_all [State.ticked]
+  | closed i =>
+    simp only [step, closeClient] at h ⊢
+    split <;> simp_all [State.dropClient]
+  | bytes i chunk =>
+    simp only [step] at h ⊢
+    split
+    · exact ⟨rfl, fun d => d⟩
+    · rename_i c _
+      split
+      · simp only [closeClient] at h ⊢
+        split <;> simp_all [State.dropClient]
+      · rename_i hok
+        obtain ⟨clock, mark⟩ :=
+          feedMsgs_unsaved i (c.decoder.feed chunk).2
+            (s.setClient
+                { c with
+                  decoder := (c.decoder.feed chunk).1, answered := false },
+              [])
+        refine ⟨clock, fun dirty => ?_⟩
+        rcases mark with marked | ⟨clean, -⟩
+        · exact marked
+        · simp [State.setClient, dirty] at clean
+
+/-- Only a periodic save moves the save clock, to its tick's time. -/
+theorem step_lastCkptMs (s : State) (ev : Event) :
+    (step s ev).1.lastCkptMs = s.lastCkptMs ∨
+      ∃ now, ev = .tick now ∧ (step s ev).1.lastCkptMs = now := by
+  cases ev with
+  | tick now =>
+    simp only [step]
+    split
+    · exact .inr ⟨now, rfl, rfl⟩
+    · exact .inl rfl
+  | connected i =>
+    left
+    simp only [step]
+    split <;> rfl
+  | closed i =>
+    left
+    simp only [step, closeClient]
+    split <;> rfl
+  | bytes i chunk =>
+    left
+    simp only [step]
+    split
+    · rfl
+    · split
+      · simp only [closeClient]
+        split <;> rfl
+      · exact (feedMsgs_unsaved i _ _).1
+  | ptyOut chunk => exact .inl rfl
+  | childExited o => exact .inl rfl
+  | stopped o => exact .inl rfl
+  | checkpointFailed => exact .inl rfl
+
+/-- The save clock is the boot's or a tick's time: never later than the clock the events give. -/
+theorem trace_lastCkptMs_le (s : State) (evs : List Event) :
+    (trace step s evs).1.lastCkptMs ≤ max s.lastCkptMs (clock evs) := by
+  induction evs generalizing s with
+  | nil => exact Nat.le_max_left _ _
+  | cons ev evs ih =>
+    have next := ih (step s ev).1
+    simp only [trace]
+    have tail : clock evs ≤ clock (ev :: evs) := by cases ev <;> simp [clock, Nat.le_max_right]
+    rcases step_lastCkptMs s ev with kept | ⟨now, rfl, moved⟩
+    · rw [kept] at next
+      omega
+    · rw [moved] at next
+      simp only [clock] at tail ⊢
+      omega
+
+/-- A booted session's save clock is never later than the clock its events give. -/
+theorem boot_lastCkptMs_le (vt : Vt.Vt) (labels metaKv : List (String × String))
+    (evs : List Event) :
+    (trace step (State.boot vt labels metaKv) evs).1.lastCkptMs ≤ clock evs := by
+  have := trace_lastCkptMs_le (State.boot vt labels metaKv) evs
+  simpa [State.boot] using this
+
+/-- A trace that asks for no save keeps the save clock and does not clear the unsaved mark. -/
+theorem trace_unsaved_kept (s : State) (evs : List Event)
+    (h : Effect.checkpoint ∉ (trace step s evs).2) :
+    (trace step s evs).1.lastCkptMs = s.lastCkptMs ∧
+      (s.dirty = true → (trace step s evs).1.dirty = true) := by
+  induction evs generalizing s with
+  | nil => exact ⟨rfl, id⟩
+  | cons ev evs ih =>
+    simp only [trace, List.mem_append, not_or] at h ⊢
+    obtain ⟨first, rest⟩ := h
+    obtain ⟨clock, mark⟩ := step_unsaved_kept s ev first
+    obtain ⟨clock', mark'⟩ := ih (step s ev).1 rest
+    exact ⟨clock'.trans clock, fun dirty => mark' (mark dirty)⟩
+
+/-- **A change no save holds falls due within the interval.** Once an event changes what a save
+holds and no step since asked for a save, the session's save falls due no later than
+`ckptIntervalMs` after any time no earlier than the save clock before that change, the session
+wakes no later than that, and a tick then asks for the save. -/
+theorem unsaved_due (s : State) (ev : Event) (post : List Event) {t : Nat}
+    (clocked : s.lastCkptMs ≤ t)
+    (changed : (step s ev).1.vt ≠ s.vt ∨ (step s ev).1.labels ≠ s.labels)
+    (unsaved : Effect.checkpoint ∉ (trace step s (ev :: post)).2) :
+    ∃ due,
+      due ≤ t + ckptIntervalMs ∧
+        (∃ wake, (trace step s (ev :: post)).1.nextTick = some wake ∧ wake ≤ due) ∧
+        ∀ now,
+          due ≤ now → Effect.checkpoint ∈ (step (trace step s (ev :: post)).1 (.tick now)).2 := by
+  obtain ⟨kept, -⟩ := trace_unsaved_kept s (ev :: post) unsaved
+  simp only [trace, List.mem_append, not_or] at unsaved kept ⊢
+  have marked :=
+    (trace_unsaved_kept (step s ev).1 post unsaved.2).2 (step_changed_dirty s ev changed)
+  refine
+    ⟨(trace step (step s ev).1 post).1.lastCkptMs + ckptIntervalMs, by omega,
+      nextTick_save _ marked, fun now due => ?_⟩
+  rw [(step_tick_checkpoint _ now
+        (by
+          simp [marked]; omega)).1]
+  exact List.mem_singleton.mpr rfl
+
 end Linger.Session

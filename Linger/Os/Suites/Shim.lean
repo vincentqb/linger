@@ -463,11 +463,50 @@ def testCStringInputs : IO Unit :=
     let file := (dir / "mode").toString
     IO.FS.writeFile file ""
     check "chmod rejects a NUL path" (← throws (chmod (file ++ suffix) 0o600))
+    check "fsyncPath rejects a NUL path" (← throws (fsyncPath (file ++ suffix)))
     for (kind, prog, args, logPath) in
       #[("program", "/bin/sh" ++ suffix, #["-c", "exit 0"], ""),
         ("argument", "/bin/sh", #["-c", "exit 0" ++ suffix], ""),
         ("log path", "/bin/sh", #["-c", "exit 0"], (dir / "log").toString ++ suffix)] do
       check s!"spawnDetached rejects NUL in {kind}" (← throws (spawnDetached prog args logPath))
+
+/-- `fsyncPath` flushes a file and a directory, opens each as what it is asked to flush and
+refuses a FIFO at once; and `replaceFile` leaves the new bytes at the path, whole, and no
+temporary sibling. -/
+def testDurable : IO Unit :=
+  IO.FS.withTempDir fun dir => do
+    let file := (dir / "file").toString
+    IO.FS.writeFile file "kept"
+    check "fsyncPath flushes a file and a directory"
+        ((← orFalse (fsyncPath file)) && (← orFalse (fsyncPath dir.toString (directory := true))))
+    check "fsyncPath refuses a path that does not exist"
+        (← throws (fsyncPath (dir / "missing").toString))
+    check "fsyncPath refuses a file to flush as a directory"
+        (← throws (fsyncPath file (directory := true)))
+    let target := (dir / "target").toString
+    let replaced ←
+      orFalse do
+          replaceFile target "first".toUTF8
+          replaceFile target "second".toUTF8
+          return (← IO.FS.readBinFile target).toList == "second".toUTF8.toList &&
+              !(← System.FilePath.pathExists (target ++ ".tmp"))
+    check "replaceFile leaves the new bytes whole and no temporary sibling" replaced
+    -- a FIFO's open would wait for a writer: the flush must refuse it at once instead
+    let fifo := (dir / "fifo").toString
+    let made ← IO.Process.output { cmd := "mkfifo", args := #[fifo] }
+    let flushing ← IO.asTask (fsyncPath fifo) Task.Priority.dedicated
+    let deadline := (← monotonicMs) + 5000
+    while !(← IO.hasFinished flushing) && (← nap deadline 10) do
+      pure ()
+    let refused ←
+      if ← IO.hasFinished flushing then
+        pure ((← IO.wait flushing) matches .error _)
+      else
+        -- a writer releases the open that waits, so that the run ends either way
+        IO.FS.withFile fifo .write fun _ => pure ()
+        let _ ← IO.wait flushing
+        pure false
+    check "fsyncPath refuses a FIFO without waiting for a writer" (made.exitCode == 0 && refused)
 
 /-- The public UInt32 dimensions must fit the kernel's unsigned-short fields
 without wrapping. Zero retains POSIX's unspecified-size meaning. -/
@@ -546,6 +585,7 @@ public def main (args : List String) : IO UInt32 := do
   testCStringInputs
   testWinsizeBounds
   testDeepCwd
+  testDurable
   testWaits check
   let n ← failed.get
   IO.println (if n == 0 then "ALL PASS" else s!"{n} FAILURES")

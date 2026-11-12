@@ -160,6 +160,20 @@ def admissionPressure (e : Env) : IO Unit := do
         (·.2) | throw (IO.userError "descriptor-pressure daemon did not report its child")
     let some pid := pidText.toNat? | throw (IO.userError "invalid child pid")
     child.set (some pid.toUInt32)
+    -- The daemon's own first writes, its first checkpoint and the records of its shell's first
+    -- output, fresh and then stale and unseen, each flushed to the disk, hold descriptors while
+    -- they run: the clients flood it once they are done, so that the pressure below is the
+    -- clients' alone.
+    let settled ←
+      waitFor patienceMs do
+          let record ← (IO.FS.readBinFile s!"{pressure.dir}/pressure.end").toBaseIO
+          let stale :=
+            record.toOption.any fun bytes =>
+              Linger.Session.Record.decode bytes.toList matches some (.running (some ⟨false, true⟩))
+          return stale && (← System.FilePath.pathExists s!"{pressure.dir}/pressure.ckpt") &&
+              !(← System.FilePath.pathExists s!"{pressure.dir}/pressure.ckpt.tmp")
+    unless settled do
+      throw (IO.userError "descriptor-pressure daemon did not settle its first writes")
     for _ in List.range maxClients do
       let peer ← Os.Shell.unixConnect socketPath true
       if peer ≥ 0 then

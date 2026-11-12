@@ -45,10 +45,11 @@ and back. The parser state is reset on load.
   a resize legitimately preserves rows wider than the current screen.
 
 Format: `magic "LNGR" ++ version 2 ++ payload`. Bump the version on
-any layout change; old daemons refuse newer files (load = none) and
-start fresh — a checkpoint is a cache, not a contract. Version 2 added the origin mode saved
-with the DECSC slot and with the stashed main screen; version 1 records still load, with both
-off (`load_saveV1_live`).
+any layout change; old daemons refuse newer files (load = none), and a
+command then starts nothing over the file and keeps it
+(`Linger.App.Recovery.decide`), so a session is never lost to a format. Version 2 added the
+origin mode saved with the DECSC slot and with the stashed main screen; version 1 records still
+load, with both off (`load_saveV1_live`).
 -/
 
 namespace Linger.Session.Checkpoint

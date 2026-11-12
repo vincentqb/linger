@@ -3,6 +3,7 @@ module
 public import Linger.App.Answer
 public import Linger.App.Commands
 public import Linger.App.Entry
+public import Linger.App.Recovery
 public import Linger.App.Wait
 public import Linger.Display.Listing
 public import Linger.Display.Status
@@ -28,6 +29,7 @@ public import Terminal.Title
 import all Linger.App.Proofs.Answer
 import all Linger.App.Proofs.Commands
 import all Linger.App.Proofs.Entry
+import all Linger.App.Proofs.Recovery
 import all Linger.App.Proofs.Wait
 import Linger.Display.Proofs.Clean
 import all Linger.Display.Proofs.Listing
@@ -1704,6 +1706,130 @@ theorem loadBytes_resave_rejects_fixed :
   have other := loadBytes_saveBytes_live ⟨Vt.Vt.init 1 1, "x", []⟩ (.init 1 1)
   have same := (h empty).symm.trans other
   exact absurd (congrArg (Option.map Checkpoint.Ckpt.cwd) same) (by decide)
+
+theorem recovery_exact (create : Bool) (file : Option ByteArray) :
+    App.Recovery.decide create file =
+      (file.map fun bytes =>
+            ((Checkpoint.loadBytes bytes).map App.Recovery.resume).getD (.refuse .notDone)).getD
+        (if create then .fresh else .refuse .notFound) := App.Recovery.recovery_exact create file
+
+theorem recovery_exact_rejects_missing :
+    ¬∀ (create : Bool) (file : Option ByteArray),
+        (fun (create : Bool) (file : Option ByteArray) =>
+              ((file.bind Checkpoint.loadBytes).map App.Recovery.resume).getD
+                (if create then App.Recovery.fresh else .refuse .notFound))
+            create file =
+          (file.map fun bytes =>
+                ((Checkpoint.loadBytes bytes).map App.Recovery.resume).getD (.refuse .notDone)).getD
+            (if create then .fresh else .refuse .notFound) := by
+  intro h
+  have empty : Checkpoint.loadBytes ByteArray.empty = none := rfl
+  have taken := h true (some ByteArray.empty)
+  simp [empty] at taken
+
+theorem crash_resumes (afterCrash : Option ByteArray → ByteArray → Bool → Option ByteArray)
+    (durable : Disk.Durable afterCrash) (create synced : Bool) (old new : Checkpoint.Ckpt Vt.Vt)
+    (hold :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) old.vt)
+    (hnew :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) new.vt) :
+    ∃ c,
+      App.Recovery.decide create
+            (afterCrash (some (Checkpoint.saveBytes old)) (Checkpoint.saveBytes new) synced) =
+          .resume c ∧
+        (c = { new with vt := new.vt.quiesce } ∨
+          synced = false ∧ c = { old with vt := old.vt.quiesce }) := by
+  have resumes (c : Checkpoint.Ckpt Vt.Vt)
+    (h :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) c.vt) :
+    App.Recovery.decide create (some (Checkpoint.saveBytes c)) =
+      .resume { c with vt := c.vt.quiesce } := by
+    rw [App.Recovery.recovery_exact create _]
+    simp only [Option.map_some, Option.getD_some]
+    rw [loadBytes_saveBytes_live c h]
+    rfl
+  obtain ⟨kept, torn⟩ := durable (some (Checkpoint.saveBytes old)) (Checkpoint.saveBytes new)
+  cases synced with
+  | true => exact ⟨_, by rw [kept, resumes new hnew], .inl rfl⟩
+  | false =>
+    rcases torn with found | found
+    · exact ⟨_, by rw [found, resumes old hold], .inr ⟨rfl, rfl⟩⟩
+    · exact ⟨_, by rw [found, resumes new hnew], .inl rfl⟩
+
+theorem crash_resumes_rejects_fresh :
+    ¬∀ (afterCrash : Option ByteArray → ByteArray → Bool → Option ByteArray),
+        Disk.Durable afterCrash →
+          ∀ (create synced : Bool) (old new : Checkpoint.Ckpt Vt.Vt),
+            Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+                (Checkpoint.Decoded Checkpoint.loadBytes) old.vt →
+              Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+                (Checkpoint.Decoded Checkpoint.loadBytes) new.vt →
+              ∃ c,
+                (fun (_ : Bool) (_ : Option ByteArray) =>
+                        (App.Recovery.fresh : App.Recovery (Checkpoint.Ckpt Vt.Vt)))
+                      create
+                      (afterCrash (some (Checkpoint.saveBytes old)) (Checkpoint.saveBytes new)
+                        synced) =
+                    .resume c ∧
+                  (c = { new with vt := new.vt.quiesce } ∨
+                    synced = false ∧ c = { old with vt := old.vt.quiesce }) := by
+  intro h
+  obtain ⟨_, fresh, -⟩ :=
+    h (fun _ new _ => some new) (fun _ _ => ⟨rfl, .inr rfl⟩) true true ⟨Vt.Vt.init 1 1, "", []⟩
+      ⟨Vt.Vt.init 1 1, "", []⟩ (.init 1 1) (.init 1 1)
+  cases fresh
+
+theorem unsaved_due (vt : Vt.Vt) (labels metaKv : List (String × String)) (pre post : List Event)
+    (ev : Event) :
+    let s := (Session.trace Session.step (State.boot vt labels metaKv) pre).1
+    let after := Session.trace Session.step s (ev :: post)
+    (Session.step s ev).1.terminal ≠ s.terminal ∨ (Session.step s ev).1.labelList ≠ s.labelList →
+      Effect.checkpoint ∉ after.2 →
+      ∃ due,
+        due ≤ Session.clock pre + ckptIntervalMs ∧
+          (∃ wake, after.1.nextTick = some wake ∧ wake ≤ due) ∧
+          ∀ now, due ≤ now → Effect.checkpoint ∈ (Session.step after.1 (.tick now)).2 := by
+  intro s after changed unsaved
+  exact
+    Session.unsaved_due s ev post (Session.boot_lastCkptMs_le vt labels metaKv pre) changed unsaved
+
+theorem unsaved_due_rejects_never :
+    ¬∀ (vt : Vt.Vt) (labels metaKv : List (String × String)) (pre post : List Event) (ev : Event),
+        let s := (Session.trace Session.step (State.boot vt labels metaKv) pre).1
+        let after := Session.trace Session.step s (ev :: post)
+        (Session.step s ev).1.terminal ≠ s.terminal ∨
+            (Session.step s ev).1.labelList ≠ s.labelList →
+          Effect.checkpoint ∉ after.2 →
+          ∃ due,
+            due ≤ Session.clock pre + ckptIntervalMs ∧
+              (∃ wake, (fun (_ : State) => (none : Option Nat)) after.1 = some wake ∧ wake ≤ due) ∧
+              ∀ now, due ≤ now → Effect.checkpoint ∈ (Session.step after.1 (.tick now)).2 := by
+  intro h
+  have printed :
+    (Session.step (State.boot (Vt.Vt.init 2 1) [] []) (.ptyOut [0x41])).1.terminal =
+      (Vt.Vt.init 2 1).feed [0x41] :=
+    Session.step_ptyOut_vt _ _
+  have moved : ((Vt.Vt.init 2 1).feed [0x41]).cursorPos = (1, 0) := by decide +kernel
+  have home : (Vt.Vt.init 2 1).cursorPos = (0, 0) := by decide +kernel
+  have quiet :
+    Effect.checkpoint ∉ (Session.step (State.boot (Vt.Vt.init 2 1) [] []) (.ptyOut [0x41])).2 := by
+    rw [Session.step_ptyOut_effects]
+    simp [Session.broadcast, Session.State.boot]
+  obtain ⟨_, -, ⟨_, asleep, -⟩, -⟩ :=
+    h (Vt.Vt.init 2 1) [] [] [] [] (.ptyOut [0x41])
+      (.inl fun same => by
+        have := congrArg Vt.Vt.cursorPos same
+        change
+          ((Session.step (State.boot (Vt.Vt.init 2 1) [] [])
+                  (.ptyOut [0x41])).1.terminal).cursorPos =
+            (State.boot (Vt.Vt.init 2 1) [] []).terminal.cursorPos at this
+        rw [printed, moved] at this
+        exact absurd (this.trans home) (by decide))
+      (by simpa [Session.trace] using quiet)
+  cases asleep
 
 theorem checkpoint_metadata (pane : Import.Resurrect.Pane) (contents : Option String) :
     (Import.Resurrect.checkpoint pane contents).cwd = pane.dir ∧

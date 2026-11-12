@@ -8,13 +8,14 @@ public section
 /-! # What session headlines are stated in
 
 The values a session exchanges with its clients and its runtime (messages, client records,
-events and effects, and the end record a name keeps), the caps its state keeps, the contract on
-the effect interpreter, and predicates over the session's operations, which they take as
-parameters: which messages fit a frame and what a decoder reads from a chunked stream, the
-bounds a state keeps, the events a session handles when every effect succeeds, the reachable
-states of the daemon's byte queues, and a model of how daemons and offline readers claim a
-session's resources; and the wrong transition and drivers the kills put in place of the program's.
-Bodies are exposed: each definition here is its own specification. -/
+events and effects, and the end record a name keeps), the caps its state keeps and how long its
+changes may go unsaved, the time its events tell it, the contract on the effect interpreter, and
+predicates over the session's operations, which they take as parameters: which messages fit a
+frame and what a decoder reads from a chunked stream, the bounds a state keeps, the events a
+session handles when every effect succeeds, the reachable states of the daemon's byte queues,
+and a model of how daemons and offline readers claim a session's resources; and the wrong
+transition and drivers the kills put in place of the program's. Bodies are exposed: each
+definition here is its own specification. -/
 
 namespace Linger.Session
 
@@ -278,6 +279,12 @@ first this many restored labels. -/
 @[expose]
 def maxLabels : Nat := 64
 
+/-- How long a session's changes may go unsaved: a session asks for a checkpoint save no later
+than this after the first change no save holds, and saves on its own at most once in it. A
+minute, in natural-number milliseconds, so that adding it to a deadline cannot wrap. -/
+@[expose]
+def ckptIntervalMs : Nat := 60000
+
 /-- One connection's record: its identity, rights, terminal size, attach and request state, and
 its undecoded input. -/
 structure Client where
@@ -328,6 +335,15 @@ inductive Event where
   /-- The last `.checkpoint` effect failed to save. -/
   | checkpointFailed
   deriving Repr
+
+/-- The time a session's events have told it: the latest time among their ticks, or 0 before
+any tick. A daemon's ticks read the monotonic clock as each poll round ends, so this is the time
+of the last tick, and an event after them happened no earlier. -/
+@[expose]
+def clock : List Event → Nat
+  | [] => 0
+  | .tick now :: evs => max now (clock evs)
+  | _ :: evs => clock evs
 
 /-- What the runtime executes, given the type of a captured repaint. -/
 inductive Effect (Plan : Type) where
@@ -430,6 +446,21 @@ exactly `bytes` until linger saves or removes the record again. A reader that se
 record, an older one, or a mix of two falsifies it. -/
 WorldClaim Record.Kept (afterSave : List UInt8 → Option (List UInt8)) :=
   ∀ bytes, afterSave bytes = some bytes
+
+/-- The file system keeps what linger replaces whole and durably through a crash, power loss
+included. `afterCrash old new synced` is what a reader finds at a path once the machine crashed
+while linger replaced the file there, which held `old` (`none` for no file), with `new`: writing
+a temporary sibling, flushing it to the device, renaming it over the path and flushing the
+directory (`Os.Shell.replaceFile`); `synced` says whether both flushes had returned. Once they
+have, the path holds `new` whole; before, it holds the old file or the new one, never part of
+either. A reader that finds anything else there after a crash, such as an empty file, a file cut
+short, a mix of two, or the old file once both flushes returned, falsifies it. No suite cuts the
+power: the resume suite kills a daemon with SIGKILL while it saves, which tests the tear and not
+the flush. -/
+WorldClaim Disk.Durable (afterCrash : Option ByteArray → ByteArray → Bool → Option ByteArray) :=
+  ∀ old new,
+    afterCrash old new true = some new ∧
+      (afterCrash old new false = old ∨ afterCrash old new false = some new)
 
 /-- How a program has set its terminal to hand it input. -/
 inductive Pty.Mode where

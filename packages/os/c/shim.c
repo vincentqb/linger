@@ -740,6 +740,43 @@ LEAN_EXPORT lean_obj_res linger_flock(b_lean_obj_arg path) {
 }
 
 /* -------------------------------------------------------------------- */
+/* durability                                                            */
+
+/* linger_fsync_path : @& String -> Bool -> IO Bool
+ * Open `path` read-only (with `directory`, as a directory: O_DIRECTORY),
+ * flush it to the device and close it: true once flushed. O_NONBLOCK keeps
+ * the open from waiting for a writer when the path is a FIFO, which fsync
+ * then refuses (EINVAL). fsync(2) on macOS hands the data to the drive and
+ * stops there, so the drive's own cache can still lose it on power loss;
+ * fcntl(F_FULLFSYNC) asks the drive to write that cache too. A file system
+ * that does not offer it (an SMB mount answers ENOTSUP) gets fsync. A file
+ * system that cannot flush a directory at all answers EINVAL, as some
+ * network and FUSE ones do: false, since nothing more can be asked of it.
+ * EINTR is retried; any other flush error is reported, never retried, since
+ * the kernel may drop the pages it failed to write. */
+LEAN_EXPORT lean_obj_res linger_fsync_path(b_lean_obj_arg path, uint8_t directory) {
+    int fd;
+    do {
+        fd = open(lean_string_cstr(path),
+                  O_RDONLY | O_NONBLOCK | O_CLOEXEC | (directory ? O_DIRECTORY : 0));
+    } while (fd < 0 && errno == EINTR);
+    if (fd < 0) return io_err("open(fsync)");
+    int r = -1;
+#ifdef __APPLE__
+    do { r = fcntl(fd, F_FULLFSYNC); } while (r < 0 && errno == EINTR);
+    if (r < 0 && (errno == ENOTSUP || errno == ENOTTY))
+#endif
+    {
+        do { r = fsync(fd); } while (r < 0 && errno == EINTR);
+    }
+    int e = errno;
+    close(fd);
+    if (r == 0) return lean_io_result_mk_ok(lean_box(1));
+    if (directory && e == EINVAL) return lean_io_result_mk_ok(lean_box(0));
+    return io_err_code("fsync", e);
+}
+
+/* -------------------------------------------------------------------- */
 /* processes                                                             */
 
 /* linger_spawn_detached : @& String -> @& Array String -> @& String -> IO UInt32

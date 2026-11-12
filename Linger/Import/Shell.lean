@@ -414,10 +414,9 @@ private def snapshot : IO (List (String × String)) := do
       let dir ←
         if row.lookup "state" == some "resumable" then
           Paths.withSessionLock name do
-              let some (_, cwd, _) ←
-                Resume.loadCkpt
-                    name | throw (IO.userError s!"could not read checkpoint for session: {name}")
-              pure cwd
+              let some saved := (← Resume.readCkpt name).bind Linger.Session.Checkpoint.loadBytes
+                | throw (IO.userError s!"could not read checkpoint for session: {name}")
+              pure saved.cwd
         else
           do
             let some pid := (row.lookup "pid").bind String.toNat?

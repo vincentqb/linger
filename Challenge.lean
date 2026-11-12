@@ -34,7 +34,8 @@ each with a kill, and says what it does not claim yet:
 6. Bounded and clean: input cannot raise any buffer, loop or wait past its cap, and nothing of a
    session's terminal session that linger's signals reach outlives it.
 7. Recovery: resuming from a checkpoint gives back the saved session, less any half-parsed
-   control sequence.
+   control sequence, and a crash costs at most the changes of the last interval, never the
+   session: a checkpoint that does not decode is kept and refused, not replaced.
 8. Clean terminal: what linger writes to a terminal on its own account is safe text or one of
    its fixed sequences, and handing a terminal back leaves it canonical.
 9. Work follows events: linger works only in response to an event, a byte, a request, a program
@@ -62,16 +63,17 @@ the declared type, and that no axiom beyond `propext`, `Quot.sound` and `Classic
 used. Changing a statement or a hole here changes what linger claims.
 
 Not claimed: that the IO executors, the C shim and the operating system behave as the world
-claims say, which the suites named with each claim exercise instead; scheduling, file system
-durability, allocation failure, termination by the operating system and failures of the
-compiler, the runtime or the C shim; memory beyond the logical bytes the buffers retain;
-ownership among processes that do not cooperate or replace the lock files; fidelity beyond
-linger's own terminal model, which stands in for every receiver; the incoming title content and
-the saved cursor slot, which fixtures cover; processes or images, since recovery restores
-screens; that an exit status tells linger's answers from a program's, since a program may exit
-with any status, as with `timeout` and `env`, so that `info` and the porcelain output are the
-exact channel; for tmux imports, captures other than the latest save's archive; and that an
-imported pane's saved command never runs, which a gate checks. -/
+claims say, which the suites named with each claim exercise instead, except for power loss,
+which `Disk.Durable` speaks of and no suite causes; scheduling, allocation failure, termination
+by the operating system and failures of the compiler, the runtime or the C shim; a bound in bytes
+or rows on what a crash loses, which is bounded in time; memory beyond the logical bytes the
+buffers retain; ownership among processes that do not cooperate or replace the lock files;
+fidelity beyond linger's own terminal model, which stands in for every receiver; the incoming
+title content and the saved cursor slot, which fixtures cover; processes or images, since
+recovery restores screens; that an exit status tells linger's answers from a program's, since a
+program may exit with any status, as with `timeout` and `env`, so that `info` and the porcelain
+output are the exact channel; for tmux imports, captures other than the latest save's archive;
+and that an imported pane's saved command never runs, which a gate checks. -/
 
 public section
 
@@ -98,6 +100,9 @@ def Linger.App.Answer.listed : List App.Answer := sorry
 def Linger.App.Wait.heldNameMs : Nat := sorry
 
 def Linger.App.Wait.decide : Option Nat → Option Nat → Nat → App.Wait.Heard → App.Wait.Next := sorry
+
+def Linger.App.Recovery.decide : Bool → Option ByteArray → App.Recovery (Checkpoint.Ckpt Vt.Vt) :=
+  sorry
 
 /-! ### Session targets -/
 
@@ -1588,7 +1593,18 @@ theorem ending_clean_rejects_hangup :
 
 The terminal package's claims cover every terminal the checkpoint decoder returns
 (`Checkpoint.live_of_decoded`), so any bytes on disk resume a session those claims cover, or are
-refused. -/
+refused, and a command never takes bytes that do not decode for no checkpoint: it starts
+nothing over them and leaves them as they are, for `kill` to discard (`recovery_exact`). A crash
+costs at most the changes of the last interval. A session asks for a save within
+`ckptIntervalMs` of every change no save holds, by the clock its ticks give it (`unsaved_due`);
+its daemon saves off its loop and replaces the checkpoint whole and durably, so that after a
+crash the file at the path is the last save whose flushes returned, or the one then running,
+whole (`Disk.Durable`, which the resume suite exercises by killing a daemon while it saves); and
+resuming then gives back that save, never a fresh session (`crash_resumes`). Not claimed: a
+bound in bytes or rows on what a crash loses, since the bound is in time, the interval and the
+saves then running, whatever the program wrote in it, and a bound in rows waits for an
+append-only store of the history; and that power loss keeps what the flushes returned for, which
+rests on `Disk.Durable` and which no suite exercises. -/
 
 theorem loadBytes_saveBytes_live (c : Checkpoint.Ckpt Vt.Vt)
     (h :
@@ -1637,6 +1653,84 @@ theorem loadBytes_resave_rejects_fixed :
               ((fun (_ : Checkpoint.Ckpt Vt.Vt) => Checkpoint.saveBytes ⟨Vt.Vt.init 1 1, "x", []⟩)
                 c) =
             some c := by
+  sorry
+
+theorem recovery_exact (create : Bool) (file : Option ByteArray) :
+    App.Recovery.decide create file =
+      (file.map fun bytes =>
+            ((Checkpoint.loadBytes bytes).map App.Recovery.resume).getD (.refuse .notDone)).getD
+        (if create then .fresh else .refuse .notFound) := by
+  sorry
+
+theorem recovery_exact_rejects_missing :
+    ¬∀ (create : Bool) (file : Option ByteArray),
+        (fun (create : Bool) (file : Option ByteArray) =>
+              ((file.bind Checkpoint.loadBytes).map App.Recovery.resume).getD
+                (if create then App.Recovery.fresh else .refuse .notFound))
+            create file =
+          (file.map fun bytes =>
+                ((Checkpoint.loadBytes bytes).map App.Recovery.resume).getD (.refuse .notDone)).getD
+            (if create then .fresh else .refuse .notFound) := by
+  sorry
+
+theorem crash_resumes (afterCrash : Option ByteArray → ByteArray → Bool → Option ByteArray)
+    (durable : Disk.Durable afterCrash) (create synced : Bool) (old new : Checkpoint.Ckpt Vt.Vt)
+    (hold :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) old.vt)
+    (hnew :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) new.vt) :
+    ∃ c,
+      App.Recovery.decide create
+            (afterCrash (some (Checkpoint.saveBytes old)) (Checkpoint.saveBytes new) synced) =
+          .resume c ∧
+        (c = { new with vt := new.vt.quiesce } ∨
+          synced = false ∧ c = { old with vt := old.vt.quiesce }) := by
+  sorry
+
+theorem crash_resumes_rejects_fresh :
+    ¬∀ (afterCrash : Option ByteArray → ByteArray → Bool → Option ByteArray),
+        Disk.Durable afterCrash →
+          ∀ (create synced : Bool) (old new : Checkpoint.Ckpt Vt.Vt),
+            Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+                (Checkpoint.Decoded Checkpoint.loadBytes) old.vt →
+              Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+                (Checkpoint.Decoded Checkpoint.loadBytes) new.vt →
+              ∃ c,
+                (fun (_ : Bool) (_ : Option ByteArray) =>
+                        (App.Recovery.fresh : App.Recovery (Checkpoint.Ckpt Vt.Vt)))
+                      create
+                      (afterCrash (some (Checkpoint.saveBytes old)) (Checkpoint.saveBytes new)
+                        synced) =
+                    .resume c ∧
+                  (c = { new with vt := new.vt.quiesce } ∨
+                    synced = false ∧ c = { old with vt := old.vt.quiesce }) := by
+  sorry
+
+theorem unsaved_due (vt : Vt.Vt) (labels metaKv : List (String × String)) (pre post : List Event)
+    (ev : Event) :
+    let s := (Session.trace Session.step (State.boot vt labels metaKv) pre).1
+    let after := Session.trace Session.step s (ev :: post)
+    (Session.step s ev).1.terminal ≠ s.terminal ∨ (Session.step s ev).1.labelList ≠ s.labelList →
+      Effect.checkpoint ∉ after.2 →
+      ∃ due,
+        due ≤ Session.clock pre + ckptIntervalMs ∧
+          (∃ wake, after.1.nextTick = some wake ∧ wake ≤ due) ∧
+          ∀ now, due ≤ now → Effect.checkpoint ∈ (Session.step after.1 (.tick now)).2 := by
+  sorry
+
+theorem unsaved_due_rejects_never :
+    ¬∀ (vt : Vt.Vt) (labels metaKv : List (String × String)) (pre post : List Event) (ev : Event),
+        let s := (Session.trace Session.step (State.boot vt labels metaKv) pre).1
+        let after := Session.trace Session.step s (ev :: post)
+        (Session.step s ev).1.terminal ≠ s.terminal ∨
+            (Session.step s ev).1.labelList ≠ s.labelList →
+          Effect.checkpoint ∉ after.2 →
+          ∃ due,
+            due ≤ Session.clock pre + ckptIntervalMs ∧
+              (∃ wake, (fun (_ : State) => (none : Option Nat)) after.1 = some wake ∧ wake ≤ due) ∧
+              ∀ now, due ≤ now → Effect.checkpoint ∈ (Session.step after.1 (.tick now)).2 := by
   sorry
 
 theorem checkpoint_metadata (pane : Import.Resurrect.Pane) (contents : Option String) :
@@ -1778,9 +1872,9 @@ theorem poll_wakes_rejects_polling :
 /-! ## 10. Graceful under load
 
 A command waits for its daemon's answer a bounded time, and what it answers when that time runs
-out is still true. A daemon saves its checkpoint and writes its end record off its loop, on a
-thread of its own (`scripts/gates.sh`), so a slow disk holds up no answer and no output, and the
-writes it asks for while one runs coalesce into the last. Every wait sleeps as `Os.Wait.next`
+out is still true. A daemon saves its checkpoint and writes its end record, their flushes
+included, off its loop, on a thread of its own (`scripts/gates.sh`), so a slow disk holds up no
+answer and no output, and the writes it asks for while one runs coalesce into the last. Every wait sleeps as `Os.Wait.next`
 decides (`scripts/gates.sh`), so it gives up once its deadline has passed, which the os package
 claims (`packages/os`), and then reports what
 it missed: `start` that its daemon did not answer, `ls` a remote host as `?`, `wait --timeout`
