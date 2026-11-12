@@ -12,10 +12,11 @@ The target theorem:
     (Vt.init v.cols v.rows).feed (Render.restore v) ≃ v
 
 The grid, tab ruler, scrollback, pen, and mode proofs generalize beyond
-these fixtures. Cursor restoration still has an origin-mode qualification,
-and title and saved-state fidelity still depend on fixtures. `replayEq`
-compares the listed observations, including all three deferred-wrap flags;
-it is not equivalence under arbitrary future input. The fixtures complement
+these fixtures, and for a live terminal `restore_readable`
+(`Terminal/Proofs/Render/Shows.lean`) proves every field later output reads,
+the cursor with its deferred wrap, the DECSC slot and the stash among them;
+title fidelity still depends on fixtures. `replayEq` compares the listed
+observations, including all three deferred-wrap flags. The fixtures complement
 the proofs with concrete regressions and literal checks on the emitter's choices.
 -/
 

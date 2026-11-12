@@ -1,15 +1,15 @@
 module
 
 public import Terminal.Spec
-public import Terminal.Spec.Claims
 
 /-! # Headline theorems of the terminal toolkit
 
 What the VT toolkit must do for the program that keeps a terminal: a live terminal keeps its
 shape and its history, feeding inert bytes changes nothing, a control sequence's count is capped,
-a repaint streams in bounded chunks and gives its receiver the terminal's rows, cursor, history,
-pen, modes and scroll region, screen text has no control characters, and the handback sequence
-leaves a terminal canonical. The theorems are stated over the toolkit's
+a repaint streams in bounded chunks, gives its receiver the terminal's rows, cursor, history,
+pen, modes and scroll region and keeps showing what the terminal shows as later output reaches
+both, screen text has no control characters, and the handback sequence leaves a terminal
+canonical. The theorems are stated over the toolkit's
 parts, declared below as holes: `sorry` here, which the package's code supplies, and
 `Terminal.Solution` proves the same statements of them. -/
 
@@ -96,12 +96,7 @@ theorem replay_grid_rejects_silence :
                   ∀ y < v.rowCount, (w.feed bytes).getRow y = v.getRow y := by
   sorry
 
-theorem replay_keeps_showing
-    (keeps :
-      Replay.KeepsShowing (Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable)
-        Vt.Vt.feed Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.atBoundary Replay.start
-        Replay.next)
-    (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
+theorem replay_keeps_showing (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
     (hv : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v)
     (hw : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable w)
     (hcols : w.colCount = v.colCount) (hrows : w.rowCount = v.rowCount)
@@ -113,35 +108,22 @@ theorem replay_keeps_showing
           ((w.feed bytes).feed later).getRow y = (v.feed later).getRow y := by
   sorry
 
-theorem replay_keeps_showing_rejects_fixed :
-    ¬(Replay.KeepsShowing
-          (Vt.Live Vt.Vt.init (fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) Vt.Vt.resize
-            Vt.Vt.quiesce Vt.Vt.Decodable)
-          (fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) Vt.Vt.colCount Vt.Vt.rowCount
-          Vt.Vt.getRow Vt.Vt.atBoundary Replay.start Replay.next →
-        ∀ (budget : Nat),
-          0 < budget →
-            ∀ (v w : Vt.Vt),
-              Vt.Live Vt.Vt.init (fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) Vt.Vt.resize
-                  Vt.Vt.quiesce Vt.Vt.Decodable v →
-                Vt.Live Vt.Vt.init (fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) Vt.Vt.resize
-                  Vt.Vt.quiesce Vt.Vt.Decodable w →
-                w.colCount = v.colCount →
-                w.rowCount = v.rowCount →
-                v.atBoundary = true →
-                ∀ (later : List UInt8),
-                  ∃ bytes,
-                    Replay.Emits Replay.next budget (Replay.start v) bytes ∧
-                      (∀ y < v.rowCount,
-                        ((fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) w bytes).getRow y =
-                          v.getRow y) ∧
-                      ∀ y < ((fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) v later).rowCount,
-                        ((fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1)
-                                ((fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) w bytes)
-                                later).getRow
-                            y =
-                          ((fun (_ : Vt.Vt) (_ : List UInt8) => Vt.Vt.init 1 1) v later).getRow
-                            y) := by
+theorem replay_keeps_showing_rejects_unregioned :
+    ¬∀ (budget : Nat),
+        0 < budget →
+          ∀ (v w : Vt.Vt),
+            Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v →
+              Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable w →
+              w.colCount = v.colCount →
+              w.rowCount = v.rowCount →
+              v.atBoundary = true →
+              ∀ (later : List UInt8),
+                ∃ bytes,
+                  Replay.Emits Replay.next budget
+                      ((fun (v : Vt.Vt) => Replay.start (v.feed [0x1B, 0x5B, 0x72])) v) bytes ∧
+                    (∀ y < v.rowCount, (w.feed bytes).getRow y = v.getRow y) ∧
+                    ∀ y < (v.feed later).rowCount,
+                      ((w.feed bytes).feed later).getRow y = (v.feed later).getRow y := by
   sorry
 
 theorem replay_history (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)

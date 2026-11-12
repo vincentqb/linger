@@ -109,8 +109,9 @@ def keepsShowing (v : Vt.Vt) (later : String) : Bool :=
     (List.range (v.feed bytes).rowCount).all fun y =>
       (w.feed bytes).getRow y == (v.feed bytes).getRow y
 
-/-- The indices whose case stops showing the session once more output arrives: a fuzz test of
-the conjecture `Terminal.Replay.KeepsShowing`. **The list is empty**, and pinned as empty. -/
+/-- The indices whose case stops showing the session once more output arrives, which
+`Render.keeps_showing` says is none: the compiled emulator against the theorem. **The list is
+empty**, and pinned as empty. -/
 def failingLater (count : Nat) : List Nat :=
   (List.range count).filter
     (fun i =>

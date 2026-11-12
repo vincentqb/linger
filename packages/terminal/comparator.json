@@ -5,7 +5,7 @@
     "Terminal.replay_grid",
     "Terminal.replay_grid_rejects_silence",
     "Terminal.replay_keeps_showing",
-    "Terminal.replay_keeps_showing_rejects_fixed",
+    "Terminal.replay_keeps_showing_rejects_unregioned",
     "Terminal.replay_history",
     "Terminal.replay_history_rejects_silence",
     "Terminal.history_grows",

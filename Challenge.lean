@@ -288,9 +288,9 @@ terminals a session can hold: fresh, fed, resized, quiesced, or admitted by the 
 door, which every terminal linger's checkpoint decoder returns passes
 (`Checkpoint.live_of_decoded`). There a client receives the repaint as a stream, in steps of any
 positive byte budget, the stream ends, and a receiver of the same size that parses it shows what the
-terminal shows; that it keeps showing it as output continues is conjectured, for a repaint taken
-between control sequences and characters; and a terminal's history only gains rows at its end,
-unless output may ask to erase it. Here: a read that attaches a connection, writable or read-only,
+terminal shows and, for a repaint taken between control sequences and characters, keeps showing it
+as the same output reaches both; and a terminal's history only gains rows at its end, unless output
+may ask to erase it. Here: a read that attaches a connection, writable or read-only,
 streams it the repaint of the session's terminal as the attach leaves it, and the read sends it
 nothing before the repaint: only the pty's resize and the program's focus report come first. A chunk
 of program output feeds the session's terminal exactly that chunk, reaches every attached client,
