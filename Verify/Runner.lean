@@ -7,24 +7,28 @@ public section
 namespace Verify.Runner
 
 /-- Run independent suites in separate processes, with at most four alive.
-The caller supplies the only assertion-count inventory. Each process keeps its
-combined output in its own log; ordinary `spawn` preserves inherited SIGINT.
+The caller supplies the only assertion-count inventory: each suite's name, how many
+checks it reports and how many of those say `SKIP`, which the platform could not
+measure (`Verify.Harness.expectMeasured`); the rest must say `PASS`. Each process keeps
+its combined output in its own log; ordinary `spawn` preserves inherited SIGINT.
 Wait for every started suite even when another fails. -/
 def run (binary : String) (args : Array String) (logDir : System.FilePath)
-    (specs : List (String × Nat)) : IO UInt32 := do
+    (specs : List (String × Nat × Nat)) : IO UInt32 := do
   let names := specs.map (·.1)
   if
       specs.isEmpty || names.eraseDups.length != names.length ||
         specs.any
-          (fun (name, count) =>
-            name.isEmpty || !name.toList.all (fun c => c.isAlphanum || c == '-') || count == 0) then
-    IO.eprintln "suites: expected distinct suite names with positive assertion counts"
+          (fun (name, count, skips) =>
+            name.isEmpty || !name.toList.all (fun c => c.isAlphanum || c == '-') || count == 0 ||
+              skips ≥ count) then
+    IO.eprintln
+        "suites: expected distinct suite names with positive check counts, fewer of them skipped"
     return 2
   if (← IO.getEnv "LINGER_TEST_DIR").isSome then
     IO.eprintln
         "suites: concurrent suites require separate state directories; unset LINGER_TEST_DIR"
     return 2
-  let suite (name : String) (expected : Nat) : IO (String × Bool × Nat) := do
+  let suite (name : String) (expected skips : Nat) : IO (String × Bool × Nat) := do
     let start ← IO.monoMsNow
     let log := logDir / s!"linger-{name}.out"
     -- Redirect in the child, not global Lean streams. All arguments remain
@@ -37,14 +41,18 @@ def run (binary : String) (args : Array String) (logDir : System.FilePath)
     let text ← IO.FS.readFile log
     let lines := Verify.Harness.lines text
     let count := (lines.filter (·.startsWith "PASS ")).length
+    let skipped := (lines.filter (·.startsWith "SKIP ")).length
     let ok :=
-      code == 0 && lines.getLast? == some "FAILURES: 0" && count == expected &&
+      code == 0 && lines.getLast? == some "FAILURES: 0" && count + skipped == expected &&
+        skipped == skips &&
         !lines.any (·.startsWith "FAIL ")
     if !ok then
-      IO.eprintln s!"suites: {name} failed (exit {code}, {count}/{expected} checks); see {log}"
+      IO.eprintln
+          s!"suites: {name} failed (exit {code}, {count} passed and {skipped} skipped of \
+            {expected} checks, {skips} to skip); see {log}"
     return (name, ok, (← IO.monoMsNow) - start)
   let failed ← IO.mkRef false
-  Verify.Harness.parallel 4 (specs.map fun (name, expected) => suite name expected) fun
+  Verify.Harness.parallel 4 (specs.map fun (name, expected, skips) => suite name expected skips) fun
       | .error e => do
         failed.set true
         IO.eprintln s!"suites: {e}"

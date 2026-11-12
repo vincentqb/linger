@@ -97,9 +97,9 @@ def infoServer (socketPath readyPath mode : String) : IO UInt32 := do
   try
     IO.FS.writeFile readyPath "ready"
     for _ in [:2] do
-      let some fd ← acceptWithin lfd 5000 | return 1
+      let some fd ← acceptWithin lfd hangMs | return 1
       try
-        let ready ← Os.Shell.poll #[fd] #[Os.Shell.POLLIN] 2000
+        let ready ← Os.Shell.poll #[fd] #[Os.Shell.POLLIN] (Int32.ofNat patienceMs)
         if ready[0]! == 0 then
           return 1
         let _ ← Os.Shell.read fd 65536
@@ -172,11 +172,11 @@ private def checkInfo (e : Env) (mode : String) (error : Option String) : IO Uni
         { cmd := self.toString, args := #["--info-server", socketPath, readyPath, mode],
           stdout := .null, stderr := .piped }
   try
-    unless (← waitFor 5000 (System.FilePath.pathExists readyPath)) do
+    unless (← waitFor patienceMs (System.FilePath.pathExists readyPath)) do
       throw (IO.userError s!"{mode} info server did not become ready")
     let (rc, out, err) ← e.cli #["get", name]
     let (lrc, listing, _) ← e.cli #["ls", "--porcelain"]
-    let serverRc ← waitProcess server 5000
+    let serverRc ← waitProcess server hangMs
     let recs := records listing
     let pathKept ← System.FilePath.pathExists socketPath
     match error with

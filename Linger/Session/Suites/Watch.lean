@@ -42,7 +42,14 @@ def checkpointChecks (e : Env) : IO Unit := do
   IO.FS.writeBinFile path bytes
   let viewer ← e.spawn #["attach", "--read-only", "saved"] 40 4
   try
-    let output ← drain viewer.fd 1500
+    -- the whole first frame: the replay, then the composed title, which the viewer writes last
+    let screen ← IO.mkRef ByteArray.empty
+    let _ ←
+      viewer.awaitText screen fun output =>
+          let title := ((Terminal.Vt.Vt.init 40 4).feed output.toList).windowTitle
+          hasBytes output (Terminal.Render.restore vt) && has title "saved" && has title "editor" &&
+            has title "~"
+    let output ← screen.get
     let rendered := hasBytes output (Terminal.Render.restore vt)
     expect rendered "read-only attach replays the saved terminal and scrollback"
     if !rendered then
@@ -62,17 +69,18 @@ def checkpointChecks (e : Env) : IO Unit := do
       if fd ≥ 0 then
         Os.Shell.close fd.toUInt64.toUInt32
     viewer.resize 12 2
-    let narrow ← drain viewer.fd 500
-    expect (hasBytes narrow (Terminal.Render.restore (vt.resize 12 2)))
+    let narrow ← IO.mkRef ByteArray.empty
+    expect (← viewer.awaitText narrow (hasBytes · (Terminal.Render.restore (vt.resize 12 2))))
         "saved viewing redraws at the viewer's terminal size"
     viewer.resize 40 4
-    let wide ← drain viewer.fd 500
-    expect (hasBytes wide (Terminal.Render.restore vt))
+    let wide ← IO.mkRef ByteArray.empty
+    expect (← viewer.awaitText wide (hasBytes · (Terminal.Render.restore vt)))
         "expanding a saved view restores the original snapshot after clipping"
     viewer.detach
-    let back ← drain viewer.fd 1000
+    -- the viewer exits, so this reads to its end of file
+    let back ← drain viewer.fd hangMs
     expect
-        ((← viewer.reap 1000) == 0 && hasBytes back Terminal.Render.leaveAnsi &&
+        ((← viewer.reap patienceMs) == 0 && hasBytes back Terminal.Render.leaveAnsi &&
           (← IO.FS.readBinFile path).toList == bytes.toList)
         "saved viewing detaches with canonical terminal handback and unchanged checkpoint"
   finally
@@ -107,16 +115,16 @@ def checkpointChecks (e : Env) : IO Unit := do
   try
     let _ ← drain pinned.fd 1000
     pinned.detach
-    let back ← drain pinned.fd 2000
-    expect ((← pinned.reap 2000) == 0 && hasText back "detached from")
+    let back ← drain pinned.fd hangMs
+    expect ((← pinned.reap patienceMs) == 0 && hasText back "detached from")
         "ctrl-\\ leaves a saved view even with LINGER_NO_DETACH_KEY set"
   finally
     pinned.bye
   for (cols, rows, expected) in [(0, 0, vt), (0, 2, vt.resize 40 2), (12, 0, vt.resize 12 4)] do
     let unsized ← e.spawn #["attach", "--read-only", "saved"] cols rows
     try
-      let output ← drain unsized.fd 1000
-      expect (hasBytes output (Terminal.Render.restore expected))
+      let output ← IO.mkRef ByteArray.empty
+      expect (← unsized.awaitText output (hasBytes · (Terminal.Render.restore expected)))
           s!"saved viewing uses checkpoint dimensions when terminal size is unspecified ({cols}x{rows})"
     finally
       unsized.bye
@@ -127,9 +135,10 @@ def checkpointChecks (e : Env) : IO Unit := do
     try
       let blocked ← e.spawn #["attach", "--read-only", "saved"] 40 4
       try
-        let output ← drain blocked.fd 1500
+        -- refused, the viewer exits, so this reads to its end of file
+        let output ← drain blocked.fd hangMs
         expect
-            ((← blocked.reap 1000) == 1 && hasText output "owned by another process" &&
+            ((← blocked.reap patienceMs) == 1 && hasText output "owned by another process" &&
               !hasBytes output (Terminal.Render.restore vt))
             "read-only attach refuses a checkpoint still owned by a daemon"
       finally
@@ -139,17 +148,17 @@ def checkpointChecks (e : Env) : IO Unit := do
   IO.FS.writeBinFile s!"{e.dir}/bad.ckpt" ⟨#[1, 2, 3]⟩
   let bad ← e.spawn #["attach", "--read-only", "bad"]
   try
-    let err ← drainStr bad.fd 1000
-    expect ((← bad.reap 1000) == 1 && has err "no live session or readable checkpoint")
+    let err ← drainStr bad.fd hangMs
+    expect ((← bad.reap patienceMs) == 1 && has err "no live session or readable checkpoint")
         "read-only attach rejects corrupt checkpoint bytes"
   finally
     bad.bye
   IO.FS.writeBinFile s!"{e.dir}/--read-only.ckpt" bytes
   let literal ← e.spawn #["attach", "--read-only", "--", "--read-only"] 40 4
   try
-    let output ← drain literal.fd 1000
+    let output ← IO.mkRef ByteArray.empty
     expect
-        (hasBytes output (Terminal.Render.restore vt) &&
+        ((← literal.awaitText output (hasBytes · (Terminal.Render.restore vt))) &&
           !(← System.FilePath.pathExists s!"{e.dir}/--read-only.sock"))
         "an option-like name remains an exact read-only target after --"
   finally
@@ -194,7 +203,7 @@ def run : IO UInt32 :=
   Env.suite "watch" fun e => do
     -- 1. read-only attachment cannot create a session.
     let missing ← e.spawn #["attach", "--read-only", "nosuch"]
-    let err ← drainStr missing.fd 1500
+    let err ← drainStr missing.fd hangMs
     let rc ← missing.reap
     missing.bye (sendDetach := false)
     expect (rc == 127) "read-only attach to a missing session exits 127"
@@ -203,12 +212,12 @@ def run : IO UInt32 :=
     expect (!has (← e.out #["ls"]) "nosuch") "read-only attach creates no session"
     -- the session under test: one real client at 80x24
     let real ← e.spawn #["attach", "w"] 80 24
-    let _ ← waitFor 4000 (return (← e.info "w" "clients") == some "1")
+    let _ ← waitFor patienceMs (return (← e.info "w" "clients") == some "1")
     let _ ← drain real.fd 500
     expect ((← e.info "w" "cols") == some "80") "session starts 80 wide"
     -- 2. the watcher attaches, at a DIFFERENT geometry
     let obs ← e.spawn #["attach", "--read-only", "w"] 100 30
-    let _ ← waitFor 4000 (return (← e.info "w" "clients") == some "2")
+    let _ ← waitFor patienceMs (return (← e.info "w" "clients") == some "2")
     let _ ← drain obs.fd 1000 -- swallow the restore burst
     expect ((← e.info "w" "clients") == some "2")
         "the watcher counts as a client (so it really is attached)"
@@ -241,7 +250,7 @@ def run : IO UInt32 :=
     expect (raw ≥ 0) "a raw watcher connects to the session"
     let watcherFd := raw.toUInt64.toUInt32
     Linger.Session.Shell.Client.sendMsg watcherFd (.attach 0 0)
-    expect (← waitFor 4000 (return (← e.info "w" "clients") == some "3"))
+    expect (← waitFor patienceMs (return (← e.info "w" "clients") == some "3"))
         "the raw watcher is attached"
     -- Everything the connection receives, decoded from its first byte.
     let stream ← IO.mkRef ByteArray.empty
@@ -251,7 +260,7 @@ def run : IO UInt32 :=
     let refusedWith : String → Linger.Session.Wire.Msg → IO Bool := fun why m => do
       let before ← errors why
       Linger.Session.Shell.Client.sendMsg watcherFd m
-      waitFor 4000 do
+      waitFor patienceMs do
           let ready ← Os.Shell.poll #[watcherFd] #[Os.Shell.POLLIN] 100
           if ready[0]! &&& Os.Shell.POLLIN != 0 then
             if let some bytes← Os.Shell.read watcherFd 65536 then
@@ -271,12 +280,14 @@ def run : IO UInt32 :=
           has (← e.out #["ls"]) "w")
         "the session keeps its program, its clients and its labels"
     Os.Shell.close watcherFd
-    expect (← waitFor 4000 (return (← e.info "w" "clients") == some "2")) "the raw watcher left"
+    expect (← waitFor patienceMs (return (← e.info "w" "clients") == some "2"))
+        "the raw watcher left"
     -- 7/8. a watcher is not the size owner, so `linger resize` still applies.
     -- With guard A intact `sizeOwner` is none and controlResize applies; with A
     -- removed the watcher owns the size and this returns 1 with "owns the size".
     real.bye
-    expect (← waitFor 4000 (return (← e.info "w" "clients") == some "1")) "only the watcher is left"
+    expect (← waitFor patienceMs (return (← e.info "w" "clients") == some "1"))
+        "only the watcher is left"
     let (rzc, _, _) ← e.cli #["resize", "w", "90", "25"]
     expect (rzc == 0 && (← e.info "w" "cols") == some "90")
         "a watcher does not own the size, so `linger resize` applies"
@@ -286,7 +297,8 @@ def run : IO UInt32 :=
     -- out, so the buffer has to be empty when it starts.
     let _ ← drain obs.fd 800
     obs.detach
-    let back ← drain obs.fd 2000
+    -- the watcher exits, so this reads to its end of file
+    let back ← drain obs.fd hangMs
     let backStr := String.fromUTF8? back |>.getD ""
     expect (has backStr "detached from") "ctrl-\\ detaches the watcher"
     -- Compared against the session's OWN emitter rather than a hardcoded byte
@@ -302,11 +314,11 @@ def run : IO UInt32 :=
     -- A read-only attach forwards no input, so the writable-attach opt-out must
     -- not take away its only exit.
     let pinned ← e.spawnEnv #["LINGER_NO_DETACH_KEY=1"] #["attach", "--read-only", "w"] 80 24
-    let _ ← waitFor 4000 (return (← e.info "w" "clients") == some "1")
+    let _ ← waitFor patienceMs (return (← e.info "w" "clients") == some "1")
     let _ ← drain pinned.fd 500
     pinned.detach
-    let pinnedBack ← drain pinned.fd 2000
-    expect ((← pinned.reap 2000) == 0 && hasText pinnedBack "detached from")
+    let pinnedBack ← drain pinned.fd hangMs
+    expect ((← pinned.reap patienceMs) == 0 && hasText pinnedBack "detached from")
         "ctrl-\\ leaves a live read-only view even with LINGER_NO_DETACH_KEY set"
     pinned.bye (sendDetach := false)
     -- 10. watching marks the session SEEN — a read-only verb with a write effect.
@@ -314,22 +326,22 @@ def run : IO UInt32 :=
     -- Read-only attach clears `wants-you`. The status suite only ever exercised that
     -- through `attach`. Compared as a `Status`, not a string literal.
     let _ ← e.cli #["send", "w", "echo unread-marker\n"]
-    expect (← waitFor 4000 (return (← e.status "w") == Status.wantsYou))
+    expect (← waitFor patienceMs (return (← e.status "w") == Status.wantsYou))
         "output with nobody watching reads wants-you"
     let obs2 ← e.spawn #["attach", "--read-only", "w"] 80 24
-    let _ ← waitFor 4000 (return (← e.info "w" "clients") == some "1")
+    let _ ← waitFor patienceMs (return (← e.info "w" "clients") == some "1")
     let _ ← drain obs2.fd 500
     obs2.bye
-    expect (← waitFor 4000 (return (← e.status "w") != Status.wantsYou))
+    expect (← waitFor patienceMs (return (← e.status "w") != Status.wantsYou))
         "watching marks the session seen (a read-only verb that writes)"
     let _ ← e.typeIn "watch-lost" #["sleep", "600"]
     let lost ← e.spawn #["attach", "--read-only", "watch-lost"] 80 24
-    let _ ← waitFor 4000 (return (← e.info "watch-lost" "clients") == some "1")
+    let _ ← waitFor patienceMs (return (← e.info "watch-lost" "clients") == some "1")
     let _ ← drain lost.fd 300
     unless (← e.crashDaemon "watch-lost") do
       throw (IO.userError "watch-lost daemon did not crash")
-    let lostOut ← drainStr lost.fd 2000
-    let lostCode ← lost.reap 3000
+    let lostOut ← drainStr lost.fd hangMs
+    let lostCode ← lost.reap patienceMs
     expect (lostCode == 1 && has lostOut "connection lost")
         "read-only attach exits 1 when its daemon disappears"
     lost.bye (sendDetach := false)

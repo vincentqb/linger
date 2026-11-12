@@ -13,11 +13,18 @@ proved. Assertions read the implementation's definitions (`status` parses with
 `Linger.Display.Status.ofName`), so renaming a status constructor is a compile error.
 Ptys, sockets and polling come from `Os.Shell`.
 
-OUTPUT CONTRACT — load-bearing, do not reformat. Every check prints `PASS <name>`
-or `FAIL <name>`, and each suite ends with `FAILURES: <n>`. `Verify.Runner` requires
-exit 0, last line `FAILURES: 0`, no `FAIL` line and exactly the `PASS` count that
+OUTPUT CONTRACT — load-bearing, do not reformat. Every check prints `PASS <name>`,
+`FAIL <name>` or, where the platform cannot measure what it claims (`expectMeasured`),
+`SKIP <name>`, and each suite ends with `FAILURES: <n>`. `Verify.Runner` requires exit 0,
+last line `FAILURES: 0`, no `FAIL` line and exactly the check and skip counts that
 `scripts/verify.sh` passes, so a suite that stops checking fails the gate and so does
-one that quietly grows — either way it is a reviewable edit. -/
+one that quietly grows — either way it is a reviewable edit.
+
+LOAD CHANGES LATENCY, NEVER RESULTS. A verdict depends on the code under test, not on how
+fast the host is: a wait for something to happen polls for it under a generous ceiling
+(`patienceMs`, `hangMs`), a deadline the program promises is checked by its outcome and by a
+shape that a regression would break whatever the load, and what something costs is the
+opt-in performance suite's to report (`Linger.Session.Suites.Perf`). -/
 
 namespace Verify.Harness
 
@@ -43,6 +50,17 @@ def expect (cond : Bool) (name : String) : IO Unit := do
   IO.println s!"{if cond then "PASS" else "FAIL"} {name}"
   unless cond do
     recordFailure
+
+/-- One check whose claim rests on a measurement the platform may not offer, as `/proc` on
+macOS: where `measured` holds it is `expect`; where not, it prints `SKIP <name>` when the
+rest of the check, `cond`, holds, since its claim went unmeasured, and fails when `cond` does
+not, so a skip never hides what could be checked. `Verify.Runner` counts `SKIP` lines apart
+from `PASS` lines, and `scripts/verify.sh` pins how many each platform skips. -/
+def expectMeasured (measured cond : Bool) (name : String) : IO Unit := do
+  if measured || !cond then
+    expect cond name
+  else
+    IO.println s!"SKIP {name}"
 
 /-- Print the verdict line `FAILURES: <n>` with the recorded count and return the
 process code: 0 when nothing failed, otherwise 1. -/
@@ -78,6 +96,14 @@ def waitFor (ms : Nat) (p : IO Bool) : IO Bool := do
 /-- The deadline of a positive wait. Such a wait returns as soon as its condition holds, so this
 bounds only a failure. -/
 def patienceMs : Nat := 15000
+
+/-- The ceiling of a wait that must catch only a hang: a command, or a workload such as filling a
+10,000-row ring, that a loaded host makes slower but that ends. At a load of about 200
+(2026-11-11), `capture --history` of a full ring took 3.5 s, six times what it cost when its
+budget was set; this is seventeen times that. Like `patienceMs`, it bounds only a failure. A
+check that a regression would only slow down, not stop, cannot rest on it: its fixture must make
+the regression outlast it. -/
+def hangMs : Nat := 60000
 
 /-- Wait for a spawned process without letting a regression hang the suite. -/
 def waitProcess {cfg : IO.Process.StdioConfig} (child : IO.Process.Child cfg) (ms : Nat) :
@@ -411,20 +437,24 @@ def Env.out (e : Env) (args : Array String) : IO String := do
 the deadline passed.
 
 stdin is at EOF and a deadline bounds the run, so a verb that blocks on input
-fails instead of hanging (Overview's `linger ls`). -/
+fails instead of hanging (Overview's `linger ls`). Both pipes are read while the verb runs:
+read only after it exited, output larger than a pipe's buffer, such as a full ring's
+`capture --history`, would hold it up until the deadline. -/
 def Env.cliTimeout (e : Env) (args : Array String) (ms : Nat) :
     IO (Option (UInt32 × String × String)) := do
   let child ←
     IO.Process.spawn
         { cmd := e.bin, args, env := e.procEnv, stdin := .null, stdout := .piped, stderr := .piped }
+  let out ← IO.asTask child.stdout.readToEnd Task.Priority.dedicated
+  let err ← IO.asTask child.stderr.readToEnd Task.Priority.dedicated
   let code ← waitOrKill child ms
   match code with
   | none =>
-    return none -- still running at the deadline, then retired: the caller reports it as a fail
+    -- still running at the deadline, then retired: the caller reports it as a fail. The reads
+    -- are not waited for, since a descendant may still hold a pipe.
+    return none
   | some c =>
-    let out ← child.stdout.readToEnd
-    let err ← child.stderr.readToEnd
-    return some (c, out, err)
+    return some (c, ← IO.ofExcept (← IO.wait out), ← IO.ofExcept (← IO.wait err))
 
 /-- A lowercase hexadecimal numeral's value; `none` when empty or another character appears. -/
 def hexValue? (s : String) : Option Nat :=

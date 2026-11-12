@@ -13,8 +13,9 @@ Work follows events: a daemon sleeps until something happens or its session's ne
 (`Session.State.nextTick`), so a session whose program is quiet and whose state is saved wakes
 its daemon for nothing at all, and a summary reads what each daemon published to its name's end
 record instead of asking it. Wakeups are the context switches `/proc` counts for every thread
-of the daemon; where there is no `/proc` (macOS) the counts are absent and those checks pass
-vacuously, as the resident-set check in `Linger.Session.Suites.Resume` does. -/
+of the daemon; where there is no `/proc` (macOS) the counts are absent and those checks say SKIP
+(`Verify.Harness.expectMeasured`), as the resident-set check in `Linger.Session.Suites.Resume`
+does. -/
 
 namespace Linger.Session.Suites.Quiet
 
@@ -78,6 +79,15 @@ def run : IO UInt32 :=
     -- longer than the freshness window, so the output's own deadline has passed, and the
     -- questions that found the pids are long answered
     IO.sleep (Linger.Session.freshMs + 1500).toUInt32
+    -- …which a loaded host may stretch, so each daemon must also have said in its end record
+    -- that its output is no longer fresh: it has nothing left to do, and sleeps
+    let stale (name : String) : IO Bool := do
+      match ← (IO.FS.readBinFile s!"{e.dir}/{name}.end").toBaseIO with
+      | .ok bytes =>
+        return (Linger.Session.Record.published bytes.toList).any (!·.fresh)
+      | .error _ =>
+        return false
+    let settled ← waitFor patienceMs (return (← stale "q-idle") && (← stale "q-burst"))
     let (idle, burst, sending) ←
       do
         let measured ← IO.asTask (wakeupsOver idlePid 3000) Task.Priority.dedicated
@@ -97,18 +107,19 @@ def run : IO UInt32 :=
           wakeupsDuring idlePid <|
               wakeupsDuring burstPid <| (List.range 3).mapM fun _ => e.cli #["ls", "--summary"]
         pure (idleAsked, burstAsked, summaries)
-    expect (idleRc == 0 && idlePid.isSome && idle.all (· == 0))
+    expectMeasured idle.isSome (settled && idleRc == 0 && idlePid.isSome && idle.all (· == 0))
         s!"a session whose program prints nothing never wakes its daemon ({idle} in 3 s)"
-    expect
-        (burstRc == 0 && burstPid.isSome && burst.all (· == 0) &&
+    expectMeasured burst.isSome
+        (settled && burstRc == 0 && burstPid.isSome && burst.all (· == 0) &&
           has (← e.out #["capture", "--history", "q-burst"]) "QUIET-42")
         s!"a session whose output stopped and is saved sleeps ({burst} wakeups in 3 s)"
     let unread := s!"1{Linger.Display.Status.icon .wantsYou}\n"
-    expect
-        (idleAsked.all (· == 0) && burstAsked.all (· == 0) &&
+    expectMeasured (idleAsked.isSome && burstAsked.isSome)
+        (idlePid.isSome && burstPid.isSome && idleAsked.all (· == 0) && burstAsked.all (· == 0) &&
           summaries.all (fun (rc, text, _) => rc == 0 && text == unread))
         s!"a summary reads what each daemon published and wakes none ({idleAsked} and {burstAsked} wakeups over three summaries: {summaries.map (·.2.1)})"
-    expect (sending.all (· == 0)) s!"a send - waiting for input sleeps ({sending} wakeups in 3 s)"
+    expectMeasured sending.isSome (sending.all (· == 0))
+        s!"a send - waiting for input sleeps ({sending} wakeups in 3 s)"
     -- a new daemon publishes what it sees before it first sleeps, so even the first summary
     -- after it starts need not wake it
     let (freshRc, _, _) ← e.cli #["start", "q-fresh", "/bin/sh", "-c", "exec sleep 1000"]

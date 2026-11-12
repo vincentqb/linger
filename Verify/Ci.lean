@@ -101,7 +101,8 @@ def noRunners : String := "[]"
 def runnerProbe (dir name : String) : IO UInt32 := do
   if name.startsWith "job-" then
     IO.FS.writeFile s!"{dir}/{name}" ""
-    unless ← waitFor 5000 (System.FilePath.pathExists s!"{dir}/release") do
+    -- Longer than the parent waits for the fourth job, so a loaded host cannot retire the first.
+    unless ← waitFor hangMs (System.FilePath.pathExists s!"{dir}/release") do
       IO.println "FAILURES: 1"
       return 1
     let signal ←
@@ -117,6 +118,8 @@ def runnerProbe (dir name : String) : IO UInt32 := do
     IO.sleep 200
   if name == "reported-failure" then
     IO.println "FAIL extra fixture"
+  if name == "skipped" then
+    IO.println "SKIP unmeasured fixture"
   IO.println "PASS fixture"
   IO.println (if name == "bad-verdict" then "FAILURES: 1" else "FAILURES: 0")
   return if name == "bad-exit" then 1 else 0
@@ -125,17 +128,17 @@ def suiteRunner : IO Unit :=
   IO.FS.withTempDir fun dir => do
     let binary := (← IO.appPath).toString
     let run := Verify.Runner.run binary #["--runner-probe", dir.toString] dir
-    let jobs := (List.range 5).map fun n => (s!"job-{n}", 1)
+    let jobs := (List.range 5).map fun n => (s!"job-{n}", 1, 0)
     let batch ← (run jobs).asTask .dedicated
     let ready ←
-      waitFor 5000 do
+      waitFor patienceMs do
           return ((← dir.readDir).filter (·.fileName.startsWith "job-")).size == 4
     -- A negative assertion: keep the observation window before releasing them.
     IO.sleep 200
     let held ← dir.readDir
     IO.FS.writeFile (dir / "release") ""
     let code ← IO.ofExcept (← IO.wait batch)
-    let logs ← jobs.mapM fun (name, _) => IO.FS.readFile (dir / s!"linger-{name}.out")
+    let logs ← jobs.mapM fun (name, _, _) => IO.FS.readFile (dir / s!"linger-{name}.out")
     let streams :=
       logs.all fun text =>
         ['e', 'o'].all fun c => (lines text).contains (String.ofList (List.replicate 70000 c))
@@ -143,17 +146,24 @@ def suiteRunner : IO Unit :=
         "suite runner overlaps four children and holds the fifth until a slot opens"
     expect (code == 0 && streams && (← System.FilePath.pathExists (dir / "job-4")))
         "suite runner captures both streams, preserves SIGINT and waits for every child"
-    let bad ← run [("bad-exit", 1), ("after-error", 1)]
+    let bad ← run [("bad-exit", 1, 0), ("after-error", 1, 0)]
     let peer ← IO.FS.readFile (dir / "linger-after-error.out")
     expect (bad == 1 && peer.endsWith "FAILURES: 0\n")
         "suite runner rejects a nonzero exit and still waits for the other children"
-    expect ((← run [("bad-verdict", 1)]) == 1) "suite runner rejects an unsuccessful final verdict"
-    expect ((← run [("wrong-count", 2)]) == 1) "suite runner rejects missing assertions"
-    let reported ← run [("reported-failure", 1)]
+    expect ((← run [("bad-verdict", 1, 0)]) == 1)
+        "suite runner rejects an unsuccessful final verdict"
+    expect ((← run [("wrong-count", 2, 0)]) == 1) "suite runner rejects missing assertions"
+    -- One check of two says SKIP: it counts as a check, apart from the passes, never as a pass.
+    let skipped ← run [("skipped", 2, 1)]
+    let unexpected ← run [("skipped", 2, 0)]
+    let uncounted ← run [("skipped", 1, 0)]
+    expect (skipped == 0 && unexpected == 1 && uncounted == 1)
+        "suite runner counts skipped checks apart from passes and rejects an unexpected skip"
+    let reported ← run [("reported-failure", 1, 0)]
     let report ← IO.FS.readFile (dir / "linger-reported-failure.out")
     expect (reported == 1 && report == "FAIL extra fixture\nPASS fixture\nFAILURES: 0\n")
         "suite runner rejects a reported failure despite a successful summary and keeps its log"
-    expect ((← run [("same", 1), ("same", 1)]) == 2)
+    expect ((← run [("same", 1, 0), ("same", 1, 0)]) == 2)
         "suite runner rejects duplicate log identities before starting children"
 
 /-- Execute the workflow's actual dependency step with controlled package tools. -/

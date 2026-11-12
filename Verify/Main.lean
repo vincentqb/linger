@@ -20,6 +20,7 @@ import Verify.Ci
 import Verify.Hygiene
 import Linger.Session.Suites.Identity
 import Linger.Session.Suites.Quiet
+import Linger.Session.Suites.Perf
 import Verify.Runner
 
 public section
@@ -30,10 +31,10 @@ One executable, one `lean_exe`, one argv dispatch: `./lake exe suites watch`.
 The suites share a harness; separate executable blocks would duplicate the same
 lakefile stanza.
 
-Each suite prints `PASS <name>` / `FAIL <name>` per check and `FAILURES: <n>` last;
-`scripts/verify.sh` supplies the exact recorded check counts to the batch runner, whose
-logs go to `LINGER_LOG_DIR` (default `Verify.Harness.tempRoot`). An unknown name is an error,
-not a silent success. -/
+Each suite prints `PASS <name>` / `FAIL <name>` / `SKIP <name>` per check and `FAILURES: <n>`
+last; `scripts/verify.sh` supplies the exact recorded check and skip counts to the batch runner
+as `<suite>:<checks>` or `<suite>:<checks>:<skips>`, whose logs go to `LINGER_LOG_DIR` (default
+`Verify.Harness.tempRoot`). An unknown name is an error, not a silent success. -/
 
 def suites : List (String × IO UInt32) :=
   [("watch", Linger.Session.Suites.Watch.run), ("status", Linger.Display.Suites.Status.run),
@@ -46,6 +47,9 @@ def suites : List (String × IO UInt32) :=
     ("interop", Linger.Import.Suites.Interop.run), ("manager", Linger.App.Suites.Manager.run),
     -- opt-in: needs a real reachable host, so NOT in scripts/verify.sh
     ("remote-live", Linger.Target.Suites.RemoteLive.run),
+    -- opt-in: reports what workloads cost on this host, so NOT in scripts/verify.sh;
+    -- `suites perf strict` fails a cost over its budget
+    ("perf", Linger.Session.Suites.Perf.run false),
     -- Verifier regression checks, separate from the live product suites.
     ("ci", Verify.Ci.run), ("hygiene", Verify.Hygiene.run),
     ("identity", Linger.Session.Suites.Identity.run), ("quiet", Linger.Session.Suites.Quiet.run)]
@@ -91,13 +95,19 @@ def main (args : List String) : IO UInt32 := do
   | "--suites" :: entries =>
     let specs :=
       entries.filterMap fun entry => do
-        let [name, count] := entry.splitOn ":" | none
-        if !(suites.any (·.1 == name)) then
-          none
-        else
-          some (name, ← count.toNat?)
+        let name :: count :: skipped := entry.splitOn ":" | none
+        guard (suites.any (·.1 == name))
+        let skips ←
+          match skipped with
+          | [] =>
+            some 0
+          | [skips] =>
+            skips.toNat?
+          | _ =>
+            none
+        return (name, ← count.toNat?, skips)
     if specs.length != entries.length then
-      IO.eprintln "suites: expected known-suite:assertion-count"
+      IO.eprintln "suites: expected known-suite:check-count or known-suite:check-count:skip-count"
       return 2
     -- `scripts/verify.sh` supplies a directory per run, so concurrent checkouts never share logs.
     let logDir :=
@@ -110,6 +120,8 @@ def main (args : List String) : IO UInt32 := do
     Linger.Display.Suites.Title.run (some binary)
   | ["remote", "discovery"] =>
     Linger.Target.Suites.Remote.runDiscovery
+  | ["perf", "strict"] =>
+    Linger.Session.Suites.Perf.run true
   | ["watch", "checkpoint"] =>
     Linger.Session.Suites.Watch.runCheckpoint
   | [name] =>

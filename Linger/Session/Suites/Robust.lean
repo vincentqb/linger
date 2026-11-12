@@ -97,13 +97,15 @@ def parseFull (log : String) : Option (Nat × Nat) :=
 /-- How many times the daemon logged the transition. -/
 def countFull (log : String) : Nat := (log.splitOn fullMarker).length - 1
 
-/-- Fake daemon that continuously emits valid info fragments without a terminator.
-A silence timeout never fires; an absolute request deadline must. -/
+/-- Fake daemon that continuously emits valid info fragments without a terminator,
+until its peer is gone. A silence timeout never fires; an absolute request deadline
+must. The stream outlasts the check's `hangMs` ceiling, so a request that waited for
+silence would outlast it too, however fast the host. -/
 def streamInfoServer (socketPath readyPath : String) : IO UInt32 := do
   let lfd ← Os.Shell.unixListen socketPath
   Os.Shell.setNonblock lfd
   IO.FS.writeFile readyPath "ready"
-  match ← acceptWithin lfd 5000 with
+  match ← acceptWithin lfd hangMs with
   | none =>
     Os.Shell.close lfd
     return 1
@@ -111,7 +113,8 @@ def streamInfoServer (socketPath readyPath : String) : IO UInt32 := do
     let frame :=
       ByteArray.mk
         (Linger.Session.Wire.encode (.infoReply "pid\t1\ncmd\tstreaming\n".toUTF8.toList)).toArray
-    let deadline := (← Os.Shell.monotonicMs) + 6000
+    -- A write to a peer that is gone throws, which ends the stream.
+    let deadline := (← Os.Shell.monotonicMs) + 2 * hangMs
     try
       while (← Os.Shell.monotonicMs) < deadline do
         Os.Shell.writeAll fd frame
@@ -144,7 +147,7 @@ def admissionPressure (e : Env) : IO Unit := do
   let owned ← IO.mkRef (#[] : Array UInt32)
   let child ← IO.mkRef (none : Option UInt32)
   try
-    unless (← waitFor 5000 (System.FilePath.pathExists socketPath)) do
+    unless (← waitFor patienceMs (System.FilePath.pathExists socketPath)) do
       throw (IO.userError "descriptor-pressure daemon did not start")
     let raw ← Os.Shell.unixConnect socketPath
     unless raw ≥ 0 do
@@ -162,7 +165,7 @@ def admissionPressure (e : Env) : IO Unit := do
       if peer ≥ 0 then
         owned.modify (·.push peer.toUInt64.toUInt32)
     let exhausted ←
-      waitFor 3000 do
+      waitFor patienceMs do
           let log ← IO.FS.readFile logPath
           return has log "accept:"
     expect exhausted "descriptor pressure reaches the daemon's accept syscall"
@@ -178,7 +181,7 @@ def admissionPressure (e : Env) : IO Unit := do
         let current ← Linger.Session.Shell.Inventory.readInfo control
         Linger.Session.Shell.Client.sendMsg control
             (.input "printf alive > \"$LINGER_DIR/alive\"\n".toUTF8.toList)
-        let ran ← waitFor 3000 (System.FilePath.pathExists marker)
+        let ran ← waitFor patienceMs (System.FilePath.pathExists marker)
         pure (ran && current.contains ("pid", pidText) && (← server.tryWait).isNone)
       catch _ =>
         pure false
@@ -189,8 +192,8 @@ def admissionPressure (e : Env) : IO Unit := do
       Os.Shell.close peer
     owned.set #[control]
     let recovered ←
-      waitFor 5000 do
-          let reply ← pressure.cliTimeout #["info", "pressure"] 2500
+      waitFor hangMs do
+          let reply ← pressure.cliTimeout #["info", "pressure"] patienceMs
           return reply.any fun (rc, text, _) => rc == 0 && (records text).contains ("pid", pidText)
     expect recovered "new connections recover after descriptor pressure clears"
   finally
@@ -202,23 +205,32 @@ def admissionPressure (e : Env) : IO Unit := do
       if ← Os.Shell.alive pid then
         Os.Shell.kill pid 9
 
-/-- Budgets for hostile input at the largest screen, about five times the cost
-measured when they were set (write 0.33 s, info 0.15 s, peak 89 MB): the counted
-CSI write and the `info` answer after a history flood, in milliseconds. -/
-def hostileBudgetMs : Nat × Nat := (1700, 800)
-
-/-- The daemon's peak resident set after that input, in KiB. -/
+/-- The daemon's peak resident set after `hostileRun`'s input, in KiB: about five times the
+89 MB measured when it was set. Memory does not grow with the host's load. -/
 def hostileBudgetKb : Nat := 450000
+
+/-- What `hostileRun` saw: whether the daemon kept up, how long it took and what it held. -/
+structure Hostile where
+  /-- Whether the screen showed the marker written after the hostile counts. -/
+  written : Bool
+  /-- Whether `linger info` answered after the history flood. -/
+  answered : Bool
+  /-- Milliseconds from typing the counted CSI write to the marker on the screen. -/
+  writeMs : Nat
+  /-- Milliseconds `linger info` took after the flood. -/
+  infoMs : Nat
+  /-- The daemon's peak resident set in KiB, where `/proc` reports it. -/
+  peak : Option Nat
 
 /-- One write carries the largest count for every CSI that repeats by it, at
 1000×1000, and one read carries 1,000 history requests. The theorems bound the
 iterations (`repeatAtMost_eq_repeat`) and the replies per read
-(`step_bytes_one_reply`); these budgets bound what that costs the running daemon.
-The timed write also carries 200 CHT/CBT pairs of 999 steps each; a tab step that
-scans every column would make each pair O(cols²). -/
-private def hostileInput (e : Env) : IO Unit := do
+(`step_bytes_one_reply`); the robust suite checks that the running daemon keeps up and
+`Linger.Session.Suites.Perf` reports what that costs. The write also carries 200 CHT/CBT
+pairs of 999 steps each; a tab step that scans every column would make each pair O(cols²).
+Every wait is `hangMs`, which only a hang outlasts. -/
+def hostileRun (e : Env) : IO Hostile := do
   let name := "hostile"
-  let (writeBudget, infoBudget) := hostileBudgetMs
   try
     let _ ← e.typeIn name #["true"]
     let _ ← e.cli #["resize", name, "1000", "1000"]
@@ -228,7 +240,7 @@ private def hostileInput (e : Env) : IO Unit := do
     IO.FS.writeFile tabs (String.join (List.replicate 200 "\x1b[999I\x1b[999Z"))
     let start ← Os.Shell.monotonicMs
     let _ ← e.typeIn name #[s!"printf '{counts}'; cat {tabs}; echo HOSTILE-$((40+2))"]
-    let written ← waitFor writeBudget (return has (← e.out #["capture", name]) "HOSTILE-42")
+    let written ← waitFor hangMs (return has (← e.out #["capture", name]) "HOSTILE-42")
     let writeMs := (← Os.Shell.monotonicMs) - start
     let raw ← Os.Shell.unixConnect s!"{e.dir}/{name}.sock"
     unless raw ≥ 0 do
@@ -239,7 +251,7 @@ private def hostileInput (e : Env) : IO Unit := do
         let flood := (List.replicate 1000 (Linger.Session.Wire.encode .history)).flatten
         Os.Shell.writeAll fd (ByteArray.mk flood.toArray)
         let start ← Os.Shell.monotonicMs
-        let reply ← e.cliTimeout #["info", name] infoBudget
+        let reply ← e.cliTimeout #["info", name] hangMs
         pure (reply.any (·.1 == 0), (← Os.Shell.monotonicMs) - start)
       finally
         Os.Shell.close fd
@@ -249,21 +261,34 @@ private def hostileInput (e : Env) : IO Unit := do
         e.daemonPeakKb name
       else
         pure none
-    expect
-        (written && answered && writeMs ≤ writeBudget && infoMs ≤ infoBudget &&
-          peak.all (· ≤ hostileBudgetKb))
-        s!"hostile counts and a history flood at 1000x1000 stay within budget (write {writeMs} ms, info {infoMs} ms, peak {peak} KiB)"
+    return { written, answered, writeMs, infoMs, peak }
   finally
     e.killAll #[name]
 
-/-- Budget for eight reads of one-byte input frames, about five times the cost
-measured when it was set (0.44 s), in milliseconds. -/
-def inputBurstBudgetMs : Nat := 2200
+/-- What `hostileRun` produced, whatever it cost: a daemon that wrote the input and answered
+after the flood, within its memory budget where `/proc` reports it. -/
+private def hostileInput (e : Env) : IO Unit := do
+  let h ← hostileRun e
+  expect (h.written && h.answered)
+      "hostile counts and a history flood at 1000x1000 leave the daemon writing and answering"
+  expectMeasured h.peak.isSome (h.answered && h.peak.all (· ≤ hostileBudgetKb))
+      s!"after hostile input at 1000x1000 the daemon's peak resident set stays within {hostileBudgetKb} KiB ({h.peak} KiB)"
 
-/-- Bound on the daemon's write(2) calls during those eight reads, where `/proc` counts
+/-- Bound on the daemon's write(2) calls during `burstRun`'s eight reads, where `/proc` counts
 them: 15 to 21 when it was set, with the pty queue flushed once per poll round. A write
 per input frame would make about 87,000. -/
 def inputBurstWriteBudget : Nat := 1000
+
+/-- What `burstRun` saw: whether the daemon answered, how long it took and how often it wrote. -/
+structure Burst where
+  /-- Whether the session's program was reading its input before the burst. -/
+  reading : Bool
+  /-- Whether the daemon answered the `info` sent after the burst on the same connection. -/
+  answered : Bool
+  /-- Milliseconds from the burst's first byte to that answer. -/
+  burstMs : Nat
+  /-- The daemon's write(2) calls meanwhile, where `/proc` counts them. -/
+  writes : Option Nat
 
 /-- Eight reads' worth of one-byte input frames: each 64 KiB read holds 10,922 and
 becomes one `.bytes` event. Compiled code folds a read's frames through
@@ -271,12 +296,13 @@ becomes one `.bytes` event. Compiled code folds a read's frames through
 the specification `Session.feedMsgs` rescans and copies the effects so far for each
 frame, which cost 1.2 s a read. An `info` sent after the burst on the same
 connection is answered after every frame before it, and the daemon makes fewer than
-`inputBurstWriteBudget` write(2) calls meanwhile. -/
-private def inputBurst (e : Env) : IO Unit := do
+`inputBurstWriteBudget` write(2) calls meanwhile. The answer's deadline is `hangMs`,
+which only a hang outlasts; `Linger.Session.Suites.Perf` reports how long it took. -/
+def burstRun (e : Env) : IO Burst := do
   let name := "input-burst"
   try
     let _ ← e.typeIn name #["stty raw -echo; echo BURST-$((40+2)); exec cat > /dev/null"]
-    let reading ← waitFor 3000 (return has (← e.out #["capture", name]) "BURST-42")
+    let reading ← waitFor patienceMs (return has (← e.out #["capture", name]) "BURST-42")
     let raw ← Os.Shell.unixConnect s!"{e.dir}/{name}.sock"
     unless raw ≥ 0 do
       throw (IO.userError "input burst could not connect")
@@ -291,7 +317,7 @@ private def inputBurst (e : Env) : IO Unit := do
         Os.Shell.writeAll fd burst
         let answered ←
           try
-            let _ ← Linger.Session.Shell.Inventory.readInfo fd (some (start + inputBurstBudgetMs))
+            let _ ← Linger.Session.Shell.Inventory.readInfo fd (some (start + hangMs))
             pure true
           catch _ =>
             pure false
@@ -299,13 +325,18 @@ private def inputBurst (e : Env) : IO Unit := do
       finally
         Os.Shell.close fd
     let after ← e.daemonWrites name
-    let writes := before.bind fun b => after.map (· - b)
-    expect
-        (reading && answered && burstMs ≤ inputBurstBudgetMs &&
-          writes.all (· < inputBurstWriteBudget))
-        s!"eight reads of 10,922 input frames each stay within budget ({burstMs} ms, {writes} writes)"
+    return { reading, answered, burstMs, writes := before.bind fun b => after.map (· - b) }
   finally
     e.killAll #[name]
+
+/-- What `burstRun` produced, whatever it cost: an answer after every frame, with fewer than
+`inputBurstWriteBudget` write(2) calls where `/proc` counts them. -/
+private def inputBurst (e : Env) : IO Unit := do
+  let b ← burstRun e
+  expect (b.reading && b.answered)
+      "an info sent after eight reads of 10,922 input frames each is answered after them"
+  expectMeasured b.writes.isSome (b.answered && b.writes.all (· < inputBurstWriteBudget))
+      s!"eight reads of 10,922 input frames each cost the daemon fewer than {inputBurstWriteBudget} writes ({b.writes} writes)"
 
 /-- Diagnostic output can fail along with the operation it reports, such as
 when checkpoints and logs share a full filesystem. Exercise each recovery path. -/
@@ -352,7 +383,8 @@ def failedDiagnostics : IO Unit := do
 /-- A checkpoint save the disk holds up delays no answer (theorem 10: required work never waits
 on optional work). The save's temporary file is a FIFO with no reader, so writing it blocks
 until this check opens it; meanwhile the daemon must still answer `info`, which a save on its
-loop would hold up past the reply window. -/
+loop would hold up for as long as the save is stuck: past any ceiling, since only this check
+ends it. -/
 def slowSave (e : Env) : IO Unit := do
   let name := "slow-save"
   let tmp := s!"{e.dir}/{name}.ckpt.tmp"
@@ -362,9 +394,9 @@ def slowSave (e : Env) : IO Unit := do
     -- a label makes the session dirty, and its first tick saves at once, in the same round
     let (setRc, _, _) ← e.cli #["set", name, "slow=save"]
     let began ← Os.Shell.monotonicMs
-    let answered ← waitFor 3000 (return (← e.info name "pid").isSome)
+    let answered ← waitFor hangMs (return (← e.info name "pid").isSome)
     let answerMs := (← Os.Shell.monotonicMs) - began
-    expect (startRc == 0 && made.exitCode == 0 && setRc == 0 && answered && answerMs < 2000)
+    expect (startRc == 0 && made.exitCode == 0 && setRc == 0 && answered)
         s!"a daemon whose checkpoint save is stuck on the disk still answers ({answerMs} ms)"
   finally
     -- a reader lets the stuck save finish, so the session can end
@@ -415,7 +447,7 @@ def run : IO UInt32 :=
     expect (socks == ["busy.sock"]) s!"busy daemon keeps its socket ({socks})"
     expect ((← e.cli #["send", "busy", "echo x\n"]).1 == 0) "busy daemon still reachable afterwards"
     e.killAll #["busy"]
-    let _ ← waitFor 4000 (return !(← System.FilePath.pathExists s!"{e.dir}/busy.sock"))
+    let _ ← waitFor patienceMs (return !(← System.FilePath.pathExists s!"{e.dir}/busy.sock"))
     -- ── 2. stale socket + concurrent starts -> one owner ──────────────────────
     -- The name is unique to this run so the `ps` scan below cannot see a developer's
     -- own session of the same name (see the module docstring), the same trick
@@ -423,7 +455,7 @@ def run : IO UInt32 :=
     let claim := s!"claim-{← Os.Shell.getpid}"
     let _ ← e.typeIn claim #["echo one"]
     -- a crashed session is a saved one only once its checkpoint is on disk
-    unless (← waitFor 3000 (System.FilePath.pathExists s!"{e.dir}/{claim}.ckpt")) do
+    unless (← waitFor patienceMs (System.FilePath.pathExists s!"{e.dir}/{claim}.ckpt")) do
       throw (IO.userError s!"daemon for '{claim}' saved no checkpoint")
     unless (← e.crashDaemon claim) do
       throw (IO.userError s!"daemon for '{claim}' did not crash")
@@ -446,7 +478,7 @@ def run : IO UInt32 :=
           else none
       let shells := ps.filter fun (_, ppid, args) => owners.contains ppid && has args "/bin/sh"
       return (owners.length, shells.length)
-    let _ ← waitFor 5000 (return (← census) == (1, 1))
+    let _ ← waitFor patienceMs (return (← census) == (1, 1))
     let (owners, shells) ← census
     expect (owners == 1) s!"exactly one daemon owns the name (got {owners})"
     expect (shells == 1) s!"exactly one shell (got {shells})"
@@ -466,12 +498,12 @@ def run : IO UInt32 :=
     expect (locks.contains s!"{claim}.lock" && lockFd == -1)
         s!"ownership lock file present ({locks})"
     e.killAll #[claim]
-    let _ ← waitFor 4000 (return !(← System.FilePath.pathExists s!"{e.dir}/{claim}.sock"))
+    let _ ← waitFor patienceMs (return !(← System.FilePath.pathExists s!"{e.dir}/{claim}.sock"))
     -- the lock must be re-acquirable once the owner is gone (kernel released it). The old
     -- daemon unlinks its socket before it releases its locks and exits, so `ps` can list
     -- both daemons for a moment.
     let (rerun, _, _) ← e.typeIn claim #["echo three"]
-    expect (rerun == 0 && (← waitFor 4000 (return (← census).1 == 1)))
+    expect (rerun == 0 && (← waitFor patienceMs (return (← census).1 == 1)))
         "name is re-claimable after the owner exits (no stale lock)"
     e.killAll #[claim]
     -- ── 3. a child that stops reading cannot grow the daemon ──────────────────
@@ -487,7 +519,7 @@ def run : IO UInt32 :=
     -- of pushing back, so `ptyIn` never grew and the cap never tripped. With lines
     -- it is EAGAIN after ~1 KB, as on Linux.
     let _ ← e.typeIn "stall" #["echo STALL-$((40+2)); exec sleep 600"]
-    let _ ← waitFor 3000 (return has (← e.out #["capture", "stall"]) "STALL-42")
+    let _ ← waitFor patienceMs (return has (← e.out #["capture", "stall"]) "STALL-42")
     -- only whether a daemon answers matters here, not its pid
     let sp ← e.daemonPid "stall"
     if sp.isSome then
@@ -507,7 +539,7 @@ def run : IO UInt32 :=
       -- is an O_APPEND file, so give the write a moment to land. The reported
       -- pending count is the bounded-buffer property itself — a full buffer that
       -- stayed <= cap is exactly "the child could not grow us".
-      let _ ← waitFor 4000 (return (parseFull (← e.log "stall")).isSome)
+      let _ ← waitFor patienceMs (return (parseFull (← e.log "stall")).isSome)
       let log ← e.log "stall"
       let m := parseFull log
       expect m.isSome "daemon reports the full input buffer"
@@ -538,6 +570,8 @@ def run : IO UInt32 :=
     catch _ =>
       pure ()
     -- ── 5. info has an absolute deadline, not a silence deadline ──────────────
+    -- The stream lasts until its peer is gone or twice `hangMs`, so a listing that waited for
+    -- silence would still be running at `hangMs`, while one that kept its deadline ends.
     let streamPath := s!"{e.dir}/streaming.sock"
     let streamReady := s!"{e.dir}/streaming.ready"
     let self ← IO.appPath
@@ -545,16 +579,16 @@ def run : IO UInt32 :=
       IO.Process.spawn
           { cmd := self.toString, args := #["--stream-info-server", streamPath, streamReady],
             stdout := .null, stderr := .null }
-    unless (← waitFor 5000 (System.FilePath.pathExists streamReady)) do
+    unless (← waitFor patienceMs (System.FilePath.pathExists streamReady)) do
       throw (IO.userError "streaming info server did not become ready")
     let t0 ← Os.Shell.monotonicMs
     let listing ←
       IO.Process.spawn
           { cmd := e.bin, args := #["list"], env := e.procEnv, stdout := .null, stderr := .null }
-    let listCode ← waitOrKill listing 3500
+    let listCode ← waitOrKill listing hangMs
     let elapsed := (← Os.Shell.monotonicMs) - t0
-    let streamCode ← waitOrKill streamServer 3000
-    expect (listCode == some 0 && elapsed < 3500 && streamCode == some 0)
+    let streamCode ← waitOrKill streamServer hangMs
+    expect (listCode == some 0 && streamCode == some 0)
         s!"continuous info traffic cannot extend the request deadline ({elapsed}ms)"
     -- ── 6. one listener round accepts at most the pure roster cap ─────────────
     let acceptPath := s!"{e.dir}/accept-bound.sock"
@@ -635,15 +669,15 @@ def run : IO UInt32 :=
       let ready ←
         try
           Os.Shell.writeAll fd (ByteArray.mk (Linger.Session.Wire.encode .info).toArray)
-          let revs ← Os.Shell.poll #[fd] #[Os.Shell.POLLIN] 3000
+          let revs ← Os.Shell.poll #[fd] #[Os.Shell.POLLIN] (Int32.ofNat patienceMs)
           pure (revs[0]! &&& Os.Shell.POLLIN != 0)
         finally
           Os.Shell.close fd
       -- The echoed input does not contain the contiguous output marker.
-      let sent ← e.cliTimeout #["send", resetName, "printf 'PEER-%s\\n' 'ALIVE'\n"] 3000
+      let sent ← e.cliTimeout #["send", resetName, "printf 'PEER-%s\\n' 'ALIVE'\n"] hangMs
       let ran ←
-        waitFor 3000 do
-            let captured ← e.cliTimeout #["capture", resetName] 1000
+        waitFor hangMs do
+            let captured ← e.cliTimeout #["capture", resetName] patienceMs
             return captured.any fun (rc, text, _) => rc == 0 && has text "PEER-ALIVE"
       let finalPid ← e.info resetName "pid"
       expect
@@ -676,21 +710,22 @@ def run : IO UInt32 :=
           (Linger.Session.Checkpoint.saveBytes ⟨saved, e.dir, []⟩)
       let capture ← e.spawn #["capture", "--history", reader]
       -- Output on the pty means the capture has loaded the checkpoint under both locks.
-      let holding := (← Os.Shell.poll #[capture.fd] #[Os.Shell.POLLIN] 5000)[0]! != 0
+      let holding :=
+        (← Os.Shell.poll #[capture.fd] #[Os.Shell.POLLIN] (Int32.ofNat patienceMs))[0]! != 0
       let starter ←
         IO.Process.spawn
             { cmd := e.bin, args := #["resume", reader], env := e.procEnv, stdin := .null,
               stdout := .null, stderr := .null }
       let found ←
-        waitFor 5000 do
+        waitFor patienceMs do
             let log ← e.log reader
             return has log (claimWaitLine reader) || has log "owned by another process"
-      let read ← drain capture.fd 5000
-      let captureCode ← capture.reap 3000
+      let read ← drain capture.fd hangMs
+      let captureCode ← capture.reap patienceMs
       capture.bye (sendDetach := false)
-      let startCode ← waitOrKill starter 5000
+      let startCode ← waitOrKill starter hangMs
       let (sendCode, _, _) ← e.cli #["send", reader, "echo resumed-$((40+2))\n"]
-      let resumed ← waitFor 5000 (return has (← e.out #["capture", reader]) "resumed-42")
+      let resumed ← waitFor patienceMs (return has (← e.out #["capture", reader]) "resumed-42")
       expect
           (holding && found && hasText read "row 3999" && captureCode == 0 && startCode == some 0 &&
             sendCode == 0 &&

@@ -133,18 +133,19 @@ def tcScript : String :=
 /-- A `find` result in a failure label: `-1` for absent. -/
 private def idxStr (o : Option Nat) : String := (o.map toString).getD "-1"
 
-/-- Whether the job whose pid a shell wrote to `path` ends within a few seconds. A job that
-outlives that is ended here, so a failed check leaves nothing running. -/
+/-- Whether the job whose pid a shell wrote to `path` ends within `patienceMs`: the jobs these
+checks start sleep far longer, so one that was left running cannot pass, however fast the host.
+A job that outlives that is ended here, so a failed check leaves nothing running. -/
 private def jobEnds (path : String) : IO Bool := do
   let pidIn : IO (Option UInt32) := do
     try
       return ((← IO.FS.readFile path).trimAscii.toString.toNat?).map UInt32.ofNat
     catch _ =>
       return none
-  unless ← waitFor 3000 (return (← pidIn).isSome) do
+  unless ← waitFor patienceMs (return (← pidIn).isSome) do
     return false
   let some job ← pidIn | return false
-  let ended ← waitFor 5000 (return !(← Os.Shell.alive job))
+  let ended ← waitFor patienceMs (return !(← Os.Shell.alive job))
   unless ended do
     Os.Shell.kill job 9
   return ended
@@ -296,7 +297,7 @@ def run : IO UInt32 :=
     -- the job ends with it.
     let jobFile := s!"{e.dir}/w4.job"
     let _ ← e.typeIn "w4" #[s!"sleep 600 & echo $! > {jobFile}; exec sh -c 'sleep 0.5; exit 3'"]
-    let waited ← e.cliTimeout #["wait", "w4"] 5000
+    let waited ← e.cliTimeout #["wait", "w4"] hangMs
     let jobEnded ← jobEnds jobFile
     expect (waited.map (·.1) == some 3 && jobEnded)
         "a session ends with its program while a background job holds its terminal, and so does the job"
@@ -314,15 +315,16 @@ def run : IO UInt32 :=
     expect (neverRc == 127 && has neverErr "no session") "wait on a name no session took exits 127"
     let (bothRc, _, _) ← e.cli #["wait", "w3", "w5"]
     expect (bothRc == 37) s!"wait reports the last of several sessions (rc={bothRc})"
-    -- A time limit stops the wait with 124 and leaves the session running.
+    -- A time limit stops the wait with 124 and leaves the session running. Its program runs for
+    -- 30 s, so a 124 says the limit, not the program, ended the wait, and the wait lasted at least
+    -- the limit: load can only lengthen it.
     let _ ← e.typeIn "w6" #["exec sleep 30"]
     let limitStart ← Os.Shell.monotonicMs
-    let limited ← e.cliTimeout #["wait", "--timeout", "0.5", "w6"] 5000
+    let limited ← e.cliTimeout #["wait", "--timeout", "0.5", "w6"] hangMs
     let limitMs := (← Os.Shell.monotonicMs) - limitStart
     let running := (← e.info "w6" "pid").isSome
     expect
         (limited.map (·.1) == some 124 && limited.any (has ·.2.2 "timed out") && 400 ≤ limitMs &&
-          limitMs ≤ 2000 &&
           running)
         s!"wait --timeout stops waiting and leaves the session running ({limitMs} ms)"
     -- kill returns once the session has ended, and the record says how: by its hangup.

@@ -69,11 +69,13 @@ def readArgs (path : System.FilePath) : IO (List String) := do
     return if text.isEmpty then [] else (text.splitOn "\x00").dropLast
   return []
 
-/-- A descendant keeps the SSH pipes open until its owner terminates the group. -/
+/-- A descendant keeps the SSH pipes open until its owner terminates the group. It outlives
+every ceiling a discovery check waits under, so a command or stop that waited for the pipes
+to close would outlast that ceiling however fast the host. -/
 def discoveryLeaf (root host : String) : IO UInt32 := do
   IO.FS.writeFile s!"{root}/{host}.leaf.tmp" (toString (← Os.Shell.getpid))
   IO.FS.rename s!"{root}/{host}.leaf.tmp" s!"{root}/{host}.leaf"
-  IO.sleep 15000
+  IO.sleep (2 * hangMs).toUInt32
   return 0
 
 /-- Re-entered through a minimal fake SSH executable. The first host waits for
@@ -192,21 +194,26 @@ private def discoveryChecks (e : Env) : IO Unit := do
           args := #["ls", "--porcelain", "-r", String.intercalate "," ("quick" :: hosts)],
           env := state.procEnv ++ #[("PATH", some path)], stdout := .piped, stderr := .null }
   try
+    let last := s!"{root}/{hosts.getLast!}.started"
     let ready ←
-      waitFor 2000 do
+      waitFor patienceMs do
           active.allM fun host => System.FilePath.pathExists s!"{root}/{host}.leaf"
-    expect (ready && !(← System.FilePath.pathExists s!"{root}/{hosts.getLast!}.started"))
+    expect (ready && !(← System.FilePath.pathExists last))
         "remote discovery limits simultaneous SSH jobs and reuses completed slots"
-    let code ← waitProcess command (Linger.App.Shell.remoteQueryTimeoutMs + 1500)
+    -- The stalled hosts hold every slot until the deadline, so with one deadline for all of them
+    -- the last host never starts, while a deadline per job would free a slot for it; and their
+    -- descendants outlive `hangMs`, so a command that waited for the pipes would too.
+    let code ← waitProcess command (Linger.App.Shell.remoteQueryTimeoutMs + hangMs)
     let elapsed := (← Os.Shell.monotonicMs) - start
-    let stopped ← waitFor 2000 (active.allM (discoveryGone root))
+    let lastStarted ← System.FilePath.pathExists last
+    let stopped ← waitFor patienceMs (active.allM (discoveryGone root))
     if code.isNone then
       cleanupDiscovery root
       command.kill
       discard command.wait
     let output ← command.stdout.readToEnd
-    expect (code == some 0 && elapsed < Linger.App.Shell.remoteQueryTimeoutMs + 1500)
-        "remote commands share one deadline even when pipes stay open"
+    expect (code == some 0 && !lastStarted)
+        s!"remote commands share one deadline even when pipes stay open ({elapsed} ms)"
     expect ((records output).filter (·.1 == "name") == [("name", s!"{goodName}@quick")])
         "only complete remote replies contribute rows"
     expect (ready && stopped) "deadline retires every SSH descendant holding a pipe"
@@ -221,13 +228,14 @@ private def discoveryChecks (e : Env) : IO Unit := do
             Os.Shell.Command.start (← IO.appPath).toString
                 #["--discovery-ssh", root, "--", "stall-stop"]))
   try
-    let ready ← waitFor 2000 (System.FilePath.pathExists s!"{root}/stall-stop.leaf")
+    let ready ← waitFor patienceMs (System.FilePath.pathExists s!"{root}/stall-stop.leaf")
     let start ← Os.Shell.monotonicMs
+    -- the leaf holds the pipes past `hangMs`, so a stop that waited for them would too
     Os.Shell.Command.stop pending 100
     let elapsed := (← Os.Shell.monotonicMs) - start
-    let stopped ← waitFor 2000 (discoveryGone root "stall-stop")
-    expect (ready && stopped && elapsed < 1500 && (← pending.get).isNone)
-        "cooperative stop force-retires descendants that retain pipes after their leader exits"
+    let stopped ← waitFor patienceMs (discoveryGone root "stall-stop")
+    expect (ready && stopped && elapsed < hangMs && (← pending.get).isNone)
+        s!"cooperative stop force-retires descendants that retain pipes after their leader exits ({elapsed} ms)"
   finally
     Os.Shell.Command.stop pending
     cleanupDiscovery root
@@ -235,7 +243,7 @@ private def discoveryChecks (e : Env) : IO Unit := do
   -- killpg refuses a group whose only member is that zombie.
   let exited ← IO.mkRef (some (← Os.Shell.Command.start "/bin/sh" #["-c", "exit 0"]))
   let finished ←
-    waitFor 2000 do
+    waitFor patienceMs do
         let some job ← exited.get | return false
         return (← IO.hasFinished job.stdout) && (← IO.hasFinished job.stderr)
   let outcome ← (Os.Shell.Command.stop exited).toBaseIO
@@ -245,15 +253,22 @@ private def discoveryChecks (e : Env) : IO Unit := do
   let (state, root, path) ← discoverySetup e "cancel"
   IO.FS.createDirAll s!"{root}/.config/linger"
   IO.FS.writeFile s!"{root}/.config/linger/remotes" "stall-cancel\n"
+  -- A chooser that waited for its listing instead of cancelling it would end only at the
+  -- listing's shared deadline, which starts after the chooser does: so the chooser must end
+  -- within that deadline of its own start. That deadline caps the regression, so it is the
+  -- bound; the host would have to stretch the chooser's start and cancellation to the remote
+  -- deadline itself, which would leave its remote discovery nothing to show either. The leaf
+  -- outlives `hangMs`, so a cancellation that left it running is seen below.
+  let spawned ← Os.Shell.monotonicMs
   let chooser ← state.spawnEnv #[s!"PATH={path}", s!"HOME={root}"] #["attach"]
   try
-    let ready ← waitFor 2000 (System.FilePath.pathExists s!"{root}/stall-cancel.leaf")
-    let start ← Os.Shell.monotonicMs
+    let ready ← waitFor patienceMs (System.FilePath.pathExists s!"{root}/stall-cancel.leaf")
     chooser.type "\x03"
-    let code ← chooser.reap 1500
-    expect (ready && code == 130 && (← Os.Shell.monotonicMs) - start < 1500)
-        "cancelling bare attach retires discovery promptly"
-    let stopped ← waitFor 2000 (discoveryGone root "stall-cancel")
+    let code ← chooser.reap patienceMs
+    let lived := (← Os.Shell.monotonicMs) - spawned
+    expect (ready && code == 130 && lived < Linger.App.Shell.remoteQueryTimeoutMs)
+        s!"cancelling bare attach retires discovery before the remote deadline ({lived} ms)"
+    let stopped ← waitFor patienceMs (discoveryGone root "stall-cancel")
     expect (ready && stopped) "chooser cancellation reaches SSH descendants"
   finally
     cleanupDiscovery root
@@ -307,7 +322,7 @@ def run : IO UInt32 :=
             !recs.any (fun kv => kv.1 == "name" && kv.2.endsWith s!"@{deadHost}"))
           "unreachable host contributes no rows"
       let c1 ← e.spawnEnv ptyPath #["attach", tag] 100 24
-      let attached ← drain c1.fd 2000
+      let attached ← drain c1.fd hangMs
       expect (hasText attached attachMark) "remote attach reaches linger"
       expect
           ((← readArgs log) ==
@@ -315,21 +330,21 @@ def run : IO UInt32 :=
             (← readArgs remoteArgs) == ["attach", goodName])
           "remote attach uses a PTY and preserves the target"
       expect
-          ((← c1.reap 1500) == 0 && hasText attached "remote-editor" &&
+          ((← c1.reap patienceMs) == 0 && hasText attached "remote-editor" &&
             hasBytes attached Terminal.Render.leaveAnsi &&
             ((Terminal.Vt.Vt.init 100 24).feed attached.toList).windowTitle.isEmpty)
           "normal SSH handback clears the application title"
       c1.bye (sendDetach := false)
       let c2 ← e.spawnEnv ptyPath #["attach", s!"{goodName}@{userHost}"] 100 24
-      let _ ← drain c2.fd 2000
+      let _ ← drain c2.fd hangMs
       expect
           ((← readArgs log) ==
             ["-t", "--", userHost, Linger.Target.Remote.command "attach" [goodName]])
           "user@host round-trips through the first-at split"
       c2.bye (sendDetach := false)
       let lost ← e.spawnEnv ptyPath #["attach", s!"{goodName}@{deadHost}"] 100 24
-      let lostBytes ← drain lost.fd 2000
-      expect ((← lost.reap 1500) == 255) "lost SSH preserves its exit status"
+      let lostBytes ← drain lost.fd hangMs
+      expect ((← lost.reap patienceMs) == 255) "lost SSH preserves its exit status"
       expect
           (hasText lostBytes "remote-lost" && hasBytes lostBytes Terminal.Render.leaveAnsi &&
             ((Terminal.Vt.Vt.init 100 24).feed lostBytes.toList).windowTitle.isEmpty)
@@ -341,9 +356,9 @@ def run : IO UInt32 :=
           "work\nprintf REMOTE-INJECTED@" ++ devHost] do
         IO.FS.writeFile log ""
         let c ← e.spawnEnv ptyPath #["attach", name] 100 24
-        let reply ← drain c.fd 1500
+        let reply ← drain c.fd hangMs
         expect
-            ((← c.reap 1500) == 2 && (← readArgs log).isEmpty &&
+            ((← c.reap patienceMs) == 2 && (← readArgs log).isEmpty &&
               hasText reply "invalid session name")
             s!"invalid remote target is rejected before SSH: {repr name}"
         c.bye (sendDetach := false)
@@ -351,17 +366,17 @@ def run : IO UInt32 :=
         ["/bin/sh", "-c", "printf '%s' \"$1\"", "two words", "", s!"$(touch {injected})",
           "`printf REMOTE-INJECTED`", "line\nbreak", "a'b\"c\\d"]
       let commandClient ← e.spawnEnv ptyPath (["attach", tag] ++ words).toArray 100 24
-      let _ ← drain commandClient.fd 2000
+      let _ ← drain commandClient.fd hangMs
       expect
-          ((← commandClient.reap 1500) == 0 &&
+          ((← commandClient.reap patienceMs) == 0 &&
             (← readArgs remoteArgs) == ["attach", goodName] ++ words &&
             !(← injected.pathExists))
           "remote attach preserves every command argument through the shell"
       commandClient.bye (sendDetach := false)
       let watcher ← e.spawnEnv ptyPath #["attach", "--read-only", tag] 100 24
-      let watched ← drain watcher.fd 2000
+      let watched ← drain watcher.fd hangMs
       expect
-          ((← watcher.reap 1500) == 0 &&
+          ((← watcher.reap patienceMs) == 0 &&
             (← readArgs remoteArgs) == ["attach", "--read-only", goodName] &&
             (← readArgs log).head? == some "-t" &&
             hasBytes watched Terminal.Render.leaveAnsi)
@@ -371,9 +386,9 @@ def run : IO UInt32 :=
         let literal ←
           e.spawnEnv ptyPath (["attach"] ++ options ++ ["--", s!"--read-only@{devHost}"]).toArray
               100 24
-        let _ ← drain literal.fd 1000
+        let _ ← drain literal.fd hangMs
         expect
-            ((← literal.reap 1000) == 0 &&
+            ((← literal.reap patienceMs) == 0 &&
               (← readArgs remoteArgs) == ["attach"] ++ options ++ ["--", "--read-only"])
             "remote attach separates options from an option-like session name"
         literal.bye (sendDetach := false)
@@ -407,7 +422,7 @@ def run : IO UInt32 :=
           input.write payload
           input.flush
           pure child
-      let senderRc ← waitOrKill sender 3000
+      let senderRc ← waitOrKill sender hangMs
       expect (senderRc == some 0 && (← IO.FS.readBinFile remoteStdin).toList == payload.toList)
           "remote send stdin is byte-exact, including NUL and invalid UTF-8"
       for args in

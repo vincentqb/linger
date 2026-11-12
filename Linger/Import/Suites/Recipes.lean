@@ -203,7 +203,7 @@ def tmuxFixtureEnv (root : System.FilePath) : IO (Array (String × Option String
   IO.FS.createDirAll sockets
   IO.FS.writeFile (root / "tmux-calls") ""
   IO.FS.writeFile (bin / "tmux")
-      r#"#!/bin/sh
+      (r#"#!/bin/sh
 printf 'CALL\000' >> "$LINGER_TMUX_CALLS"
 printf '%s\000' "$@" >> "$LINGER_TMUX_CALLS"
 printf '\n' >> "$LINGER_TMUX_CALLS"
@@ -211,11 +211,14 @@ if [ "$#" -ne 3 ] || [ "$1" != show-options ] || [ "$2" != -gqv ] || [ "$3" != @
     exit 97
 fi
 if [ "$LINGER_TMUX_WAIT" = 1 ]; then
-    exec /bin/sleep 5
-fi
+"# ++
+        -- past `hangMs`, so a command that waited for this query, rather than retiring it, would
+        -- outlast its check's ceiling
+        s!"    exec /bin/sleep {2 * hangMs / 1000}\n" ++
+        r#"fi
 printf '%s\n' "$LINGER_TMUX_DIRECTORY"
 exit "$LINGER_TMUX_RC"
-"#
+"#)
   Os.Shell.chmod (bin / "tmux").toString 0o700
   let path := (← IO.getEnv "PATH").getD "/usr/bin:/bin"
   return #[("PATH", some s!"{bin}:{path}"), ("TMUX", none), ("TMUX_TMPDIR", some sockets.toString),

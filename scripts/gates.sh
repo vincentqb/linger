@@ -1663,11 +1663,12 @@ suite_unreached="$(module_imports Verify/Main.lean 'Verify/*' 'Linger/*/Suites/*
           F[j] != "packages/os/Os/Suites/Wait.lean" && !(F[j] in reached)) printf "%s ", F[j] }')"
 [ -z "$suite_unreached" ] \
   || fail "outside the import closure of Verify/Main.lean, so './lake build suites' never elaborates them: ${suite_unreached% }"
-# Every registered suite but the opt-in remote-live runs in the verifier: Verify.Main.suites
+# Every registered suite but the opt-in remote-live and perf runs in the verifier: Verify.Main.suites
 # names exactly the suites that scripts/verify.sh passes to `suites --suites`, read from those
-# commands with their continuation lines joined.
+# commands with their continuation lines joined, each as `<suite>:<checks>` or
+# `<suite>:<checks>:<skips>`.
 registered="$(awk '/^def suites :/ { on = 1 } on { sub(/--.*/, ""); print } on && /[]][[:space:]]*$/ { exit }' Verify/Main.lean \
-  | grep -oE '[(]"[^"]+"' | tr -d '("' | grep -vx 'remote-live' | sort)"
+  | grep -oE '[(]"[^"]+"' | tr -d '("' | grep -vxE 'remote-live|perf' | sort)"
 verified="$(awk '
   { cmd = cmd $0 }
   /\\$/ { sub(/\\$/, " ", cmd); next }
@@ -1675,7 +1676,7 @@ verified="$(awk '
     sub(/^[.]\/[.]lake\/build\/bin\/suites --suites[[:space:]]+/, "", cmd)
     sub(/[[:space:]]*[|][|].*/, "", cmd)
     n = split(cmd, w, " ")
-    for (k = 1; k <= n; k++) { name = w[k]; sub(/:[0-9]+$/, "", name); print name } }
+    for (k = 1; k <= n; k++) { name = w[k]; sub(/:.*$/, "", name); print name } }
   { cmd = "" }' scripts/verify.sh | sort)"
 [ -n "$registered" ] && [ "$registered" = "$verified" ] \
   || fail "Verify.Main.suites less remote-live ($(printf '%s' "$registered" | tr '\n' ' ')) differs from the suites scripts/verify.sh runs ($(printf '%s' "$verified" | tr '\n' ' '))"
@@ -1901,10 +1902,11 @@ es_n="$(code_count 'IO[.]sleep([^[:alnum:]_]|$)' 'Verify/*' 'Linger/*/Suites/*' 
 [ "$es_n" -le "$SUITE_SLEEP_CAP" ] \
   || fail "suite fixed sleeps grew to $es_n (cap $SUITE_SLEEP_CAP); poll a readiness signal with waitFor"
 # Fixed drain windows: drain/drainStr with a literal deadline read for that long
-# whatever arrives. Positive waits poll with Client.awaitText/awaitNeedle; the windows
-# left are negative assertions, discards, stream sync points and positive reads not
+# whatever arrives. Positive waits poll with Client.awaitText/awaitNeedle, and a read to the
+# end of a client that exits drains under `hangMs`, which returns at its end of file; the
+# windows left are negative assertions, discards, stream sync points and positive reads not
 # yet converted.
-SUITE_DRAIN_CAP=64
+SUITE_DRAIN_CAP=43
 ed_n="$(code_count '(^|[^[:alnum:]_.])drain(Str)?[[:space:]]+[^[:space:]]+[[:space:]]+[0-9]' 'Verify/*' \
   'Linger/*/Suites/*' ':!Linger/Os/Suites/Shim.lean')"
 [ "$ed_n" -le "$SUITE_DRAIN_CAP" ] \

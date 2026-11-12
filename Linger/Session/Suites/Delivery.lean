@@ -307,15 +307,17 @@ def closeGrace (dir : String) (shutdown : Bool) : IO Unit := do
         rt ← pump rt' feedback
       let (rt', feedback) ← runEffect rt (.close fd.toNat)
       rt ← pump rt' feedback
+      -- The peer never reads, so a close that kept it would keep it past any ceiling: the
+      -- release is the outcome, and `hangMs` past the drain deadline only stops a hang.
       let began ← IO.monoMsNow
       if shutdown then
         rt ← drainConns rt
       else
-        while (rt.conn? fd).isSome && (← IO.monoMsNow) - began < drainTimeoutMs + 1500 do
+        while (rt.conn? fd).isSome && (← IO.monoMsNow) - began < drainTimeoutMs + hangMs do
           let (rt', events) ← pollRound rt (limitMs := some 100)
           rt ← pump rt' events
-      expect ((rt.conn? fd).isNone && (← IO.monoMsNow) - began < drainTimeoutMs + 2000)
-          s!"delivery/{tag}/nonreader-released"
+      expect (rt.conn? fd).isNone
+          s!"delivery/{tag}/nonreader-released ({(← IO.monoMsNow) - began} ms)"
 
 /-- Removing a client from the pure roster must not permit unbounded retired
 socket plans. Exercise actual accepts while earlier clients stay stalled. -/

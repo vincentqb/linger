@@ -202,7 +202,7 @@ say "2c. verifier regression tests (CI policy, caches and suite isolation)"
 # against a temporary project.
 # The same runner checks exit status, final verdict, every assertion and both
 # streams. Intentional failures inside these tests stay in their captured logs.
-./.lake/build/bin/suites --suites ci:58 hygiene:56 \
+./.lake/build/bin/suites --suites ci:59 hygiene:56 \
   || fail "verifier regression checks (see $logs/linger-ci.out and linger-hygiene.out)"
 
 say "2d. headline theorems (Challenge.lean against Theorems/Solution.lean)"
@@ -271,13 +271,23 @@ LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/
 say "4. live suites (separate processes, at most four at once)"
 # One assertion inventory, consumed by the tested Lean runner, longer suites first.
 # Each child keeps $logs/linger-<suite>.out; zero exit, final verdict and exact count
-# must all agree, and no explicit FAIL line is accepted.
+# must all agree, and no explicit FAIL line is accepted. A check that reads /proc says SKIP
+# where there is none, as on macOS, and `<suite>:<checks>:<skips>` pins how many of a
+# suite's checks skip. A verdict here depends on the code, not on how fast the host is;
+# what the largest workloads cost is the opt-in `./.lake/build/bin/suites perf [strict]`.
 # Ordinary child spawning preserves SIGINT, unlike a shell's asynchronous list.
 # No suite shares an Env directory, and the runner waits for all of them on failure.
+if [ -d /proc/self ]; then
+  resume_skips=0 robust_skips=0 title_skips=0 quiet_skips=0
+else
+  resume_skips=1 robust_skips=2 title_skips=1 quiet_skips=4
+fi
+# shellcheck disable=SC2086  # each skip count is a number
 ./.lake/build/bin/suites --suites \
   manager:128 delivery:37 attach:64 agent:63 \
-  resume:29 watch:50 title:18 graphics:9 robust:31 \
-  interop:72 recipes:56 status:18 terminal:12 overview:15 remote:68 identity:25 quiet:5 \
+  resume:29:$resume_skips watch:50 title:18:$title_skips graphics:9 robust:33:$robust_skips \
+  interop:72 recipes:56 status:18 terminal:12 overview:15 remote:68 identity:25 \
+  quiet:5:$quiet_skips \
   || fail "live suites (see $logs/linger-*.out)"
 
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \

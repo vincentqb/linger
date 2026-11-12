@@ -145,8 +145,10 @@ private def recordCommand (root : System.FilePath) (args : List String) : IO UIn
         output.putStr (← readText (root / "listing-prefix"))
         output.flush
         IO.FS.writeFile (root / s!"list-started-{serial}") (toString pid)
+        -- held past `hangMs`, so a picker that waited for this listing, rather than cancelling
+        -- or replacing it, would outlast its check's ceiling
         let released ←
-          waitFor 10000 do
+          waitFor hangMs do
               return (← (root / s!"release-listing-{serial}").pathExists) ||
                   (← (root / "release-all-listings").pathExists)
         unless released do
@@ -1483,7 +1485,7 @@ private def displayChecks (e : Env) : IO Unit := do
 
 private def Fixture.waitListing (f : Fixture) (serial : Nat) (completed : Bool := false) :
     IO Bool :=
-  waitFor 4500
+  waitFor patienceMs
     ((f.root / s!"list-{if completed then "completed" else "started"}-{serial}").pathExists)
 
 private def Fixture.releaseListing (f : Fixture) (serial : Nat) : IO Unit :=
@@ -1734,7 +1736,7 @@ private def refreshChecks (e : Env) : IO Unit := do
               let start ← s.mark
               -- Enter cannot accept an item before the first complete snapshot.
               s.text (if serial == 1 then "\rB" else "B")
-              let responsive ← s.untilAny ["  › B", "linger> B"] start 1500
+              let responsive ← s.untilAny ["  › B", "linger> B"] start
               -- This interval crosses another refresh deadline while stdout is held.
               s.observe 1200
               let one :=
@@ -1743,10 +1745,12 @@ private def refreshChecks (e : Env) : IO Unit := do
               let start ← s.mark
               let began ← monotonicMs
               s.text key
-              let promptExit ← s.until "MANAGER-EXIT:130" start 2000
+              -- The listing is held past `hangMs`: a cancel that waited for it, or left its
+              -- child running, could pass neither wait.
+              let promptExit ← s.until "MANAGER-EXIT:130" start
               let elapsed := (← monotonicMs) - began
               let reaped ←
-                waitFor 500 do
+                waitFor patienceMs do
                     return pid > 0 && !(← alive (UInt32.ofNat pid))
               IO.FS.writeFile (f.root / "cancel-observation")
                   s!"pid={pid}\nalive-before={live}\nkeyboard-responsive={responsive}\none-in-flight={one}\nexit-within-deadline={promptExit}\nelapsed-ms={elapsed}\nchild-gone={reaped}\n"

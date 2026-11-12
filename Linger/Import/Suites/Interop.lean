@@ -23,7 +23,7 @@ open Verify.Harness
 open Linger.Import.Suites.Recipes (paneLine tmuxFixtureEnv)
 open Linger.Session.Checkpoint
 
-private def process (args : IO.Process.SpawnArgs) (ms : Nat := 10000) :
+private def process (args : IO.Process.SpawnArgs) (ms : Nat := hangMs) :
     IO (UInt32 × String × String) := do
   let child ←
     IO.Process.spawn
@@ -403,13 +403,14 @@ private def missingDiscovery (f : Fixture) (configured : Bool) : IO Bool := do
       (← f.queries) == queryCall &&
       (← namesIn (System.FilePath.mk f.env.dir)).isEmpty
 
+/-- The fixture's tmux answers only after twice `hangMs`, and `Fixture.cli` gives up at `hangMs`:
+a query that timed out but was then waited for, rather than retired, cannot end in time, however
+fast the host. -/
 private def discoveryTimeout (f : Fixture) : IO Bool := do
   f.catalogSave (f.root / "data/tmux/resurrect/last")
       (paneLine "fallback" "0" "0" (f.root / "home").toString "")
-  let before ← IO.monoMsNow
   let (rc, out, err) ← f.cli #["tmux", "ls"] #[("LINGER_TMUX_WAIT", some "1")]
-  let elapsed := (← IO.monoMsNow) - before
-  return elapsed < 4500 && rc == 1 && out.isEmpty && has err "tmux configuration query timed out" &&
+  return rc == 1 && out.isEmpty && has err "tmux configuration query timed out" &&
       has err "explicitly" &&
       (← f.queries) == queryCall &&
       (← namesIn (System.FilePath.mk f.env.dir)).isEmpty

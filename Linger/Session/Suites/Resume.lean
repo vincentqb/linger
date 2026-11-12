@@ -1,6 +1,6 @@
 module
 
-import Verify.Harness
+public import Verify.Harness
 import Linger.Session.Checkpoint
 import Linger.Session.Shell.Daemon
 public import Linger.Session.Spec
@@ -55,21 +55,43 @@ def checkpointRetry : IO Unit := do
   expect (before == 1 && (← attempts.get) == 2 && (← saved.get) == labels)
       "a failed quiet checkpoint retries at the next cadence with its state intact"
 
-/-- Budgets at realistic size, about five times the cost measured when they were
-set (fill 1.1 s, capture 0.56 s, replay 0.22 s, save 0.25 s, peak 319 MB), so only
-a pathological regression fails: the 10,000-row fill, `capture --history`, the
-reattach replay and the detach checkpoint, in milliseconds. -/
-def scaleBudgetMs : Nat × Nat × Nat × Nat := (5500, 3000, 1200, 1300)
-
-/-- The daemon's peak resident set at that size, in KiB. -/
+/-- The daemon's peak resident set after `scaleRun`, in KiB: about five times the 319 MB measured
+when it was set, so only a pathological regression exceeds it. Memory does not grow with the
+host's load. -/
 def scaleBudgetKb : Nat := 1600000
 
-/-- A 200-column session with its 10,000-row history ring full of varied text,
-which neither run-length coding nor trailing blanks shorten. Theorems bound what
-the model computes; these budgets bound what it costs. -/
-private def scaleChecks (e : Env) : IO Unit := do
+/-- What `scaleRun` saw: whether each step completed, what it produced and how long it took. -/
+structure Scale where
+  /-- Whether the screen showed the marker printed after the 10,050 lines. -/
+  filled : Bool
+  /-- The exit status of `capture --history`; `none` when it was still running at `hangMs`. -/
+  historyRc : Option UInt32
+  /-- How many lines `capture --history` printed. -/
+  historyLines : Nat
+  /-- Whether a reattach at 200x50 replayed the marker. -/
+  replayed : Bool
+  /-- Whether the detach checkpoint on disk came to hold the full ring. -/
+  saved : Bool
+  /-- That checkpoint's size in bytes. -/
+  size : UInt64
+  /-- The daemon's peak resident set in KiB, where `/proc` reports it. -/
+  peak : Option Nat
+  /-- Milliseconds from typing the fill to the marker on the screen. -/
+  fillMs : Nat
+  /-- Milliseconds `capture --history` took. -/
+  captureMs : Nat
+  /-- Milliseconds from the reattach to the replayed marker. -/
+  replayMs : Nat
+  /-- Milliseconds from the detach to the full checkpoint on disk. -/
+  saveMs : Nat
+
+/-- A 200-column session with its 10,000-row history ring full of varied text, which neither
+run-length coding nor trailing blanks shorten: fill it, export it with `capture --history`,
+replay it to a reattach and checkpoint it on the detach. Every wait is `hangMs`, which only a
+hang outlasts. Theorems bound what the model computes; the resume suite checks what this
+produced and `Linger.Session.Suites.Perf` reports what it cost. -/
+def scaleRun (e : Env) : IO Scale := do
   let name := "scale"
-  let (fillBudget, captureBudget, replayBudget, saveBudget) := scaleBudgetMs
   try
     let _ ← e.typeIn name #["true"]
     let _ ← e.cli #["resize", name, "200", "50"]
@@ -77,21 +99,16 @@ private def scaleChecks (e : Env) : IO Unit := do
     let _ ←
       e.typeIn name
           #["awk 'BEGIN { for (i = 0; i < 10050; i++) { s = \"\"; for (j = 0; j < 20; j++) s = s sprintf(\"%09d \", 20 * i + j); print s } }'; echo SCALE-$((40+2))"]
-    let filled ← waitFor fillBudget (return has (← e.out #["capture", name]) "SCALE-42")
+    let filled ← waitFor hangMs (return has (← e.out #["capture", name]) "SCALE-42")
     let fillMs := (← Os.Shell.monotonicMs) - start
     let start ← Os.Shell.monotonicMs
-    let (historyRc, history, _) ← e.cli #["capture", "--history", name]
+    let history ← e.cliTimeout #["capture", "--history", name] hangMs
     let captureMs := (← Os.Shell.monotonicMs) - start
-    let historyLines := (lines history).length
-    expect
-        (filled && historyRc == 0 && historyLines ≥ Terminal.Vt.sbCap + 50 &&
-          captureMs ≤ captureBudget)
-        s!"a full ring at 200 columns fills and exports with capture --history within budget (fill {fillMs} ms, capture {captureMs} ms for {historyLines} lines)"
     let client ← e.spawn #["attach", name] 200 50
-    let saved ←
+    let (replayed, replayMs, saved, saveMs, size) ←
       try
         let start ← Os.Shell.monotonicMs
-        let replayed ← client.awaitNeedle "SCALE-42" replayBudget
+        let replayed ← client.awaitNeedle "SCALE-42" hangMs
         let replayMs := (← Os.Shell.monotonicMs) - start
         let start ← Os.Shell.monotonicMs
         client.detach
@@ -101,12 +118,9 @@ private def scaleChecks (e : Env) : IO Unit := do
         let full := (Terminal.Vt.sbCap * 200).toUInt64
         let sizeOf : IO UInt64 := do
           return ((← ckpt.metadata.toBaseIO).toOption.map (·.byteSize)).getD 0
-        let saved ← waitFor saveBudget (return (← sizeOf) ≥ full)
+        let saved ← waitFor hangMs (return (← sizeOf) ≥ full)
         let saveMs := (← Os.Shell.monotonicMs) - start
-        let size ← sizeOf
-        expect (replayed && saved && size ≥ full && replayMs ≤ replayBudget && saveMs ≤ saveBudget)
-            s!"reattach replays and detach checkpoints a full ring within budget (replay {replayMs} ms, save {saveMs} ms, {size} bytes)"
-        pure saved
+        pure (replayed, replayMs, saved, saveMs, ← sizeOf)
       finally
         client.bye (sendDetach := false)
     -- A daemon that did not answer cannot be measured, so its check fails.
@@ -115,10 +129,24 @@ private def scaleChecks (e : Env) : IO Unit := do
         e.daemonPeakKb name
       else
         pure none
-    expect (saved && peak.all (· ≤ scaleBudgetKb))
-        s!"the daemon's peak resident set stays within {scaleBudgetKb} KiB where /proc reports it ({peak} KiB)"
+    let scale : Scale :=
+      { filled, historyRc := history.map (·.1),
+        historyLines := (history.map fun (_, text, _) => (lines text).length).getD 0, replayed,
+        saved, size, peak, fillMs, captureMs, replayMs, saveMs }
+    return scale
   finally
     e.killAll #[name]
+
+/-- What `scaleRun` produced, whatever it cost: the full ring exported, replayed and saved, and
+the daemon's peak resident set where `/proc` reports it. -/
+private def scaleChecks (e : Env) : IO Unit := do
+  let s ← scaleRun e
+  expect (s.filled && s.historyRc == some 0 && s.historyLines ≥ Terminal.Vt.sbCap + 50)
+      s!"a full ring at 200 columns fills and exports with capture --history ({s.historyLines} lines)"
+  expect (s.replayed && s.saved)
+      s!"reattach replays a full ring and detach checkpoints it ({s.size} bytes)"
+  expectMeasured s.peak.isSome (s.saved && s.peak.all (· ≤ scaleBudgetKb))
+      s!"the daemon's peak resident set stays within {scaleBudgetKb} KiB ({s.peak} KiB)"
 
 /-- A resume runs in its saved directory, or in `$HOME` when that is gone, and says so; with
 HOME unset or empty it refuses and leaves the saved session as it was (`Env.resumeDir`). -/
@@ -171,7 +199,7 @@ answered. -/
 private def answerChecks (e : Env) : IO Unit := do
   let report := s!"{e.dir}/logs/taken.start-check"
   IO.FS.createDirAll s!"{e.dir}/logs"
-  let ran ← e.cliTimeout #["__start", report, "taken", e.dir, "/bin/sh", "-c", "exit 0"] 10000
+  let ran ← e.cliTimeout #["__start", report, "taken", e.dir, "/bin/sh", "-c", "exit 0"] hangMs
   expect
       (ran.any (·.1 == 0) && !(← System.FilePath.pathExists report) &&
         !(← e.dirNames ".sock").contains "taken.sock" &&
@@ -191,15 +219,16 @@ private def answerChecks (e : Env) : IO Unit := do
   let fed ← IO.mkRef (none : Option UInt32)
   let resumed ←
     try
-      a.cliTimeout #["resume", "late"] 60000
+      -- the command's 30 s wait, then only a hang
+      a.cliTimeout #["resume", "late"] (30000 + hangMs)
     finally
       let feed ←
         IO.Process.spawn
             { cmd := "sh", args := #["-c", s!"cat '{source}' > '{fifo}'"], stdin := .null,
               stdout := .null, stderr := .null }
-      fed.set (← waitOrKill feed 10000)
+      fed.set (← waitOrKill feed hangMs)
   let waitedMs := (← Os.Shell.monotonicMs) - begun
-  let settled ← waitFor 10000 (lockFree s!"{a.dir}/late.lock")
+  let settled ← waitFor patienceMs (lockFree s!"{a.dir}/late.lock")
   IO.FS.removeFile fifo
   let sockets ← a.dirNames ".sock"
   let left :=
@@ -450,15 +479,18 @@ def run : IO UInt32 :=
     e.killAll #["save-fail"]
     -- Existing but unreadable recovery state is not equivalent to no checkpoint. A resume
     -- says why at once. An attach's daemon exits, so the client gives up after the 3 s floor,
-    -- long before the 30 s cap.
+    -- long before the 30 s cap. The client says the same either way, so only when it gives up
+    -- tells them apart: the wait ends 17 s after the floor and 10 s before the cap, as far from
+    -- each as the product's own constants allow, so neither the host's load nor a client that
+    -- waited out the cap can be mistaken for the other.
     let readPath := s!"{e.dir}/read-fail.ckpt"
     IO.FS.createDirAll readPath
     let readStart ← Os.Shell.monotonicMs
-    let readResume ← e.cliTimeout #["resume", "read-fail"] 10000
+    let readResume ← e.cliTimeout #["resume", "read-fail"] hangMs
     let reader ← e.spawn #["attach", "read-fail"] cols rows
     let readOut ← IO.mkRef ByteArray.empty
-    let gaveUp ← reader.awaitText readOut (hasText · "see ") (ms := 10000)
-    let readRc ← reader.reap 1000
+    let gaveUp ← reader.awaitText readOut (hasText · "see ") (ms := 20000)
+    let readRc ← reader.reap patienceMs
     reader.bye (sendDetach := false)
     let readMs := (← Os.Shell.monotonicMs) - readStart
     let readSockets ← e.dirNames ".sock"
@@ -469,8 +501,8 @@ def run : IO UInt32 :=
           readRc == 1 &&
           has readLog "checkpoint read failed" &&
           !readSockets.contains "read-fail.sock")
-        s!"checkpoint read failure is visible, does not start fresh and ends within 10 s \
-          ({readResume.map (·.1)}, {readRc}, {readMs} ms)"
+        s!"checkpoint read failure is visible, does not start fresh and gives up long before \
+          the 30 s cap ({readResume.map (·.1)}, {readRc}, {readMs} ms)"
     e.killAll #["read-fail"]
     IO.FS.removeDirAll readPath
     -- A daemon that holds its locks but needs longer than the 3 s floor to listen still
@@ -483,9 +515,9 @@ def run : IO UInt32 :=
             stdin := .null, stdout := .null, stderr := .null }
     let slowStart ← Os.Shell.monotonicMs
     let slow ← e.spawn #["attach", "slow"] cols rows
-    let attached ← waitFor 10000 (return (← e.info "slow" "clients") == some "1")
+    let attached ← waitFor hangMs (return (← e.info "slow" "clients") == some "1")
     let slowMs := (← Os.Shell.monotonicMs) - slowStart
-    let _ ← waitOrKill release 10000
+    let _ ← waitOrKill release hangMs
     slow.bye
     expect (made.exitCode == 0 && attached && slowMs ≥ 3000)
         s!"a daemon slower than the 3 s window to listen still connects ({slowMs} ms)"

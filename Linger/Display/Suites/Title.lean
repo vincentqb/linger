@@ -1,6 +1,6 @@
 module
 
-import Verify.Harness
+public import Verify.Harness
 import Terminal.Mediation
 import Terminal.Title
 import Linger.Display.Title
@@ -40,10 +40,6 @@ private def openOsc : ByteArray :=
 
 /-- A quiet window over which an attached client samples its title about three times. -/
 def idleWindowMs : Nat := 3000
-
-/-- The client's own CPU over `idleWindowMs`, about five times the cost measured
-when it was set. Sampling spawns no process, so the client reaps no children. -/
-def idleBudgetMs : Nat := 100
 
 /-- Raw foreground program: lower-case keys open a partial sequence, their
 upper-case partners finish it; `r` repeats an identical title, `p` answers a
@@ -101,7 +97,7 @@ def fixtureSample (dir : String) : IO String := do
   IO.FS.writeFile s!"{dir}/sample-count" (toString serial)
   try
     let gate := if serial == 1 then "release-failure" else "release-valid"
-    unless ← waitFor 8000 (System.FilePath.pathExists s!"{dir}/{gate}") do
+    unless ← waitFor hangMs (System.FilePath.pathExists s!"{dir}/{gate}") do
       throw (IO.userError "the fixture never released this title sample")
     if serial == 1 then
       throw (IO.userError "fixture title sample failure")
@@ -147,9 +143,38 @@ private def startProbe (e : Env) (name : String) : IO Bool := do
   let self ← IO.appPath
   let (code, _, _) ← e.cli #["start", name, self.toString, "--title-probe"]
   let ready ←
-    waitFor 4000 do
+    waitFor patienceMs do
         return has (← e.out #["capture", name]) "TITLE-READY"
   return code == 0 && ready
+
+/-- The CPU milliseconds of process `pid` while `window` runs, its own and its reaped children's,
+from `/proc`; `none` where there is none. -/
+def cpuDuring (pid : UInt32) (window : IO Unit) : IO (Option (Nat × Nat)) := do
+  let start ← processCpuMs pid
+  window
+  let finish ← processCpuMs pid
+  match start, finish with
+  | some (before, _), some (after, children) =>
+    return some (after - before, children)
+  | _, _ =>
+    return none
+
+/-- An idle attached client, for `Linger.Session.Suites.Perf`: start a session running the
+probe program, attach to it, and once the program's first output arrives measure the client's
+CPU over `idleWindowMs` of quiet. Whether it attached, and that cost. -/
+def idleRun (e : Env) : IO (Bool × Option (Nat × Nat)) := do
+  let name := "title-idle"
+  try
+    let ready ← startProbe e name
+    let c ← e.spawn #["attach", name] 80 24
+    try
+      let attached ← c.awaitNeedle "TITLE-READY"
+      let cost ← cpuDuring c.pid (discard (drain c.fd idleWindowMs))
+      return (ready && attached, cost)
+    finally
+      c.bye
+  finally
+    e.killAll #[name]
 
 /-- One other session, either read or carrying unread output. Capture is used
 only for an intentional acknowledgment; status and info must leave it unread. -/
@@ -235,7 +260,7 @@ private def sampleCase (base : Env) : IO Unit := do
     let seen ← IO.mkRef ({} : Receiver)
     try
       let initial ← awaitOutput c seen (titled "")
-      let blocked ← waitFor 4000 (return (← count "sample-count") == 1)
+      let blocked ← waitFor patienceMs (return (← count "sample-count") == 1)
       let responsive ← ping c seen
       expect
           (ready && initial && blocked && responsive && (← count "sample-finished") == 0 &&
@@ -254,21 +279,21 @@ private def sampleCase (base : Env) : IO Unit := do
       -- Hold the next sample, then detach while it is outstanding.
       IO.FS.removeFile s!"{e.dir}/release-valid"
       let outstanding ←
-        waitFor 4000 do
+        waitFor patienceMs do
             return (← count "sample-count") > (← count "sample-finished")
       let held ← count "sample-count"
       let detachStart := (← seen.get).bytes.size
       c.detach
       let cleared ← awaitOutput c seen (titleIs "")
-      let released ← waitFor 2000 (return (← e.info name "clients") == some "0")
+      let released ← waitFor patienceMs (return (← e.info name "clients") == some "0")
       let joining := (← c.reap 300) == -1
       IO.FS.writeFile s!"{e.dir}/release-valid" ""
-      let code ← c.reap 2000
+      let code ← c.reap patienceMs
       let handedBack := hasBytes (since (← seen.get) detachStart) Terminal.Render.leaveAnsi
       let before := (← e.info name "outseq").bind (·.toNat?)
       let (sendCode, _, _) ← e.cli #["send", name, "p"]
       let survived ←
-        waitFor 4000 do
+        waitFor patienceMs do
             let after := (← e.info name "outseq").bind (·.toNat?)
             return before.isSome && after.getD 0 > before.getD 0 &&
                 has (← e.out #["capture", name]) "TITLE-PONG"
@@ -296,14 +321,11 @@ def run (binary : Option String := none) : IO UInt32 :=
         let composed ← awaitOutput c seen (titleIs (expectedTitle false))
         expect (ready && composed && hasText (← seen.get).bytes "TITLE-READY")
             "attach composes the session name and the application's editor title"
-        let start ← processCpuMs c.pid
-        receive c seen idleWindowMs
-        let cost :=
-          match start, ← processCpuMs c.pid with
-          | some (before, _), some (after, children) => some (after - before, children)
-          | _, _ => none
-        expect (cost.all fun (own, children) => children == 0 && own ≤ idleBudgetMs)
-            s!"an idle attached client samples its title in its own process within {idleBudgetMs} ms of CPU per {idleWindowMs} ms where /proc reports it (own, children: {cost})"
+        -- Sampling spawns no process, so the client reaps no children; what its own CPU costs
+        -- grows with the host's load, and `Linger.Session.Suites.Perf` reports it.
+        let cost ← cpuDuring c.pid (receive c seen idleWindowMs)
+        expectMeasured cost.isSome (cost.all (·.2 == 0))
+            s!"an idle attached client samples its title in its own process over {idleWindowMs} ms (own CPU ms, children's: {cost})"
         let otherReady ← startProbe e "title-other"
         let changed ← attention e true
         let before := ((← e.info "title-other" "behind").getD "").toNat?
@@ -348,13 +370,13 @@ def run (binary : Option String := none) : IO UInt32 :=
               !s.vt.atBoundary && hasText (since s detachStart) "\x1bPtitle-probe"
         c.detach
         let cleared ← awaitOutput c seen (titleIs "")
-        let exited ← c.reap 2000
+        let exited ← c.reap patienceMs
         expect (openCode == 0 && incomplete && cleared && exited == 0)
             "detach clears the title at a complete boundary and exits promptly"
         let (finishCode, _, _) ← e.cli #["send", "title-main", "D"]
         let (pingCode, _, _) ← e.cli #["send", "title-main", "p"]
         let answered ←
-          waitFor 4000 do
+          waitFor patienceMs do
               return has (← e.out #["capture", "title-main"]) "TITLE-PONG"
         expect
             (finishCode == 0 && pingCode == 0 && answered &&
