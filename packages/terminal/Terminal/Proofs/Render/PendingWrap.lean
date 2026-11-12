@@ -582,50 +582,120 @@ theorem pending_row_active (v w : Vt) (hg : Good w) (hrows : w.rows = v.rows)
     have := hon.2.2
     omega
 
-/-- DECSC saves the complete cursor, including deferred wrap. -/
+/-- DECSC saves the complete cursor, including deferred wrap, the pen and origin mode. -/
 theorem save_feed_eq (w : Vt) (hg : w.pstate = .ground) (hu : w.u8need = 0) :
-    w.feed (escSeq 0x37) = { w with saved := ⟨w.cursor, w.pen⟩ } := by
+    w.feed (escSeq 0x37) = { w with saved := ⟨w.cursor, w.pen, w.modes.origin⟩ } := by
   rw [show escSeq 0x37 = [0x1B, 0x37] from rfl,
     show w.feed [0x1B, 0x37] = (w.step 0x1B).step 0x37 from by simp [Vt.feed], esc_step_eq hg hu,
     step_of_esc_quiet (v := { w with pstate := .esc }) 0x37 rfl hu]
-  simp [Vt.stepEsc, ← hg]
+  simp [Vt.stepEsc, Vt.saveCursor, Vt.cursorSaved, ← hg]
 
-/-- The saved repair changes only the cursor, pen and saved slot. -/
-theorem savedPendingAnsi_feed_eq (v w : Vt) (hg : Good w) (hr : Renderable w)
-    (hcols : w.cols = v.cols) (hgrid : w.grid = v.grid) (h0 : w.g0Line = false)
-    (h1 : w.g1Line = false) (hwrap : w.modes.wrap = true) (hins : w.modes.insert = false)
-    (ho : w.modes.origin = false) (hps : w.pstate = .ground) (hun : w.u8need = 0)
-    (hua : w.u8acc = 0) :
-    w.feed (Terminal.Render.savedPendingAnsi v) =
-      if v.saved.cur.pending then
-        let z :=
-          if pendingAnsi v.cols v.grid v.saved.cur (v.saved.cur.y + 1) v.saved.pen = [] then w
-          else
-            { w with
-              cursor := v.saved.cur, pen := v.saved.pen }
-        { z with saved := ⟨z.cursor, z.pen⟩ }
-      else w := by
-  unfold savedPendingAnsi
+/-- **A cursor address writes the cursor and nothing else**, whatever its parameters: the walk
+to the final byte moves only the parser state, and `CUP` only the cursor. -/
+theorem cup_frame (a b : Nat) {w : Vt} (hg : w.pstate = .ground) (hu : w.u8need = 0) :
+    ∃ c, w.feed (csiNum2 a b 0x48) = { w with cursor := c } := by
+  obtain ⟨hp, -, he⟩ :=
+    fixes_csiNum2 (π := fun u : Vt =>
+      ({ u with
+          cursor := {}, pstate := .ground } :
+        Vt))
+      (fun _ _ => rfl) a b 0x48 (by decide) (by decide)
+      (fun u t => by rw [frame_csiDispatch_cup u t]) w hg hu
+  refine ⟨(w.feed (csiNum2 a b 0x48)).cursor, ?_⟩
+  generalize w.feed (csiNum2 a b 0x48) = w' at hp he ⊢
+  cases w
+  cases w'
+  simp only [VtRec.mk.injEq] at he hp hg ⊢
+  simp_all
+
+/-- **A park changes only the cursor, the pen and origin mode**, which it turns on with the saved
+one, on a receiver whose region is the whole screen, with ASCII charsets, autowrap on and
+replacement mode: the deferred-wrap repaint reprints an existing cell. No bound on the saved
+cursor is needed. -/
+theorem parkAnsi_frame (w : Vt) (sv : Saved) (hg : Good w) (hr : Renderable w)
+    (h0 : w.g0Line = false) (h1 : w.g1Line = false) (hwrap : w.modes.wrap = true)
+    (hins : w.modes.insert = false) (htop : w.top = 0) (hbot : w.bot = w.rows - 1)
+    (hps : w.pstate = .ground) (hun : w.u8need = 0) (hua : w.u8acc = 0) :
+    ∃ c p,
+      w.feed (parkAnsi w.cols w.grid sv) =
+        { w with
+          cursor := c, pen := p,
+          modes := if sv.origin then { w.modes with origin := true } else w.modes } := by
+  generalize hm : (if sv.origin then { w.modes with origin := true } else w.modes) = M
+  -- the origin set: DECOM on homes the cursor into the whole-screen region
+  obtain ⟨c1, hw1⟩ :
+    ∃ c1,
+      w.feed (if sv.origin then modeSet 6 true else []) =
+        { w with
+          cursor := c1, modes := M } :=
+    by
+    rw [← hm]
+    cases ho : sv.origin
+    · exact ⟨w.cursor, by simp only [Bool.false_eq_true, ↓reduceIte, feed_nil]⟩
+    · refine ⟨(Vt.moveTo { w with modes := { w.modes with origin := true } } 0 0).cursor, ?_⟩
+      simp only [↓reduceIte]
+      rw [modeSet_feed_eq 6 true (by decide) (by decide) hps hun]
+      simp [Vt.setMode, Vt.moveTo, ← hps]
+  have hw2 :
+    w.feed ((if sv.origin then modeSet 6 true else []) ++ penSgr sv.pen) =
+      { w with
+        cursor := c1, modes := M, pen := sv.pen } := by
+    rw [feed_append, hw1,
+      penSgr_feed (v :=
+        { w with
+          cursor := c1, modes := M })
+        sv.pen hps hun]
+  obtain ⟨c3, hw3⟩ :=
+    cup_frame (sv.cur.y + 1) (sv.cur.x + 1) (w :=
+      { w with
+        cursor := c1, modes := M, pen := sv.pen })
+      hps hun
+  have e3 :
+    w.feed
+        ((if sv.origin then modeSet 6 true else []) ++ penSgr sv.pen ++
+          csiNum2 (sv.cur.y + 1) (sv.cur.x + 1) 0x48) =
+      { w with
+        cursor := c3, modes := M, pen := sv.pen } := by
+    rw [feed_append, hw2, hw3]
+  have g3 :
+    Good
+      { w with
+        cursor := c3, modes := M, pen := sv.pen } :=
+    e3 ▸ Good.feed _ hg
+  have r3 :
+    Renderable
+      { w with
+        cursor := c3, modes := M, pen := sv.pen } :=
+    e3 ▸ renderable_feed hr _
+  have hMwrap : M.wrap = true := by
+    rw [← hm]; split <;> exact hwrap
+  have hMins : M.insert = false := by
+    rw [← hm]; split <;> exact hins
+  have hrowsLe := hg.rowsLe
+  have he :=
+    pendingAnsi_feed_eq
+      { w with
+        cursor := c3, modes := M, pen := sv.pen }
+      sv.cur (sv.cur.y + 1) sv.pen g3 r3 h0 h1 hMwrap hMins
+      (fun hy => by
+        refine
+          ⟨by omega, by
+            dsimp only at hy; omega, ?_⟩
+        dsimp only at hy ⊢
+        unfold Vt.moveTo
+        by_cases hM : M.origin <;> simp [hM, htop, hbot] <;> omega)
+      hps hun hua
+  rw [show
+      parkAnsi w.cols w.grid sv =
+        (if sv.origin then modeSet 6 true else []) ++ penSgr sv.pen ++
+          csiNum2 (sv.cur.y + 1) (sv.cur.x + 1) 0x48 ++
+          pendingAnsi w.cols w.grid sv.cur (sv.cur.y + 1) sv.pen
+      from rfl,
+    feed_append, e3]
+  rw [he]
   split
-  · have hp :=
-      pendingAnsi_feed_eq w v.saved.cur (v.saved.cur.y + 1) v.saved.pen hg hr h0 h1 hwrap hins
-        (pending_row_absolute w v.saved.cur hg ho) hps hun hua
-    have hp' :
-      w.feed (pendingAnsi v.cols v.grid v.saved.cur (v.saved.cur.y + 1) v.saved.pen) =
-        if pendingAnsi v.cols v.grid v.saved.cur (v.saved.cur.y + 1) v.saved.pen = [] then w
-        else
-          { w with
-            cursor := v.saved.cur, pen := v.saved.pen } := by
-      simpa only [← hcols, ← hgrid] using hp
-    rw [feed_append, hp']
-    split
-    · exact save_feed_eq w hps hun
-    · exact
-        save_feed_eq
-          { w with
-            cursor := v.saved.cur, pen := v.saved.pen }
-          hps hun
-  · rfl
+  · exact ⟨c3, sv.pen, rfl⟩
+  · exact ⟨sv.cur, sv.pen, rfl⟩
 
 theorem mmap_id_save : MMap id (escSeq 0x37) := by
   intro w hg hu
@@ -639,8 +709,44 @@ theorem mmap_id_hts : MMap id (escSeq 0x48) := by
     step_of_esc_quiet (v := { w with pstate := .esc }) 0x48 rfl hu]
   exact ⟨rfl, hu, rfl⟩
 
-theorem mmap_id_savedAnsi (v : Vt) : MMap id (savedAnsi v) :=
-  mmap_id_streamPred.savedAnsi mmap_id_penSgr mmap_id_cup mmap_id_save v
+/-- **The DECSC slot's replay changes only the cursor, the pen and the saved slot** on a receiver
+in the paint's state: its park turns origin mode on with the saved one, and the reset after
+`ESC 7` turns it off again. -/
+theorem savedAnsi_frame (v w : Vt) (hg : Good w) (hr : Renderable w) (hcols : w.cols = v.cols)
+    (hgrid : w.grid = v.grid) (h0 : w.g0Line = false) (h1 : w.g1Line = false)
+    (hwrap : w.modes.wrap = true) (hins : w.modes.insert = false) (ho : w.modes.origin = false)
+    (htop : w.top = 0) (hbot : w.bot = w.rows - 1) (hps : w.pstate = .ground) (hun : w.u8need = 0)
+    (hua : w.u8acc = 0) :
+    ∃ c p sv,
+      w.feed (savedAnsi v) =
+        { w with
+          cursor := c, pen := p, saved := sv } := by
+  obtain ⟨c, p, hpk⟩ := parkAnsi_frame w v.saved hg hr h0 h1 hwrap hins htop hbot hps hun hua
+  generalize hM : (if v.saved.origin then { w.modes with origin := true } else w.modes) = M at hpk
+  rw [show savedAnsi v = parkAnsi w.cols w.grid v.saved ++ escSeq 0x37 ++ originOffAnsi v.saved from
+      by
+      rw [hcols, hgrid]; rfl,
+    feed_append, feed_append, hpk,
+    save_feed_eq
+      { w with
+        cursor := c, pen := p, modes := M }
+      hps hun]
+  have hmeq : ({ w.modes with origin := false } : Modes) = w.modes := by rw [← ho]
+  unfold originOffAnsi
+  cases hs : v.saved.origin
+  · rw [hs] at hM
+    simp only [Bool.false_eq_true, ↓reduceIte] at hM ⊢
+    subst hM
+    exact ⟨c, p, _, rfl⟩
+  · rw [hs] at hM
+    simp only [↓reduceIte] at hM ⊢
+    subst hM
+    rw [modeSet_feed_eq 6 false (by decide) (by decide) ?hg ?hu]
+    · simp only [Vt.setMode, Vt.moveTo, Bool.false_eq_true, ↓reduceIte, ← hps]
+      rw [hmeq]
+      exact ⟨_, _, _, rfl⟩
+    · exact hps
+    · exact hun
 
 theorem mmap_id_regionAnsi (v : Vt) : MMap id (regionAnsi v) :=
   mmap_id_streamPred.regionAnsi
@@ -876,9 +982,7 @@ theorem pending_tail_region (v u : Vt) (hg : Good u) (hrows : u.rows = v.rows) (
     (hreg : (v.top = 0 ∧ v.bot = v.rows - 1) ∨ (v.top < v.bot ∧ v.bot < v.rows)) :
     let c :=
       u.feed
-        (regionAnsi v ++ tabsAnsi v ++ savedAnsi v ++ savedPendingAnsi v ++ titleAnsi v ++
-          modesAnsi v ++
-          charsetAnsi v ++
+        (savedAnsi v ++ regionAnsi v ++ tabsAnsi v ++ titleAnsi v ++ modesAnsi v ++ charsetAnsi v ++
           penSgr v.pen ++
           cursorAnsi v)
     c.top = v.top ∧ c.bot = v.bot := by
@@ -886,12 +990,9 @@ theorem pending_tail_region (v u : Vt) (hg : Good u) (hrows : u.rows = v.rows) (
     rw [← hrows]; exact hg.rowsLe
   have htc : v.top + 1 < 65535 := by rcases hreg with h | h <;> omega
   have hbc : v.bot + 1 < 65535 := by rcases hreg with h | h <;> omega
-  have hmid :=
-    ((((smap_id_tabsAnsi v).append (smap_id_savedAnsi v)).append
-              (smap_id_savedPendingAnsi v)).append
-          (smap_id_titleAnsi v)).append
-      (smap_id_modesAnsi v)
-  have hm := ((smap_regionAnsi v htc hbc).comp hmid).congr (fun _ => rfl)
+  have hmid := ((smap_id_tabsAnsi v).append (smap_id_titleAnsi v)).append (smap_id_modesAnsi v)
+  have hm :=
+    (((smap_id_savedAnsi v).comp (smap_regionAnsi v htc hbc)).comp hmid).congr (fun _ => rfl)
   have hs :=
     (hm.comp (smap_charsetAnsi v)).comp ((smap_id_penSgr v.pen).append (smap_id_cursorAnsi v))
   have he := (hs u hp).2
@@ -930,97 +1031,79 @@ theorem pending_tail_region (v u : Vt) (hg : Good u) (hrows : u.rows = v.rows) (
     rw [stStbm_of hh.1 hh.2]
     exact ⟨rfl, rfl⟩
 
-/-- The two printable tail stages repaint existing cells. The intervening
-metadata stages may move cursors and set modes, but supply the exact geometry
-and decoder state needed by the second repaint. -/
+/-- The two printable tail stages repaint existing cells: the DECSC slot's park, first, and the
+active cursor's deferred wrap, last. The intervening metadata stages may move cursors and set
+modes, but supply the exact geometry and decoder state needed by the second repaint. -/
 theorem pending_tail_frames (v u : Vt) (hg : Good u) (hr : Renderable u) (hcols : u.cols = v.cols)
     (hrows : u.rows = v.rows) (hgrid : u.grid = v.grid) (ht : u.top = 0) (hb : u.bot = v.rows - 1)
     (h0 : u.g0Line = false) (h1 : u.g1Line = false) (hwrap : u.modes.wrap = true)
     (hins : u.modes.insert = false) (ho : u.modes.origin = false) (hp : u.pstate = .ground)
     (hn : u.u8need = 0) (ha : u.u8acc = 0) :
-    let a := u.feed (regionAnsi v ++ tabsAnsi v ++ savedAnsi v)
-    let b := a.feed (savedPendingAnsi v)
-    let c := b.feed (titleAnsi v ++ modesAnsi v ++ charsetAnsi v ++ penSgr v.pen ++ cursorAnsi v)
+    let a := u.feed (savedAnsi v)
+    let c :=
+      a.feed
+        (regionAnsi v ++ tabsAnsi v ++ titleAnsi v ++ modesAnsi v ++ charsetAnsi v ++
+          penSgr v.pen ++
+          cursorAnsi v)
     let d := c.feed (cursorPendingAnsi v)
-    b.pstate = .ground ∧
-      b.u8need = 0 ∧
-      b.grid = a.grid ∧
-      b.sb = a.sb ∧ c.pstate = .ground ∧ c.u8need = 0 ∧ d.grid = c.grid ∧ d.sb = c.sb := by
-  intro a b c d
-  have hpre := ((keeps_regionAnsi v).append (keeps_tabsAnsi v)).append (keeps_savedAnsi v)
-  obtain ⟨ap, an, ag⟩ := hpre u hp hn
-  have am :=
-    (mmap_id_append (mmap_id_append (mmap_id_regionAnsi v) (mmap_id_tabsAnsi v))
-        (mmap_id_savedAnsi v) u hp hn).2.2
-  simp only [id_eq] at am
-  have ac : a.cols = v.cols := by
-    rw [← dims_fst, dims_feed _ hg, dims_fst]
-    exact hcols
-  have aa : a.u8acc = 0 := u8Ok_feed _ (fun _ => ha) an
-  have ast :=
-    (((smap_id_tabsAnsi v).append (smap_id_savedAnsi v)) (u.feed (regionAnsi v))
-        (keeps_regionAnsi v u hp hn).1).2
-  simp only [id_eq, feed_append] at ast
-  have a0 : a.g0Line = false := by
-    dsimp only [a]
-    simp only [feed_append]
-    rw [← stick_g0, ast, stick_g0]
-    exact (regionAnsi_charsets v u hp hn).1.trans h0
-  have a1 : a.g1Line = false := by
-    dsimp only [a]
-    simp only [feed_append]
-    rw [← stick_g1, ast, stick_g1]
-    exact (regionAnsi_charsets v u hp hn).2.trans h1
-  have ae : a.feed (savedPendingAnsi v) = _ :=
-    savedPendingAnsi_feed_eq v a (Good.feed _ hg) (renderable_feed hr _) ac (ag.trans hgrid) a0 a1
-      ((congrArg Modes.wrap am).trans hwrap) ((congrArg Modes.insert am).trans hins)
-      ((congrArg Modes.origin am).trans ho) ap an aa
-  have bframe :
-    b.pstate = .ground ∧ b.u8need = 0 ∧ b.u8acc = 0 ∧ b.grid = a.grid ∧ b.sb = a.sb := by
-    by_cases hpend : v.saved.cur.pending = true
-    · by_cases hempty :
-          pendingAnsi v.cols v.grid v.saved.cur (v.saved.cur.y + 1) v.saved.pen = [] <;>
-        simpa only [b, ae, hpend, hempty, ↓reduceIte] using
-          (show a.pstate = .ground ∧ a.u8need = 0 ∧ a.u8acc = 0 ∧ a.grid = a.grid ∧ a.sb = a.sb from
-            ⟨ap, an, aa, rfl, rfl⟩)
-    · dsimp only [b]
-      rw [ae, ite_eq_right hpend]
-      exact ⟨ap, an, aa, rfl, rfl⟩
+    a.pstate = .ground ∧
+      a.u8need = 0 ∧
+      a.grid = u.grid ∧
+      a.sb = u.sb ∧ c.pstate = .ground ∧ c.u8need = 0 ∧ d.grid = c.grid ∧ d.sb = c.sb := by
+  intro a c d
+  obtain ⟨c0, p0, s0, hsa⟩ :=
+    savedAnsi_frame v u hg hr hcols hgrid h0 h1 hwrap hins ho ht (hb.trans (by rw [hrows])) hp hn ha
+  have ap : a.pstate = .ground := by
+    simp only [a, hsa]; exact hp
+  have an : a.u8need = 0 := by
+    simp only [a, hsa]; exact hn
+  have aa : a.u8acc = 0 := by
+    simp only [a, hsa]; exact ha
+  have ag : a.grid = u.grid := by simp only [a, hsa]
+  have asb : a.sb = u.sb := by simp only [a, hsa]
   have hpost :=
-    ((((keeps_titleAnsi v).append (keeps_modesAnsi v)).append (keeps_charsetAnsi v)).append
+    ((((((keeps_regionAnsi v).append (keeps_tabsAnsi v)).append (keeps_titleAnsi v)).append
+                  (keeps_modesAnsi v)).append
+              (keeps_charsetAnsi v)).append
           (keeps_penSgr v.pen)).append
       (keeps_cursorAnsi v)
-  obtain ⟨cp, cn, cg⟩ := hpost b bframe.1 bframe.2.1
-  have ca : c.u8acc = 0 := u8Ok_feed _ (fun _ => bframe.2.2.1) cn
-  have cgood : Good c := Good.feed _ (Good.feed _ (Good.feed _ hg))
-  have cren : Renderable c := renderable_feed (renderable_feed (renderable_feed hr _) _) _
+  obtain ⟨cp, cn, cg⟩ := hpost a ap an
+  have ca : c.u8acc = 0 := u8Ok_feed _ (fun _ => aa) cn
+  have cgood : Good c := Good.feed _ (Good.feed _ hg)
+  have cren : Renderable c := renderable_feed (renderable_feed hr _) _
   have cc : c.cols = v.cols := by
-    rw [← dims_fst, dims_feed _ (Good.feed _ (Good.feed _ hg)), dims_feed _ (Good.feed _ hg),
-      dims_feed _ hg, dims_fst]
+    rw [← dims_fst, dims_feed _ (Good.feed _ hg), dims_feed _ hg, dims_fst]
     exact hcols
   have cr : c.rows = v.rows := by
-    rw [← dims_snd, dims_feed _ (Good.feed _ (Good.feed _ hg)), dims_feed _ (Good.feed _ hg),
-      dims_feed _ hg, dims_snd]
+    rw [← dims_snd, dims_feed _ (Good.feed _ hg), dims_feed _ hg, dims_snd]
     exact hrows
-  have cgrid : c.grid = v.grid := cg.trans (bframe.2.2.2.1.trans (ag.trans hgrid))
+  have cgrid : c.grid = v.grid := cg.trans (ag.trans hgrid)
   have co : c.modes.origin = v.modes.origin := by
-    have htitle := keeps_titleAnsi v b bframe.1 bframe.2.1
-    have hmode := keeps_modesAnsi v (b.feed (titleAnsi v)) htitle.1 htitle.2.1
+    have hb' := ((keeps_regionAnsi v).append (keeps_tabsAnsi v)) a ap an
+    have htitle := keeps_titleAnsi v (a.feed (regionAnsi v ++ tabsAnsi v)) hb'.1 hb'.2.1
+    have hmode :=
+      keeps_modesAnsi v ((a.feed (regionAnsi v ++ tabsAnsi v)).feed (titleAnsi v)) htitle.1
+        htitle.2.1
     have hlast :=
       mmap_id_append (mmap_id_append (mmap_id_charsetAnsi v) (mmap_id_penSgr v.pen))
         (mmap_id_cursorAnsi v)
-    have he := (hlast ((b.feed (titleAnsi v)).feed (modesAnsi v)) hmode.1 hmode.2.1).2.2
-    simp only [id_eq, feed_append] at he
+    have he :=
+      (hlast (((a.feed (regionAnsi v ++ tabsAnsi v)).feed (titleAnsi v)).feed (modesAnsi v)) hmode.1
+          hmode.2.1).2.2
+    have hor :=
+      modesAnsi_origin v ((a.feed (regionAnsi v ++ tabsAnsi v)).feed (titleAnsi v)) htitle.1
+        htitle.2.1
+    simp only [id_eq, feed_append] at he hor
     dsimp only [c]
     simp only [feed_append]
     rw [he]
-    exact modesAnsi_origin v (b.feed (titleAnsi v)) htitle.1 htitle.2.1
+    exact hor
   have creg :
     (v.top = 0 ∧ v.bot = v.rows - 1) ∨ (v.top < v.bot ∧ v.bot < v.rows) →
       c.top = v.top ∧ c.bot = v.bot := by
     intro hv
     have hh := pending_tail_region v u hg hrows ht hb hp hv
-    simpa only [a, b, c, feed_append] using hh
+    simpa only [a, c, feed_append] using hh
   have ce :=
     cursorPendingAnsi_feed_eq v c cgood cren cc cgrid
       (fun hon hy => pending_row_active v c cgood cr co creg hon hy) cp cn ca
@@ -1028,6 +1111,6 @@ theorem pending_tail_frames (v u : Vt) (hg : Good u) (hr : Renderable u) (hcols 
     dsimp only [d]
     rw [ce]
     split <;> exact ⟨rfl, rfl⟩
-  exact ⟨bframe.1, bframe.2.1, bframe.2.2.2.1, bframe.2.2.2.2, cp, cn, dframe.1, dframe.2⟩
+  exact ⟨ap, an, ag, asb, cp, cn, dframe.1, dframe.2⟩
 
 end Terminal.Render

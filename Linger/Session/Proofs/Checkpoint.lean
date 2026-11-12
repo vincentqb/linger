@@ -304,10 +304,18 @@ theorem rt_modes : RT wModes rModes := by
   unfold wModes rModes
   simp only [List.append_assoc, rt_bool, rt_nat, Option.bind_eq_bind, Option.bind_some]
 
-theorem rt_saved : RT wSaved rSaved := by
+theorem rt_saved : RT wSaved (rSaved false) := by
   intro s rest
-  unfold wSaved rSaved
-  simp only [List.append_assoc, rt_cursor, rt_pen, Option.bind_eq_bind, Option.bind_some]
+  unfold wSaved wSavedV1 rSaved
+  simp only [List.append_assoc, rt_cursor, rt_pen, rt_bool, Option.bind_eq_bind, Option.bind_some,
+    Bool.false_eq_true, ↓reduceIte]
+
+/-- Format version 1's saved cursor reads back with origin mode off. -/
+theorem rt_savedV1 (s : Saved) (rest : List UInt8) :
+    rSaved true (wSavedV1 s ++ rest) = some ({ s with origin := false }, rest) := by
+  unfold wSavedV1 rSaved
+  simp only [List.append_assoc, rt_cursor, rt_pen, Option.bind_eq_bind, Option.bind_some,
+    ↓reduceIte]
 
 theorem rt_ring : RT wRing rRing := by
   intro r rest
@@ -328,17 +336,29 @@ theorem rRing_bounded (bytes : List UInt8) (limit : Nat) :
       obtain ⟨rows, tail⟩ := pair
       by_cases h : rows.length ≤ limit <;> simp [Option.filter_some, Ring.size, h]
 
-theorem rt_alt : RT wAlt rAlt := by
+theorem rt_alt : RT (fun a => wAlt a) (fun l => rAlt l) := by
   unfold wAlt rAlt
   apply rt_opt
   intro x rest
-  obtain ⟨g, c, p⟩ := x
-  simp only [List.append_assoc, rt_list rt_row, rt_cursor, rt_pen, Option.bind_eq_bind,
-    Option.bind_some]
+  obtain ⟨g, sv⟩ := x
+  simp only [Bool.false_eq_true, ↓reduceIte, List.append_assoc, rt_list rt_row, rt_saved,
+    Option.bind_eq_bind, Option.bind_some]
 
-theorem rAlt_bounded (bytes : List UInt8) (cols rows : Nat) :
-    rAlt bytes (some cols) (some rows) =
-      (rAlt bytes).filter
+/-- Format version 1's stash reads back with its origin mode off. -/
+theorem rt_altV1 (a : Option (Array Row × Saved)) (rest : List UInt8) :
+    rAlt (wAlt a true ++ rest) none none true =
+      some (a.map (fun (g, sv) => (g, { sv with origin := false })), rest) := by
+  unfold wAlt rAlt
+  cases a with
+  | none => rfl
+  | some x =>
+    obtain ⟨g, sv⟩ := x
+    simp only [wOpt, rOpt, ↓reduceIte, List.cons_append, List.append_assoc, rt_list rt_row,
+      rt_savedV1, Option.bind_eq_bind, Option.bind_some, Option.map_some, Array.toArray_toList]
+
+theorem rAlt_bounded (bytes : List UInt8) (cols rows : Nat) (legacy : Bool) :
+    rAlt bytes (some cols) (some rows) legacy =
+      (rAlt bytes none none legacy).filter
         (fun out =>
           out.1.all
             (fun screen =>
@@ -355,14 +375,11 @@ theorem rAlt_bounded (bytes : List UInt8) (cols rows : Nat) :
     cases h : grid.all (fun row => row.size ≤ cols) && grid.length ≤ rows <;>
       simp only [Option.filter_some, h, Bool.false_eq_true, ite_false, ite_true,
         Option.bind_eq_bind, Option.bind_none, Option.bind_some] <;>
-      cases hc : rCursor rest <;>
+      cases hs : rSaved legacy rest <;>
       simp only [Option.bind_none, Option.bind_some, Option.filter_none]
     all_goals
       rename_i pair
-      obtain ⟨cursor, tail⟩ := pair
-      cases hp : rPen tail <;> simp only [Option.bind_none, Option.bind_some, Option.filter_none]
-      rename_i pair
-      obtain ⟨pen, tail⟩ := pair
+      obtain ⟨sv, tail⟩ := pair
       simp only [Option.filter_some, List.size_toArray, h, Bool.false_eq_true, ite_false, ite_true]
 
 /-- Shape validation already entails the cheaper pre-expansion screen budgets. -/
@@ -381,8 +398,8 @@ theorem gridOk_bounded {cols rows : Nat} {grid : Array Row} (h : GridOk cols row
 guards. In particular, no bound on history row widths is inferred here. -/
 theorem ofDecoded_bounds {cols rows : Nat} {grid : Array Row} {cursor : Cursor} {pen : Pen}
     {modes : Modes} {top bot : Nat} {tabs : Array Bool} {sb : Ring}
-    {alt : Option (Array Row × Cursor × Pen)} {saved : Saved} {title : String}
-    {g0 g1 shift bell : Bool} {v : Vt}
+    {alt : Option (Array Row × Saved)} {saved : Saved} {title : String} {g0 g1 shift bell : Bool}
+    {v : Vt}
     (h :
       Vt.ofDecoded cols rows grid cursor pen modes top bot tabs sb alt saved title g0 g1 shift
           bell =
@@ -399,7 +416,7 @@ theorem ofDecoded_bounds {cols rows : Nat} {grid : Array Row} {cursor : Cursor} 
   · rename_i hok
     simp only [Bool.and_eq_true] at hok
     obtain ⟨hgood, hshape⟩ := hok
-    obtain ⟨hc1, hc2, hr1, hr2, -, -, -, -, -, -, hsb, -⟩ := decodedOk_iff.mp hgood
+    obtain ⟨hc1, hc2, hr1, hr2, -, -, -, -, -, -, hsb, -, -, -, -, -⟩ := decodedOk_iff.mp hgood
     obtain ⟨hgrid, htabs, halt⟩ := decodedRenderable_iff.mp hshape
     refine ⟨?_, gridOk_bounded hgrid, Nat.le_of_eq htabs, hsb, ?_⟩
     · simp [clampDim, Nat.max_eq_left hc1, Nat.min_eq_left hc2, Nat.max_eq_left hr1,
@@ -407,15 +424,15 @@ theorem ofDecoded_bounds {cols rows : Nat} {grid : Array Row} {cursor : Cursor} 
     · cases alt with
       | none => rfl
       | some screen =>
-        obtain ⟨g, c, p⟩ := screen
-        exact gridOk_bounded (halt g c p rfl)
+        obtain ⟨g, sv⟩ := screen
+        exact gridOk_bounded (halt g sv rfl)
   · contradiction
 
 /-- Moving the existing shape and count rejection before allocation preserves
 the result on every byte string, including accepted noncanonical encodings.
 The right-hand side is the original unrestricted reader chain. -/
-theorem rVt_unbounded (bytes : List UInt8) :
-    rVt bytes =
+theorem rVt_unbounded (legacy : Bool) (bytes : List UInt8) :
+    rVt legacy bytes =
       (do
         let (cols, l) ← rNat bytes
         let (rows, l) ← rNat l
@@ -427,8 +444,8 @@ theorem rVt_unbounded (bytes : List UInt8) :
         let (bot, l) ← rNat l
         let (tabs, l) ← rList rBool l
         let (sb, l) ← rRing l
-        let (alt, l) ← rAlt l
-        let (saved, l) ← rSaved l
+        let (alt, l) ← rAlt l none none legacy
+        let (saved, l) ← rSaved legacy l
         let (title, l) ← rStr l
         let (g0, l) ← rBool l
         let (g1, l) ← rBool l
@@ -479,14 +496,29 @@ constructor's decision.** The earlier resource guards preserve that decision by
 Both of the claims above it read off this one: `rt_vt` by `ofDecoded_of_good`, and
 `load_save_none_of_cols_zero` by `ofDecoded_none_of_cols_zero`. -/
 theorem rVt_fields (v : Vt) (rest : List UInt8) :
-    rVt (wVt v ++ rest) =
+    rVt false (wVt v ++ rest) =
       (Vt.ofDecoded v.cols v.rows v.grid v.cursor v.pen v.modes v.top v.bot v.tabs v.sb v.altGrid
             v.saved v.title v.g0Line v.g1Line v.shiftOut v.bell).map
         (fun w => (w, rest)) := by
   rw [rVt_unbounded]
   unfold wVt
-  simp only [List.append_assoc, rt_nat, rt_list rt_row, rt_cursor, rt_pen, rt_modes,
-    rt_list rt_bool, rt_ring, rt_alt, rt_saved, rt_str, rt_bool, Option.bind_eq_bind,
+  simp only [Bool.false_eq_true, ↓reduceIte, List.append_assoc, rt_nat, rt_list rt_row, rt_cursor,
+    rt_pen, rt_modes, rt_list rt_bool, rt_ring, rt_alt, rt_saved, rt_str, rt_bool,
+    Option.bind_eq_bind, Option.bind_some, Array.toArray_toList]
+  exact Option.map_eq_bind.symm
+
+/-- **A format version 1 record decodes to the same fields with both saved origin modes off**:
+the one difference between the two layouts. -/
+theorem rVt_fieldsV1 (v : Vt) (rest : List UInt8) :
+    rVt true (wVt v true ++ rest) =
+      (Vt.ofDecoded v.cols v.rows v.grid v.cursor v.pen v.modes v.top v.bot v.tabs v.sb
+            (v.altGrid.map (fun (g, sv) => (g, { sv with origin := false })))
+            { v.saved with origin := false } v.title v.g0Line v.g1Line v.shiftOut v.bell).map
+        (fun w => (w, rest)) := by
+  rw [rVt_unbounded]
+  unfold wVt
+  simp only [↓reduceIte, List.append_assoc, rt_nat, rt_list rt_row, rt_cursor, rt_pen, rt_modes,
+    rt_list rt_bool, rt_ring, rt_altV1, rt_savedV1, rt_str, rt_bool, Option.bind_eq_bind,
     Option.bind_some, Array.toArray_toList]
   exact Option.map_eq_bind.symm
 
@@ -506,14 +538,81 @@ answer to "is this a weakening" — the unconditional statement was true of a sc
 session satisfies all three (`good_of_liveReachable`, `renderable_of_liveReachable`,
 `tabsOk_of_liveReachable`), so `load_save_live` below is the honest reading of the cost. -/
 theorem rt_vt (v : Vt) (h : Good v) (hren : Renderable v) (htabs : TabsOk v) (rest : List UInt8) :
-    rVt (wVt v ++ rest) = some (v.quiesce, rest) := by
+    rVt false (wVt v ++ rest) = some (v.quiesce, rest) := by
   rw [rVt_fields, ofDecoded_of_good h hren htabs, Option.map_some]
+
+/-- What a format version 1 record of a state restores: the state with neither saved cursor
+keeping origin mode, which version 1 did not record. -/
+theorem good_withoutSavedOrigin {v : Vt} (h : Good v) :
+    Good
+      { v with
+        saved := { v.saved with origin := false },
+        altGrid := v.altGrid.map (fun (g, sv) => (g, { sv with origin := false })) } := by
+  refine
+    { h with
+      altCur := ?_, altPendX := ?_ }
+  · intro g sv heq
+    cases hv : v.altGrid with
+    | none =>
+      rw [hv] at heq; exact nomatch heq
+    | some x =>
+      obtain ⟨g0, s0⟩ := x
+      rw [hv] at heq
+      simp only [Option.map_some, Option.some.injEq, Prod.mk.injEq] at heq
+      obtain ⟨-, rfl⟩ := heq
+      exact h.altCur g0 s0 hv
+  · intro g sv heq
+    cases hv : v.altGrid with
+    | none =>
+      rw [hv] at heq; exact nomatch heq
+    | some x =>
+      obtain ⟨g0, s0⟩ := x
+      rw [hv] at heq
+      simp only [Option.map_some, Option.some.injEq, Prod.mk.injEq] at heq
+      obtain ⟨-, rfl⟩ := heq
+      exact h.altPendX g0 s0 hv
+
+theorem renderable_withoutSavedOrigin {v : Vt} (h : Renderable v) :
+    Renderable
+      { v with
+        saved := { v.saved with origin := false },
+        altGrid := v.altGrid.map (fun (g, sv) => (g, { sv with origin := false })) } := by
+  refine ⟨h.main, fun g sv heq => ?_⟩
+  cases hv : v.altGrid with
+  | none =>
+    rw [hv] at heq; exact nomatch heq
+  | some x =>
+    obtain ⟨g0, s0⟩ := x
+    rw [hv] at heq
+    simp only [Option.map_some, Option.some.injEq, Prod.mk.injEq] at heq
+    obtain ⟨rfl, -⟩ := heq
+    exact h.alt g0 s0 hv
+
+/-- The format version 1 round trip, for any state a live session can hold: the state with its
+parser quiesced and both saved origin modes off. -/
+theorem rVtV1_live (v : Vt) (h : LiveReachableVt v) (rest : List UInt8) :
+    rVt true (wVt v true ++ rest) =
+      some
+        ({ v.quiesce with
+            saved := { v.saved with origin := false },
+            altGrid := v.altGrid.map (fun (g, sv) => (g, { sv with origin := false })) },
+          rest) := by
+  rw [rVt_fieldsV1,
+    ofDecoded_of_good (v :=
+      { v with
+        saved := { v.saved with origin := false },
+        altGrid := v.altGrid.map (fun (g, sv) => (g, { sv with origin := false })) })
+      (good_withoutSavedOrigin (good_of_liveReachable h))
+      (renderable_withoutSavedOrigin (renderable_of_liveReachable h))
+      (tabsOk_of_liveReachable (v := v) h),
+    Option.map_some]
+  rfl
 
 /-- Every accepted byte string reaches the checked constructor and starts with
 an empty parser. The reader chain is destructured once here; safety, shape and
 reachability below are projections of this acceptance result. -/
-theorem rVt_accepted {l : List UInt8} {v : Vt} {rest : List UInt8} (h : rVt l = some (v, rest)) :
-    LiveReachableVt v ∧ v.quiesce = v := by
+theorem rVt_accepted {legacy : Bool} {l : List UInt8} {v : Vt} {rest : List UInt8}
+    (h : rVt legacy l = some (v, rest)) : LiveReachableVt v ∧ v.quiesce = v := by
   simp only [rVt, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
   obtain ⟨_, -, _, -, h⟩ := h
   split at h
@@ -540,8 +639,8 @@ attacker-controlled input the `Vt` seal could not reach. If `rVt` yields a `Vt`,
 This is the theorem the step is for, and it is the one that makes every
 `Good`-hypothesised claim in `packages/terminal/Terminal/Proofs/Render/*` and `Linger/Session/Proofs/Resume.lean` reachable
 from the resume path rather than merely stated. -/
-theorem rVt_good {l : List UInt8} {v : Vt} {rest : List UInt8} (h : rVt l = some (v, rest)) :
-    Good v := good_of_liveReachable (rVt_accepted h).1
+theorem rVt_good {legacy : Bool} {l : List UInt8} {v : Vt} {rest : List UInt8}
+    (h : rVt legacy l = some (v, rest)) : Good v := good_of_liveReachable (rVt_accepted h).1
 
 /-- **…and nothing the emitter cannot repaint, either — finding R2.** The other half of
 "nothing bad is ever decoded", from an arbitrary `List UInt8`: if `rVt` yields a `Vt`, that
@@ -553,8 +652,8 @@ the same shape, and the tab ruler is the width of the screen.
 observable: a real checkpoint with its `rows` byte flipped decoded to a screen whose replay
 is not the screen it came from. Both properties follow from the accepted state in
 `rVt_accepted`, and are projected by `load_renderable` and `load_tabsOk` below. -/
-theorem rVt_shape {l : List UInt8} {v : Vt} {rest : List UInt8} (h : rVt l = some (v, rest)) :
-    Renderable v ∧ TabsOk v := by
+theorem rVt_shape {legacy : Bool} {l : List UInt8} {v : Vt} {rest : List UInt8}
+    (h : rVt legacy l = some (v, rest)) : Renderable v ∧ TabsOk v := by
   have hlive := (rVt_accepted h).1
   exact ⟨renderable_of_liveReachable hlive, tabsOk_of_liveReachable hlive⟩
 
@@ -572,8 +671,8 @@ it to the resume path, where `Session.liveVt_boot_of_load` closes the gap in one
 The rung is sound only because the *door* decides all four components — R2 is what made
 this provable, and a rung premised on `Good v` instead was measured unsound (§LiveReachable
 in `packages/terminal/Terminal/Proofs/Vt.lean`). -/
-theorem rVt_live {l : List UInt8} {v : Vt} {rest : List UInt8} (h : rVt l = some (v, rest)) :
-    LiveReachableVt v := (rVt_accepted h).1
+theorem rVt_live {legacy : Bool} {l : List UInt8} {v : Vt} {rest : List UInt8}
+    (h : rVt legacy l = some (v, rest)) : LiveReachableVt v := (rVt_accepted h).1
 
 /-! ### The format tag, as a named stage
 
@@ -581,7 +680,10 @@ theorem rVt_live {l : List UInt8} {v : Vt} {rest : List UInt8} (h : rVt l = some
 `load_save_none_of_cols_zero` go through it instead of unfolding the decision into the
 parser chain. -/
 
-theorem stripMagic_magic (p : List UInt8) : stripMagic (magic ++ p) = some p := rfl
+theorem stripMagic_magic (p : List UInt8) : stripMagic (magic ++ p) = some (false, p) := rfl
+
+/-- Format version 1's tag is the legacy one. -/
+theorem stripMagic_legacy (p : List UInt8) : stripMagic (legacyMagic ++ p) = some (true, p) := rfl
 
 /-- Acceptance at the file boundary preserves the checked state and parser
 reset established by `rVt`. This applies to any bytes, including encodings that
@@ -589,7 +691,7 @@ were not produced by `save`. -/
 theorem load_accepted {l : List UInt8} {c : Ckpt Vt.Vt} (h : load l = some c) :
     LiveReachableVt c.vt ∧ c.vt.quiesce = c.vt := by
   simp only [load, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
-  obtain ⟨_, -, ⟨vt, _⟩, hvt, _, -, _, -, h⟩ := h
+  obtain ⟨⟨_, _⟩, -, ⟨vt, _⟩, hvt, _, -, _, -, h⟩ := h
   split at h
   · simp only [Option.some.injEq] at h
     subst h
@@ -683,6 +785,27 @@ three lemma names in a docstring and a reader taking them on trust. -/
 theorem load_save_live (c : Ckpt Vt.Vt) (h : LiveReachableVt c.vt) :
     load (save c) = some { c with vt := c.vt.quiesce } :=
   load_save c (good_of_liveReachable h) (renderable_of_liveReachable h) (tabsOk_of_liveReachable h)
+
+/-- **A format version 1 checkpoint still loads.** The record version 1 wrote of a state a live
+session can hold loads to that state with its parser quiesced and both saved origin modes off,
+the DECSC slot's and the stashed screen's, which version 1 did not record. -/
+theorem load_saveV1_live (c : Ckpt Vt.Vt) (h : LiveReachableVt c.vt) :
+    load (saveV1 c) =
+      some
+        { c with
+          vt :=
+            { c.vt.quiesce with
+              saved := { c.vt.saved with origin := false },
+              altGrid :=
+                c.vt.altGrid.map (fun (g, sv) => (g, { sv with origin := false })) } } := by
+  rw [show saveV1 c = saveV1 c ++ [] from (List.append_nil _).symm]
+  unfold load saveV1
+  simp only [List.append_assoc]
+  rw [stripMagic_legacy]
+  simp only [Option.bind_eq_bind, Option.bind_some]
+  rw [rVtV1_live c.vt h]
+  simp only [rt_str, rt_list (rt_pair rt_str rt_str), Option.bind_some]
+  rfl
 
 /-- Loading, saving and loading an accepted checkpoint again is exact, including
 cwd and labels. Its parser is already quiescent, so subsequent checkpoints do not
@@ -791,7 +914,7 @@ theorem rleB_appends {α : Type} [DecidableEq α] {f : ByteArray → α → Byte
 
 theorem rowB_appends : Appends rowB wRow := fun acc r => rleB_appends cellB_appends acc r.toList
 
-/-- **The byte-array writer is `save`**: the same `"LNGR"` v1 record, byte for byte. -/
+/-- **The byte-array writer is `save`**: the same record, byte for byte. -/
 theorem saveBytes_eq (c : Ckpt Vt.Vt) : saveBytes c = ⟨(save c).toArray⟩ := by
   have h : (saveBytes c).data.toList = save c := by
     unfold saveBytes save wVt wRing wAlt
@@ -799,7 +922,7 @@ theorem saveBytes_eq (c : Ckpt Vt.Vt) : saveBytes c = ⟨(save c).toArray⟩ := 
     cases c.vt.altGrid with
     | none => simp [listB_appends rowB_appends, wOpt]
     | some screen =>
-      obtain ⟨g, cur, pen⟩ := screen
+      obtain ⟨g, sv⟩ := screen
       simp [listB_appends rowB_appends, wOpt]
   apply ByteArray.ext
   simp [← Array.toList_inj, h]
@@ -985,10 +1108,12 @@ theorem rModesB_mirrors : Mirrors rModesB rModes := by
   simp only [rModesB, rModes, Option.bind_eq_bind, ← rNatB_mirrors, ← rBoolB_mirrors,
     Option.bind_map, Option.map_bind, Function.comp_def, Option.map_some]
 
-theorem rSavedB_mirrors : Mirrors rSavedB rSaved := by
+theorem rSavedB_mirrors (legacy : Bool) : Mirrors (rSavedB legacy) (rSaved legacy) := by
   intro b i
-  simp only [rSavedB, rSaved, Option.bind_eq_bind, ← rCursorB_mirrors, ← rPenB_mirrors,
-    Option.bind_map, Option.map_bind, Function.comp_def, Option.map_some]
+  cases legacy <;>
+    simp only [rSavedB, rSaved, Bool.false_eq_true, ↓reduceIte, Option.bind_eq_bind,
+      ← rCursorB_mirrors, ← rPenB_mirrors, ← rBoolB_mirrors, Option.bind_map, Option.map_bind,
+      Function.comp_def, Option.map_some]
 
 theorem rRingB_mirrors (maxRows : Option Nat) :
     Mirrors (fun b i => rRingB b i maxRows) (fun l => rRing l maxRows) := by
@@ -997,15 +1122,16 @@ theorem rRingB_mirrors (maxRows : Option Nat) :
     ← rListB_mirrors (rRowB_mirrors none), Option.bind_map, Option.map_bind, Function.comp_def,
     Option.map_some]
 
-theorem rAltB_mirrors (maxCols maxRows : Option Nat) :
-    Mirrors (fun b i => rAltB b i maxCols maxRows) (fun l => rAlt l maxCols maxRows) := by
+theorem rAltB_mirrors (maxCols maxRows : Option Nat) (legacy : Bool) :
+    Mirrors (fun b i => rAltB b i maxCols maxRows legacy)
+      (fun l => rAlt l maxCols maxRows legacy) := by
   intro b i
   apply rOptB_mirrors
   intro b i
-  simp only [← rListB_mirrors (rRowB_mirrors maxCols), ← rCursorB_mirrors, ← rPenB_mirrors,
+  simp only [← rListB_mirrors (rRowB_mirrors maxCols), ← rSavedB_mirrors legacy,
     Option.bind_eq_bind, Option.bind_map, Option.map_bind, Function.comp_def, Option.map_some]
 
-theorem rVtB_mirrors : Mirrors rVtB rVt := by
+theorem rVtB_mirrors (legacy : Bool) : Mirrors (rVtB legacy) (rVt legacy) := by
   intro b i
   simp only [rVtB, rVt, Option.bind_eq_bind, ← rNatB_mirrors, Option.bind_map, Option.map_bind,
     Function.comp_def]
@@ -1017,8 +1143,8 @@ theorem rVtB_mirrors : Mirrors rVtB rVt := by
   · rfl
   · simp only [← rListB_mirrors (rRowB_mirrors (some c.1)), ← rCursorB_mirrors, ← rPenB_mirrors,
       ← rModesB_mirrors, ← rNatB_mirrors, ← rListB_mirrors rBoolB_mirrors, ← rRingB_mirrors,
-      ← rAltB_mirrors, ← rSavedB_mirrors, ← rStrB_mirrors, ← rBoolB_mirrors, Option.bind_map,
-      Option.map_bind, Function.comp_def, Option.map_some]
+      ← rAltB_mirrors _ _ legacy, ← rSavedB_mirrors legacy, ← rStrB_mirrors, ← rBoolB_mirrors,
+      Option.bind_map, Option.map_bind, Function.comp_def, Option.map_some]
 
 theorem prefixB_mirrors (p : List UInt8) (b : ByteArray) (i : Nat) :
     (prefixB p b i).map (b.data.toList.drop ·) = p.isPrefixOf? (b.data.toList.drop i) := by
@@ -1030,13 +1156,22 @@ theorem prefixB_mirrors (p : List UInt8) (b : ByteArray) (i : Nat) :
       by_cases hx : x = b[i] <;> simp [prefixB, h, hx, List.isPrefixOf?, ih]
     · simp [prefixB, h, drop_ge h, List.isPrefixOf?]
 
+/-- The tag check on a byte array is `stripMagic` on its bytes, with the rest given as the
+position where it starts. -/
+theorem stripMagicB_mirrors (b : ByteArray) :
+    (stripMagicB b).map (fun p => (p.1, b.data.toList.drop p.2)) = stripMagic b.data.toList := by
+  have hp := prefixB_mirrors magic b 0
+  have hl := prefixB_mirrors legacyMagic b 0
+  rw [List.drop_zero] at hp hl
+  unfold stripMagicB stripMagic
+  rw [← hp, ← hl]
+  cases prefixB magic b 0 <;> cases prefixB legacyMagic b 0 <;> rfl
+
 /-- **The runtime decoder is `load`**: on any byte array, `loadBytes` returns what `load`
 returns on the array's bytes, so `load_good`, `load_live`, `load_save_live` and every other
 theorem about `load` holds of what the runtime decodes. -/
 theorem loadBytes_eq (b : ByteArray) : loadBytes b = load b.data.toList := by
-  have hp := prefixB_mirrors magic b 0
-  rw [List.drop_zero] at hp
-  simp only [loadBytes, load, stripMagic, Option.bind_eq_bind, ← hp, Option.bind_map,
+  simp only [loadBytes, load, ← stripMagicB_mirrors, Option.bind_eq_bind, Option.bind_map,
     Function.comp_def, ← rVtB_mirrors, ← rStrB_mirrors,
     ← rListB_mirrors (rPairB_mirrors rStrB_mirrors rStrB_mirrors), List.isEmpty_iff,
     List.drop_eq_nil_iff, Array.length_toList, ByteArray.size_data]

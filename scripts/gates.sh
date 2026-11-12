@@ -1441,7 +1441,7 @@ for bound in \
   'let [(]rows, j[)] ← rListB [(]fun bytes j => rRowB bytes j maxCols[)] bytes j maxRows' \
   'let [(]tabs, i[)] ← rListB rBoolB b i [(]some cols[)]' \
   'let [(]sb, i[)] ← rRingB b i [(]some sbCap[)]' \
-  'let [(]altGrid, i[)] ← rAltB b i [(]some cols[)] [(]some rows[)]'; do
+  'let [(]altGrid, i[)] ← rAltB b i [(]some cols[)] [(]some rows[)] legacy'; do
   code_grep "^[[:space:]]+$bound\$" 'Linger/Session/Checkpoint.lean' > /dev/null \
     || fail "a byte-array checkpoint reader stopped forwarding its bound: $bound"
 done
@@ -1649,8 +1649,8 @@ emitter_claims="$(awk '
         if (name ~ /^[A-Za-z][A-Za-z0-9_.]*$/) sub(/.*[.]/, "", name)
         print "Verify/Coverage.lean:emitters:" name } }
     print "#rows " rows }' Verify/Coverage.lean)"
-[ "$(printf '%s\n' "$emitter_claims" | sed -n 's/^#rows //p')" = 31 ] \
-  || fail "Verify/Coverage.lean's emitter table no longer reads as its 31 rows"
+[ "$(printf '%s\n' "$emitter_claims" | sed -n 's/^#rows //p')" = 30 ] \
+  || fail "Verify/Coverage.lean's emitter table no longer reads as its 30 rows"
 { printf '%s\n' "$thm_decls" '#cites'; cite_scan; printf '%s\n' "$emitter_claims" | grep -v '^#rows '; } \
 | CITE_ABSENT="$cite_absent" CITE_FOREIGN="$cite_foreign" awk -F: '
   BEGIN { n = split(ENVIRON["CITE_ABSENT"], L, " "); for (i = 1; i <= n; i++) absent[L[i]] = 1

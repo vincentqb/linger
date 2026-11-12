@@ -545,6 +545,19 @@ def pendingAnsi (cols : Nat) (grid : Array Row) (cur : Cursor) (row : Nat) (pen 
     csiNum2 row (x + 1) 0x48 ++ penSgr cell.pen ++ cellText cell ++ penSgr pen
   else []
 
+/-- **Establish a saved cursor**: origin mode as saved, the pen, the position, and deferred wrap
+by repainting the margin cell (`pendingAnsi`). The receiver's scroll region must be the whole
+screen, which makes the address absolute under either origin mode, and its autowrap on, as
+`pendingAnsi` requires. What follows saves the result: `ESC 7` for the DECSC slot, `?1049h` for
+the stash, each then turning origin mode back off. -/
+def parkAnsi (cols : Nat) (grid : Array Row) (s : Saved) : Bytes :=
+  (if s.origin then modeSet 6 true else []) ++ penSgr s.pen ++
+    csiNum2 (s.cur.y + 1) (s.cur.x + 1) 0x48 ++
+    pendingAnsi cols grid s.cur (s.cur.y + 1) s.pen
+
+/-- Origin mode off again, after a park that set it. -/
+def originOffAnsi (s : Saved) : Bytes := if s.origin then modeSet 6 false else []
+
 /-- The history, then the two screens: in alt, paint main, park the stashed
 cursor/pen, switch, then paint alt (§Replay fix 7).
 
@@ -564,10 +577,8 @@ private def screensAnsi (v : Vt) : Bytes :=
   scrollbackAnsi v ++
     match v.altGrid with
     | none => gridAnsi v.grid
-    | some (mainGrid, mcur, mpen) =>
-      gridAnsi mainGrid ++ penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48 ++
-        pendingAnsi v.cols mainGrid mcur (mcur.y + 1) mpen ++
-        csiPriv 1049 0x68 ++
+    | some (mainGrid, ms) =>
+      gridAnsi mainGrid ++ parkAnsi v.cols mainGrid ms ++ csiPriv 1049 0x68 ++ originOffAnsi ms ++
         gridAnsi v.grid
 
 /-- Scroll region, when it is not the whole screen. -/
@@ -593,22 +604,16 @@ Being unconditional costs one `CSI 3 g` plus a `CHA`+`HTS` pair per stop on ever
 attach — nine stops and ~70 bytes for an 80-column default ruler. The alternative
 is a field that is only right when the client happens to be pristine, which is the
 one thing `specs/archive/restore-conformance.md` says a client never is. The `CHA`s move
-the cursor, which is safe here because `savedAnsi` and `cursorAnsi` both address it
-absolutely afterwards. -/
+the cursor, which is safe here because `cursorAnsi` addresses it absolutely afterwards. -/
 def tabsAnsi (v : Vt) : Bytes :=
   csiNum 3 0x67 ++
     (((List.range v.cols).filter (fun i => v.tabs.getD i false)).flatMap
       (fun i => csiNum (i + 1) 0x47 ++ escSeq 0x48))
 
-/-- Replay the DECSC slot (§Replay fix 3). -/
+/-- Replay the DECSC slot (§Replay fix 3): park it and save it, cursor, wrap-pending flag, pen
+and origin mode, then leave origin mode off. -/
 def savedAnsi (v : Vt) : Bytes :=
-  penSgr v.saved.pen ++ csiNum2 (v.saved.cur.y + 1) (v.saved.cur.x + 1) 0x48 ++ escSeq 0x37
-
-/-- DECSC copies the pending flag as well as the position and pen. -/
-def savedPendingAnsi (v : Vt) : Bytes :=
-  if v.saved.cur.pending then
-    pendingAnsi v.cols v.grid v.saved.cur (v.saved.cur.y + 1) v.saved.pen ++ escSeq 0x37
-  else []
+  parkAnsi v.cols v.grid v.saved ++ escSeq 0x37 ++ originOffAnsi v.saved
 
 /-- Charset designations and the shift state (§Replay fix 2). -/
 def charsetAnsi (v : Vt) : Bytes :=
@@ -661,8 +666,9 @@ the §Replay constraint (specs/archive/bigger-theorems.md):
    what stashes them, so painting first and switching after would stash
    wherever the main repaint happened to end (fix 7);
 3. the saved-cursor replay comes *after* the alt switch (which
-   clobbers `saved`) and *before* DECOM is set (its address is
-   absolute) (fix 3);
+   clobbers `saved`) and *before* the scroll region (under the saved
+   origin mode its address is relative to the region, still the whole
+   screen there) (fix 3);
 4. the final cursor address is region-relative iff DECOM is on (fix 5,
    in `cursorAnsi`).
 
@@ -679,10 +685,9 @@ private def restoreBody (v : Vt) : Bytes :=
     ++ csiNum 0 0x6D ++
     csiNum 2 0x4A -- clean slate
     ++ screensAnsi v ++
+    savedAnsi v ++
     regionAnsi v ++
     tabsAnsi v ++
-    savedAnsi v ++
-    savedPendingAnsi v ++
     titleAnsi v ++
     modesAnsi v ++
     charsetAnsi v ++

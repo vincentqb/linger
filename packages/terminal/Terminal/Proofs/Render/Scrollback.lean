@@ -363,6 +363,10 @@ theorem sb_enterAlt (v : Vt) (s : Bool) : (v.enterAlt s).sb = v.sb := by rw [fra
 
 theorem sb_leaveAlt (v : Vt) (s : Bool) : (v.leaveAlt s).sb = v.sb := by rw [frame_leaveAlt]
 
+theorem sb_saveCursor (v : Vt) : v.saveCursor.sb = v.sb := rfl
+
+theorem sb_restoreCursor (v : Vt) : v.restoreCursor.sb = v.sb := rfl
+
 /-- **A mode set never touches the ring**, for any mode number — including `47`/`1047`/
 `1049`, which swap the *grid*: `enterAlt`/`leaveAlt` stash and restore cells, never
 history, which is why a session's scrollback survives a full-screen program. -/
@@ -370,7 +374,7 @@ theorem sb_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) :
     (v.setMode priv n on).sb = v.sb := by
   unfold Vt.setMode
   repeat' split
-  all_goals try simp only [sb_moveTo, sb_enterAlt, sb_leaveAlt]
+  all_goals try simp only [sb_moveTo, sb_enterAlt, sb_leaveAlt, sb_saveCursor, sb_restoreCursor]
 
 theorem sb_setModes (v : Vt) (priv : Bool) (ps : List (Nat × Bool)) (on : Bool) :
     (v.setModes priv ps on).sb = v.sb :=
@@ -411,7 +415,8 @@ theorem fixes_sb_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x3E ∨
   rw [show escSeq b = [0x1B] ++ [b] from rfl]
   rw [show ∀ (w : Vt), w.feed ([0x1B] ++ [b]) = (w.step 0x1B).step b from fun _ => rfl]
   rw [esc_step_eq hg hu, step_of_esc_quiet b rfl (by simpa using hu)]
-  rcases hb with h | h | h | h | h <;> subst h <;> show _ ∧ _ ∧ _ <;> unfold Vt.stepEsc <;>
+  rcases hb with h | h | h | h | h <;> subst h <;> show _ ∧ _ ∧ _ <;>
+    unfold Vt.stepEsc Vt.saveCursor <;>
     exact ⟨rfl, by simpa using hu, rfl⟩
 
 theorem fixes_sb_escCharset (i x : UInt8) (hi : i = 0x28 ∨ i = 0x29) (hlo : 0x30 ≤ x)
@@ -439,11 +444,6 @@ theorem fixes_sb_modesAnsi (v : Vt) : Fixes (fun v : Vt => v.sb) (modesAnsi v) :
   (Fixes.streamPred _).modesAnsi v (fun n on _ => fixes_sb_modeSet n on)
     (fun _ => fixes_sb_modeSet _ _) (fixes_sb_modeSet 6 _) (fixes_sb_escSeq 0x3D (by decide))
     (fixes_sb_escSeq 0x3E (by decide)) fixes_sb_irm
-
-theorem fixes_sb_savedAnsi (v : Vt) : Fixes (fun v : Vt => v.sb) (savedAnsi v) :=
-  (Fixes.streamPred _).savedAnsi (fixes_penSgr psBlind_sb · sb_csiDispatch_sgr)
-    (fun _ _ => fixes_csiNum2 psBlind_sb _ _ 0x48 (by decide) (by decide) sb_csiDispatch_cup)
-    (fixes_sb_escSeq 0x37 (by decide)) v
 
 theorem fixes_sb_titleAnsi (v : Vt) : Fixes (fun v : Vt => v.sb) (titleAnsi v) := by
   unfold titleAnsi
@@ -1403,22 +1403,22 @@ theorem restore_sb_of_paint (v w : Vt) (hgood : Good w) (hren : Renderable w)
   have hf :=
     pending_tail_frames v u (Good.feed _ hgood) (renderable_feed hren _) uc ur hgrid ut ub u0 u1
       hwrap hins uo hps hn ua
-  let a := u.feed (regionAnsi v ++ tabsAnsi v ++ savedAnsi v)
-  let b := a.feed (savedPendingAnsi v)
-  let c := b.feed (titleAnsi v ++ modesAnsi v ++ charsetAnsi v ++ penSgr v.pen ++ cursorAnsi v)
-  have ha :=
-    (((fixes_sb_regionAnsi v).append (fixes_sb_tabsAnsi v)).append (fixes_sb_savedAnsi v)) u hps hn
+  let a := u.feed (savedAnsi v)
+  let c :=
+    a.feed
+      (regionAnsi v ++ tabsAnsi v ++ titleAnsi v ++ modesAnsi v ++ charsetAnsi v ++ penSgr v.pen ++
+        cursorAnsi v)
   have hc :=
-    (((((fixes_sb_titleAnsi v).append (fixes_sb_modesAnsi v)).append
-                (fixes_sb_charsetAnsi v)).append
-            (fixes_penSgr psBlind_sb v.pen sb_csiDispatch_sgr)).append
-        (fixes_sb_cursorAnsi v))
-      b hf.1 hf.2.1
+    ((((((fixes_sb_regionAnsi v).append (fixes_sb_tabsAnsi v)).append (fixes_sb_titleAnsi v)).append
+                  (fixes_sb_modesAnsi v)).append
+              (fixes_sb_charsetAnsi v)).append
+          (fixes_penSgr psBlind_sb v.pen sb_csiDispatch_sgr)).append
+      (fixes_sb_cursorAnsi v) a hf.1 hf.2.1
   have he :
     (c.feed (cursorPendingAnsi v)).sb =
       (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ scrollbackAnsi v)).sb :=
-    hf.2.2.2.2.2.2.2.trans (hc.2.2.trans (hf.2.2.2.1.trans (ha.2.2.trans hsb)))
-  simpa only [restore_split, u, a, b, c, feed_append] using he
+    hf.2.2.2.2.2.2.2.trans (hc.2.2.trans (hf.2.2.2.1.trans hsb))
+  simpa only [restore_split, u, a, c, feed_append] using he
 
 /-- **The ring `restore` leaves is the ring the history stage built.** Everything after
 `scrollbackAnsi` — one or two screen paints, the alt switch, the region, the ruler, the DECSC

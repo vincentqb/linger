@@ -79,7 +79,9 @@ theorem stepEscInter_final (v : Vt) (i b : UInt8) (hlo : 0x30 ≤ b) (hhi : b �
         else { v with pstate := .ground } := by
   simp [Vt.stepEscInter, hlo, hhi]
 
-/-- Everything §Total and §Bound need, as one induction hypothesis. -/
+/-- Everything §Total and §Bound need, as one induction hypothesis, and what a repaint needs
+to reproduce a state: under origin mode the cursor is inside the scroll region, wrap is
+pending only at the right margin, and the region is the whole screen or spans two rows. -/
 structure Good (v : Vt) : Prop where
   colsPos : 1 ≤ v.cols
   rowsPos : 1 ≤ v.rows
@@ -89,13 +91,23 @@ structure Good (v : Vt) : Prop where
   curY : v.cursor.y < v.rows
   savX : v.saved.cur.x < v.cols
   savY : v.saved.cur.y < v.rows
-  altCur : ∀ g c p, v.altGrid = some (g, c, p) → c.x < v.cols ∧ c.y < v.rows
+  altCur : ∀ g s, v.altGrid = some (g, s) → s.cur.x < v.cols ∧ s.cur.y < v.rows
   topLe : v.top ≤ v.bot
   botLt : v.bot < v.rows
   sbLe : v.sb.size ≤ sbCap
   u8Le : v.u8need ≤ 3
   csiLe : ∀ s, v.pstate = .csi s → s.params.size ≤ 16
   oscLe : ∀ acc e, v.pstate = .osc acc e → acc.size ≤ 2048
+  /-- Under origin mode (DECOM) the cursor is inside the scroll region. -/
+  originIn : v.modes.origin = true → v.top ≤ v.cursor.y ∧ v.cursor.y ≤ v.bot
+  /-- Wrap is pending only at the right margin, the one column a print arms it in. -/
+  pendX : v.cursor.pending = true → v.cursor.x + 1 = v.cols
+  /-- …and so for the saved cursor, -/
+  savPendX : v.saved.cur.pending = true → v.saved.cur.x + 1 = v.cols
+  /-- …and for the main screen's cursor stashed on the alternate screen. -/
+  altPendX : ∀ g s, v.altGrid = some (g, s) → s.cur.pending = true → s.cur.x + 1 = v.cols
+  /-- The scroll region is the whole screen or spans two rows, as `DECSTBM` sets it. -/
+  region : v.top < v.bot ∨ v.rows = 1
 
 /-- **A clamped dimension is a legal dimension, and above the cap it *is* the cap.** The
 second half is what makes `clampDim n + 1` the smallest value a caller must reject. -/
@@ -113,7 +125,7 @@ theorem clampDim_eq_self_iff (n : Nat) : clampDim n = n ↔ 1 ≤ n ∧ n ≤ 10
 
 /-- The state a fresh session starts in is Good. -/
 theorem good_init (cols rows : Nat) : Good (Vt.init cols rows) := by
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;>
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;>
     simp [Vt.init, clampDim, Ring.size, sbCap] <;>
     omega
 
@@ -128,9 +140,9 @@ refusing everything. -/
 /-- What the decoder's check actually decides, in `Good`'s own vocabulary. Stated so the
 `Bool` and the `Prop` cannot drift: `ofDecoded_good` and `ofDecoded_of_good` both go
 through this rather than unfolding twelve `&&`s twice. -/
-theorem decodedOk_iff {cols rows top bot : Nat} {cursor : Cursor} {sb : Ring} {saved : Saved}
-    {altGrid : Option (Array Row × Cursor × Pen)} :
-    Vt.decodedOk cols rows cursor top bot sb altGrid saved = true ↔
+theorem decodedOk_iff {cols rows top bot : Nat} {cursor : Cursor} {origin : Bool} {sb : Ring}
+    {saved : Saved} {altGrid : Option (Array Row × Saved)} :
+    Vt.decodedOk cols rows cursor origin top bot sb altGrid saved = true ↔
       1 ≤ cols ∧
         cols ≤ 1000 ∧
         1 ≤ rows ∧
@@ -141,22 +153,32 @@ theorem decodedOk_iff {cols rows top bot : Nat} {cursor : Cursor} {sb : Ring} {s
         saved.cur.y < rows ∧
         top ≤ bot ∧
         bot < rows ∧
-        sb.size ≤ sbCap ∧ ∀ g c p, altGrid = some (g, c, p) → c.x < cols ∧ c.y < rows := by
+        sb.size ≤ sbCap ∧
+        (origin = true → top ≤ cursor.y ∧ cursor.y ≤ bot) ∧
+        (cursor.pending = true → cursor.x + 1 = cols) ∧
+        (saved.cur.pending = true → saved.cur.x + 1 = cols) ∧
+        (top < bot ∨ rows = 1) ∧
+        ∀ g s,
+          altGrid = some (g, s) →
+            s.cur.x < cols ∧ s.cur.y < rows ∧ (s.cur.pending = true → s.cur.x + 1 = cols) := by
   unfold Vt.decodedOk
+  have imp (a : Bool) (p : Prop) : ((!a) = true ∨ p) ↔ (a = true → p) := by cases a <;> simp
   cases altGrid with
   | none =>
-    simp only [Bool.and_eq_true, decide_eq_true_eq, and_assoc, and_true]; simp
+    simp only [Bool.and_eq_true, decide_eq_true_eq, Bool.or_eq_true, imp, beq_iff_eq, and_true,
+      reduceCtorEq, false_implies, implies_true, and_assoc]
   | some x =>
-    obtain ⟨g₀, c₀, p₀⟩ := x
-    simp only [Bool.and_eq_true, decide_eq_true_eq, and_assoc, Option.some.injEq, Prod.mk.injEq]
+    obtain ⟨g₀, s₀⟩ := x
+    simp only [Bool.and_eq_true, decide_eq_true_eq, Bool.or_eq_true, imp, beq_iff_eq, and_assoc,
+      Option.some.injEq, Prod.mk.injEq]
     constructor
-    · rintro ⟨a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, hx, hy⟩
-      refine ⟨a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, ?_⟩
-      rintro g c p ⟨rfl, rfl, rfl⟩
-      exact ⟨hx, hy⟩
-    · rintro ⟨a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, halt⟩
-      obtain ⟨hx, hy⟩ := halt g₀ c₀ p₀ ⟨rfl, rfl, rfl⟩
-      exact ⟨a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, hx, hy⟩
+    · rintro ⟨a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, hx, hy, hp⟩
+      refine ⟨a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, ?_⟩
+      rintro g s ⟨rfl, rfl⟩
+      exact ⟨hx, hy, hp⟩
+    · rintro ⟨a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, halt⟩
+      obtain ⟨hx, hy, hp⟩ := halt g₀ s₀ ⟨rfl, rfl⟩
+      exact ⟨a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, hx, hy, hp⟩
 
 /-- **Nothing bad comes out of the decoder's door.** Whatever a checkpoint file says,
 if `Vt.ofDecoded` returns a `Vt` at all then that `Vt` is `Good`: the dimensions are in
@@ -168,7 +190,7 @@ This is the claim `specs/archive/vt-toolkit.md` Step 2 exists for. Before it, `r
 and one the emulator's own theorems are all false of — was one hostile byte away. -/
 theorem ofDecoded_good {cols rows : Nat} {grid : Array Row} {cursor : Cursor} {pen : Pen}
     {modes : Modes} {top bot : Nat} {tabs : Array Bool} {sb : Ring}
-    {altGrid : Option (Array Row × Cursor × Pen)} {saved : Saved} {title : String}
+    {altGrid : Option (Array Row × Saved)} {saved : Saved} {title : String}
     {g0Line g1Line shiftOut bell : Bool} {v : Vt}
     (h :
       Vt.ofDecoded cols rows grid cursor pen modes top bot tabs sb altGrid saved title g0Line g1Line
@@ -179,11 +201,13 @@ theorem ofDecoded_good {cols rows : Nat} {grid : Array Row} {cursor : Cursor} {p
   split at h
   · rename_i hg
     simp only [Bool.and_eq_true] at hg
-    obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, halt⟩ := decodedOk_iff.mp hg.1
+    obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, hor, hpe, hspe, hreg, halt⟩ :=
+      decodedOk_iff.mp hg.1
     cases h
     exact
-      ⟨h1, h3, h2, h4, h5, h6, h7, h8, halt, h9, h10, h11, Nat.zero_le 3, fun s hs =>
-        absurd hs (by simp), fun acc e hs => absurd hs (by simp)⟩
+      ⟨h1, h3, h2, h4, h5, h6, h7, h8, fun g s e => ⟨(halt g s e).1, (halt g s e).2.1⟩, h9, h10,
+        h11, Nat.zero_le 3, fun s hs => absurd hs (by simp), fun acc e hs => absurd hs (by simp),
+        hor, hpe, hspe, fun g s e => (halt g s e).2.2, hreg⟩
   · exact absurd h (by simp)
 
 /-! **The other half of the door's claim — "nothing good is rejected" — is
@@ -207,13 +231,13 @@ behaviour: `load` is already `Option`-valued, and its `none` already means "star
 fresh". -/
 theorem ofDecoded_none_of_cols_zero {rows : Nat} {grid : Array Row} {cursor : Cursor} {pen : Pen}
     {modes : Modes} {top bot : Nat} {tabs : Array Bool} {sb : Ring}
-    {altGrid : Option (Array Row × Cursor × Pen)} {saved : Saved} {title : String}
+    {altGrid : Option (Array Row × Saved)} {saved : Saved} {title : String}
     {g0Line g1Line shiftOut bell : Bool} :
     Vt.ofDecoded 0 rows grid cursor pen modes top bot tabs sb altGrid saved title g0Line g1Line
         shiftOut bell =
       none := by
   have hno :
-    (Vt.decodedOk 0 rows cursor top bot sb altGrid saved &&
+    (Vt.decodedOk 0 rows cursor modes.origin top bot sb altGrid saved &&
         Vt.decodedRenderable 0 rows grid tabs altGrid) ≠
       true := by
     intro hg
@@ -304,22 +328,37 @@ theorem csiDispatch_private_u (v : Vt) (s : CsiState) (hi : s.ignore = false) (h
 
 /-- Public ANSI `CSI u` still restores the saved cursor and pen. -/
 theorem csiDispatch_public_u (v : Vt) (s : CsiState) (hi : s.ignore = false) (hp : s.priv = 0) :
-    v.csiDispatch s 0x75 =
-      { v with
-        cursor := v.saved.cur, pen := v.saved.pen } := by
-  simp [Vt.csiDispatch, hi, hp]
+    v.csiDispatch s 0x75 = v.restoreCursor := by simp [Vt.csiDispatch, hi, hp]
+
+/-- DECSC records the cursor with its wrap-pending flag, the pen and origin mode. -/
+theorem cursorSaved_eq (v : Vt) :
+    v.cursorSaved = { cur := v.cursor, pen := v.pen, origin := v.modes.origin } := rfl
+
+/-- **DECRC restores what DECSC saved**: under origin mode the cursor is inside the region, so
+the clamp moves nothing, and restoring right after saving changes nothing. -/
+theorem restoreCursor_saveCursor {v : Vt}
+    (h : v.modes.origin = true → v.top ≤ v.cursor.y ∧ v.cursor.y ≤ v.bot) :
+    v.saveCursor.restoreCursor = v.saveCursor := by
+  unfold Vt.restoreCursor Vt.restoreFrom Vt.saveCursor Vt.cursorSaved
+  cases ho : v.modes.origin
+  · simp only [Bool.false_eq_true, ↓reduceIte]
+    rw [← ho]
+  · have hin := h ho
+    simp only [↓reduceIte]
+    rw [show min (max v.cursor.y v.top) v.bot = v.cursor.y by omega, ← ho]
 
 end Terminal.Vt
 
 namespace Terminal.Vt.Good
 
 /-- Replacing only the grid touches nothing Good watches. Same for
-pen, modes, tabs, title, bell — all definitional repacks. -/
+pen, tabs, title, bell — all definitional repacks — and modes that keep origin mode. -/
 theorem set_grid {v : Vt} (g : Array Row) (h : Good v) : Good { v with grid := g } := { h with }
 
 theorem set_pen {v : Vt} (p : Pen) (h : Good v) : Good { v with pen := p } := { h with }
 
-theorem set_modes {v : Vt} (m : Modes) (h : Good v) : Good { v with modes := m } := { h with }
+theorem set_modes {v : Vt} (m : Modes) (ho : m.origin = v.modes.origin) (h : Good v) :
+    Good { v with modes := m } := { h with originIn := fun hm => h.originIn (ho ▸ hm) }
 
 theorem set_ground {v : Vt} (h : Good v) : Good { v with pstate := .ground } :=
   { h with
@@ -329,57 +368,83 @@ theorem set_tabs {v : Vt} (t : Array Bool) (h : Good v) : Good { v with tabs := 
 
 /-! ## Cursor-writing primitives -/
 
-theorem clearPending {v : Vt} (h : Good v) : Good v.clearPending := { h with }
+/-- A cursor with no wrap pending satisfies the margin clause vacuously. -/
+theorem pend_of_false {c : Cursor} {n : Nat} (h : c.pending = false) :
+    c.pending = true → c.x + 1 = n := fun hc => absurd (h ▸ hc) (by decide)
 
-theorem moveTo {v : Vt} (x y : Nat) (h : Good v) : Good (v.moveTo x y) := by
+/-- New modes and a new cursor keep every invariant when the cursor is in bounds, inside the
+region the new origin mode selects, and pending only at the margin: those are the only clauses
+the two fields touch. -/
+theorem set_cursor_modes (v : Vt) (m : Modes) (c : Cursor) (hx : c.x < v.cols) (hy : c.y < v.rows)
+    (ho : m.origin = true → v.top ≤ c.y ∧ c.y ≤ v.bot) (hp : c.pending = true → c.x + 1 = v.cols)
+    (h : Good v) : Good { v with modes := m, cursor := c } :=
+  { h with curX := hx, curY := hy, originIn := ho, pendX := hp }
+
+/-- …and a new cursor alone. -/
+theorem set_cursor (v : Vt) (c : Cursor) (hx : c.x < v.cols) (hy : c.y < v.rows)
+    (ho : v.modes.origin = true → v.top ≤ c.y ∧ c.y ≤ v.bot)
+    (hp : c.pending = true → c.x + 1 = v.cols) (h : Good v) : Good { v with cursor := c } :=
+  set_cursor_modes v v.modes c hx hy ho hp h
+
+theorem clearPending {v : Vt} (h : Good v) : Good v.clearPending :=
+  set_cursor v _ h.curX h.curY h.originIn (pend_of_false rfl) h
+
+/-- Setting the modes and then addressing the cursor keeps every invariant whatever the new
+origin mode: the address lands inside the region it selects. -/
+theorem moveTo_modes {v : Vt} (m : Modes) (x y : Nat) (h : Good v) :
+    Good (Vt.moveTo { v with modes := m } x y) := by
   have := h.colsPos
   have := h.rowsPos
   have := h.botLt
+  have := h.topLe
   unfold Vt.moveTo
-  refine
-    { h with
-      curX := ?_, curY := ?_ }
+  refine set_cursor_modes v m _ ?_ ?_ ?_ (pend_of_false rfl) h
   · dsimp only; omega
-  · by_cases ho : v.modes.origin <;> simp [ho] <;> omega
+  · by_cases ho : m.origin <;> simp [ho] <;> omega
+  · intro ho; simp [ho]; omega
+
+theorem moveTo {v : Vt} (x y : Nat) (h : Good v) : Good (v.moveTo x y) :=
+  moveTo_modes v.modes x y h
 
 theorem moveRel {v : Vt} (dx dy : Int) (h : Good v) : Good (v.moveRel dx dy) := by
   have := h.colsPos
   have := h.rowsPos
   have := h.botLt
+  have := h.topLe
   unfold Vt.moveRel
-  refine
-    { h with
-      curX := ?_, curY := ?_ }
+  refine set_cursor v _ ?_ ?_ ?_ (pend_of_false rfl) h
   · dsimp only; omega
   · by_cases hr : (v.cursor.y ≥ v.top && v.cursor.y ≤ v.bot) <;> simp [hr] <;> omega
+  · intro ho
+    have hin := h.originIn ho
+    have hr : (v.cursor.y ≥ v.top && v.cursor.y ≤ v.bot) = true := by
+      simp only [ge_iff_le, Bool.and_eq_true, decide_eq_true_eq]; exact hin
+    simp only [hr, ↓reduceIte]
+    omega
 
 theorem carriageReturn {v : Vt} (h : Good v) : Good v.carriageReturn :=
-  { h with
-    curX := by
-      have := h.colsPos; dsimp only [Vt.carriageReturn]; omega }
+  set_cursor v _ (by have := h.colsPos; dsimp only; omega) h.curY h.originIn (pend_of_false rfl) h
 
 theorem backspace {v : Vt} (h : Good v) : Good v.backspace := by
   unfold Vt.backspace Vt.clearPending
   split
-  · exact { h with }
-  · exact
-      { h with
-        curX := by
-          have := h.curX; dsimp only; omega }
+  · exact set_cursor v _ h.curX h.curY h.originIn (pend_of_false rfl) h
+  · rename_i hp
+    exact
+      set_cursor v _ (by have := h.curX; dsimp only; omega) h.curY h.originIn
+        (pend_of_false (by simpa using hp)) h
 
 theorem tab {v : Vt} (h : Good v) : Good v.tab := by
   unfold Vt.tab Vt.clearPending
   exact
-    { h with
-      curX := by
-        have := h.colsPos; dsimp only; omega }
+    set_cursor v _ (by have := h.colsPos; dsimp only; omega) h.curY h.originIn
+      (pend_of_false rfl) h
 
 theorem backTab {v : Vt} (h : Good v) : Good v.backTab := by
   unfold Vt.backTab
   exact
-    { h with
-      curX := by
-        have := h.colsPos; dsimp only; omega }
+    set_cursor v _ (by have := h.colsPos; dsimp only; omega) h.curY h.originIn
+      (pend_of_false rfl) h
 
 /-! ## Scrolling — grid + ring only; the cursor is untouched -/
 
@@ -404,10 +469,14 @@ theorem lineFeed {v : Vt} (h : Good v) : Good v.lineFeed := by
   split
   · exact scrollUp h'
   · split
-    · exact
-        { h' with
-          curY := by
-            dsimp only; omega }
+    · rename_i hne hlt
+      refine
+        set_cursor v.clearPending _ h'.curX (by dsimp only; omega) (fun ho => ?_)
+          (pend_of_false rfl) h'
+      have := h'.originIn ho
+      simp only [beq_iff_eq] at hne
+      dsimp only
+      omega
     · exact h'
 
 theorem reverseIndex {v : Vt} (h : Good v) : Good v.reverseIndex := by
@@ -416,15 +485,19 @@ theorem reverseIndex {v : Vt} (h : Good v) : Good v.reverseIndex := by
   dsimp only
   split
   · exact scrollDown h'
-  · exact
-      { h' with
-        curY := by
-          have := h'.curY; dsimp only; omega }
+  · rename_i hne
+    refine
+      set_cursor v.clearPending _ h'.curX (by have := h'.curY; dsimp only; omega) (fun ho => ?_)
+        (pend_of_false rfl) h'
+    have := h'.originIn ho
+    have := h'.topLe
+    simp only [beq_iff_eq] at hne
+    dsimp only
+    omega
 
 theorem setCol {v : Vt} (x : Nat) (h : Good v) : Good (v.setCol x) :=
-  { h with
-    curX := by
-      have := h.curX; have := h.colsPos; dsimp only [Vt.setCol]; omega }
+  set_cursor v _ (by have := h.curX; have := h.colsPos; dsimp only; omega) h.curY h.originIn
+    (pend_of_false rfl) h
 
 /-! ## Folded repetitions -/
 
@@ -473,6 +546,32 @@ theorem applySgr {v : Vt} (ps : List (Nat × Bool)) (h : Good v) : Good (v.apply
 
 /-! ## Alt screen -/
 
+/-- DECSC keeps every invariant: the saved slot takes the cursor's bounds and margin clause. -/
+theorem saveCursor {v : Vt} (h : Good v) : Good v.saveCursor :=
+  { h with savX := h.curX, savY := h.curY, savPendX := h.pendX }
+
+/-- Restoring a saved cursor in bounds, pending only at the margin, keeps every invariant:
+under the restored origin mode the clamp puts the row inside the region. -/
+theorem restoreFrom {v : Vt} (s : Saved) (hx : s.cur.x < v.cols) (hy : s.cur.y < v.rows)
+    (hp : s.cur.pending = true → s.cur.x + 1 = v.cols) (h : Good v) : Good (v.restoreFrom s) := by
+  have := h.topLe
+  have := h.botLt
+  unfold Vt.restoreFrom
+  cases ho : s.origin
+  · exact
+      set_pen s.pen
+        (set_cursor_modes v { v.modes with origin := false } s.cur hx hy (fun hf => by simp at hf)
+          hp h)
+  · exact
+      set_pen s.pen
+        (set_cursor_modes v { v.modes with origin := true }
+          { s.cur with y := min (max s.cur.y v.top) v.bot } hx (by dsimp only; omega)
+          (fun _ => by dsimp only; omega) hp h)
+
+/-- DECRC keeps every invariant. -/
+theorem restoreCursor {v : Vt} (h : Good v) : Good v.restoreCursor :=
+  restoreFrom v.saved h.savX h.savY h.savPendX h
+
 theorem enterAlt {v : Vt} (saveCursor : Bool) (h : Good v) : Good (v.enterAlt saveCursor) := by
   have := h.colsPos
   have := h.rowsPos
@@ -481,7 +580,8 @@ theorem enterAlt {v : Vt} (saveCursor : Bool) (h : Good v) : Good (v.enterAlt sa
   · exact h
   · refine
       { h with
-        curX := ?_, curY := ?_, savX := ?_, savY := ?_, altCur := ?_, topLe := ?_, botLt := ?_ }
+        curX := ?_, curY := ?_, savX := ?_, savY := ?_, altCur := ?_, topLe := ?_, botLt := ?_,
+        originIn := ?_, pendX := pend_of_false rfl, savPendX := ?_, altPendX := ?_, region := ?_ }
     · dsimp only; omega
     · dsimp only; omega
     · dsimp only
@@ -492,12 +592,23 @@ theorem enterAlt {v : Vt} (saveCursor : Bool) (h : Good v) : Good (v.enterAlt sa
       split
       · exact h.curY
       · exact h.savY
-    · intro g c p heq
+    · intro g s heq
       simp only [Option.some.injEq, Prod.mk.injEq] at heq
-      obtain ⟨-, hc, -⟩ := heq
-      subst hc
+      obtain ⟨-, hs⟩ := heq
+      subst hs
       exact ⟨h.curX, h.curY⟩
     · dsimp only; omega
+    · dsimp only; omega
+    · intro _; dsimp only; omega
+    · dsimp only
+      split
+      · exact h.pendX
+      · exact h.savPendX
+    · intro g s heq
+      simp only [Option.some.injEq, Prod.mk.injEq] at heq
+      obtain ⟨-, hs⟩ := heq
+      subst hs
+      exact h.pendX
     · dsimp only; omega
 
 theorem leaveAlt {v : Vt} (restoreCursor : Bool) (h : Good v) :
@@ -506,11 +617,13 @@ theorem leaveAlt {v : Vt} (restoreCursor : Bool) (h : Good v) :
   unfold Vt.leaveAlt
   split
   · exact h
-  · rename_i g cur pen heq
-    obtain ⟨hax, hay⟩ := h.altCur g cur pen heq
+  · rename_i g s heq
+    obtain ⟨hax, hay⟩ := h.altCur g s heq
+    have hap := h.altPendX g s heq
     refine
       { h with
-        curX := ?_, curY := ?_, altCur := fun _ _ _ hh => (nomatch hh), topLe := ?_, botLt := ?_ }
+        curX := ?_, curY := ?_, altCur := fun _ _ hh => (nomatch hh), topLe := ?_, botLt := ?_,
+        originIn := ?_, pendX := ?_, altPendX := fun _ _ hh => (nomatch hh), region := ?_ }
     · dsimp only
       split
       · exact hax
@@ -520,6 +633,16 @@ theorem leaveAlt {v : Vt} (restoreCursor : Bool) (h : Good v) :
       · exact hay
       · exact h.curY
     · dsimp only; omega
+    · dsimp only; omega
+    · intro _
+      dsimp only
+      split
+      · omega
+      · have := h.curY; omega
+    · dsimp only
+      split
+      · exact hap
+      · exact h.pendX
     · dsimp only; omega
 
 /-! ## Mode switching -/
@@ -532,28 +655,40 @@ theorem setMode {v : Vt} (priv : Bool) (n : Nat) (on : Bool) (h : Good v) :
     with_reducible
       first
       | exact h
-      | exact set_modes _ h
-      | exact moveTo 0 0 (set_modes _ h)
+      | exact set_modes _ rfl h
+      | exact moveTo_modes _ 0 0 h
       |
         (split <;>
             with_reducible
               first
               | exact enterAlt _ h
               | exact leaveAlt _ h
-              |
-                exact
-                  { h with
-                    savX := h.curX, savY := h.curY }
-              |
-                exact
-                  { h with
-                    curX := h.savX, curY := h.savY })
+              | exact saveCursor h
+              | exact restoreCursor h)
 
 theorem setModes {v : Vt} (priv : Bool) (ps : List (Nat × Bool)) (on : Bool) (h : Good v) :
     Good (v.setModes priv ps on) :=
   setModes_invariant Good priv on ps (fun _ p _ hh => setMode priv p.1 on hh) v h
 
 /-! ## CSI dispatch -/
+
+/-- DECSTBM: a region of two rows or more, then the cursor homed into it. -/
+theorem stbm {v : Vt} (t b : Nat) (htb : t < b) (hb : b < v.rows) (h : Good v) :
+    Good (Vt.moveTo { v with top := t, bot := b } 0 0) := by
+  have := h.colsPos
+  have := h.rowsPos
+  unfold Vt.moveTo
+  refine
+    { h with
+      curX := ?_, curY := ?_, topLe := ?_, botLt := hb, originIn := ?_,
+      pendX := pend_of_false rfl, region := Or.inl htb }
+  · dsimp only; omega
+  · by_cases ho : v.modes.origin <;> simp [ho] <;> omega
+  · dsimp only; omega
+  · intro ho
+    dsimp only at ho ⊢
+    simp only [ho, ↓reduceIte]
+    omega
 
 theorem csiDispatch {v : Vt} (s : CsiState) (final : UInt8) (h : Good v) :
     Good (v.csiDispatch s final) := by
@@ -581,10 +716,7 @@ theorem csiDispatch {v : Vt} (s : CsiState) (final : UInt8) (h : Good v) :
         | exact deleteChars _ h
         | exact eraseChars _ h
         | exact setModes _ _ _ h
-        |
-          exact
-            { h with
-              savX := h.curX, savY := h.curY }
+        | exact saveCursor h
         |
           (split <;>
               with_reducible
@@ -592,10 +724,7 @@ theorem csiDispatch {v : Vt} (s : CsiState) (final : UInt8) (h : Good v) :
                 | exact applySgr _ h
                 | exact set_tabs _ h
                 | exact h
-                |
-                  exact
-                    { h with
-                      curX := h.savX, curY := h.savY }
+                | exact restoreCursor h
                 | ( dsimp only
                     split <;>
                       with_reducible
@@ -603,11 +732,7 @@ theorem csiDispatch {v : Vt} (s : CsiState) (final : UInt8) (h : Good v) :
                         | exact h
                         | ( rename_i hg
                             simp only [Bool.and_eq_true, decide_eq_true_eq] at hg
-                            refine
-                                moveTo 0 0
-                                  { h with
-                                    topLe := ?_, botLt := ?_ } <;>
-                              (dsimp only; omega))))
+                            exact stbm _ _ hg.1 hg.2 h)))
 
 /-! ## Printing -/
 
@@ -653,11 +778,10 @@ theorem printAdvance {v : Vt} (w : Nat) (h : Good v) : Good (v.printAdvance w) :
   have := h.colsPos
   unfold Vt.printAdvance
   dsimp only
-  split <;>
-    exact
-      { h with
-        curX := by
-          dsimp only; omega }
+  split
+  · exact set_cursor v _ (by dsimp only; omega) h.curY h.originIn (fun _ => by dsimp only; omega) h
+  · rename_i hlt
+    exact set_cursor v _ (by dsimp only; omega) h.curY h.originIn (pend_of_false rfl) h
 
 theorem printMark {v : Vt} (ch : Char) (h : Good v) : Good (v.printMark ch) := by
   unfold Vt.printMark
@@ -701,11 +825,8 @@ theorem oscFinish {v : Vt} (acc : Array UInt8) (h : Good v) : Good (v.oscFinish 
   unfold Vt.oscFinish
   dsimp only
   have hg := set_ground h
-  split
-  · split
-    · exact { hg with }
-    · exact hg
-  · exact hg
+  repeat' split
+  all_goals first | exact hg | exact { hg with }
 
 theorem csiFinish {v : Vt} (s : CsiState) (final : UInt8) (h : Good v) :
     Good (v.csiFinish s final) := by
@@ -805,13 +926,9 @@ theorem stepEsc {v : Vt} (b : UInt8) (h : Good v) : Good (v.stepEsc b) := by
       | exact set_ground (lineFeed (carriageReturn h))
       | exact set_ground (reverseIndex h)
       | -- DECSC: save cursor + ground
-        exact
-          { set_ground h with
-            savX := h.curX, savY := h.curY }
+        exact set_ground (saveCursor h)
       | -- DECRC: restore cursor + ground
-        exact
-          { set_ground h with
-            curX := h.savX, curY := h.savY }
+        exact set_ground (restoreCursor h)
       | -- HTS: tabs + ground
         exact { set_ground h with }
       | -- RIS: fresh screen, its history carried
@@ -915,19 +1032,31 @@ theorem resize {v : Vt} (cols rows : Nat) (h : Good v) : Good (v.resize cols row
   unfold Vt.resize
   refine
     ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?altCur, ?_, ?_, ring_pushAll_le _ h.sbLe, h.u8Le, h.csiLe,
-      h.oscLe⟩
+      h.oscLe, ?_, ?_, ?_, ?altPendX, ?_⟩
   case altCur =>
-    intro g c p heq
+    intro g s heq
     simp only at heq
     rcases hv : v.altGrid with - | x
     · rw [hv] at heq
       exact nomatch heq
-    · obtain ⟨g0, c0, p0⟩ := x
+    · obtain ⟨g0, s0⟩ := x
       rw [hv] at heq
       simp only [Option.map_some, Option.some.injEq, Prod.mk.injEq] at heq
-      obtain ⟨-, hcc, -⟩ := heq
-      subst hcc
+      obtain ⟨-, hss⟩ := heq
+      subst hss
       constructor <;> simp [clampDim] <;> omega
+  case altPendX =>
+    intro g s heq
+    simp only at heq
+    rcases hv : v.altGrid with - | x
+    · rw [hv] at heq
+      exact nomatch heq
+    · obtain ⟨g0, s0⟩ := x
+      rw [hv] at heq
+      simp only [Option.map_some, Option.some.injEq, Prod.mk.injEq] at heq
+      obtain ⟨-, hss⟩ := heq
+      subst hss
+      simp
   all_goals simp [clampDim] <;> omega
 
 end Terminal.Vt.Good
@@ -1233,8 +1362,8 @@ theorem frame_leaveAlt (v : Vt) (s : Bool) :
     v.leaveAlt s =
       { v with
         grid := (v.leaveAlt s).grid, cursor := (v.leaveAlt s).cursor, pen := (v.leaveAlt s).pen,
-        altGrid := (v.leaveAlt s).altGrid, top := (v.leaveAlt s).top,
-        bot := (v.leaveAlt s).bot } := by
+        modes := (v.leaveAlt s).modes, altGrid := (v.leaveAlt s).altGrid,
+        top := (v.leaveAlt s).top, bot := (v.leaveAlt s).bot } := by
   unfold Vt.leaveAlt; split <;> rfl
 
 theorem frame_stepEscInter (v : Vt) (i b : UInt8) :
@@ -1347,7 +1476,7 @@ structure OffScreen where
   g0 : Bool
   g1 : Bool
   so : Bool
-  alt : Option (Array Row × Cursor × Pen)
+  alt : Option (Array Row × Saved)
   pstate : PState
   u8need : Nat
   u8acc : Nat

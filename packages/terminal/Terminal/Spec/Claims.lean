@@ -8,7 +8,7 @@ public section
 /-! # The VT toolkit's named claims
 
 The claims the toolkit's headlines take as hypotheses while no theorem proves them. This is the only
-module of the package that imports the claim commands. -/
+module of the package that declares claims; `Terminal/Tests/Keeps.lean` proves instances of them. -/
 
 namespace Terminal.Replay
 

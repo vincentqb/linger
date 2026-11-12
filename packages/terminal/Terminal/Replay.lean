@@ -45,8 +45,7 @@ def start (v : Vt) : Plan :=
       Render.scrollbackAnsi v ++
       header
   let title :=
-    Render.regionAnsi v ++ Render.tabsAnsi v ++ Render.savedAnsi v ++ Render.savedPendingAnsi v ++
-      Render.escB ++
+    Render.savedAnsi v ++ Render.regionAnsi v ++ Render.tabsAnsi v ++ Render.escB ++
       [0x5D, 0x32, 0x3B]
   let after :=
     [0x07] ++ Render.modesAnsi v ++ Render.charsetAnsi v ++ Render.penSgr v.getPen ++
@@ -55,12 +54,11 @@ def start (v : Vt) : Plan :=
   let screens :=
     match v.altGrid with
     | none => [Part.rows v.grid.toList {}]
-    | some (mainGrid, cur, pen) =>
+    | some (mainGrid, ms) =>
       [Part.rows mainGrid.toList {},
         .bytes
-          (Render.penSgr pen ++ Render.csiNum2 (cur.y + 1) (cur.x + 1) 0x48 ++
-            Render.pendingAnsi v.cols mainGrid cur (cur.y + 1) pen ++
-            Render.csiPriv 1049 0x68 ++
+          (Render.parkAnsi v.cols mainGrid ms ++ Render.csiPriv 1049 0x68 ++
+            Render.originOffAnsi ms ++
             header),
         .rows v.grid.toList {}]
   { parts := .bytes before :: screens ++ [.bytes title, .text v.title.toSlice, .bytes after] }

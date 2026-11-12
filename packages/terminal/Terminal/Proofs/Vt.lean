@@ -57,7 +57,7 @@ either. -/
 returns it, so the resume rung admits exactly the door's outputs. -/
 theorem decodable_of_ofDecoded {cols rows : Nat} {grid : Array Row} {cursor : Cursor} {pen : Pen}
     {modes : Modes} {top bot : Nat} {tabs : Array Bool} {sb : Ring}
-    {altGrid : Option (Array Row × Cursor × Pen)} {saved : Saved} {title : String}
+    {altGrid : Option (Array Row × Saved)} {saved : Saved} {title : String}
     {g0Line g1Line shiftOut bell : Bool} {v : Vt}
     (h :
       Vt.ofDecoded cols rows grid cursor pen modes top bot tabs sb altGrid saved title g0Line g1Line
@@ -157,7 +157,7 @@ claim; Step 3 measured exactly that failure (`invalid ▸ notation, argument hg.
 v.u8need ≤ 3, equality expected`). -/
 theorem ofDecoded_u8Ok {cols rows : Nat} {grid : Array Row} {cursor : Cursor} {pen : Pen}
     {modes : Modes} {top bot : Nat} {tabs : Array Bool} {sb : Ring}
-    {altGrid : Option (Array Row × Cursor × Pen)} {saved : Saved} {title : String}
+    {altGrid : Option (Array Row × Saved)} {saved : Saved} {title : String}
     {g0Line g1Line shiftOut bell : Bool} {v : Vt}
     (h :
       Vt.ofDecoded cols rows grid cursor pen modes top bot tabs sb altGrid saved title g0Line g1Line
@@ -397,7 +397,7 @@ theorem csiOk_feed : ∀ (bs : List UInt8) {v : Vt}, CsiOk v → CsiOk (v.feed b
 /-- The decoder starts in ground state, so it needs no new acceptance condition. -/
 theorem ofDecoded_csiOk {cols rows : Nat} {grid : Array Row} {cursor : Cursor} {pen : Pen}
     {modes : Modes} {top bot : Nat} {tabs : Array Bool} {sb : Ring}
-    {altGrid : Option (Array Row × Cursor × Pen)} {saved : Saved} {title : String}
+    {altGrid : Option (Array Row × Saved)} {saved : Saved} {title : String}
     {g0Line g1Line shiftOut bell : Bool} {v : Vt}
     (h :
       Vt.ofDecoded cols rows grid cursor pen modes top bot tabs sb altGrid saved title g0Line g1Line
@@ -1198,16 +1198,16 @@ screen cursor stashed while the alternate screen is active. -/
 theorem resize_clears_pending (v : Vt) (cols rows : Nat) :
     (v.resize cols rows).cursor.pending = false ∧
       (v.resize cols rows).saved.cur.pending = false ∧
-      ∀ g cur pen, (v.resize cols rows).altGrid = some (g, cur, pen) → cur.pending = false := by
+      ∀ g s, (v.resize cols rows).altGrid = some (g, s) → s.cur.pending = false := by
   refine ⟨rfl, rfl, ?_⟩
-  intro g cur pen h
+  intro g s h
   cases hAlt : v.altGrid with
   | none => simp [Vt.resize, hAlt] at h
   | some value =>
-    obtain ⟨oldGrid, oldCur, oldPen⟩ := value
+    obtain ⟨oldGrid, oldSaved⟩ := value
     simp only [Vt.resize, hAlt, Option.map_some, Option.some.injEq, Prod.mk.injEq] at h
-    rcases h with ⟨_, hcur, _⟩
-    rw [← hcur]
+    rcases h with ⟨_, hs⟩
+    rw [← hs]
 
 /-- **A 256-colour parameter saturates rather than wraps**, which is why `color256` takes a
 `min`: `UInt8.ofNat 256` is `0`, so without it `SGR 38;5;256` would silently select colour 0

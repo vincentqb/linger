@@ -24,7 +24,7 @@ namespace Terminal.Render.Tests
 open Terminal.Vt
 
 /-- The §Replay equivalence. Compared: grid, cursor position, pen,
-scroll region, modes, title, tabs, charset, saved cursor/pen, the alt
+scroll region, modes, title, tabs, charset, saved cursor/pen/origin mode, the alt
 stash, all three deferred-wrap flags, the **scrollback** (against `sbRows v`, the fitted and
 budget-trimmed history the emitter promises — not `v.sb`, since a
 session's ring may have wrapped and the receiver's is built from index
@@ -57,10 +57,14 @@ def replayEq (r v : Vt) : Bool :=
     r.saved.cur.y == v.saved.cur.y &&
     r.saved.cur.pending == v.saved.cur.pending &&
     r.saved.pen == v.saved.pen &&
+    r.saved.origin == v.saved.origin &&
     (match r.altGrid, v.altGrid with
     | none, none => true
-    | some (g1, c1, p1), some (g2, c2, p2) =>
-      g1 == g2 && c1.x == c2.x && c1.y == c2.y && c1.pending == c2.pending && p1 == p2
+    | some (g1, s1), some (g2, s2) =>
+      g1 == g2 && s1.cur.x == s2.cur.x && s1.cur.y == s2.cur.y &&
+        s1.cur.pending == s2.cur.pending &&
+        s1.pen == s2.pen &&
+        s1.origin == s2.origin
     | _, _ => false) &&
     r.pstate == PState.ground &&
     v.pstate == PState.ground &&

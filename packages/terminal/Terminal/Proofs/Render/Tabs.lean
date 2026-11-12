@@ -54,6 +54,10 @@ theorem tabs_enterAlt (v : Vt) (s : Bool) : (v.enterAlt s).tabs = v.tabs := by r
 
 theorem tabs_leaveAlt (v : Vt) (s : Bool) : (v.leaveAlt s).tabs = v.tabs := by rw [frame_leaveAlt]
 
+theorem tabs_saveCursor (v : Vt) : v.saveCursor.tabs = v.tabs := rfl
+
+theorem tabs_restoreCursor (v : Vt) : v.restoreCursor.tabs = v.tabs := rfl
+
 /-- **A mode set never touches the ruler** — unconditionally, for any mode number.
 `setMode`'s only non-`modes` arms are `enterAlt`/`leaveAlt`/`moveTo`/the DECSC slot,
 and none of them writes `tabs`. This is where the ruler's claim is *simpler* than
@@ -64,7 +68,8 @@ theorem tabs_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) :
     (v.setMode priv n on).tabs = v.tabs := by
   unfold Vt.setMode
   repeat' split
-  all_goals try simp only [tabs_moveTo, tabs_enterAlt, tabs_leaveAlt]
+  all_goals
+    try simp only [tabs_moveTo, tabs_enterAlt, tabs_leaveAlt, tabs_saveCursor, tabs_restoreCursor]
 
 theorem tabs_setModes (v : Vt) (priv : Bool) (ps : List (Nat × Bool)) (on : Bool) :
     (v.setModes priv ps on).tabs = v.tabs :=
@@ -99,7 +104,8 @@ theorem fixes_tabs_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x3E �
   rw [show ∀ (w : Vt), w.feed ([0x1B] ++ [b]) = (w.step 0x1B).step b from fun w => by
       simp [Vt.feed]]
   rw [esc_step_eq hg hu, step_of_esc_quiet b rfl (by simpa using hu)]
-  rcases hb with h | h | h | h <;> subst h <;> show _ ∧ _ ∧ _ <;> unfold Vt.stepEsc <;>
+  rcases hb with h | h | h | h <;> subst h <;> show _ ∧ _ ∧ _ <;>
+    unfold Vt.stepEsc Vt.saveCursor <;>
     exact ⟨rfl, by simpa using hu, rfl⟩
 
 theorem fixes_tabs_escCharset (i x : UInt8) (hi : i = 0x28 ∨ i = 0x29) (hlo : 0x30 ≤ x)
@@ -136,11 +142,6 @@ theorem fixes_tabs_modesAnsi (v : Vt) : Fixes (fun v : Vt => v.tabs) (modesAnsi 
   (Fixes.streamPred _).modesAnsi v (fun n on _ => fixes_tabs_modeSet n on)
     (fun _ => fixes_tabs_modeSet _ _) (fixes_tabs_modeSet 6 _) (fixes_tabs_escSeq 0x3D (by decide))
     (fixes_tabs_escSeq 0x3E (by decide)) fixes_tabs_irm
-
-theorem fixes_tabs_savedAnsi (v : Vt) : Fixes (fun v : Vt => v.tabs) (savedAnsi v) :=
-  (Fixes.streamPred _).savedAnsi (fixes_penSgr psBlind_tabs · tabs_csiDispatch_sgr)
-    (fun _ _ => fixes_csiNum2 psBlind_tabs _ _ 0x48 (by decide) (by decide) tabs_csiDispatch_cup)
-    (fixes_tabs_escSeq 0x37 (by decide)) v
 
 theorem fixes_tabs_titleAnsi (v : Vt) : Fixes (fun v : Vt => v.tabs) (titleAnsi v) := by
   unfold titleAnsi
@@ -317,14 +318,6 @@ theorem fixes_tabs_pendingAnsi (cols : Nat) (grid : Array Row) (cur : Cursor) (r
     exact ⟨hq.1, hq.2.1, hq.2.2.trans (ht.trans (hp.2.2.trans hc.2.2))⟩
   · exact Fixes.nil _
 
-theorem fixes_tabs_savedPendingAnsi (v : Vt) :
-    Fixes (fun v : Vt => v.tabs) (savedPendingAnsi v) := by
-  unfold savedPendingAnsi
-  exact
-    (Fixes.streamPred _).ite
-      (fun _ => (fixes_tabs_pendingAnsi _ _ _ _ _).append (fixes_tabs_escSeq 0x37 (by decide)))
-      (fun _ => Fixes.nil _)
-
 theorem fixes_tabs_cursorPendingAnsi (v : Vt) :
     Fixes (fun v : Vt => v.tabs) (cursorPendingAnsi v) := by
   unfold cursorPendingAnsi
@@ -340,20 +333,17 @@ theorem fixes_tabs_cursorPendingAnsi (v : Vt) :
     exact (fixes_tabs_modeSet 7 true).append (fixes_tabs_irm false)
   · exact Fixes.nil _
 
-/-- Every stage after the tab ruler, including both pending-wrap repairs, preserves it. -/
+/-- Every stage after the tab ruler, including the active cursor's pending-wrap repair,
+preserves it. -/
 theorem fixes_tabs_pending_tail (v : Vt) :
     Fixes (fun v : Vt => v.tabs)
-      (savedAnsi v ++ savedPendingAnsi v ++ titleAnsi v ++ modesAnsi v ++ charsetAnsi v ++
-        penSgr v.pen ++
-        cursorAnsi v ++
+      (titleAnsi v ++ modesAnsi v ++ charsetAnsi v ++ penSgr v.pen ++ cursorAnsi v ++
         cursorPendingAnsi v) := by
   refine Fixes.append ?_ (fixes_tabs_cursorPendingAnsi v)
   refine Fixes.append ?_ (fixes_tabs_cursorAnsi v)
   refine Fixes.append ?_ (fixes_penSgr psBlind_tabs v.pen tabs_csiDispatch_sgr)
   refine Fixes.append ?_ (fixes_tabs_charsetAnsi v)
-  refine Fixes.append ?_ (fixes_tabs_modesAnsi v)
-  refine Fixes.append ?_ (fixes_tabs_titleAnsi v)
-  exact (fixes_tabs_savedAnsi v).append (fixes_tabs_savedPendingAnsi v)
+  exact (fixes_tabs_titleAnsi v).append (fixes_tabs_modesAnsi v)
 
 /-- `CSI 3 g` (TBC 3) as a state equation: it clears every stop and touches nothing
 else. -/
@@ -466,13 +456,12 @@ theorem hts_run :
 the stops, and the tail that leaves the ruler alone. -/
 theorem restore_tabs_split (v : Vt) :
     restore v =
-      (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v) ++
+      (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ savedAnsi v ++
+          regionAnsi v) ++
         (csiNum 3 0x67 ++
           ((((List.range v.cols).filter (fun i => v.tabs.getD i false)).flatMap
               (fun i => csiNum (i + 1) 0x47 ++ escSeq 0x48)) ++
-            (savedAnsi v ++ savedPendingAnsi v ++ titleAnsi v ++ modesAnsi v ++ charsetAnsi v ++
-              penSgr v.pen ++
-              cursorAnsi v ++
+            (titleAnsi v ++ modesAnsi v ++ charsetAnsi v ++ penSgr v.pen ++ cursorAnsi v ++
               cursorPendingAnsi v))) := by
   unfold restore restoreBody tabsAnsi
   simp only [List.append_assoc]
@@ -496,14 +485,14 @@ theorem restore_tabs_any (v w : Vt) (hgood : Good w) (hcols : w.cols = v.cols)
   -- the head grounds any receiver and cannot change its width
   have hhg :
     (w.feed
-          (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++
+          (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ savedAnsi v ++
             regionAnsi v)).pstate =
       .ground := by
-    rw [feed_append]
-    exact ends_regionAnsi v _ (paint_grounds v w)
+    rw [feed_append, feed_append]
+    exact ends_regionAnsi v _ (ends_savedAnsi v _ (paint_grounds v w))
   have hhc :
     (w.feed
-          (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++
+          (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ savedAnsi v ++
             regionAnsi v)).cols =
       v.cols := by
     rw [← dims_fst, dims_feed _ hgood, dims_fst]; exact hcols

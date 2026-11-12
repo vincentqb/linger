@@ -315,10 +315,11 @@ theorem charsetAnsi {P : Bytes → Prop} (hP : StreamPred P)
     (hP.ite (fun _ => h _ _ (.inr rfl) (.inl rfl)) fun _ => h _ _ (.inr rfl) (.inr rfl))
     (hP.ite (fun _ => hso) fun _ => hP.nil)
 
-theorem savedAnsi {P : Bytes → Prop} (hP : StreamPred P) (hpen : ∀ p, P (penSgr p))
-    (hcup : ∀ a b, P (csiNum2 a b 0x48)) (hsc : P (escSeq 0x37)) (v : Vt) :
-    P (Terminal.Render.savedAnsi v) :=
-  hP.append3 (hpen _) (hcup _ _) hsc
+/-- Origin mode off after a park that set it. -/
+theorem originOffAnsi {P : Bytes → Prop} (hP : StreamPred P)
+    (hoff : P (Terminal.Render.modeSet 6 false)) (s : Saved) :
+    P (Terminal.Render.originOffAnsi s) :=
+  hP.ite (fun _ => hoff) fun _ => hP.nil
 
 theorem cursorAnsi {P : Bytes → Prop} (hP : StreamPred P) (hcup : ∀ a b, P (csiNum2 a b 0x48))
     (v : Vt) : P (Terminal.Render.cursorAnsi v) :=
@@ -339,10 +340,20 @@ theorem pendingAnsi {P : Bytes → Prop} (hP : StreamPred P) (hcup : ∀ a b, P 
     P (Terminal.Render.pendingAnsi cols grid cur row pen) :=
   hP.ite (fun _ => hP.append4 (hcup _ _) (hpen _) (hcell _) (hpen _)) fun _ => hP.nil
 
-theorem savedPendingAnsi {P : Bytes → Prop} (hP : StreamPred P)
+/-- A saved cursor's park: the saved origin mode, the pen, the address and the deferred-wrap
+repaint. -/
+theorem parkAnsi {P : Bytes → Prop} (hP : StreamPred P) (hon : P (Terminal.Render.modeSet 6 true))
+    (hpen : ∀ p, P (penSgr p)) (hcup : ∀ a b, P (csiNum2 a b 0x48))
     (hpend : ∀ cols grid cur row pen, P (Terminal.Render.pendingAnsi cols grid cur row pen))
-    (hsc : P (escSeq 0x37)) (v : Vt) : P (Terminal.Render.savedPendingAnsi v) :=
-  hP.ite (fun _ => hP.append (hpend _ _ _ _ _) hsc) fun _ => hP.nil
+    (cols : Nat) (grid : Array Row) (s : Saved) : P (Terminal.Render.parkAnsi cols grid s) :=
+  hP.append4 (hP.ite (fun _ => hon) fun _ => hP.nil) (hpen _) (hcup _ _) (hpend _ _ _ _ _)
+
+/-- The DECSC slot: its park, `ESC 7`, and origin mode off. -/
+theorem savedAnsi {P : Bytes → Prop} (hP : StreamPred P)
+    (hpark : ∀ cols grid s, P (Terminal.Render.parkAnsi cols grid s)) (hsc : P (escSeq 0x37))
+    (hoff : ∀ s, P (Terminal.Render.originOffAnsi s)) (v : Vt) :
+    P (Terminal.Render.savedAnsi v) :=
+  hP.append3 (hpark _ _ _) hsc (hoff _)
 
 /-- The mode replay, from the modes it names: the fixed set, the guarded mouse mode, the
 session's DECOM, both keypad escapes and IRM either way. The chain is **right**-associated
@@ -846,15 +857,21 @@ behind `prologue_grounds`, for any receiver, and `restore_quiesced_any`
 (`packages/terminal/Terminal/Proofs/Render/Sticky.lean`) adds the decoder half.
 -/
 
+theorem ends_parkAnsi (cols : Nat) (grid : Array Row) (s : Saved) : Ends (parkAnsi cols grid s) :=
+  Ends.streamPred.parkAnsi (ends_modeSet 6 true) ends_penSgr
+    (fun _ _ => ends_csiNum2 _ _ 0x48 (by decide) (by decide)) ends_pendingAnsi cols grid s
+
+theorem ends_originOffAnsi (s : Saved) : Ends (originOffAnsi s) :=
+  Ends.streamPred.originOffAnsi (ends_modeSet 6 false) s
+
 theorem ends_screensAnsi (v : Vt) : Ends (screensAnsi v) := by
   unfold screensAnsi
   refine (ends_scrollbackAnsi v).append ?_
   split
   · exact ends_gridAnsi _
-  · exact (((((ends_gridAnsi _).append (ends_penSgr _)).append
-      (ends_csiNum2 _ _ 0x48 (by decide) (by decide))).append
-      (ends_pendingAnsi _ _ _ _ _)).append
-      (ends_csiPriv 1049 0x68 (by decide) (by decide))).append (ends_gridAnsi _)
+  · exact ((((ends_gridAnsi _).append (ends_parkAnsi _ _ _)).append
+      (ends_csiPriv 1049 0x68 (by decide) (by decide))).append (ends_originOffAnsi _)).append
+      (ends_gridAnsi _)
 
 theorem ends_regionAnsi (v : Vt) : Ends (regionAnsi v) :=
   Ends.streamPred.regionAnsi (fun _ _ => ends_csiNum2 _ _ 0x72 (by decide) (by decide)) v
@@ -864,11 +881,7 @@ theorem ends_tabsAnsi (v : Vt) : Ends (tabsAnsi v) :=
     (fun n => ends_csiNum n 0x47 (by decide) (by decide)) (ends_escSeq 0x48 (by decide)) v
 
 theorem ends_savedAnsi (v : Vt) : Ends (savedAnsi v) :=
-  Ends.streamPred.savedAnsi ends_penSgr (fun _ _ => ends_csiNum2 _ _ 0x48 (by decide) (by decide))
-    (ends_escSeq 0x37 (by decide)) v
-
-theorem ends_savedPendingAnsi (v : Vt) : Ends (Terminal.Render.savedPendingAnsi v) :=
-  Ends.streamPred.savedPendingAnsi ends_pendingAnsi (ends_escSeq 0x37 (by decide)) v
+  Ends.streamPred.savedAnsi ends_parkAnsi (ends_escSeq 0x37 (by decide)) ends_originOffAnsi v
 
 theorem ends_charsetAnsi (v : Vt) : Ends (charsetAnsi v) :=
   Ends.streamPred.charsetAnsi (fun _ _ hi hx => ends_escCharset _ _ hi (by grind) (by grind))

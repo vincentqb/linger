@@ -165,14 +165,12 @@ theorem restoreBody_grounds (v w : Vt) : (w.feed (restoreBody v)).pstate = .grou
       (ends_charsetAnsi v _
         (ends_modesAnsi v _
           (ends_titleAnsi v _
-            (ends_savedPendingAnsi v _
-              (ends_savedAnsi v _
-                (ends_tabsAnsi v _
-                  (ends_regionAnsi v _
-                    (ends_screensAnsi v _
-                      (ends_csiNum 2 0x4A (by decide) (by decide) _
-                        (ends_csiNum 0 0x6D (by decide) (by decide) _
-                          (prologue_grounds v w)))))))))))
+            (ends_tabsAnsi v _
+              (ends_regionAnsi v _
+                (ends_savedAnsi v _
+                  (ends_screensAnsi v _
+                    (ends_csiNum 2 0x4A (by decide) (by decide) _
+                      (ends_csiNum 0 0x6D (by decide) (by decide) _ (prologue_grounds v w))))))))))
 
 /-- **`restore` grounds any receiver**: this prefix, through the final `CUP`, and the
 whole stream in `restore_grounds`. No assumption on the client's parser state at all,
@@ -203,50 +201,24 @@ instance of: no `ite`, no dependence on a `Vt`. -/
 theorem ends_csiPlain (final : UInt8) (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E) :
     Ends (csiPlain final) := by simpa [csiPlain] using ends_csi_seq [] final ParamBytes.nil h1 h2
 
--- Unfold one character at a time: reducing the recursive legacy splitter in one
--- step spends the default recursion budget on its termination proof.
-theorem split_empty_title : "2;".splitOn ";" = ["2", ""] := by
-  unfold String.splitOn
-  rw [ite_eq_right (by decide), String.splitOnAux]
-  rw [ite_eq_right (by decide), ite_eq_right (by decide)]
-  change String.splitOnAux "2;" ";" ⟨0⟩ ⟨1⟩ ⟨0⟩ [] = _
-  rw [String.splitOnAux, ite_eq_right (by decide), ite_eq_left (by decide)]
-  change (if true then String.splitOnAux "2;" ";" ⟨2⟩ ⟨2⟩ ⟨0⟩ ["2"] else _) = _
-  rw [ite_eq_left (by decide), String.splitOnAux, ite_eq_left (by decide)]
-  rfl
-
 theorem finish_empty_title (v : Vt) :
     v.oscFinish #[0x32, 0x3B] =
       { v with
         pstate := .ground, title := "" } := by
-  have hdecode : String.fromUTF8? (ByteArray.mk #[0x32, 0x3B]) = some "2;" := by decide
-  simp [Vt.oscFinish, hdecode, split_empty_title, String.intercalate_singleton]
-
-/-- `"2;t"` splits at its one `;`, unfolded like `split_empty_title`. -/
-theorem split_title_t : "2;t".splitOn ";" = ["2", "t"] := by
-  unfold String.splitOn
-  rw [ite_eq_right (by decide), String.splitOnAux]
-  rw [ite_eq_right (by decide), ite_eq_right (by decide)]
-  change String.splitOnAux "2;t" ";" ⟨0⟩ ⟨1⟩ ⟨0⟩ [] = _
-  rw [String.splitOnAux, ite_eq_right (by decide), ite_eq_left (by decide)]
-  change (if true then String.splitOnAux "2;t" ";" ⟨2⟩ ⟨2⟩ ⟨0⟩ ["2"] else _) = _
-  rw [ite_eq_left (by decide), String.splitOnAux, ite_eq_right (by decide),
-    ite_eq_right (by decide)]
-  change String.splitOnAux "2;t" ";" ⟨2⟩ ⟨3⟩ ⟨0⟩ ["2"] = _
-  rw [String.splitOnAux, ite_eq_left (by decide)]
-  rfl
+  have hdecode : String.fromUTF8? ⟨#[]⟩ = some "" := by decide
+  simp [Vt.oscFinish, hdecode]
 
 /-- On a fresh terminal, OSC 2 with the payload `t` sets the window title to `t`. -/
 theorem title_observed :
     ((Vt.init 2 1).feed [0x1B, 0x5D, 0x32, 0x3B, 0x74, 0x07]).windowTitle = "t" := by
-  have hdecode : String.fromUTF8? (ByteArray.mk #[0x32, 0x3B, 0x74]) = some "2;t" := by decide
+  have hdecode : String.fromUTF8? ⟨#[0x74]⟩ = some "t" := by decide
   have hosc :
     (Vt.init 2 1).feed [0x1B, 0x5D, 0x32, 0x3B, 0x74, 0x07] =
       Vt.oscFinish { Vt.init 2 1 with pstate := .osc #[0x32, 0x3B, 0x74] false }
         #[0x32, 0x3B, 0x74] :=
     rfl
   rw [hosc]
-  simp [Vt.oscFinish, hdecode, split_title_t, Vt.windowTitle]
+  simp [Vt.oscFinish, hdecode, Vt.windowTitle]
 
 /-- Empty OSC 2 sets the title absolutely. Its leading ESC aborts even a pending
 UTF-8 character; every other field is preserved. No title bound or prior value is
@@ -333,16 +305,26 @@ the default record, for **any** receiver `w`. -/
 
 theorem modes_moveTo (v : Vt) (x y : Nat) : (v.moveTo x y).modes = v.modes := by rfl
 
-theorem modes_leaveAlt (v : Vt) (r : Bool) : (v.leaveAlt r).modes = v.modes := by
+theorem modes_leaveAlt (v : Vt) : (v.leaveAlt false).modes = v.modes := by
+  unfold Vt.leaveAlt; split <;> rfl
+
+/-- Leaving the alternate screen with mode 1049 keeps every mode but origin, which it restores
+from the stash. -/
+theorem modes_leaveAlt_true (v : Vt) :
+    (v.leaveAlt true).modes = { v.modes with origin := (v.leaveAlt true).modes.origin } := by
   unfold Vt.leaveAlt; split <;> rfl
 
 theorem modes_enterAlt (v : Vt) (s : Bool) : (v.enterAlt s).modes = v.modes := by
   unfold Vt.enterAlt; split <;> rfl
 
-theorem modes_setMode {w1 w2 : Vt} (p : Bool) (n : Nat) (on : Bool) (h : w1.modes = w2.modes) :
+/-- A mode set's modes are a function of the modes before, except the resets of 1048 and 1049,
+which restore a saved origin mode. -/
+theorem modes_setMode {w1 w2 : Vt} (p : Bool) (n : Nat) (on : Bool)
+    (hr : ¬(on = false ∧ (n = 1048 ∨ n = 1049))) (h : w1.modes = w2.modes) :
     (w1.setMode p n on).modes = (w2.setMode p n on).modes := by
   unfold Vt.setMode
-  split <;> (repeat' split) <;> simp_all [modes_moveTo, modes_leaveAlt, modes_enterAlt]
+  split <;> (repeat' split) <;>
+    simp_all [modes_moveTo, modes_leaveAlt, modes_enterAlt, Vt.saveCursor]
 
 /-- **A private mode set, as a state equation.** `?<n>h` / `?<n>l` *is* `setMode true n on`,
 with the parser back in ground. `modeSet_modes` gave only the `Modes` field, which cannot see
@@ -532,13 +514,26 @@ theorem modes_csiDispatch_sgr (v : Vt) (s : CsiState) : (v.csiDispatch s 0x6D).m
 def smMod (n : Nat) (on : Bool) (m : Modes) : Modes :=
   (Vt.setMode { Vt.init 1 1 with modes := m } true n on).modes
 
-theorem mmap_modeSet (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535) :
-    MMap (smMod n on) (modeSet n on) := by
+theorem mmap_modeSet (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535)
+    (hr : ¬(on = false ∧ (n = 1048 ∨ n = 1049))) : MMap (smMod n on) (modeSet n on) := by
   intro v hg hu
   obtain ⟨hm, hp, hun⟩ := modeSet_modes n on hn hlt hg hu
   exact
     ⟨hp, hun, by
-      rw [hm]; exact modes_setMode true n on rfl⟩
+      rw [hm]; exact modes_setMode true n on hr rfl⟩
+
+/-- **Leaving the alternate screen with `?1049l`**, on the modes: every mode is kept but origin,
+which mode 1049 restores from the stash. The modes after are therefore not a function of the
+modes before, and a chain that turns origin mode off later reads them through this. -/
+theorem leave1049_modes {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
+    (v.feed (modeSet 1049 false)).pstate = .ground ∧
+      (v.feed (modeSet 1049 false)).u8need = 0 ∧
+      (v.feed (modeSet 1049 false)).modes =
+        { v.modes with origin := (v.feed (modeSet 1049 false)).modes.origin } := by
+  obtain ⟨hm, hp, hun⟩ := modeSet_modes 1049 false (by decide) (by decide) hg hu
+  refine ⟨hp, hun, ?_⟩
+  rw [hm, show v.setMode true 1049 false = v.leaveAlt true from rfl]
+  exact modes_leaveAlt_true v
 
 theorem MMap.congr {f g : Modes → Modes} {bs : Bytes} (h : MMap f bs) (hfg : ∀ m, f m = g m) :
     MMap g bs := by
@@ -601,24 +596,25 @@ outbound value half). `leaveAnsi`'s lead-in grounds `w`, then each mode chunk se
 its field absolutely and the non-mode chunks leave modes alone, so the composite is
 the default record regardless of what the session left behind. -/
 theorem leave_modes (w : Vt) : (w.feed leaveAnsi).modes = ({} : Modes) := by
-  -- after the `ESC \` lead-in each mode chunk sets its field absolutely and every other chunk
-  -- leaves the modes alone, so the composite transform is constant
+  -- after the `ESC \` lead-in and `?1049l` each mode chunk sets its field absolutely and every
+  -- other chunk leaves the modes alone, so the composite transform is constant, whatever origin
+  -- mode leaving the alternate screen restored
   simp only [leaveAnsi, List.append_assoc]
-  rw [feed_append]
+  rw [feed_append, feed_append]
+  obtain ⟨hlg, hlu, -⟩ := leave1049_modes (st_grounds w).1 (st_grounds w).2
   exact
-    ((mmap_modeSet 1049 false (by decide) (by decide)).comp
-        ((mmap_irm false).comp
-          ((mmap_modeSet 25 true (by decide) (by decide)).comp
-            ((mmap_modeSet 2004 false (by decide) (by decide)).comp
-              ((mmap_modeSet 1000 false (by decide) (by decide)).comp
-                ((mmap_modeSet 1002 false (by decide) (by decide)).comp
-                  ((mmap_modeSet 1003 false (by decide) (by decide)).comp
-                    ((mmap_modeSet 1006 false (by decide) (by decide)).comp
-                      ((mmap_modeSet 1004 false (by decide) (by decide)).comp
-                        ((mmap_modeSet 1 false (by decide) (by decide)).comp
+    (((mmap_irm false).comp
+          ((mmap_modeSet 25 true (by decide) (by decide) (by simp)).comp
+            ((mmap_modeSet 2004 false (by decide) (by decide) (by simp)).comp
+              ((mmap_modeSet 1000 false (by decide) (by decide) (by simp)).comp
+                ((mmap_modeSet 1002 false (by decide) (by decide) (by simp)).comp
+                  ((mmap_modeSet 1003 false (by decide) (by decide) (by simp)).comp
+                    ((mmap_modeSet 1006 false (by decide) (by decide) (by simp)).comp
+                      ((mmap_modeSet 1004 false (by decide) (by decide) (by simp)).comp
+                        ((mmap_modeSet 1 false (by decide) (by decide) (by simp)).comp
                           ((mmap_keypad false).comp
-                            ((mmap_modeSet 6 false (by decide) (by decide)).comp
-                              ((mmap_modeSet 7 true (by decide) (by decide)).comp
+                            ((mmap_modeSet 6 false (by decide) (by decide) (by simp)).comp
+                              ((mmap_modeSet 7 true (by decide) (by decide) (by simp)).comp
                                 (mmap_id_stbm.comp
                                   ((mmap_id_charset 0x28 0x42 (Or.inl rfl) (by decide)
                                         (by decide)).comp
@@ -628,7 +624,7 @@ theorem leave_modes (w : Vt) : (w.feed leaveAnsi).modes = ({} : Modes) := by
                                         ((mmap_id_cup 999 1).comp
                                           (mmap_id_sgr.comp
                                             mmap_id_defaultTitleAnsi))))))))))))))))))
-        _ (st_grounds w).1 (st_grounds w).2).2.2
+        _ hlg hlu).2.2
 
 /-- **A5, outbound.** The hand-back returns the parser to ground with nothing
 half-decoded and the modes to the default, for any receiver — the value companion
@@ -812,38 +808,38 @@ Each mode chunk is given its *explicit* record-update transform (not the opaque
 that `rfl` collapses — `smMod` nested that deep blows the `whnf` budget. -/
 
 theorem mmap_wrap (b : Bool) : MMap (fun m => { m with wrap := b }) (modeSet 7 b) :=
-  (mmap_modeSet 7 b (by decide) (by decide)).congr (fun m => rfl)
+  (mmap_modeSet 7 b (by decide) (by decide) (by simp)).congr (fun m => rfl)
 
 theorem mmap_appCursor (b : Bool) : MMap (fun m => { m with appCursor := b }) (modeSet 1 b) :=
-  (mmap_modeSet 1 b (by decide) (by decide)).congr (fun m => rfl)
+  (mmap_modeSet 1 b (by decide) (by decide) (by simp)).congr (fun m => rfl)
 
 theorem mmap_cursorVis (b : Bool) : MMap (fun m => { m with cursorVisible := b }) (modeSet 25 b) :=
-  (mmap_modeSet 25 b (by decide) (by decide)).congr (fun m => rfl)
+  (mmap_modeSet 25 b (by decide) (by decide) (by simp)).congr (fun m => rfl)
 
 theorem mmap_bracketed (b : Bool) :
     MMap (fun m => { m with bracketedPaste := b }) (modeSet 2004 b) :=
-  (mmap_modeSet 2004 b (by decide) (by decide)).congr (fun m => rfl)
+  (mmap_modeSet 2004 b (by decide) (by decide) (by simp)).congr (fun m => rfl)
 
 theorem mmap_mouse0 (n : Nat) (hn : n = 1000 ∨ n = 1002 ∨ n = 1003) :
     MMap (fun m => { m with mouse := 0 }) (modeSet n false) :=
-  (mmap_modeSet n false (by omega) (by omega)).congr
+  (mmap_modeSet n false (by omega) (by omega) (fun h => by rcases h.2 with h' | h' <;> omega)).congr
     (fun m => by rcases hn with h | h | h <;> subst h <;> rfl)
 
 theorem mmap_mouseSet (n : Nat) (hn : (n == 1000 || n == 1002 || n == 1003) = true) :
     MMap (fun m => { m with mouse := n }) (modeSet n true) := by
   have hn' : n = 1000 ∨ n = 1002 ∨ n = 1003 := by simpa [or_assoc] using hn
   exact
-    (mmap_modeSet n true (by omega) (by omega)).congr
+    (mmap_modeSet n true (by omega) (by omega) (by simp)).congr
       (fun m => by rcases hn' with h | h | h <;> subst h <;> rfl)
 
 theorem mmap_mouseSgr (b : Bool) : MMap (fun m => { m with mouseSgr := b }) (modeSet 1006 b) :=
-  (mmap_modeSet 1006 b (by decide) (by decide)).congr (fun m => rfl)
+  (mmap_modeSet 1006 b (by decide) (by decide) (by simp)).congr (fun m => rfl)
 
 theorem mmap_focus (b : Bool) : MMap (fun m => { m with focusEvents := b }) (modeSet 1004 b) :=
-  (mmap_modeSet 1004 b (by decide) (by decide)).congr (fun m => rfl)
+  (mmap_modeSet 1004 b (by decide) (by decide) (by simp)).congr (fun m => rfl)
 
 theorem mmap_origin (b : Bool) : MMap (fun m => { m with origin := b }) (modeSet 6 b) :=
-  (mmap_modeSet 6 b (by decide) (by decide)).congr (fun m => rfl)
+  (mmap_modeSet 6 b (by decide) (by decide) (by simp)).congr (fun m => rfl)
 
 theorem modes_cursorPendingAnsi (v w : Vt) (hg : w.pstate = .ground) (hu : w.u8need = 0)
     (hm : w.modes = v.modes) : (w.feed (cursorPendingAnsi v)).modes = v.modes := by
@@ -946,13 +942,12 @@ theorem restore_modes_placed (v w : Vt)
   simp only [restoreBody, feed_append]
   -- through the DECSC slot the parser is ground; the title's leading `ESC` clears `u8need`
   have hg :=
-    ends_savedPendingAnsi v _
-      (ends_savedAnsi v _
-        (ends_tabsAnsi v _
-          (ends_regionAnsi v _
-            (ends_screensAnsi v _
-              (ends_csiNum 2 0x4A (by decide) (by decide) _
-                (ends_csiNum 0 0x6D (by decide) (by decide) _ (prologue_grounds v w)))))))
+    ends_tabsAnsi v _
+      (ends_regionAnsi v _
+        (ends_savedAnsi v _
+          (ends_screensAnsi v _
+            (ends_csiNum 2 0x4A (by decide) (by decide) _
+              (ends_csiNum 0 0x6D (by decide) (by decide) _ (prologue_grounds v w))))))
   obtain ⟨g1, u1, m1⟩ := mmap_modesAnsi v hmouse _ (ends_titleAnsi v _ hg) (uz_titleAnsi v hg)
   obtain ⟨g2, u2, m2⟩ := mmap_id_charsetAnsi v _ g1 u1
   obtain ⟨g3, u3, m3⟩ := mmap_id_penSgr v.pen _ g2 u2
@@ -1016,13 +1011,12 @@ theorem restore_pen_placed (v w : Vt) : (w.feed (restoreBody v ++ cursorAnsi v))
   have hg :=
     ends_modesAnsi v _
       (ends_titleAnsi v _
-        (ends_savedPendingAnsi v _
-          (ends_savedAnsi v _
-            (ends_tabsAnsi v _
-              (ends_regionAnsi v _
-                (ends_screensAnsi v _
-                  (ends_csiNum 2 0x4A (by decide) (by decide) _
-                    (ends_csiNum 0 0x6D (by decide) (by decide) _ (prologue_grounds v w)))))))))
+        (ends_tabsAnsi v _
+          (ends_regionAnsi v _
+            (ends_savedAnsi v _
+              (ends_screensAnsi v _
+                (ends_csiNum 2 0x4A (by decide) (by decide) _
+                  (ends_csiNum 0 0x6D (by decide) (by decide) _ (prologue_grounds v w))))))))
   obtain ⟨hg', hu', -⟩ := mmap_id_charsetAnsi v _ hg (un_modesAnsi v _)
   rw [penSgr_feed v.pen hg' hu']
   exact pen_cursorAnsi v hg' hu'

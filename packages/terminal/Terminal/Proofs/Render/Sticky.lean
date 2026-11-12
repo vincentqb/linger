@@ -511,15 +511,9 @@ theorem smap_id_gridAnsi (grid : Array Row) : SMap id (gridAnsi grid) :=
 theorem smap_id_cursorAnsi (v : Vt) : SMap id (cursorAnsi v) :=
   SMap.streamPred.cursorAnsi smap_id_cup v
 
-theorem smap_id_savedAnsi (v : Vt) : SMap id (savedAnsi v) :=
-  SMap.streamPred.savedAnsi smap_id_penSgr smap_id_cup (smap_id_escSeq 0x37 (by decide)) v
-
 theorem smap_id_pendingAnsi (cols : Nat) (grid : Array Row) (cur : Cursor) (row : Nat) (pen : Pen) :
     SMap id (pendingAnsi cols grid cur row pen) :=
   SMap.streamPred.pendingAnsi smap_id_cup smap_id_penSgr smap_cellText cols grid cur row pen
-
-theorem smap_id_savedPendingAnsi (v : Vt) : SMap id (savedPendingAnsi v) :=
-  SMap.streamPred.savedPendingAnsi smap_id_pendingAnsi (smap_id_escSeq 0x37 (by decide)) v
 
 theorem smap_id_tabsAnsi (v : Vt) : SMap id (tabsAnsi v) :=
   SMap.streamPred.tabsAnsi (smap_id_tbc 3) smap_id_cha (smap_id_escSeq 0x48 (by decide)) v
@@ -542,6 +536,20 @@ theorem smap_id_modeSet_safe (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535
     (h1047 : n ≠ 1047) (h1049 : n ≠ 1049) : SMap id (modeSet n on) :=
   (smap_modeSet n on hn hlt).congr fun s =>
     stSetMode_of_not_screen on s (by simp [h47, h1047, h1049])
+
+theorem smap_id_parkAnsi (cols : Nat) (grid : Array Row) (sv : Saved) :
+    SMap id (parkAnsi cols grid sv) :=
+  SMap.streamPred.parkAnsi
+    (smap_id_modeSet_safe 6 true (by decide) (by decide) (by decide) (by decide) (by decide))
+    smap_id_penSgr smap_id_cup smap_id_pendingAnsi cols grid sv
+
+theorem smap_id_originOffAnsi (sv : Saved) : SMap id (originOffAnsi sv) :=
+  SMap.streamPred.originOffAnsi
+    (smap_id_modeSet_safe 6 false (by decide) (by decide) (by decide) (by decide) (by decide)) sv
+
+theorem smap_id_savedAnsi (v : Vt) : SMap id (savedAnsi v) :=
+  SMap.streamPred.savedAnsi smap_id_parkAnsi (smap_id_escSeq 0x37 (by decide)) smap_id_originOffAnsi
+    v
 
 /-- Every mode `modesAnsi` replays is one `setMode` cannot turn into a screen
 switch — including the mouse field, whose *guard* is what rules 47/1047/1049 out
@@ -674,12 +682,11 @@ theorem smap_screensAnsi (v : Vt) :
   rcases hv : v.altGrid with - | x
   · rw [ite_eq_right (by simp)]
     exact smap_id_gridAnsi _
-  · obtain ⟨mg, mc, mp⟩ := x
+  · obtain ⟨mg, ms⟩ := x
     rw [ite_eq_left (by simp)]
     exact
-      (((((((smap_id_gridAnsi mg).append (smap_id_penSgr mp)).append (smap_id_cup _ _)).append
-                    (smap_id_pendingAnsi _ _ _ _ _)).comp
-                h1049).comp
+      ((((((smap_id_gridAnsi mg).append (smap_id_parkAnsi _ _ _)).comp h1049).comp
+                (smap_id_originOffAnsi ms)).comp
             (smap_id_gridAnsi v.grid)).congr
         (fun s => rfl))
 
@@ -757,10 +764,9 @@ theorem restore_sticky_placed (v w : Vt) (hrows : w.rows = v.rows) (hlt : v.top 
           csiNum 0 0x6D ++
           csiNum 2 0x4A ++
           screensAnsi v ++
+          savedAnsi v ++
           regionAnsi v ++
           tabsAnsi v ++
-          savedAnsi v ++
-          savedPendingAnsi v ++
           titleAnsi v ++
           modesAnsi v ++
           charsetAnsi v ++
@@ -839,9 +845,10 @@ theorem restore_sticky_placed (v w : Vt) (hrows : w.rows = v.rows) (hlt : v.top 
           rw [ite_eq_right (by simp)]
         · rw [ite_eq_right hv, show v.altGrid.isSome = false from by simpa using hv]
           rfl)
-  -- the scroll region
+  -- the DECSC slot, then the scroll region
+  have h11s := sput_congr (sput_step h11 (smap_id_savedAnsi v)) (id_eq _)
   have h12 :=
-    sput_congr (sput_step h11 (smap_regionAnsi v (by omega) (by omega)))
+    sput_congr (sput_step h11s (smap_regionAnsi v (by omega) (by omega)))
       (show
         (if v.top == 0 && v.bot == v.rows - 1 then id else stStbm v.top v.bot)
             (⟨v.rows, 0, v.rows - 1, false, false, false, v.altGrid.isSome⟩ : Sticky) =
@@ -860,9 +867,7 @@ theorem restore_sticky_placed (v w : Vt) (hrows : w.rows = v.rows) (hlt : v.top 
                 from by
                 simp only; omega)])
   have h13 := sput_congr (sput_step h12 (smap_id_tabsAnsi v)) (id_eq _)
-  have h14 := sput_congr (sput_step h13 (smap_id_savedAnsi v)) (id_eq _)
-  have h14p := sput_congr (sput_step h14 (smap_id_savedPendingAnsi v)) (id_eq _)
-  have h15 := sput_congr (sput_step h14p (smap_id_titleAnsi v)) (id_eq _)
+  have h15 := sput_congr (sput_step h13 (smap_id_titleAnsi v)) (id_eq _)
   have h16 := sput_congr (sput_step h15 (smap_id_modesAnsi v)) (id_eq _)
   -- the charsets and the shift state
   have h17 :=
@@ -1241,10 +1246,9 @@ theorem restoreBody_origin (v w : Vt) (ho : v.modes.origin = false) :
         csiNum 0 0x6D ++
         csiNum 2 0x4A ++
         screensAnsi v ++
+        savedAnsi v ++
         regionAnsi v ++
         tabsAnsi v ++
-        savedAnsi v ++
-        savedPendingAnsi v ++
         titleAnsi v ++
         modesAnsi v ++
         charsetAnsi v ++
@@ -1253,45 +1257,45 @@ theorem restoreBody_origin (v w : Vt) (ho : v.modes.origin = false) :
     refine Quiet.append ?_ (quiet_charsetAnsi v)
     refine Quiet.append ?_ (quiet_modesAnsi v ho)
     refine Quiet.append ?_ (quiet_titleAnsi v)
-    refine Quiet.append ?_ (quiet_savedPendingAnsi v)
-    refine Quiet.append ?_ (quiet_savedAnsi v)
     refine Quiet.append ?_ (quiet_tabsAnsi v)
     refine Quiet.append ?_ (quiet_regionAnsi v)
+    refine Quiet.append ?_ (quiet_savedAnsi v)
     refine Quiet.append ?_ (quiet_screensAnsi v)
-    refine Quiet.append ?_ (quiet_csiNum 2 0x4A (by decide) (by decide))
-    refine Quiet.append ?_ (quiet_csiNum 0 0x6D (by decide) (by decide))
+    refine Quiet.append ?_ (quiet_csiNum 2 0x4A (by decide) (by decide) (by decide))
+    refine Quiet.append ?_ (quiet_csiNum 0 0x6D (by decide) (by decide) (by decide))
     refine Quiet.append ?_ (Quiet.text (bs := [0x0F]) (by decide))
     refine Quiet.append ?_ (quiet_escCharset 0x29 0x42 (by decide) (by decide) (by decide))
     refine Quiet.append ?_ (quiet_escCharset 0x28 0x42 (by decide) (by decide) (by decide))
     exact
-      (quiet_modeSet 7 true (by decide)).append
-        (quiet_csiNum2 1 v.rows 0x72 (by decide) (by decide))
-  have hm : MMap _ (modeSet 1049 false ++ csiNum 4 0x6C ++ modeSet 6 false) :=
-    ((mmap_modeSet 1049 false (by decide) (by decide)).comp (mmap_irm false)).comp
-      (mmap_origin false)
+      (quiet_modeSet 7 true (by decide) (by decide)).append
+        (quiet_csiNum2 1 v.rows 0x72 (by decide) (by decide) (by decide))
+  -- `?1049l` restores whatever origin mode the receiver's stash held; `4l ?6l` then turn
+  -- insert mode and DECOM off, whatever they were
+  have hm : MMap _ (csiNum 4 0x6C ++ modeSet 6 false) := (mmap_irm false).comp (mmap_origin false)
   obtain ⟨g1, u1⟩ := st_grounds w
-  obtain ⟨g2, -, m2⟩ := hm _ g1 u1
+  obtain ⟨g2, u2, -⟩ := leave1049_modes g1 u1
+  obtain ⟨g3, -, m3⟩ := hm _ g2 u2
   rw [show
       restoreBody v =
         escSeq 0x5C ++
-          ((modeSet 1049 false ++ csiNum 4 0x6C ++ modeSet 6 false) ++
-            (modeSet 7 true ++ csiNum2 1 v.rows 0x72 ++ escCharset 0x28 0x42 ++
-              escCharset 0x29 0x42 ++
-              [0x0F] ++
-              csiNum 0 0x6D ++
-              csiNum 2 0x4A ++
-              screensAnsi v ++
-              regionAnsi v ++
-              tabsAnsi v ++
-              savedAnsi v ++
-              savedPendingAnsi v ++
-              titleAnsi v ++
-              modesAnsi v ++
-              charsetAnsi v ++
-              penSgr v.pen))
+          (modeSet 1049 false ++
+            ((csiNum 4 0x6C ++ modeSet 6 false) ++
+              (modeSet 7 true ++ csiNum2 1 v.rows 0x72 ++ escCharset 0x28 0x42 ++
+                escCharset 0x29 0x42 ++
+                [0x0F] ++
+                csiNum 0 0x6D ++
+                csiNum 2 0x4A ++
+                screensAnsi v ++
+                savedAnsi v ++
+                regionAnsi v ++
+                tabsAnsi v ++
+                titleAnsi v ++
+                modesAnsi v ++
+                charsetAnsi v ++
+                penSgr v.pen)))
       from by simp only [restoreBody, prologueAnsi, List.append_assoc],
-    feed_append w (escSeq 0x5C), feed_append (w.feed (escSeq 0x5C))]
-  exact (hq _ g2 (by rw [m2])).2
+    feed_append w (escSeq 0x5C), feed_append (w.feed (escSeq 0x5C)), feed_append]
+  exact (hq _ g3 (by rw [m3])).2
 
 /-- **§Replay (cursor), receiver-quantified.** The final `CUP` lands where the session
 had it in *any* client's emulator of the session's size, not only a fresh one. -/

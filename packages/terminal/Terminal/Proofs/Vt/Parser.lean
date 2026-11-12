@@ -48,6 +48,10 @@ theorem un_applySgr (v : Vt) (ps : List (Nat × Bool)) : (v.applySgr ps).u8need 
 
 theorem un_backTab (v : Vt) : v.backTab.u8need = v.u8need := by rfl
 
+theorem un_saveCursor (v : Vt) : v.saveCursor.u8need = v.u8need := by rfl
+
+theorem un_restoreCursor (v : Vt) : v.restoreCursor.u8need = v.u8need := by rfl
+
 theorem un_scrollUpIn (v : Vt) (t b : Nat) (a : Bool) : (v.scrollUpIn t b a).u8need = v.u8need := by
   unfold Vt.scrollUpIn; dsimp only; split <;> rfl
 
@@ -104,7 +108,7 @@ theorem un_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) :
     (v.setMode priv n on).u8need = v.u8need := by
   unfold Vt.setMode
   repeat' split
-  all_goals try simp only [un_moveTo, un_enterAlt, un_leaveAlt]
+  all_goals try simp only [un_moveTo, un_enterAlt, un_leaveAlt, un_saveCursor, un_restoreCursor]
 
 theorem un_setModes (v : Vt) (priv : Bool) (ps : List (Nat × Bool)) (on : Bool) :
     (v.setModes priv ps on).u8need = v.u8need :=
@@ -136,7 +140,7 @@ theorem un_csiDispatch (v : Vt) (s : CsiState) (final : UInt8) :
     try
       simp only [un_insertChars, un_moveRel, un_carriageReturn, un_setCol, un_moveTo,
         un_eraseScreen, un_eraseLine, un_insertLines, un_deleteLines, un_deleteChars, un_eraseChars,
-        un_setModes, un_applySgr, Vt.repeatAtMost]
+        un_setModes, un_applySgr, un_saveCursor, un_restoreCursor, Vt.repeatAtMost]
   all_goals
     with_reducible
       first
@@ -236,6 +240,10 @@ theorem ua_applySgr (v : Vt) (ps : List (Nat × Bool)) : (v.applySgr ps).u8acc =
 
 theorem ua_backTab (v : Vt) : v.backTab.u8acc = v.u8acc := by rfl
 
+theorem ua_saveCursor (v : Vt) : v.saveCursor.u8acc = v.u8acc := by rfl
+
+theorem ua_restoreCursor (v : Vt) : v.restoreCursor.u8acc = v.u8acc := by rfl
+
 theorem ua_scrollUpIn (v : Vt) (t b : Nat) (a : Bool) : (v.scrollUpIn t b a).u8acc = v.u8acc := by
   unfold Vt.scrollUpIn; dsimp only; split <;> rfl
 
@@ -277,7 +285,7 @@ theorem ua_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) :
     (v.setMode priv n on).u8acc = v.u8acc := by
   unfold Vt.setMode
   repeat' split
-  all_goals try simp only [ua_moveTo, ua_enterAlt, ua_leaveAlt]
+  all_goals try simp only [ua_moveTo, ua_enterAlt, ua_leaveAlt, ua_saveCursor, ua_restoreCursor]
 
 theorem ua_setModes (v : Vt) (priv : Bool) (ps : List (Nat × Bool)) (on : Bool) :
     (v.setModes priv ps on).u8acc = v.u8acc :=
@@ -303,7 +311,7 @@ theorem ua_csiDispatch (v : Vt) (s : CsiState) (final : UInt8) :
     try
       simp only [ua_insertChars, ua_moveRel, ua_carriageReturn, ua_setCol, ua_moveTo,
         ua_eraseScreen, ua_eraseLine, ua_insertLines, ua_deleteLines, ua_deleteChars, ua_eraseChars,
-        ua_setModes, ua_applySgr, Vt.repeatAtMost]
+        ua_setModes, ua_applySgr, ua_saveCursor, ua_restoreCursor, Vt.repeatAtMost]
   all_goals
     with_reducible
       first
@@ -1036,18 +1044,18 @@ theorem tabsOk_step {v : Vt} (b : UInt8) (h : TabsOk v) : TabsOk (v.step b) := b
 theorem tabsOk_feed : ∀ (bs : List UInt8) {v : Vt}, TabsOk v → TabsOk (v.feed bs) := fun bs {v} h =>
   invariant_foldl TabsOk Vt.step (fun _ b hw => tabsOk_step b hw) bs v h
 
-/-! ## Origin mode survives everything that is not a mode set
+/-! ## Origin mode survives everything that is not a mode set or a cursor restore
 
 The rung §Replay's *restore-level* cursor claim stands on: a session with
 DECOM off must replay with DECOM off, or the final `CUP` would be read
 region-relative and land somewhere else.
 
-The structural fact that makes this cheap: `modes` is only ever written
-by `setMode`, which `csiDispatch` reaches only through the `h`/`l`
-finals. So one conditional lemma (`org_setMode`: only *private* mode 6
-touches `origin`) plus the usual arm sweep carries it. Fourth instance of
-the invariance-layer recipe, and the one that will also serve pen,
-region and mode fidelity.
+The structural fact that makes this cheap: `origin` is only ever written
+by `setMode` and by the restores of a saved cursor, which `csiDispatch` reaches through the
+`h`/`l` finals and `CSI u`, and `stepEsc` through `ESC 8` and `RIS`. So one conditional lemma
+(`org_setMode`: only *private* mode 6 and the resets of 1048 and 1049, which restore a saved
+cursor, touch `origin`) plus the usual arm sweep carries it. Fourth instance of the
+invariance-layer recipe, and the one that will also serve pen, region and mode fidelity.
 -/
 
 theorem org_foldl {α : Type} (f : Vt → α → Vt) (hf : ∀ v a, (f v a).modes.origin = v.modes.origin) :
@@ -1121,67 +1129,99 @@ theorem org_deleteLines (v : Vt) (n : Nat) : (v.deleteLines n).modes.origin = v.
 theorem org_enterAlt (v : Vt) (s : Bool) : (v.enterAlt s).modes.origin = v.modes.origin := by
   unfold Vt.enterAlt; dsimp only; split <;> rfl
 
-theorem org_leaveAlt (v : Vt) (s : Bool) : (v.leaveAlt s).modes.origin = v.modes.origin := by
+/-- Leaving the alternate screen keeps origin mode unless mode 1049 restores the stashed one. -/
+theorem org_leaveAlt (v : Vt) : (v.leaveAlt false).modes.origin = v.modes.origin := by
   unfold Vt.leaveAlt; split <;> rfl
 
-/-- **The conditional rung.** Only *private* mode 6 (DECOM) writes
-`origin`; every other mode number, private or not, leaves it alone. -/
-theorem org_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) (h : ¬(priv = true ∧ n = 6)) :
+theorem org_saveCursor (v : Vt) : v.saveCursor.modes.origin = v.modes.origin := by rfl
+
+/-- **The conditional rung.** Only *private* mode 6 (DECOM) and the resets of private modes 1048
+and 1049, which restore a saved cursor and origin mode with it, write `origin`; every other mode
+number, private or not, leaves it alone. -/
+theorem org_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool)
+    (h : ¬(priv = true ∧ (n = 6 ∨ (on = false ∧ (n = 1048 ∨ n = 1049))))) :
     (v.setMode priv n on).modes.origin = v.modes.origin := by
   unfold Vt.setMode
   split
   · rename_i hp
-    -- private modes: only 6 touches origin, and that case is excluded
-    repeat' split
+    have h6 : n ≠ 6 := fun e => h ⟨hp, Or.inl e⟩
+    have h48 : on = false → n ≠ 1048 := fun ho e => h ⟨hp, Or.inr ⟨ho, Or.inl e⟩⟩
+    have h49 : on = false → n ≠ 1049 := fun ho e => h ⟨hp, Or.inr ⟨ho, Or.inr e⟩⟩
+    -- private modes: only 6 and the two cursor restores touch origin, and those are excluded
+    split
     all_goals
       first
       | rfl
-      | exact org_enterAlt _ _
-      | exact org_leaveAlt _ _
-      | ( exfalso
-          apply h
-          refine ⟨hp, ?_⟩
-          rfl)
+      | exact absurd rfl h6
+      | ( split
+          all_goals
+            first
+            | rfl
+            | exact org_enterAlt _ _
+            | exact org_leaveAlt _
+            | (rename_i hon; exact absurd rfl (h48 (by simpa using hon)))
+            | (rename_i hon; exact absurd rfl (h49 (by simpa using hon))))
   · -- non-private: only IRM (4), which is a different flag
     repeat' split
     all_goals rfl
 
-/-- A mode batch preserves origin when none of its requested modes is DECOM. -/
+/-- A mode batch preserves origin when none of its requested modes is DECOM or a cursor
+restore. -/
 theorem org_setModes (v : Vt) (priv : Bool) (ps : List (Nat × Bool)) (on : Bool)
-    (h : ∀ p ∈ ps, ¬(priv = true ∧ p.1 = 6)) :
+    (h : ∀ p ∈ ps, ¬(priv = true ∧ (p.1 = 6 ∨ (on = false ∧ (p.1 = 1048 ∨ p.1 = 1049))))) :
     (v.setModes priv ps on).modes.origin = v.modes.origin :=
   setModes_invariant (fun w => w.modes.origin = v.modes.origin) priv on ps
     (fun w p hp hw => (org_setMode w priv p.1 on (h p hp)).trans hw) v rfl
 
-theorem org_setMode_eq (v : Vt) (priv : Bool) (n : Nat) (on : Bool) :
+theorem org_setMode_eq (v : Vt) (priv : Bool) (n : Nat) (on : Bool)
+    (h : ¬(priv = true ∧ on = false ∧ (n = 1048 ∨ n = 1049))) :
     (v.setMode priv n on).modes.origin = if priv = true ∧ n = 6 then on else v.modes.origin := by
-  by_cases h : priv = true ∧ n = 6
-  · obtain ⟨hp, hn⟩ := h
+  by_cases h6 : priv = true ∧ n = 6
+  · obtain ⟨hp, hn⟩ := h6
     subst priv; subst n
     rw [ite_eq_left ⟨rfl, rfl⟩]
     exact org_moveTo _ _ _
-  · rw [ite_eq_right h]
-    exact org_setMode v priv n on h
+  · rw [ite_eq_right h6]
+    refine org_setMode v priv n on ?_
+    rintro ⟨hp, h6' | hr⟩
+    · exact h6 ⟨hp, h6'⟩
+    · exact h ⟨hp, hr⟩
 
-/-- Any occurrence of private mode 6 sets origin to the batch's requested value.
-This covers repeated DECOM and DECOM after other modes, without a frame premise. -/
-theorem org_setModes_eq (v : Vt) (priv : Bool) (ps : List (Nat × Bool)) (on : Bool) :
+/-- Any occurrence of private mode 6 sets origin to the batch's requested value, in a batch
+that restores no saved cursor. This covers repeated DECOM and DECOM after other modes, without
+a frame premise. -/
+theorem org_setModes_eq (v : Vt) (priv : Bool) (ps : List (Nat × Bool)) (on : Bool)
+    (h : ∀ p ∈ ps, ¬(priv = true ∧ on = false ∧ (p.1 = 1048 ∨ p.1 = 1049))) :
     (v.setModes priv ps on).modes.origin =
       if priv = true ∧ ps.any (fun p => p.1 == 6) = true then on else v.modes.origin := by
   induction ps generalizing v with
   | nil => simp [setModes_nil]
-  | cons p ps ih =>
-    rw [setModes_cons, ih, org_setMode_eq, List.any_cons]
+  | cons p ps
+    ih =>
+    rw [setModes_cons, ih _ (fun q hq => h q (by simp [hq])),
+      org_setMode_eq _ _ _ _ (h p (by simp)), List.any_cons]
     simp only [Bool.or_eq_true, beq_iff_eq]
     by_cases hp : priv = true <;> by_cases hn : p.1 = 6 <;>
       by_cases ht : ps.any (fun p => p.1 == 6) = true <;>
       simp [hp, hn, ht]
 
-/-- `csiDispatch` preserves `origin` unless a private sequence requests DECOM
-somewhere in its parameters. The first parameter alone cannot establish this. -/
-theorem org_csiDispatch (v : Vt) (s : CsiState) (final : UInt8)
-    (h : ∀ p ∈ s.params.toList, ¬((s.priv == 0x3F) = true ∧ p.1 = 6)) :
+/-- `csiDispatch` preserves `origin` unless it restores the saved cursor (`CSI u`), a private
+sequence requests DECOM somewhere in its parameters, or a private reset (`l`) names 1048 or 1049,
+which restore a saved cursor. The first parameter alone cannot establish this. -/
+theorem org_csiDispatch (v : Vt) (s : CsiState) (final : UInt8) (hu : final ≠ 0x75)
+    (h6 : ∀ p ∈ s.params.toList, ¬((s.priv == 0x3F) = true ∧ p.1 = 6))
+    (hr :
+      final = 0x6C →
+        ∀ p ∈ s.params.toList, ¬((s.priv == 0x3F) = true ∧ (p.1 = 1048 ∨ p.1 = 1049))) :
     (v.csiDispatch s final).modes.origin = v.modes.origin := by
+  have hm :
+    ∀ (on : Bool),
+      (on = false → final = 0x6C) →
+        ∀ p ∈ s.params.toList,
+          ¬((s.priv == 0x3F) = true ∧ (p.1 = 6 ∨ (on = false ∧ (p.1 = 1048 ∨ p.1 = 1049)))) := by
+    rintro on hon p hp ⟨hpr, h6' | ⟨hoff, hre⟩⟩
+    · exact h6 p hp ⟨hpr, h6'⟩
+    · exact hr (hon hoff) p hp ⟨hpr, hre⟩
   unfold Vt.csiDispatch Vt.repeatAtMost
   dsimp only
   repeat' split
@@ -1189,12 +1229,14 @@ theorem org_csiDispatch (v : Vt) (s : CsiState) (final : UInt8)
     try
       simp only [org_insertChars, org_moveRel, org_carriageReturn, org_setCol, org_moveTo,
         org_eraseScreen, org_eraseLine, org_insertLines, org_deleteLines, org_deleteChars,
-        org_eraseChars, org_applySgr]
+        org_eraseChars, org_applySgr, org_saveCursor]
   all_goals
     with_reducible
       first
       | rfl
-      | exact org_setModes _ _ _ _ h
+      | exact absurd rfl hu
+      | exact org_setModes _ _ _ _ (hm true (fun hf => absurd hf (by decide)))
+      | exact org_setModes _ _ _ _ (hm false (fun _ => rfl))
       | exact org_foldl _ (fun w _ => org_tab w) _ _
       | exact org_foldl _ (fun w _ => org_scrollUp w) _ _
       | exact org_foldl _ (fun w _ => org_scrollDown w) _ _
@@ -1205,25 +1247,27 @@ theorem priv_csiPush (s : CsiState) (sub : Bool) : (csiPush s sub).priv = s.priv
   repeat' split
   all_goals rfl
 
-theorem org_csiFinish (v : Vt) (s : CsiState) (final : UInt8) (hp : (s.priv == 0x3F) = false) :
-    (v.csiFinish s final).modes.origin = v.modes.origin := by
+theorem org_csiFinish (v : Vt) (s : CsiState) (final : UInt8) (hu : final ≠ 0x75)
+    (hp : (s.priv == 0x3F) = false) : (v.csiFinish s final).modes.origin = v.modes.origin := by
   -- every record `csiFinish` builds keeps `priv`, so one hypothesis covers
   -- every dispatch site
   have hnot :
     ∀ (t : CsiState),
-      t.priv = s.priv → ∀ p ∈ t.params.toList, ¬((t.priv == 0x3F) = true ∧ p.1 = 6) := by
-    intro t ht p _ hc
+      t.priv = s.priv → ∀ (q : Prop) (p : Nat × Bool), ¬((t.priv == 0x3F) = true ∧ q) := by
+    intro t ht q p hc
     rw [ht, hp] at hc
     exact absurd hc.1 (by simp)
   unfold Vt.csiFinish
   dsimp only
   split
   · split
-    · exact org_csiDispatch _ _ _ (hnot _ rfl)
-    · exact org_csiDispatch _ _ _ (hnot _ rfl)
+    · exact org_csiDispatch _ _ _ hu (fun p _ => hnot _ rfl _ p) (fun _ p _ => hnot _ rfl _ p)
+    · exact org_csiDispatch _ _ _ hu (fun p _ => hnot _ rfl _ p) (fun _ p _ => hnot _ rfl _ p)
   · split
-    · exact org_csiDispatch _ _ _ (hnot _ rfl)
-    · exact org_csiDispatch _ _ _ (hnot _ (priv_csiPush s false))
+    · exact org_csiDispatch _ _ _ hu (fun p _ => hnot _ rfl _ p) (fun _ p _ => hnot _ rfl _ p)
+    · exact
+        org_csiDispatch _ _ _ hu (fun p _ => hnot _ (priv_csiPush s false) _ p)
+          (fun _ p _ => hnot _ (priv_csiPush s false) _ p)
 
 theorem org_ctl (v : Vt) (b : UInt8) : (v.ctl b).modes.origin = v.modes.origin := by
   unfold Vt.ctl
@@ -1238,11 +1282,11 @@ theorem org_ctl (v : Vt) (b : UInt8) : (v.ctl b).modes.origin = v.modes.origin :
       | rfl
 
 /-- Inside a CSI, `origin` survives unless the sequence is a private
-mode-6 set/reset — and a private-marker byte only *records* the marker. -/
-theorem org_stepCsi (v : Vt) (s : CsiState) (b : UInt8) (hp : (s.priv == 0x3F) = false) :
-    (v.stepCsi s b).modes.origin = v.modes.origin := by
+mode-6 set/reset or a cursor restore — and a private-marker byte only *records* the marker. -/
+theorem org_stepCsi (v : Vt) (s : CsiState) (b : UInt8) (hu : b ≠ 0x75)
+    (hp : (s.priv == 0x3F) = false) : (v.stepCsi s b).modes.origin = v.modes.origin := by
   unfold Vt.stepCsi
-  simp only [apply_ite (fun w : Vt => w.modes.origin), org_csiFinish _ _ _ hp, org_ctl, ite_self]
+  simp only [apply_ite (fun w : Vt => w.modes.origin), org_csiFinish _ _ _ hu hp, org_ctl, ite_self]
 
 theorem org_print (v : Vt) (c : Char) : (v.print c).modes.origin = v.modes.origin :=
   congrArg (fun s => s.modes.origin) (off_print v c)
@@ -1275,8 +1319,8 @@ theorem org_abortUtf8 (v : Vt) (b : UInt8) : (v.abortUtf8 b).modes.origin = v.mo
 
 /-- `stepEsc` preserves `origin` except at `RIS`, which resets it to the
 default — `false`, which is what a DECOM-off session wants anyway, so the
-statement is "stays false". -/
-theorem org_stepEsc {v : Vt} (b : UInt8) (h : v.modes.origin = false) :
+statement is "stays false" — and at `ESC 8`, which restores the saved origin mode. -/
+theorem org_stepEsc {v : Vt} (b : UInt8) (h8 : b ≠ 0x38) (h : v.modes.origin = false) :
     (v.stepEsc b).modes.origin = false := by
   unfold Vt.stepEsc
   dsimp only
@@ -1286,6 +1330,7 @@ theorem org_stepEsc {v : Vt} (b : UInt8) (h : v.modes.origin = false) :
     first
     | exact h
     | rfl
+    | exact absurd rfl h8
 
 /-! ### The private-CSI escape hatch
 
@@ -1299,28 +1344,37 @@ one pending accumulator, whose value is not 6.
 -/
 
 /-- With no previously pushed parameters, the pending parameter is the only
-mode `csiFinish` can request. If it is not 6, no `h`/`l` final can be DECOM. -/
-theorem org_csiFinish_pending (v : Vt) (s : CsiState) (final : UInt8) (hparams : s.params = #[])
-    (hhave : s.haveCur = true) (hne : min s.cur 65535 ≠ 6) :
+mode `csiFinish` can request. If it is not 6, 1048 or 1049, no `h`/`l` final can be DECOM or a
+cursor restore. -/
+theorem org_csiFinish_pending (v : Vt) (s : CsiState) (final : UInt8) (hu : final ≠ 0x75)
+    (hparams : s.params = #[]) (hhave : s.haveCur = true) (hne : min s.cur 65535 ≠ 6)
+    (h48 : final = 0x6C → min s.cur 65535 ≠ 1048) (h49 : final = 0x6C → min s.cur 65535 ≠ 1049) :
     (v.csiFinish s final).modes.origin = v.modes.origin := by
   have hsize : ¬(s.params.size ≥ 16) := by
     rw [hparams]; simp
   unfold Vt.csiFinish
   dsimp only
   rw [ite_eq_left hhave, ite_eq_right hsize]
-  refine org_csiDispatch _ _ _ ?_
-  intro p hp ⟨_, h6⟩
-  simp only [hparams, Array.toList_push, List.nil_append, List.mem_singleton] at hp
-  subst p
-  exact hne h6
+  refine org_csiDispatch _ _ _ hu ?_ ?_
+  · intro p hp ⟨_, h6⟩
+    simp only [hparams, Array.toList_push, List.nil_append, List.mem_singleton] at hp
+    subst p
+    exact hne h6
+  · intro hl p hp ⟨_, h6⟩
+    simp only [hparams, Array.toList_push, List.nil_append, List.mem_singleton] at hp
+    subst p
+    rcases h6 with h6 | h6
+    · exact h48 hl h6
+    · exact h49 hl h6
 
 /-- `stepCsi` under the same knowledge: no branch can turn `origin` on. -/
-theorem org_stepCsi_pending (v : Vt) (s : CsiState) (b : UInt8) (hparams : s.params = #[])
-    (hhave : s.haveCur = true) (hne : min s.cur 65535 ≠ 6) :
+theorem org_stepCsi_pending (v : Vt) (s : CsiState) (b : UInt8) (hu : b ≠ 0x75)
+    (hparams : s.params = #[]) (hhave : s.haveCur = true) (hne : min s.cur 65535 ≠ 6)
+    (h48 : b = 0x6C → min s.cur 65535 ≠ 1048) (h49 : b = 0x6C → min s.cur 65535 ≠ 1049) :
     (v.stepCsi s b).modes.origin = v.modes.origin := by
   unfold Vt.stepCsi
   simp only [apply_ite (fun w : Vt => w.modes.origin),
-    org_csiFinish_pending _ _ _ hparams hhave hne, org_ctl, ite_self]
+    org_csiFinish_pending _ _ _ hu hparams hhave hne h48 h49, org_ctl, ite_self]
 
 /-! ### The dispatcher: `origin` across one whole `Vt.step`
 
@@ -1334,12 +1388,12 @@ theorem org_step_of_ground {v : Vt} (b : UInt8) (hg : v.pstate = .ground) :
   rw [step_of_ground b hg, org_stepGround, org_abortUtf8]
 
 /-- From `.esc` the claim has to be "stays false" rather than "unchanged":
-`RIS` resets `origin` to its default, which is `false`. -/
-theorem org_step_of_esc {v : Vt} (b : UInt8) (hg : v.pstate = .esc) (h : v.modes.origin = false) :
-    (v.step b).modes.origin = false := by
+`RIS` resets `origin` to its default, which is `false`; `ESC 8` is excluded. -/
+theorem org_step_of_esc {v : Vt} (b : UInt8) (hg : v.pstate = .esc) (h8 : b ≠ 0x38)
+    (h : v.modes.origin = false) : (v.step b).modes.origin = false := by
   rw [step_of_esc b hg]
   exact
-    org_stepEsc b
+    org_stepEsc b h8
       (by
         rw [org_abortUtf8]; exact h)
 
@@ -1351,14 +1405,15 @@ theorem org_step_of_osc {v : Vt} {acc : Array UInt8} {e : Bool} (b : UInt8)
     (hg : v.pstate = .osc acc e) : (v.step b).modes.origin = v.modes.origin := by
   rw [step_of_osc b hg, org_stepOsc, org_abortUtf8]
 
-theorem org_step_of_csi {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi s)
+theorem org_step_of_csi {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi s) (hu : b ≠ 0x75)
     (hp : (s.priv == 0x3F) = false) : (v.step b).modes.origin = v.modes.origin := by
-  rw [step_of_csi b hg, org_stepCsi _ _ _ hp, org_abortUtf8]
+  rw [step_of_csi b hg, org_stepCsi _ _ _ hu hp, org_abortUtf8]
 
 /-- The marker-tolerant companion of `org_step_of_csi`. -/
 theorem org_step_of_csi_pending {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi s)
-    (hparams : s.params = #[]) (hhave : s.haveCur = true) (hne : min s.cur 65535 ≠ 6) :
-    (v.step b).modes.origin = v.modes.origin := by
-  rw [step_of_csi b hg, org_stepCsi_pending _ _ _ hparams hhave hne, org_abortUtf8]
+    (hu : b ≠ 0x75) (hparams : s.params = #[]) (hhave : s.haveCur = true)
+    (hne : min s.cur 65535 ≠ 6) (h48 : b = 0x6C → min s.cur 65535 ≠ 1048)
+    (h49 : b = 0x6C → min s.cur 65535 ≠ 1049) : (v.step b).modes.origin = v.modes.origin := by
+  rw [step_of_csi b hg, org_stepCsi_pending _ _ _ hu hparams hhave hne h48 h49, org_abortUtf8]
 
 end Terminal.Vt

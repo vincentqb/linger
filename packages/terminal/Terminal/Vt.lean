@@ -317,12 +317,16 @@ structure Cursor where
   pending : Bool := false
   deriving Repr, DecidableEq, Inhabited
 
-/-- The cursor and pen DECSC saves and DECRC restores. -/
+/-- What DECSC saves and DECRC restores, as the VT510 and xterm do: the cursor, the pen and origin
+mode. Entering the alternate screen with mode 1049 saves the same three with the main screen,
+and leaving it restores them. -/
 structure Saved where
   /-- The saved cursor, including its wrap-pending flag. -/
   cur : Cursor := {}
   /-- The saved pen. -/
   pen : Pen := {}
+  /-- Origin mode (DECOM) when saved. -/
+  origin : Bool := false
   deriving Repr, DecidableEq, Inhabited
 
 /-- The emulator state. **The representation is sealed**: every field is
@@ -426,7 +430,7 @@ structure VtRec where
   private bot : Nat
   private tabs : Array Bool -- size cols
   private sb : Ring := {} -- scrollback (main screen only)
-  private altGrid : Option (Array Row × Cursor × Pen) := none -- stashed MAIN state while in alt
+  private altGrid : Option (Array Row × Saved) := none -- stashed MAIN grid and cursor while in alt
   private saved : Saved := {}
   private title : String := ""
   private g0Line : Bool := false -- G0 is DEC line-drawing
@@ -444,9 +448,10 @@ abbrev Vt : Type := VtRec
 -- No `Repr`: it would publicly read every private field (`Terminal.Tests.VtApi` pins
 -- this).
 
-/-- The default tab ruler: a stop every eight columns after column 0. -/
+/-- The default tab ruler: a stop every eight columns after column 0. Built from a list, which the
+kernel evaluates (`Terminal/Tests/Keeps.lean`). -/
 private def defaultTabs (cols : Nat) : Array Bool :=
-  (Array.range cols).map (fun i => i % 8 == 0 && i != 0)
+  ((List.range cols).map (fun i => i % 8 == 0 && i != 0)).toArray
 
 /-- A fresh screen with each dimension clamped to [1, 1000]. -/
 def Vt.init (cols rows : Nat) : Vt :=
@@ -541,18 +546,28 @@ useful. Naming it gives `split` one splittable term. Two stages now, `decodedOk`
 
 /-- Screen geometry, cursors and the scroll region — `Good`'s decidable content, and
 nothing about the grid. `Vt.decodedRenderable` below is the other half; the door checks
-both. -/
-private def Vt.decodedOk (cols rows : Nat) (cursor : Cursor) (top bot : Nat) (sb : Ring)
-    (altGrid : Option (Array Row × Cursor × Pen)) (saved : Saved) : Bool :=
+both.
+
+Besides the bounds, it checks what only the emulator's own transitions establish and a
+repaint needs: under origin mode the cursor is inside the scroll region, wrap is pending only
+at the right margin (for the cursor, the saved cursor and the stashed one), and the region is
+the whole screen or spans two rows, as `DECSTBM` sets it. A record without them describes a
+screen no session reaches and no repaint reproduces. -/
+private def Vt.decodedOk (cols rows : Nat) (cursor : Cursor) (origin : Bool) (top bot : Nat)
+    (sb : Ring) (altGrid : Option (Array Row × Saved)) (saved : Saved) : Bool :=
   1 ≤ cols && cols ≤ 1000 && 1 ≤ rows && rows ≤ 1000 && cursor.x < cols && cursor.y < rows &&
     saved.cur.x < cols &&
     saved.cur.y < rows &&
     top ≤ bot &&
     bot < rows &&
     sb.size ≤ sbCap &&
+    (!origin || (top ≤ cursor.y && cursor.y ≤ bot)) &&
+    (!cursor.pending || cursor.x + 1 == cols) &&
+    (!saved.cur.pending || saved.cur.x + 1 == cols) &&
+    (top < bot || rows == 1) &&
     (match altGrid with
     | none => true
-    | some (_, c, _) => c.x < cols && c.y < rows)
+    | some (_, s) => s.cur.x < cols && s.cur.y < rows && (!s.cur.pending || s.cur.x + 1 == cols))
 
 /-! ### The shape half of the door
 
@@ -641,14 +656,14 @@ private def Vt.decodedGridOk (cols rows : Nat) (g : Array Row) : Bool :=
 screen — whose grid was checked *nowhere* before this, only its cursor. The `Bool` half
 of `Renderable` ∧ `TabsOk` (`decodedRenderable_iff`). -/
 private def Vt.decodedRenderable (cols rows : Nat) (grid : Array Row) (tabs : Array Bool)
-    (altGrid : Option (Array Row × Cursor × Pen)) : Bool :=
+    (altGrid : Option (Array Row × Saved)) : Bool :=
   Vt.decodedGridOk cols rows grid && tabs.size == cols &&
     (match altGrid with
     | none => true
-    | some (g, _, _) => Vt.decodedGridOk cols rows g)
+    | some (g, _) => Vt.decodedGridOk cols rows g)
 
 /-- The decoder's door itself: `Good`'s decidable content **and** `Renderable`'s, then the
-record. Three of `Good`'s fifteen clauses need no check because this constructor *fixes*
+record. Three of `Good`'s clauses need no check because this constructor *fixes*
 the fields they are about — `pstate := .ground` forces `csiLe`/`oscLe` and `u8need := 0`
 forces `u8Le`. Parser state is deliberately not persisted (`Checkpoint.wVt`), so there is
 nothing on disk to validate.
@@ -659,10 +674,10 @@ Claimed by `Vt.ofDecoded_good` and `Vt.ofDecoded_renderable`/`Vt.ofDecoded_tabsO
 junk records are refused) in `packages/terminal/Terminal/Proofs/Vt/`. -/
 private def Vt.ofDecoded (cols rows : Nat) (grid : Array Row) (cursor : Cursor) (pen : Pen)
     (modes : Modes) (top bot : Nat) (tabs : Array Bool) (sb : Ring)
-    (altGrid : Option (Array Row × Cursor × Pen)) (saved : Saved) (title : String)
+    (altGrid : Option (Array Row × Saved)) (saved : Saved) (title : String)
     (g0Line g1Line shiftOut bell : Bool) : Option Vt :=
   if
-      Vt.decodedOk cols rows cursor top bot sb altGrid saved &&
+      Vt.decodedOk cols rows cursor modes.origin top bot sb altGrid saved &&
         Vt.decodedRenderable cols rows grid tabs altGrid then
     some
       { cols, rows, grid, cursor, pen, modes, top, bot, tabs, sb, altGrid, saved, title, g0Line,
@@ -805,6 +820,27 @@ private def Vt.backTab (v : Vt) : Vt :=
     cursor :=
       { v.cursor with
         x := min (prevTabStop v.tabs v.cursor.x) (v.cols - 1), pending := false } }
+
+/-! ## Saving and restoring the cursor -/
+
+/-- What DECSC saves of the state: the cursor with its wrap-pending flag, the pen and origin
+mode. -/
+private def Vt.cursorSaved (v : Vt) : Saved :=
+  { cur := v.cursor, pen := v.pen, origin := v.modes.origin }
+
+/-- DECSC (`ESC 7`, `CSI s`, mode 1048 set): save the cursor, the pen and origin mode. -/
+private def Vt.saveCursor (v : Vt) : Vt := { v with saved := v.cursorSaved }
+
+/-- Restore a saved cursor, pen and origin mode. With origin mode on the cursor cannot leave
+the scroll region (DECOM), so a row saved outside the current region is clamped into it; the
+column and the wrap-pending flag are kept. -/
+private def Vt.restoreFrom (v : Vt) (s : Saved) : Vt :=
+  { v with
+    cursor := if s.origin then { s.cur with y := min (max s.cur.y v.top) v.bot } else s.cur,
+    pen := s.pen, modes := { v.modes with origin := s.origin } }
+
+/-- DECRC (`ESC 8`, `CSI u`, mode 1048 reset): restore what DECSC saved. -/
+private def Vt.restoreCursor (v : Vt) : Vt := v.restoreFrom v.saved
 
 /-! ## Printing -/
 
@@ -1084,22 +1120,28 @@ private def Vt.applySgr (v : Vt) (params : List (Nat × Bool)) : Vt :=
 
 /-! ## Alt screen -/
 
+/-- Switch to the alternate screen: stash the main grid with the cursor, pen and origin mode,
+and with `saveCursor` (mode 1049) save those three as DECSC does. -/
 private def Vt.enterAlt (v : Vt) (saveCursor : Bool) : Vt :=
   if v.altGrid.isSome then v -- already there
   else
-    let saved := if saveCursor then { cur := v.cursor, pen := v.pen } else v.saved
+    let saved := if saveCursor then v.cursorSaved else v.saved
     { v with
-      altGrid := some (v.grid, v.cursor, v.pen),
-      grid := Array.replicate v.rows (blankRow v.cols {}), cursor := {}, saved, top := 0,
-      bot := v.rows - 1 }
+      altGrid := some (v.grid, v.cursorSaved), grid := Array.replicate v.rows (blankRow v.cols {}),
+      cursor := {}, saved, top := 0, bot := v.rows - 1 }
 
+/-- Switch back to the main screen, with the whole screen as the region, and with
+`restoreCursor` (mode 1049) restore the stashed cursor, pen and origin mode. The whole screen
+holds every cursor, so none is clamped. -/
 private def Vt.leaveAlt (v : Vt) (restoreCursor : Bool) : Vt :=
   match v.altGrid with
   | none => v
-  | some (g, cur, pen) =>
+  | some (g, s) =>
     { v with
-      altGrid := none, grid := g, cursor := if restoreCursor then cur else v.cursor,
-      pen := if restoreCursor then pen else v.pen, top := 0, bot := v.rows - 1 }
+      altGrid := none, grid := g, cursor := if restoreCursor then s.cur else v.cursor,
+      pen := if restoreCursor then s.pen else v.pen,
+      modes := if restoreCursor then { v.modes with origin := s.origin } else v.modes, top := 0,
+      bot := v.rows - 1 }
 
 /-! ## Resize (truncate/pad; no reflow — see header) -/
 
@@ -1130,26 +1172,28 @@ def Vt.resize (v : Vt) (cols rows : Nat) : Vt :=
         if src < g.size then resizeRow (g.getD src #[]) c {} else blankRow c {})
   let main :=
     match v.altGrid with
-    | some (g, _, _) => g
+    | some (g, _) => g
     | none => v.grid
   { v with
     cols := c, rows := r, grid := fit v.grid,
     sb := (main.toList.take (main.size - r)).foldl Ring.push v.sb,
     altGrid :=
       v.altGrid.map
-        (fun (g, cur, pen) =>
+        (fun (g, s) =>
           (fit g,
-            { cur with
-              x := min cur.x (c - 1), y := min cur.y (r - 1), pending := false },
-            pen)),
+            { s with
+              cur :=
+                { s.cur with
+                  x := min s.cur.x (c - 1), y := min s.cur.y (r - 1), pending := false } })),
     cursor :=
       { v.cursor with
         x := min v.cursor.x (c - 1), y := min v.cursor.y (r - 1), pending := false },
     -- the saved cursor must shrink too, or DECRC after a
     -- shrink restores an out-of-bounds position (§Total)
     saved :=
-      { cur := { x := min v.saved.cur.x (c - 1), y := min v.saved.cur.y (r - 1), pending := false },
-        pen := v.saved.pen },
+      { v.saved with
+        cur :=
+          { x := min v.saved.cur.x (c - 1), y := min v.saved.cur.y (r - 1), pending := false } },
     top := 0, bot := r - 1, tabs := defaultTabs c }
 
 /-! ## CSI dispatch -/
@@ -1174,8 +1218,7 @@ private def Vt.setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) : Vt :=
     | 1006 => { v with modes := { v.modes with mouseSgr := on } }
     | 1004 => { v with modes := { v.modes with focusEvents := on } }
     | 1047 => if on then v.enterAlt false else v.leaveAlt false
-    | 1048 => if on then { v with saved := { cur := v.cursor, pen := v.pen } }
-              else { v with cursor := v.saved.cur, pen := v.saved.pen }
+    | 1048 => if on then v.saveCursor else v.restoreCursor
     | 1049 => if on then v.enterAlt true else v.leaveAlt true
     | 2004 => { v with modes := { v.modes with bracketedPaste := on } }
     | _ => v
@@ -1240,12 +1283,8 @@ private def Vt.csiDispatch (v : Vt) (s : CsiState) (final : UInt8) : Vt :=
               top := t, bot := b }
             0 0
         else v
-    | 0x73 => { v with saved := { cur := v.cursor, pen := v.pen } } -- s DECSC (ANSI)
-    | 0x75 => -- u DECRC (ANSI)
-      if s.priv == 0 then
-        { v with
-          cursor := v.saved.cur, pen := v.saved.pen }
-      else v
+    | 0x73 => v.saveCursor -- s DECSC (ANSI)
+    | 0x75 => if s.priv == 0 then v.restoreCursor else v -- u DECRC (ANSI)
     | _ => v -- DA/DSR/CPR/DECSCUSR/… : queries and styling we don't act on
 
 /-! ## Byte-at-a-time parser -/
@@ -1275,12 +1314,18 @@ private def Vt.csiFinish (v : Vt) (s : CsiState) (final : UInt8) : Vt :=
   let v := v.csiDispatch s final
   { v with pstate := .ground }
 
+/-- OSC 0 and OSC 2 set the window title to the payload after the first `;`, or to the empty title
+without one; a payload that is not UTF-8 sets nothing. The payload is split as bytes, which splits
+its text the same way since `;` is ASCII, so the kernel evaluates it
+(`Terminal/Tests/Keeps.lean`). -/
 private def Vt.oscFinish (v : Vt) (acc : Array UInt8) : Vt :=
-  let txt := String.fromUTF8? (ByteArray.mk acc) |>.getD ""
   let v := { v with pstate := .ground }
-  match txt.splitOn ";" with
-  | code :: rest =>
-    if code == "0" || code == "2" then { v with title := String.intercalate ";" rest } else v
+  match acc.toList with
+  | [0x30] | [0x32] => { v with title := "" }
+  | 0x30 :: 0x3B :: text | 0x32 :: 0x3B :: text =>
+    match String.fromUTF8? ⟨text.toArray⟩ with
+    | some title => { v with title }
+    | none => v
   | _ => v
 
 /-- Handle a C0 control byte (valid in most parser states). -/
@@ -1345,14 +1390,8 @@ private def Vt.stepEsc (v : Vt) (b : UInt8) : Vt :=
   | 0x5B => { v with pstate := .csi {} } -- [
   | 0x5D => { v with pstate := .osc #[] false } -- ]
   | 0x50 | 0x58 | 0x5E | 0x5F => { v with pstate := .str false } -- P X ^ _
-  | 0x37 =>
-    { v with
-      saved := { cur := v.cursor, pen := v.pen }, -- 7 DECSC
-      pstate := .ground }
-  | 0x38 =>
-    { v with
-      cursor := v.saved.cur, pen := v.saved.pen, -- 8 DECRC
-      pstate := .ground }
+  | 0x37 => { v.saveCursor with pstate := .ground } -- 7 DECSC
+  | 0x38 => { v.restoreCursor with pstate := .ground } -- 8 DECRC
   | 0x44 => { v.lineFeed with pstate := .ground } -- D IND
   | 0x45 => { (v.carriageReturn).lineFeed with pstate := .ground } -- E NEL
   | 0x48 =>

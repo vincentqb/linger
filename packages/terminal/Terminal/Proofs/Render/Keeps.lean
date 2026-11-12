@@ -350,7 +350,8 @@ theorem keeps_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48 ∨ b 
   rw [show ∀ (w : Vt), w.feed ([0x1B] ++ [b]) = (w.step 0x1B).step b from
     fun w => by simp [Vt.feed]]
   rw [esc_step_eq hg hu, step_of_esc_quiet b rfl (by simpa using hu)]
-  rcases hb with h | h | h | h | h <;> subst h <;> show _ ∧ _ ∧ _ <;> unfold Vt.stepEsc <;>
+  rcases hb with h | h | h | h | h <;> subst h <;> show _ ∧ _ ∧ _ <;>
+    unfold Vt.stepEsc Vt.saveCursor <;>
     exact ⟨rfl, by simpa using hu, rfl⟩
 
 /-- `ESC ( x` / `ESC ) x` set a charset flag. -/
@@ -400,11 +401,6 @@ theorem keeps_regionAnsi (v : Vt) : Keeps (regionAnsi v) :=
 theorem keeps_cursorAnsi (v : Vt) : Keeps (cursorAnsi v) :=
   Keeps.streamPred.cursorAnsi
     (fun _ _ => keeps_csiNum2 _ _ 0x48 (by decide) (by decide) grid_csiDispatch_cup) v
-
-theorem keeps_savedAnsi (v : Vt) : Keeps (savedAnsi v) :=
-  Keeps.streamPred.savedAnsi keeps_penSgr
-    (fun _ _ => keeps_csiNum2 _ _ 0x48 (by decide) (by decide) grid_csiDispatch_cup)
-    (keeps_escSeq 0x37 (by decide)) v
 
 theorem keeps_tabsAnsi (v : Vt) : Keeps (tabsAnsi v) :=
   Keeps.streamPred.tabsAnsi (keeps_csiNum 3 0x67 (by decide) (by decide) grid_csiDispatch_tbc)
@@ -693,11 +689,11 @@ The control stages are framed by their `keeps_*` lemmas. The saved and active
 deferred-wrap stages also print an existing cell, so `Grid.lean` composes those
 frames with the complete-state equations in `PendingWrap.lean`. -/
 
-/-- Re-associate the clear-and-paint prefix and the ten tail stages, including
+/-- Re-associate the clear-and-paint prefix and the nine tail stages, including
 the saved and active deferred-wrap repairs. -/
 theorem restore_split (v : Vt) :
     restore v = (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v)
-      ++ (regionAnsi v ++ tabsAnsi v ++ savedAnsi v ++ savedPendingAnsi v ++ titleAnsi v ++ modesAnsi v
+      ++ (savedAnsi v ++ regionAnsi v ++ tabsAnsi v ++ titleAnsi v ++ modesAnsi v
           ++ charsetAnsi v ++ penSgr v.pen ++ cursorAnsi v ++ cursorPendingAnsi v) := by
   unfold restore restoreBody
   simp

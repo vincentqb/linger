@@ -44,9 +44,11 @@ and back. The parser state is reset on load.
   expansion using validated dimensions. History row widths remain unrestricted:
   a resize legitimately preserves rows wider than the current screen.
 
-Format: `magic "LNGR" ++ version 1 ++ payload`. Bump the version on
+Format: `magic "LNGR" ++ version 2 ++ payload`. Bump the version on
 any layout change; old daemons refuse newer files (load = none) and
-start fresh — a checkpoint is a cache, not a contract.
+start fresh — a checkpoint is a cache, not a contract. Version 2 added the origin mode saved
+with the DECSC slot and with the stashed main screen; version 1 records still load, with both
+off (`load_saveV1_live`).
 -/
 
 namespace Linger.Session.Checkpoint
@@ -293,14 +295,22 @@ def rModes : R Modes := fun l => do
           bracketedPaste, mouse, mouseSgr, focusEvents },
         l)
 
-/-- The saved cursor, then the saved pen. -/
-def wSaved (s : Saved) : List UInt8 := wCursor s.cur ++ wPen s.pen
+/-- The saved cursor, then the saved pen: what format version 1 wrote of a saved cursor. -/
+def wSavedV1 (s : Saved) : List UInt8 := wCursor s.cur ++ wPen s.pen
 
-/-- Inverse of `wSaved` (`rt_saved`). -/
-def rSaved : R Saved := fun l => do
+/-- The saved cursor, the saved pen, then the saved origin mode. -/
+def wSaved (s : Saved) : List UInt8 := wSavedV1 s ++ wBool s.origin
+
+/-- Inverse of `wSaved` (`rt_saved`), and with `legacy` of `wSavedV1`, origin mode off
+(`rt_savedV1`). -/
+def rSaved (legacy : Bool) : R Saved := fun l => do
   let (cur, l) ← rCursor l
   let (pen, l) ← rPen l
-  some ({ cur, pen }, l)
+  if legacy then
+    some ({ cur, pen }, l)
+  else
+    let (origin, l) ← rBool l
+    some ({ cur, pen, origin }, l)
 
 /-- The ring's start index, then its rows in storage order rather than oldest first. -/
 def wRing (r : Ring) : List UInt8 :=
@@ -314,35 +324,35 @@ def rRing (l : List UInt8) (maxRows : Option Nat := none) : Option (Ring × List
   let (rows, l) ← rList rRow l maxRows
   some ({ data := rows.toArray, start }, l)
 
-/-- The stashed main screen, if any, behind a `wOpt` tag: its rows, cursor and pen. -/
-def wAlt : Option (Array Row × Cursor × Pen) → List UInt8 :=
-  wOpt (fun (g, c, p) => wList wRow g.toList ++ wCursor c ++ wPen p)
+/-- The stashed main screen, if any, behind a `wOpt` tag: its rows, then its saved cursor, pen
+and origin mode; with `legacy`, as format version 1 wrote it, without the origin mode. -/
+def wAlt (alt : Option (Array Row × Saved)) (legacy : Bool := false) : List UInt8 :=
+  wOpt (fun (g, s) => wList wRow g.toList ++ if legacy then wSavedV1 s else wSaved s) alt
 
 /-- Inverse of `wAlt` (`rt_alt`). `maxRows` bounds the stash's row count before any row is
 read, and `maxCols` each row's cells before that row is expanded. -/
-def rAlt (l : List UInt8) (maxCols : Option Nat := none) (maxRows : Option Nat := none) :
-    Option (Option (Array Row × Cursor × Pen) × List UInt8) :=
+def rAlt (l : List UInt8) (maxCols : Option Nat := none) (maxRows : Option Nat := none)
+    (legacy : Bool := false) : Option (Option (Array Row × Saved) × List UInt8) :=
   rOpt
     (fun l => do
       let (rows, l) ← rList (fun bytes => rRow bytes maxCols) l maxRows
-      let (c, l) ← rCursor l
-      let (p, l) ← rPen l
-      some ((rows.toArray, c, p), l))
+      let (s, l) ← rSaved legacy l
+      some ((rows.toArray, s), l))
     l
 
 /-- The parser state is deliberately not persisted. A poll boundary can bisect
 an escape sequence or a UTF-8 character; loading discards that partial parser
 state while retaining the screen and modes. This is a format choice, separate
 from the runtime's atomic file replacement. -/
-def wVt (v : Vt) : List UInt8 :=
+def wVt (v : Vt) (legacy : Bool := false) : List UInt8 :=
   wNat v.cols ++ wNat v.rows ++ wList wRow v.grid.toList ++ wCursor v.cursor ++ wPen v.pen ++
     wModes v.modes ++
     wNat v.top ++
     wNat v.bot ++
     wList wBool v.tabs.toList ++
     wRing v.sb ++
-    wAlt v.altGrid ++
-    wSaved v.saved ++
+    wAlt v.altGrid legacy ++
+    (if legacy then wSavedV1 v.saved else wSaved v.saved) ++
     wStr v.title ++
     wBool v.g0Line ++
     wBool v.g1Line ++
@@ -366,8 +376,10 @@ therefore **permanent, and for reads plus that one checked door**. What must not
 back is the structure literal; `scripts/gates.sh` greps for it in both directions (the
 positive check that this function calls `ofDecoded`, and the negative one that no
 `Vt` field is assigned anywhere in this file). Same species of oracle as `SHIM_CAP`:
-evadeable by deliberately writing something new, not by reverting a fix. -/
-def rVt : R Vt := fun l => do
+evadeable by deliberately writing something new, not by reverting a fix.
+
+With `legacy` it reads format version 1, which saved no origin mode with a saved cursor. -/
+def rVt (legacy : Bool) : R Vt := fun l => do
   let (cols, l) ← rNat l
   let (rows, l) ← rNat l
   if cols != clampDim cols || rows != clampDim rows then
@@ -382,8 +394,8 @@ def rVt : R Vt := fun l => do
       let (bot, l) ← rNat l
       let (tabs, l) ← rList rBool l (some cols)
       let (sb, l) ← rRing l (some sbCap)
-      let (altGrid, l) ← rAlt l (some cols) (some rows)
-      let (saved, l) ← rSaved l
+      let (altGrid, l) ← rAlt l (some cols) (some rows) legacy
+      let (saved, l) ← rSaved legacy l
       let (title, l) ← rStr l
       let (g0Line, l) ← rBool l
       let (g1Line, l) ← rBool l
@@ -397,26 +409,37 @@ def rVt : R Vt := fun l => do
 /-! ## The checkpoint record -/
 
 /-- On-disk magic: `"LNGR"` and the format version. What `save` writes. -/
-public def magic : List UInt8 := [0x4C, 0x4E, 0x47, 0x52, 1] -- "LNGR" v1
+public def magic : List UInt8 := [0x4C, 0x4E, 0x47, 0x52, 2] -- "LNGR" v2
+
+/-- Format version 1's tag, which `load` still reads and `save` never writes. -/
+def legacyMagic : List UInt8 := [0x4C, 0x4E, 0x47, 0x52, 1] -- "LNGR" v1
 
 /-- The checkpoint record: `magic`, then the terminal, the working directory and the labels.
 Loading the record of a live state returns it with its parser quiesced (`load_save_live`). -/
 def save (c : Ckpt Vt.Vt) : List UInt8 :=
   magic ++ wVt c.vt ++ wStr c.cwd ++ wList (wPair wStr wStr) c.labels
 
-/-- Strip the format tag. A **named stage** rather than the check inlined in `load`,
-and it stays one even though there is now only a single tag to check: with the decision
-inline, `load_save`'s round-trip proof carries it through the whole parser chain and
-times out at two million heartbeats, where naming it gives the round trip one rewrite
-(`stripMagic_magic`) and needs no raise at all. Measured both ways — the AGENTS.md
-"restructure for provability" rule, on the smallest possible thing. -/
-def stripMagic (l : List UInt8) : Option (List UInt8) := magic.isPrefixOf? l
+/-- The record format version 1 wrote: no origin mode with the DECSC slot or the stashed
+screen. Never written; it states what an old checkpoint is (`load_saveV1_live`). -/
+def saveV1 (c : Ckpt Vt.Vt) : List UInt8 :=
+  legacyMagic ++ wVt c.vt true ++ wStr c.cwd ++ wList (wPair wStr wStr) c.labels
+
+/-- Strip the format tag, and say whether it is format version 1's. A **named stage**
+rather than the check inlined in `load`: with the decision inline, `load_save`'s round-trip
+proof carries it through the whole parser chain and times out at two million heartbeats,
+where naming it gives the round trip one rewrite (`stripMagic_magic`) and needs no raise at
+all. Measured both ways — the AGENTS.md "restructure for provability" rule, on the smallest
+possible thing. -/
+def stripMagic (l : List UInt8) : Option (Bool × List UInt8) :=
+  match magic.isPrefixOf? l with
+  | some rest => some (false, rest)
+  | none => (legacyMagic.isPrefixOf? l).map (true, ·)
 
 /-- Total: any byte list either parses fully or is `none`. Trailing
 garbage is rejected (a torn write is not a checkpoint). -/
 def load (l : List UInt8) : Option (Ckpt Vt.Vt) := do
-  let rest ← stripMagic l
-  let (vt, rest) ← rVt rest
+  let (legacy, rest) ← stripMagic l
+  let (vt, rest) ← rVt legacy rest
   let (cwd, rest) ← rStr rest
   let (labels, rest) ← rList (rPair rStr rStr) rest
   if rest.isEmpty then
@@ -491,8 +514,7 @@ public def saveBytes (c : Ckpt Vt.Vt) : ByteArray :=
   let acc :=
     match v.altGrid with
     | none => acc.push 0
-    | some (screen, cursor, pen) =>
-      listB rowB (acc.push 1) screen.toList ++ (wCursor cursor ++ wPen pen).toByteArray
+    | some (screen, s) => listB rowB (acc.push 1) screen.toList ++ (wSaved s).toByteArray
   acc ++
     (wSaved v.saved ++ wStr v.title ++ wBool v.g0Line ++ wBool v.g1Line ++ wBool v.shiftOut ++
         wBool v.bell ++
@@ -678,10 +700,14 @@ def rModesB : RB Modes := fun b i => do
         i)
 
 /-- `rSaved` at a position. -/
-def rSavedB : RB Saved := fun b i => do
+def rSavedB (legacy : Bool) : RB Saved := fun b i => do
   let (cur, i) ← rCursorB b i
   let (pen, i) ← rPenB b i
-  some ({ cur, pen }, i)
+  if legacy then
+    some ({ cur, pen }, i)
+  else
+    let (origin, i) ← rBoolB b i
+    some ({ cur, pen, origin }, i)
 
 /-- `rRing` at a position. -/
 def rRingB (b : ByteArray) (i : Nat) (maxRows : Option Nat := none) : Option (Ring × Nat) := do
@@ -690,19 +716,18 @@ def rRingB (b : ByteArray) (i : Nat) (maxRows : Option Nat := none) : Option (Ri
   some ({ data := rows.toArray, start }, j)
 
 /-- `rAlt` at a position. -/
-def rAltB (b : ByteArray) (i : Nat) (maxCols : Option Nat := none) (maxRows : Option Nat := none) :
-    Option (Option (Array Row × Cursor × Pen) × Nat) :=
+def rAltB (b : ByteArray) (i : Nat) (maxCols : Option Nat := none) (maxRows : Option Nat := none)
+    (legacy : Bool := false) : Option (Option (Array Row × Saved) × Nat) :=
   rOptB
     (fun bytes j => do
       let (rows, j) ← rListB (fun bytes j => rRowB bytes j maxCols) bytes j maxRows
-      let (c, j) ← rCursorB bytes j
-      let (p, j) ← rPenB bytes j
-      some ((rows.toArray, c, p), j))
+      let (s, j) ← rSavedB legacy bytes j
+      some ((rows.toArray, s), j))
     b i
 
 /-- `rVt` at a position: the same dimension check before reading any row, the same bounds on
 both screens, the tab ruler and the history, and the same checked constructor. -/
-def rVtB : RB Vt := fun b i => do
+def rVtB (legacy : Bool) : RB Vt := fun b i => do
   let (cols, i) ← rNatB b i
   let (rows, i) ← rNatB b i
   if cols != clampDim cols || rows != clampDim rows then
@@ -717,8 +742,8 @@ def rVtB : RB Vt := fun b i => do
       let (bot, i) ← rNatB b i
       let (tabs, i) ← rListB rBoolB b i (some cols)
       let (sb, i) ← rRingB b i (some sbCap)
-      let (altGrid, i) ← rAltB b i (some cols) (some rows)
-      let (saved, i) ← rSavedB b i
+      let (altGrid, i) ← rAltB b i (some cols) (some rows) legacy
+      let (saved, i) ← rSavedB legacy b i
       let (title, i) ← rStrB b i
       let (g0Line, i) ← rBoolB b i
       let (g1Line, i) ← rBoolB b i
@@ -735,11 +760,18 @@ def prefixB : List UInt8 → ByteArray → Nat → Option Nat
   | [], _, i => some i
   | x :: p, b, i => if h : i < b.size then if x == b[i] then prefixB p b (i + 1) else none else none
 
+/-- `stripMagic` on a byte array: the position after the tag, and whether it is format
+version 1's. -/
+def stripMagicB (b : ByteArray) : Option (Bool × Nat) :=
+  match prefixB magic b 0 with
+  | some i => some (false, i)
+  | none => (prefixB legacyMagic b 0).map (true, ·)
+
 /-- `load` on a byte array (`loadBytes_eq`): the same tag check, the same reader chain, and
 the same refusal of unread trailing bytes. -/
 public def loadBytes (b : ByteArray) : Option (Ckpt Vt.Vt) := do
-  let i ← prefixB magic b 0
-  let (vt, i) ← rVtB b i
+  let (legacy, i) ← stripMagicB b
+  let (vt, i) ← rVtB legacy b i
   let (cwd, i) ← rStrB b i
   let (labels, i) ← rListB (rPairB rStrB rStrB) b i
   if b.size ≤ i then

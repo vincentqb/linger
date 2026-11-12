@@ -1291,7 +1291,7 @@ def GridOk (cols rows : Nat) (g : Array Row) : Prop :=
 
 structure Renderable (v : Vt) : Prop where
   main : GridOk v.cols v.rows v.grid
-  alt : ∀ g c p, v.altGrid = some (g, c, p) → GridOk v.cols v.rows g
+  alt : ∀ g s, v.altGrid = some (g, s) → GridOk v.cols v.rows g
 
 theorem gridOk_replicate (cols rows : Nat) (p : Pen) :
     GridOk cols rows (Array.replicate rows (blankRow cols p)) := by
@@ -1305,7 +1305,7 @@ theorem gridOk_replicate (cols rows : Nat) (p : Pen) :
     exact rowOk_blankRow cols {}
 
 theorem renderable_init (cols rows : Nat) : Renderable (Vt.init cols rows) :=
-  ⟨gridOk_replicate _ _ _, fun _ _ _ h => nomatch h⟩
+  ⟨gridOk_replicate _ _ _, fun _ _ h => nomatch h⟩
 
 /-! ### The decoder's door, part two — the shape half (finding R2)
 
@@ -1420,25 +1420,25 @@ theorem decodedGridOk_iff {cols rows : Nat} {g : Array Row} :
 alt clause is the sub-clause that was checked *nowhere* before: `decodedOk` looks at the
 stashed cursor and never at the stashed grid. -/
 theorem decodedRenderable_iff {cols rows : Nat} {grid : Array Row} {tabs : Array Bool}
-    {altGrid : Option (Array Row × Cursor × Pen)} :
+    {altGrid : Option (Array Row × Saved)} :
     Vt.decodedRenderable cols rows grid tabs altGrid = true ↔
       GridOk cols rows grid ∧
-        tabs.size = cols ∧ ∀ g c p, altGrid = some (g, c, p) → GridOk cols rows g := by
+        tabs.size = cols ∧ ∀ g s, altGrid = some (g, s) → GridOk cols rows g := by
   unfold Vt.decodedRenderable
   cases altGrid with
   | none =>
     simp only [Bool.and_eq_true, beq_iff_eq, decodedGridOk_iff, and_true]
     simp
   | some x =>
-    obtain ⟨g₀, c₀, p₀⟩ := x
+    obtain ⟨g₀, s₀⟩ := x
     simp only [Bool.and_eq_true, beq_iff_eq, decodedGridOk_iff, Option.some.injEq, Prod.mk.injEq]
     constructor
     · rintro ⟨⟨hg, ht⟩, ha⟩
       refine ⟨hg, ht, ?_⟩
-      rintro g c p ⟨rfl, rfl, rfl⟩
+      rintro g s ⟨rfl, rfl⟩
       exact ha
     · rintro ⟨hg, ht, ha⟩
-      exact ⟨⟨hg, ht⟩, ha g₀ c₀ p₀ ⟨rfl, rfl, rfl⟩⟩
+      exact ⟨⟨hg, ht⟩, ha g₀ s₀ ⟨rfl, rfl⟩⟩
 
 /-- **Nothing the emitter cannot reproduce comes out of the decoder's door.** Whatever a
 checkpoint file says, if `Vt.ofDecoded` returns a `Vt` at all then that `Vt` is
@@ -1452,7 +1452,7 @@ record whose `rows` byte disagreed with its grid's length decoded happily into a
 real path, for *arbitrary bytes*. -/
 theorem ofDecoded_renderable {cols rows : Nat} {grid : Array Row} {cursor : Cursor} {pen : Pen}
     {modes : Modes} {top bot : Nat} {tabs : Array Bool} {sb : Ring}
-    {altGrid : Option (Array Row × Cursor × Pen)} {saved : Saved} {title : String}
+    {altGrid : Option (Array Row × Saved)} {saved : Saved} {title : String}
     {g0Line g1Line shiftOut bell : Bool} {v : Vt}
     (h :
       Vt.ofDecoded cols rows grid cursor pen modes top bot tabs sb altGrid saved title g0Line g1Line
@@ -1473,7 +1473,7 @@ because `TabsOk` is not one of `Renderable`'s clauses and the claims that consum
 (`Render.restore_tabs_any`, `Resume.resume_tabs`) ask for it separately. -/
 theorem ofDecoded_tabsOk {cols rows : Nat} {grid : Array Row} {cursor : Cursor} {pen : Pen}
     {modes : Modes} {top bot : Nat} {tabs : Array Bool} {sb : Ring}
-    {altGrid : Option (Array Row × Cursor × Pen)} {saved : Saved} {title : String}
+    {altGrid : Option (Array Row × Saved)} {saved : Saved} {title : String}
     {g0Line g1Line shiftOut bell : Bool} {v : Vt}
     (h :
       Vt.ofDecoded cols rows grid cursor pen modes top bot tabs sb altGrid saved title g0Line g1Line
@@ -1516,7 +1516,8 @@ theorem ofDecoded_of_good {v : Vt} (h : Good v) (hren : Renderable v) (htabs : T
         exact
           ⟨decodedOk_iff.mpr
               ⟨h.colsPos, h.colsLe, h.rowsPos, h.rowsLe, h.curX, h.curY, h.savX, h.savY, h.topLe,
-                h.botLt, h.sbLe, h.altCur⟩,
+                h.botLt, h.sbLe, h.originIn, h.pendX, h.savPendX, h.region, fun g s e =>
+                ⟨(h.altCur g s e).1, (h.altCur g s e).2, h.altPendX g s e⟩⟩,
             decodedRenderable_iff.mpr ⟨hren.main, htabs, hren.alt⟩⟩)]
   cases v
   rfl
@@ -1531,13 +1532,13 @@ is refused by a dimension check anyone would think to write, and this one needed
 decoder to be handed the grid. `Linger/Session/Tests/Checkpoint.lean` pins the byte-level version. -/
 theorem ofDecoded_none_of_rows_mismatch {cols rows : Nat} {grid : Array Row} {cursor : Cursor}
     {pen : Pen} {modes : Modes} {top bot : Nat} {tabs : Array Bool} {sb : Ring}
-    {altGrid : Option (Array Row × Cursor × Pen)} {saved : Saved} {title : String}
+    {altGrid : Option (Array Row × Saved)} {saved : Saved} {title : String}
     {g0Line g1Line shiftOut bell : Bool} (hne : grid.size ≠ rows) :
     Vt.ofDecoded cols rows grid cursor pen modes top bot tabs sb altGrid saved title g0Line g1Line
         shiftOut bell =
       none := by
   have hno :
-    (Vt.decodedOk cols rows cursor top bot sb altGrid saved &&
+    (Vt.decodedOk cols rows cursor modes.origin top bot sb altGrid saved &&
         Vt.decodedRenderable cols rows grid tabs altGrid) ≠
       true := by
     intro hg
@@ -1554,10 +1555,10 @@ theorem renderable_congr {v w : Vt} (h : Renderable v) (hg : w.grid = v.grid) (h
     (hr : w.rows = v.rows) (ha : w.altGrid = v.altGrid) : Renderable w := by
   refine
     ⟨by
-      rw [hg, hc, hr]; exact h.main, fun g c p hs => ?_⟩
+      rw [hg, hc, hr]; exact h.main, fun g s hs => ?_⟩
   rw [hc, hr]
   exact
-    h.alt g c p
+    h.alt g s
       (by
         rw [← ha]; exact hs)
 
@@ -1713,7 +1714,7 @@ most of `csiDispatch`. An operation that writes cells goes
 theorem renderable_of_gridOk {v w : Vt} (h : Renderable v)
     (hc : w.cols = v.cols) (hr : w.rows = v.rows) (ha : w.altGrid = v.altGrid)
     (hg : GridOk w.cols w.rows w.grid) : Renderable w :=
-  ⟨hg, fun g c p hs => by rw [hc, hr]; exact h.alt g c p (by rw [← ha]; exact hs)⟩
+  ⟨hg, fun g s hs => by rw [hc, hr]; exact h.alt g s (by rw [← ha]; exact hs)⟩
 
 theorem gridOkExcept_putCell {v : Vt} {y : Nat}
     (h : GridOkExcept v.cols v.rows y v.grid) (x : Nat) (c : Cell) (hc : CellOk c) :
@@ -2121,10 +2122,10 @@ theorem renderable_enterAlt {v : Vt} (h : Renderable v) (s : Bool) :
   unfold Vt.enterAlt
   split
   · exact h
-  · refine ⟨gridOk_replicate _ _ _, fun g c p hs => ?_⟩
+  · refine ⟨gridOk_replicate _ _ _, fun g s hs => ?_⟩
     -- the stash is the main grid we just left
     simp only [Option.some.injEq, Prod.mk.injEq] at hs
-    obtain ⟨hg, -, -⟩ := hs
+    obtain ⟨hg, -⟩ := hs
     subst hg
     exact h.main
 
@@ -2133,8 +2134,8 @@ theorem renderable_leaveAlt {v : Vt} (h : Renderable v) (s : Bool) :
   unfold Vt.leaveAlt
   split
   · exact h
-  · rename_i g cur pen heq
-    exact ⟨h.alt g cur pen heq, fun _ _ _ hs => nomatch hs⟩
+  · rename_i g s heq
+    exact ⟨h.alt g s heq, fun _ _ hs => nomatch hs⟩
 
 theorem renderable_setMode {v : Vt} (h : Renderable v) (priv : Bool) (n : Nat) (on : Bool) :
     Renderable (v.setMode priv n on) := by
@@ -2373,15 +2374,15 @@ theorem gridOk_fit {cols : Nat} {g : Array Row} (c r : Nat)
 theorem renderable_resize {v : Vt} (h : Renderable v) (cols rows : Nat) :
     Renderable (v.resize cols rows) := by
   unfold Vt.resize
-  refine ⟨gridOk_fit _ _ h.main.2, fun g c p hs => ?_⟩
+  refine ⟨gridOk_fit _ _ h.main.2, fun g s hs => ?_⟩
   dsimp only at hs
   rcases hv : v.altGrid with - | x
   · rw [hv] at hs; exact nomatch hs
-  · obtain ⟨g0, c0, p0⟩ := x
+  · obtain ⟨g0, s0⟩ := x
     rw [hv] at hs
     simp only [Option.map_some, Option.some.injEq, Prod.mk.injEq] at hs
-    obtain ⟨hg, -, -⟩ := hs
+    obtain ⟨hg, -⟩ := hs
     subst hg
-    exact gridOk_fit _ _ (h.alt g0 c0 p0 hv).2
+    exact gridOk_fit _ _ (h.alt g0 s0 hv).2
 
 end Terminal.Vt

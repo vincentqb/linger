@@ -140,9 +140,12 @@ origin on*. The repaint's prologue needs the complement: `CSI ? 6 l` turns it
 is proved at the one dispatch it belongs to. -/
 
 theorem org_csiDispatch_decom_off (v : Vt) (s : CsiState) (hi : s.ignore = false)
-    (hpriv : (s.priv == 0x3F) = true) (h6 : s.params.toList.any (fun p => p.1 == 6) = true) :
+    (hpriv : (s.priv == 0x3F) = true) (h6 : s.params.toList.any (fun p => p.1 == 6) = true)
+    (hr : ∀ p ∈ s.params.toList, p.1 ≠ 1048 ∧ p.1 ≠ 1049) :
     (v.csiDispatch s 0x6C).modes.origin = false := by
-  rw [csiDispatch_rm _ _ hi, org_setModes_eq, ite_eq_left ⟨hpriv, h6⟩]
+  rw [csiDispatch_rm _ _ hi,
+    org_setModes_eq _ _ _ _ (fun p hp ⟨_, _, hc⟩ => hc.elim (hr p hp).1 (hr p hp).2),
+    ite_eq_left ⟨hpriv, h6⟩]
 
 theorem org_csiFinish_decom_off (v : Vt) (s : CsiState) (hi : s.ignore = false)
     (hpriv : (s.priv == 0x3F) = true) (hparams : s.params = #[]) (hhave : s.haveCur = true)
@@ -152,13 +155,16 @@ theorem org_csiFinish_decom_off (v : Vt) (s : CsiState) (hi : s.ignore = false)
   unfold Vt.csiFinish
   dsimp only
   rw [ite_eq_left hhave, ite_eq_right hsize]
-  refine org_csiDispatch_decom_off _ _ hi hpriv ?_
   rw [show
       ({ s with params := s.params.push (min s.cur 65535, s.curSub) } : CsiState) =
         { s with params := #[(6, s.curSub)] }
       from by
       rw [hparams, hcur]; rfl]
-  rfl
+  refine org_csiDispatch_decom_off _ _ hi hpriv rfl ?_
+  intro p hp
+  simp only [List.mem_singleton] at hp
+  subst hp
+  constructor <;> simp
 
 theorem org_step_of_csi_decom_off {v : Vt} {s : CsiState} (hg : v.pstate = .csi s)
     (hi : s.ignore = false) (hpriv : (s.priv == 0x3F) = true) (hparams : s.params = #[])
@@ -320,7 +326,10 @@ theorem csi_plain_feed : ∀ (bs : Bytes) {v : Vt} {s : CsiState}, v.pstate = .c
   | x :: xs, v, s, hg, hp, h => by
     obtain ⟨s1, hs1, hpv1⟩ := csi_plain_step x hg (h x (by simp)).1 (h x (by simp)).2
     have hp1 : (s1.priv == 0x3F) = false := by rw [hpv1]; exact hp
-    have horg := org_step_of_csi x hg hp
+    have horg := org_step_of_csi x hg
+      (by
+        have := (h x (by simp)).2
+        intro e; rw [e] at this; exact absurd this (by decide)) hp
     rw [feed_cons]
     obtain ⟨s2, hs2, hp2, ho2⟩ :=
       csi_plain_feed xs hs1 hp1 (fun b hb => h b (by simp [hb]))
@@ -331,7 +340,8 @@ be DECOM whatever its final byte, because DECOM is a *private* mode and
 `ParamBytes` excludes the marker. Cursor addressing, SGR pens, the scroll
 region, the tab ruler and IRM are all instances. -/
 theorem quiet_csi_seq (params : Bytes) (final : UInt8) (hp : ParamBytes params)
-    (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E) : Quiet (csiB ++ params ++ [final]) := by
+    (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E) (hu : final ≠ 0x75) :
+    Quiet (csiB ++ params ++ [final]) := by
   intro v hg ho
   refine ⟨ends_csi_seq params final hp h1 h2 v hg, ?_⟩
   rw [show (csiB ++ params ++ [final] : Bytes) = 0x1B :: 0x5B :: (params ++ [final]) from by
@@ -340,29 +350,30 @@ theorem quiet_csi_seq (params : Bytes) (final : UInt8) (hp : ParamBytes params)
   have he := esc_step hg
   have hb := csi_open_step he
   have hob : ((v.step 0x1B).step 0x5B).modes.origin = false :=
-    org_step_of_esc 0x5B he (by rw [org_step_of_ground 0x1B hg]; exact ho)
+    org_step_of_esc 0x5B he (by decide) (by rw [org_step_of_ground 0x1B hg]; exact ho)
   rw [show ∀ (w : Vt), w.feed (params ++ [final]) = (w.feed params).feed [final] from
     fun w => by simp [Vt.feed, List.foldl_append]]
   obtain ⟨s', hs', hpv', hor'⟩ := csi_plain_feed params hb (by decide) hp
   rw [show ∀ (w : Vt), w.feed [final] = w.step final from fun _ => rfl]
-  rw [org_step_of_csi final hs' hpv', hor']
+  rw [org_step_of_csi final hs' hu hpv', hor']
   exact hob
 
-theorem quiet_csiNum (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E) :
+theorem quiet_csiNum (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
+    (hu : final ≠ 0x75) :
     Quiet (csiNum n final) :=
-  quiet_csi_seq _ final (paramBytes_digits n) h1 h2
+  quiet_csi_seq _ final (paramBytes_digits n) h1 h2 hu
 
 theorem quiet_csiNum2 (a b : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
-    (h2 : final ≤ 0x7E) : Quiet (csiNum2 a b final) := by
+    (h2 : final ≤ 0x7E) (hu : final ≠ 0x75) : Quiet (csiNum2 a b final) := by
   rw [show csiNum2 a b final = csiB ++ (digits a ++ [0x3B] ++ digits b) ++ [final] from by
     simp [csiNum2, List.append_assoc]]
   exact quiet_csi_seq _ final
     (((paramBytes_digits a).append
       (ParamBytes.cons (by decide) (by decide) ParamBytes.nil)).append
-      (paramBytes_digits b)) h1 h2
+      (paramBytes_digits b)) h1 h2 hu
 
 theorem quiet_sgrOf (codes : List Nat) : Quiet (sgrOf codes) :=
-  quiet_csi_seq _ 0x6D (paramBytes_joinSemi codes) (by decide) (by decide)
+  quiet_csi_seq _ 0x6D (paramBytes_joinSemi codes) (by decide) (by decide) (by decide)
 
 theorem quiet_sgrColorSeq (c : Color) (isFg : Bool) : Quiet (sgrColorSeq c isFg) := by
   unfold sgrColorSeq
@@ -379,18 +390,19 @@ theorem csi_marker_step {v : Vt} {s : CsiState} (hg : v.pstate = .csi s)
     (hp : (s.priv == 0x3F) = false) :
     (v.step 0x3F).pstate = .csi { s with priv := 0x3F }
       ∧ (v.step 0x3F).modes.origin = v.modes.origin := by
-  refine ⟨?_, org_step_of_csi 0x3F hg hp⟩
+  refine ⟨?_, org_step_of_csi 0x3F hg (by decide) hp⟩
   rw [Terminal.Vt.step_of_csi 0x3F hg]
   unfold Vt.stepCsi
   rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_left (by decide)]
 
-/-- **A private mode replay is `Quiet` iff it is not DECOM.** The number
-is accumulated before the guard exists, so the digit run's innocence comes
-from the frame layer (`frame_csi_digits_feed`: a digit byte writes nothing
-but the accumulator), and the final byte is discharged by the
-pending-parameter hatch with `min n 65535 ≠ 6`. -/
-theorem quiet_csiPriv (n : Nat) (final : UInt8) (hn : n ≠ 6) (h1 : 0x40 ≤ final)
-    (h2 : final ≤ 0x7E) : Quiet (csiPriv n final) := by
+/-- **A private mode replay is `Quiet` iff it is not DECOM** nor a reset of 1048 or 1049, which
+restore a saved cursor and its origin mode. The number is accumulated before the guard exists,
+so the digit run's innocence comes from the frame layer (`frame_csi_digits_feed`: a digit byte
+writes nothing but the accumulator), and the final byte is discharged by the pending-parameter
+hatch with `min n 65535 ≠ 6`. -/
+theorem quiet_csiPriv (n : Nat) (final : UInt8) (hn : n ≠ 6)
+    (hr : final = 0x6C → n ≠ 1048 ∧ n ≠ 1049) (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
+    (hu : final ≠ 0x75) : Quiet (csiPriv n final) := by
   intro v hg ho
   refine ⟨ends_csiPriv n final h1 h2 v hg, ?_⟩
   rw [show csiPriv n final = 0x1B :: 0x5B :: 0x3F :: (digits n ++ [final]) from by
@@ -401,7 +413,7 @@ theorem quiet_csiPriv (n : Nat) (final : UInt8) (hn : n ≠ 6) (h1 : 0x40 ≤ fi
   obtain ⟨hm, hmo⟩ := csi_marker_step hb (by decide)
   have hom : (((v.step 0x1B).step 0x5B).step 0x3F).modes.origin = false := by
     rw [hmo]
-    exact org_step_of_esc 0x5B he (by rw [org_step_of_ground 0x1B hg]; exact ho)
+    exact org_step_of_esc 0x5B he (by decide) (by rw [org_step_of_ground 0x1B hg]; exact ho)
   rw [show ∀ (w : Vt), w.feed (digits n ++ [final]) = (w.feed (digits n)).feed [final] from
     fun w => by simp [Vt.feed, List.foldl_append]]
   obtain ⟨s', hs', hcur', hhave', hpar', -⟩ := csi_digits_value n hm rfl
@@ -410,8 +422,9 @@ theorem quiet_csiPriv (n : Nat) (final : UInt8) (hn : n ≠ 6) (h1 : 0x40 ≤ fi
       = (((v.step 0x1B).step 0x5B).step 0x3F).modes :=
     congrArg (·.2.2) (frame_csi_digits_feed (digits n) hm (digits_range n))
   rw [show ∀ (w : Vt), w.feed [final] = w.step final from fun _ => rfl]
-  rw [org_step_of_csi_pending final hs' (by rw [hpar']) hhave'
-    (by rw [hcur']; omega)]
+  rw [org_step_of_csi_pending final hs' hu (by rw [hpar']) hhave' (by rw [hcur']; omega)
+    (fun hl => by have := (hr hl).1; rw [hcur']; omega)
+    (fun hl => by have := (hr hl).2; rw [hcur']; omega)]
   rw [show ((((v.step 0x1B).step 0x5B).step 0x3F).feed (digits n)).modes.origin
       = (((v.step 0x1B).step 0x5B).step 0x3F).modes.origin from congrArg (·.origin) hmodes]
   exact hom
@@ -424,7 +437,9 @@ theorem quiet_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48 ∨ b 
   refine ⟨ends_escSeq b hb v hg, ?_⟩
   rw [show escSeq b = 0x1B :: [b] from by simp [escSeq, escB]]
   rw [feed_cons, show ∀ (w : Vt), w.feed [b] = w.step b from fun _ => rfl]
-  exact org_step_of_esc b (esc_step hg) (by rw [org_step_of_ground 0x1B hg]; exact ho)
+  exact
+    org_step_of_esc b (esc_step hg) (by rcases hb with h | h | h | h | h <;> subst h <;> decide)
+      (by rw [org_step_of_ground 0x1B hg]; exact ho)
 
 theorem quiet_escCharset (i x : UInt8) (hi : i = 0x28 ∨ i = 0x29)
     (hlo : 0x30 ≤ x) (hhi : x ≤ 0x7E) :
@@ -434,7 +449,9 @@ theorem quiet_escCharset (i x : UInt8) (hi : i = 0x28 ∨ i = 0x29)
   rw [show escCharset i x = 0x1B :: i :: [x] from by simp [escCharset, escB]]
   rw [feed_cons, feed_cons, show ∀ (w : Vt), w.feed [x] = w.step x from fun _ => rfl]
   rw [org_step_of_escInter x (esc_inter_step i (esc_step hg) hi)]
-  exact org_step_of_esc i (esc_step hg) (by rw [org_step_of_ground 0x1B hg]; exact ho)
+  exact
+    org_step_of_esc i (esc_step hg) (by rcases hi with h | h <;> subst h <;> decide)
+      (by rw [org_step_of_ground 0x1B hg]; exact ho)
 
 /-- An OSC payload byte cannot dispatch anything: the accumulator is not
 the mode machine. -/
@@ -460,7 +477,7 @@ theorem quiet_osc (payload : List Char) :
   obtain ⟨a2, h2⟩ := osc_accum_step 0x32 h1 (by decide) (by decide)
   obtain ⟨a3, h3⟩ := osc_accum_step 0x3B h2 (by decide) (by decide)
   have hoo : ((v.step 0x1B).step 0x5D).modes.origin = false :=
-    org_step_of_esc 0x5D he (by rw [org_step_of_ground 0x1B hg]; exact ho)
+    org_step_of_esc 0x5D he (by decide) (by rw [org_step_of_ground 0x1B hg]; exact ho)
   rw [show ∀ (w : Vt), w.feed (utf8s payload ++ [0x07])
       = (w.feed (utf8s payload)).feed [0x07] from
     fun w => by simp [Vt.feed, List.foldl_append]]
@@ -486,21 +503,26 @@ theorem quiet_cellText (c : Cell) : Quiet (cellText c) := by
 
 theorem quiet_rowAnsi (row : Row) (p : Pen) : Quiet (rowAnsi row p).1 :=
   Quiet.streamPred.rowAnsi quiet_penSgr quiet_utf8_safe quiet_utf8s
-    (fun n => quiet_csiNum n 0x47 (by decide) (by decide)) row p
+    (fun n => quiet_csiNum n 0x47 (by decide) (by decide) (by decide)) row p
 
 theorem quiet_gridAnsi (grid : Array Row) : Quiet (gridAnsi grid) := by
-  refine Quiet.streamPred.gridAnsi (quiet_csiNum 0 0x6D (by decide) (by decide))
+  refine Quiet.streamPred.gridAnsi (quiet_csiNum 0 0x6D (by decide) (by decide) (by decide))
     ?_ (Quiet.text (by decide)) quiet_rowAnsi grid
-  exact quiet_csi_seq [] 0x48 ParamBytes.nil (by decide) (by decide)
+  exact quiet_csi_seq [] 0x48 ParamBytes.nil (by decide) (by decide) (by decide)
 
-theorem quiet_modeSet (n : Nat) (on : Bool) (hn : n ≠ 6) : Quiet (modeSet n on) :=
-  Quiet.streamPred.modeSet (fun _ hf => quiet_csiPriv n _ hn (by grind) (by grind)) on
+theorem quiet_modeSet (n : Nat) (on : Bool) (hn : n ≠ 6)
+    (hr : on = false → n ≠ 1048 ∧ n ≠ 1049) : Quiet (modeSet n on) := by
+  cases on
+  · exact quiet_csiPriv n 0x6C hn (fun _ => hr rfl) (by decide) (by decide) (by decide)
+  · exact
+      quiet_csiPriv n 0x68 hn (fun h => absurd h (by decide)) (by decide) (by decide)
+        (by decide)
 
-/-- **DECOM reset is `Quiet` because it makes the conclusion true outright.** The
-`≠ 6` family says a mode replay cannot turn origin *on*; this says `?6l` turns it
-*off*, which is what the repaint's prologue needs. -/
-theorem quiet_modeSet_decom_off : Quiet (modeSet 6 false) := by
-  intro v hg ho
+/-- **DECOM reset turns origin mode off from any origin mode**, which is what lets the
+repaint's prologue, and a park that turned DECOM on, end with it off. -/
+theorem decom_off_any (v : Vt) (hg : v.pstate = .ground) :
+    (v.feed (modeSet 6 false)).pstate = .ground ∧
+      (v.feed (modeSet 6 false)).modes.origin = false := by
   refine ⟨ends_modeSet 6 false v hg, ?_⟩
   rw [show modeSet 6 false = 0x1B :: 0x5B :: 0x3F :: (digits 6 ++ [(0x6C : UInt8)]) from by
     simp [modeSet, csiPriv, csiB]]
@@ -516,6 +538,18 @@ theorem quiet_modeSet_decom_off : Quiet (modeSet 6 false) := by
   exact org_step_of_csi_decom_off hs' (by simp [hign']) (by simp [hpriv']) (by simp [hpar'])
     hhave' (by simp [hint']) (by rw [hcur']; decide)
 
+/-- **DECOM reset is `Quiet` because it makes the conclusion true outright.** The
+`≠ 6` family says a mode replay cannot turn origin *on*; this says `?6l` turns it
+*off*, which is what the repaint's prologue needs. -/
+theorem quiet_modeSet_decom_off : Quiet (modeSet 6 false) := fun v hg _ => decom_off_any v hg
+
+/-- Anything that ends in ground, then DECOM reset, is `Quiet`: whatever the bytes did to origin
+mode, the reset turns it off. -/
+theorem quiet_ends_decom_off {a : Bytes} (ha : Ends a) : Quiet (a ++ modeSet 6 false) := by
+  intro v hg _
+  rw [feed_append]
+  exact decom_off_any _ (ha v hg)
+
 /-- The flush run keeps DECOM off: it is ESC-free, so `Quiet.text` carries it. -/
 theorem quiet_crlfRun (n : Nat) : Quiet ((List.replicate n crlfB).flatten) :=
   Quiet.text (crlfRun_no_1B n)
@@ -528,41 +562,68 @@ theorem quiet_scrollbackAnsi (v : Vt) : Quiet (scrollbackAnsi v) := by
   -- because mode 6 *is* DECOM: it is the one mode emit whose `Quiet` is about its value
   -- rather than its number
   refine Quiet.append (Quiet.append (Quiet.append ?_
-    (quiet_csiNum 4 0x6C (by decide) (by decide))) quiet_modeSet_decom_off)
-    (quiet_modeSet 7 true (by decide))
+    (quiet_csiNum 4 0x6C (by decide) (by decide) (by decide))) quiet_modeSet_decom_off)
+    (quiet_modeSet 7 true (by decide) (by decide))
   exact Quiet.ite (fun _ => Quiet.nil)
-    (fun _ => (((quiet_csiNum 3 0x4A (by decide) (by decide)).append
+    (fun _ => (((quiet_csiNum 3 0x4A (by decide) (by decide) (by decide)).append
       (quiet_gridAnsi (sbRows v))).append (quiet_crlfRun v.rows)))
 
 theorem quiet_pendingAnsi (cols : Nat) (grid : Array Row) (cur : Cursor)
     (row : Nat) (pen : Pen) : Quiet (pendingAnsi cols grid cur row pen) :=
-  Quiet.streamPred.pendingAnsi (fun _ _ => quiet_csiNum2 _ _ 0x48 (by decide) (by decide))
+  Quiet.streamPred.pendingAnsi
+    (fun _ _ => quiet_csiNum2 _ _ 0x48 (by decide) (by decide) (by decide))
     quiet_penSgr quiet_cellText cols grid cur row pen
+
+/-- **A park and what saves it keep DECOM off.** Under a saved origin mode the park turns it on
+and the trailing reset turns it off again; otherwise every piece is `Quiet`. -/
+theorem quiet_park (cols : Nat) (grid : Array Row) (s : Saved) {x : Bytes} (hx : Quiet x)
+    (hxe : Ends x) : Quiet (parkAnsi cols grid s ++ x ++ originOffAnsi s) := by
+  cases ho : s.origin
+  · rw [show parkAnsi cols grid s =
+          [] ++ penSgr s.pen ++ csiNum2 (s.cur.y + 1) (s.cur.x + 1) 0x48 ++
+            pendingAnsi cols grid s.cur (s.cur.y + 1) s.pen
+        from by simp [parkAnsi, ho],
+      show originOffAnsi s = [] from by simp [originOffAnsi, ho]]
+    exact
+      (((((Quiet.nil.append (quiet_penSgr _)).append
+                  (quiet_csiNum2 _ _ 0x48 (by decide) (by decide) (by decide))).append
+              (quiet_pendingAnsi _ _ _ _ _)).append
+            hx).append
+        Quiet.nil)
+  · rw [show originOffAnsi s = modeSet 6 false from by simp [originOffAnsi, ho]]
+    exact quiet_ends_decom_off ((ends_parkAnsi cols grid s).append hxe)
 
 theorem quiet_screensAnsi (v : Vt) : Quiet (screensAnsi v) := by
   unfold screensAnsi
   refine (quiet_scrollbackAnsi v).append ?_
   split
   · exact quiet_gridAnsi _
-  · exact (((((quiet_gridAnsi _).append (quiet_penSgr _)).append
-      (quiet_csiNum2 _ _ 0x48 (by decide) (by decide))).append
-      (quiet_pendingAnsi _ _ _ _ _)).append
-      (quiet_csiPriv 1049 0x68 (by decide) (by decide) (by decide))).append
-      (quiet_gridAnsi _)
+  · rename_i _ mg ms _
+    rw [show
+        gridAnsi mg ++ parkAnsi v.cols mg ms ++ csiPriv 1049 0x68 ++ originOffAnsi ms ++
+            gridAnsi v.grid =
+          gridAnsi mg ++ (parkAnsi v.cols mg ms ++ csiPriv 1049 0x68 ++ originOffAnsi ms) ++
+            gridAnsi v.grid
+        from by simp only [List.append_assoc]]
+    exact
+      ((quiet_gridAnsi _).append
+          (quiet_park _ _ ms
+            (quiet_csiPriv 1049 0x68 (by decide) (fun h => absurd h (by decide)) (by decide)
+              (by decide) (by decide))
+            (ends_csiPriv 1049 0x68 (by decide) (by decide)))).append
+        (quiet_gridAnsi _)
 
 theorem quiet_regionAnsi (v : Vt) : Quiet (regionAnsi v) :=
-  Quiet.streamPred.regionAnsi (fun _ _ => quiet_csiNum2 _ _ 0x72 (by decide) (by decide)) v
+  Quiet.streamPred.regionAnsi
+    (fun _ _ => quiet_csiNum2 _ _ 0x72 (by decide) (by decide) (by decide)) v
 
 theorem quiet_tabsAnsi (v : Vt) : Quiet (tabsAnsi v) :=
-  Quiet.streamPred.tabsAnsi (quiet_csiNum 3 0x67 (by decide) (by decide))
-    (fun n => quiet_csiNum n 0x47 (by decide) (by decide)) (quiet_escSeq 0x48 (by decide)) v
+  Quiet.streamPred.tabsAnsi (quiet_csiNum 3 0x67 (by decide) (by decide) (by decide))
+    (fun n => quiet_csiNum n 0x47 (by decide) (by decide) (by decide))
+    (quiet_escSeq 0x48 (by decide)) v
 
 theorem quiet_savedAnsi (v : Vt) : Quiet (savedAnsi v) :=
-  Quiet.streamPred.savedAnsi quiet_penSgr (fun _ _ => quiet_csiNum2 _ _ 0x48 (by decide) (by decide))
-    (quiet_escSeq 0x37 (by decide)) v
-
-theorem quiet_savedPendingAnsi (v : Vt) : Quiet (savedPendingAnsi v) :=
-  Quiet.streamPred.savedPendingAnsi quiet_pendingAnsi (quiet_escSeq 0x37 (by decide)) v
+  quiet_park _ _ _ (quiet_escSeq 0x37 (by decide)) (ends_escSeq 0x37 (by decide))
 
 theorem quiet_charsetAnsi (v : Vt) : Quiet (charsetAnsi v) :=
   Quiet.streamPred.charsetAnsi (fun _ _ hi hx => quiet_escCharset _ _ hi (by grind) (by grind))
@@ -573,15 +634,18 @@ theorem quiet_titleAnsi (v : Vt) : Quiet (titleAnsi v) := by
   exact quiet_osc _
 
 theorem quiet_irm (on : Bool) : Quiet (csiNum 4 (if on then 0x68 else 0x6C)) :=
-  Quiet.streamPred.irm (fun _ hf => quiet_csiNum 4 _ (by grind) (by grind)) on
+  Quiet.streamPred.irm (fun _ hf => quiet_csiNum 4 _ (by grind) (by grind) (by grind)) on
 
 /-- The mode replay is where the DECOM hypothesis lands: with the session's origin
 off the emit at mode 6 is a *reset*, discharged outright by
 `quiet_modeSet_decom_off`. Every other private mode the emitter names is a literal
-≠ 6, or the guarded mouse mode, whose allowlist contains no 6. -/
+≠ 6, or the guarded mouse mode, whose allowlist contains no 6, and none restores a saved
+cursor. -/
 theorem quiet_modesAnsi (v : Vt) (ho : v.modes.origin = false) : Quiet (modesAnsi v) :=
-  Quiet.streamPred.modesAnsi v (fun n on h => quiet_modeSet n on (by omega))
-    (fun h => quiet_modeSet _ _ (by simp only [Bool.or_eq_true, beq_iff_eq] at h; omega))
+  Quiet.streamPred.modesAnsi v (fun n on h => quiet_modeSet n on (by omega) (fun _ => by omega))
+    (fun h =>
+      quiet_modeSet _ _ (by simp only [Bool.or_eq_true, beq_iff_eq] at h; omega)
+        (fun hf => absurd hf (by decide)))
     (ho ▸ quiet_modeSet_decom_off) (quiet_escSeq 0x3D (by decide)) (quiet_escSeq 0x3E (by decide))
     quiet_irm
 

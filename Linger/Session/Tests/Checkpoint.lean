@@ -77,10 +77,10 @@ example :
 one extra row or cell before returning an alternate screen. -/
 example :
     (let rest : List UInt8 := [0xAA]
-     let good : Option (Array Row × Cursor × Pen) := some (#[blankRow 2 {}, blankRow 2 {}], {}, {})
-      let tall : Option (Array Row × Cursor × Pen) :=
-        some (#[blankRow 2 {}, blankRow 2 {}, blankRow 2 {}], {}, {})
-      let wide : Option (Array Row × Cursor × Pen) := some (#[blankRow 3 {}, blankRow 2 {}], {}, {})
+     let good : Option (Array Row × Saved) := some (#[blankRow 2 {}, blankRow 2 {}], {})
+      let tall : Option (Array Row × Saved) :=
+        some (#[blankRow 2 {}, blankRow 2 {}, blankRow 2 {}], {})
+      let wide : Option (Array Row × Saved) := some (#[blankRow 3 {}, blankRow 2 {}], {})
       rAlt (wAlt good ++ rest) (some 2) (some 2) == some (good, rest) &&
         (rAlt (wAlt tall) (some 2) (some 2)).isNone &&
         (rAlt (wAlt wide) (some 2) (some 2)).isNone) =
@@ -138,12 +138,15 @@ example :
 
 /-! ### The format tag
 
-`save` writes `"LNGR"` v1 and `load` accepts nothing else. The theorems are about the
-*constant*, so these pin the bytes — which is what catches someone editing four hex
-literals to the wrong value, a change no round-trip theorem can see. -/
+`save` writes `"LNGR"` v2, and `load` reads it and `"LNGR"` v1 and nothing else. The theorems
+are about the *constants*, so these pin the bytes — which is what catches someone editing four
+hex literals to the wrong value, a change no round-trip theorem can see. -/
 
 /-- The bytes themselves, spelled out. -/
-example : (magic == [0x4C, 0x4E, 0x47, 0x52, 1]) = true := by native_decide
+example :
+    (magic == [0x4C, 0x4E, 0x47, 0x52, 2] && legacyMagic == [0x4C, 0x4E, 0x47, 0x52, 1]) =
+      true := by
+  native_decide
 
 /-- Any other tag is refused — including the pre-rename `"LZMX"` (whose reader was
 removed in `e1ac562`'s successor; check that commit out if you ever need it), a future
@@ -152,8 +155,17 @@ example :
     (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "", labels := [] }
      let body := (save c).drop 5
      (load ([0x4C, 0x5A, 0x4D, 0x58, 1] ++ body)).isNone      -- "LZMX" v1
-       && (load ([0x4C, 0x4E, 0x47, 0x52, 2] ++ body)).isNone  -- "LNGR" v2
+       && (load ([0x4C, 0x4E, 0x47, 0x52, 3] ++ body)).isNone  -- "LNGR" v3
        && (load ([0x00, 0x00, 0x00, 0x00, 0] ++ body)).isNone) = true := by
+  native_decide
+
+/-- Each tag needs its own layout: a version 2 body under the version 1 tag, and the reverse,
+are refused, since version 2 adds a byte after each saved cursor. -/
+example :
+    (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "", labels := [] }
+     (load (legacyMagic ++ (save c).drop 5)).isNone
+       && (load (magic ++ (saveV1 c).drop 5)).isNone
+       && (load (saveV1 c)).isSome) = true := by
   native_decide
 
 /-! ### The corrupt record
@@ -167,7 +179,7 @@ things the theorems do not show.
 
 The first two are the honest shape of the attack: a **real** checkpoint with **one byte
 flipped**, not a forged `Vt` serialised. The payload starts at index 5 (after the
-`"LNGR"` v1 tag) with LEB128 `cols` then `rows`, both single-byte at these dimensions —
+`"LNGR"` tag) with LEB128 `cols` then `rows`, both single-byte at these dimensions —
 which the fixtures assert rather than assume, so a format change fails here loudly
 instead of silently patching some other field. -/
 
@@ -304,7 +316,7 @@ looks at the stashed cursor and stops there. A session in the alt screen carries
 screen in `altGrid`, and `Render.screens_paint_alt` paints it, so a bad one is the same
 defect one indirection away. -/
 example :
-    (let v := { Vt.init 4 2 with altGrid := some (#[blankRow 4 {}], { x := 0, y := 0 }, {}) }
+    (let v := { Vt.init 4 2 with altGrid := some (#[blankRow 4 {}], { cur := { x := 0, y := 0 } }) }
      (load (save { vt := v, cwd := "", labels := [] })).isNone) =
       true := by
   native_decide
@@ -334,13 +346,57 @@ example :
       true := by
   native_decide
 
-/-! ### The LNGR v1 layout
+/-! ### The corrupt record, part three: what only the emulator establishes
+
+`Vt.decodedOk` also checks what no bound implies but every live session satisfies and a repaint
+needs: under origin mode the cursor is inside the scroll region, a wrap is pending only at the
+right margin, for the cursor, the saved cursor and the stashed one, and the region spans two rows
+unless the screen has one. Each refused fixture breaks one of them; its accepted neighbour keeps it.
+-/
+
+/-- Refused: origin mode with the cursor above the region, a wrap pending at column 1 in each of
+the three cursors, and a region of one row on a three-row screen. -/
+example :
+    ([{ Vt.init 4 3 with
+              modes := { origin := true }, top := 1, bot := 2 },
+            { Vt.init 4 3 with cursor := { x := 1, pending := true } },
+            { Vt.init 4 3 with saved := { cur := { x := 1, pending := true } } },
+            { Vt.init 4 3 with
+              altGrid :=
+                some (Array.replicate 3 (blankRow 4 {}), { cur := { x := 1, pending := true } }) },
+            { Vt.init 4 3 with
+              top := 1, bot := 1 }].all
+        fun (v : Vt) => (load (save { vt := v, cwd := "", labels := [] })).isNone) =
+      true := by
+  native_decide
+
+/-- Accepted: the cursor inside the region under origin mode, each wrap pending at the last
+column, and a region of two rows. -/
+example :
+    ([{ Vt.init 4 3 with
+              modes := { origin := true }, top := 1, bot := 2, cursor := { y := 1 } },
+            { Vt.init 4 3 with cursor := { x := 3, pending := true } },
+            { Vt.init 4 3 with saved := { cur := { x := 3, pending := true } } },
+            { Vt.init 4 3 with
+              altGrid :=
+                some (Array.replicate 3 (blankRow 4 {}), { cur := { x := 3, pending := true } }) },
+            { Vt.init 4 3 with
+              top := 1, bot := 2 }].all
+        fun (v : Vt) => (load (save { vt := v, cwd := "", labels := [] })).isSome) =
+      true := by
+  native_decide
+
+/-! ### The LNGR layout
 
 The round-trip theorems hold of any field order, so a writer and reader reordered together
 pass them while a checkpoint already on disk decodes to a different state. These pin one
 record's bytes. Its three cells give the seven pen flags distinct patterns, so any reordering
 of the pen flags changes a byte. Every other field is pinned only at the value it holds here:
-swapping two fields that hold the same value, such as two false modes, still passes. -/
+swapping two fields that hold the same value, such as two false modes, still passes.
+
+Format version 2 adds one byte to version 1: the origin mode after each saved cursor's pen, in
+the DECSC slot and in the stashed main screen. The version 1 bytes below are what the version 1
+writer wrote, so they pin that `saveV1`, which `load_saveV1_live` is about, is that format. -/
 
 /-- A record with indexed and RGB colours, nondefault modes, both cursors, a title, a line
 drawing set, a cwd and a label. -/
@@ -352,19 +408,60 @@ def golden : Ckpt Vt.Vt :=
             "\x1b[2;1H\x1b7\x1b[1;2H\x1b]2;t\x07\x1b(0").toUTF8
     cwd := "/c", labels := [("k", "v")] }
 
-/-- Its LNGR v1 bytes. Change them only together with the version byte in `magic`. -/
+/-- Its bytes in format version 2. Change them only together with the version byte in `magic`. -/
 def goldenBytes : List UInt8 :=
-  [76, 78, 71, 82, 1, 3, 2, 2, 3, 1, 65, 0, 1, 1, 3, 2, 1, 2, 3, 1, 0, 1, 0, 1, 0, 1, 1, 66, 0, 1,
+  [76, 78, 71, 82, 2, 3, 2, 2, 3, 1, 65, 0, 1, 1, 3, 2, 1, 2, 3, 1, 0, 1, 0, 1, 0, 1, 1, 66, 0, 1,
     0, 0, 0, 1, 1, 0, 0, 1, 1, 1, 67, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 3, 32, 0, 1, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 234, 7, 1, 1, 0, 1, 3,
-    0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 116, 1, 0, 0, 0, 2, 47, 99, 1, 1, 107,
-    1, 118]
+    0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 116, 1, 0, 0, 0, 2, 47, 99, 1, 1,
+    107, 1, 118]
 
 /-- The writer produces exactly those bytes. -/
 example : ((saveBytes golden).toList == goldenBytes) = true := by native_decide
 
 /-- The reader decodes those bytes to the record, with its parser quiesced. -/
 example : ((loadBytes ⟨goldenBytes.toArray⟩).map saveBytes == some (saveBytes golden)) = true := by
+  native_decide
+
+/-- Its bytes in format version 1, as the version 1 writer wrote them. Never change them: they
+are the checkpoints version 1 left on disk. -/
+def goldenV1Bytes : List UInt8 :=
+  [76, 78, 71, 82, 1, 3, 2, 2, 3, 1, 65, 0, 1, 1, 3, 2, 1, 2, 3, 1, 0, 1, 0, 1, 0, 1, 1, 66, 0, 1,
+    0, 0, 0, 1, 1, 0, 0, 1, 1, 1, 67, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 3, 32, 0, 1, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 234, 7, 1, 1, 0, 1, 3,
+    0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 116, 1, 0, 0, 0, 2, 47, 99, 1, 1, 107,
+    1, 118]
+
+/-- `saveV1` writes those bytes, and a version 1 checkpoint loads: to the record, whose saved
+cursor was taken with origin mode off. -/
+example :
+    (saveV1 golden == goldenV1Bytes &&
+        (loadBytes ⟨goldenV1Bytes.toArray⟩).map saveBytes == some (saveBytes golden)) =
+      true := by
+  native_decide
+
+/-- The DECSC slot and the stashed main screen both saved under origin mode, which is off again
+on the alternate screen. -/
+def originGolden : Ckpt Vt.Vt :=
+  { vt := (Vt.init 3 2).feedBytes "\x1b[?6h\x1b[?1049h\x1b[?6l".toUTF8, cwd := "", labels := [] }
+
+/-- Its bytes. -/
+def originBytes : List UInt8 :=
+  [76, 78, 71, 82, 2, 3, 2, 2, 1, 3, 32, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 3, 32, 0, 1, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 3, 0,
+    0, 0, 0, 0, 1, 2, 1, 3, 32, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 3, 32, 0, 1, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0,
+    0, 0, 0, 0]
+
+/-- The writer produces those bytes, which carry both origin modes on, the reader keeps them,
+and the record in format version 1 loads with both off, as `load_saveV1_live` states. -/
+example :
+    (let saved (c : Ckpt Vt.Vt) := (c.vt.saved.origin, c.vt.altGrid.map (·.2.origin))
+     saved originGolden == (true, some true) && !originGolden.vt.modes.origin &&
+       (saveBytes originGolden).toList == originBytes &&
+       (loadBytes ⟨originBytes.toArray⟩).map saved == some (true, some true) &&
+       (loadBytes ⟨(saveV1 originGolden).toArray⟩).map saved == some (false, some false)) =
+      true := by
   native_decide
 
 /-! ### The byte-array reader

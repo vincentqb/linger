@@ -27,7 +27,7 @@ private def largeScreen (marks : Bool := false) : Vt.Vt :=
                  reverse := true, strike := true } } :
           Vt.Cell)
   { Vt.Vt.init cols 100 with
-    grid, altGrid := some (grid, {}, {}) }
+    grid, altGrid := some (grid, {}) }
 
 /-- `largeScreen marks` as a checkpoint load returns it, or `none` if loading refuses it. -/
 def acceptedScreen (marks : Bool := false) : Option Vt.Vt :=

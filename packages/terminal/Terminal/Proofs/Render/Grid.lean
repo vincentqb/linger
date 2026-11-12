@@ -1342,25 +1342,38 @@ theorem prologue_modes (v w : Vt) :
       from by simp only [prologueAnsi, List.append_assoc],
     feed_append]
   obtain ⟨hlg, hlu⟩ := st_grounds w
-  -- the mode-affecting chain, after the lead-in has grounded the receiver
+  -- `?1049l` restores whatever origin mode the receiver's stash held; the rest of the chain
+  -- sets the three paint modes absolutely
+  obtain ⟨h2g, h2u, -⟩ := leave1049_modes hlg hlu
   have hmm :
-    MMap (fun m => smMod 7 true (smMod 6 false ({ (smMod 1049 false m) with insert := false })))
-      (modeSet 1049 false ++ csiNum 4 0x6C ++ modeSet 6 false ++ modeSet 7 true ++
-        csiNum2 1 v.rows 0x72 ++
+    MMap (fun m => smMod 7 true (smMod 6 false ({ m with insert := false })))
+      (csiNum 4 0x6C ++ modeSet 6 false ++ modeSet 7 true ++ csiNum2 1 v.rows 0x72 ++
         escCharset 0x28 0x42 ++
         escCharset 0x29 0x42 ++
         [0x0F]) := by
     have :=
-      (((((((mmap_modeSet 1049 false (by decide) (by decide)).comp (mmap_irm false)).comp
-                            (mmap_modeSet 6 false (by decide) (by decide))).comp
-                        (mmap_modeSet 7 true (by decide) (by decide))).comp
+      ((((((mmap_irm false).comp (mmap_modeSet 6 false (by decide) (by decide) (by simp))).comp
+                        (mmap_modeSet 7 true (by decide) (by decide) (by simp))).comp
                     (mmap_id_stbm2 1 v.rows)).comp
                 (mmap_id_charset 0x28 0x42 (Or.inl rfl) (by decide) (by decide))).comp
             (mmap_id_charset 0x29 0x42 (Or.inr rfl) (by decide) (by decide))).comp
         mmap_id_si
     refine this.congr (fun m => ?_)
     simp only [id_eq]
-  obtain ⟨-, -, hmodes⟩ := hmm (w.feed (escSeq 0x5C)) hlg hlu
+  rw [show
+      modeSet 1049 false ++ csiNum 4 0x6C ++ modeSet 6 false ++ modeSet 7 true ++
+          csiNum2 1 v.rows 0x72 ++
+          escCharset 0x28 0x42 ++
+          escCharset 0x29 0x42 ++
+          [0x0F] =
+        modeSet 1049 false ++
+          (csiNum 4 0x6C ++ modeSet 6 false ++ modeSet 7 true ++ csiNum2 1 v.rows 0x72 ++
+            escCharset 0x28 0x42 ++
+            escCharset 0x29 0x42 ++
+            [0x0F])
+      from by simp only [List.append_assoc],
+    feed_append]
+  obtain ⟨-, -, hmodes⟩ := hmm ((w.feed (escSeq 0x5C)).feed (modeSet 1049 false)) h2g h2u
   rw [hmodes]
   dsimp only
   rw [smMod_daw7, smMod_dom6]
@@ -1695,18 +1708,20 @@ theorem restore_grid_of_paint (v w : Vt) (hgood : Good w) (hren : Renderable w)
   have hf :=
     pending_tail_frames v u (Good.feed _ hgood) (renderable_feed hren _) uc ur hgrid ut ub u0 u1
       hwrap hins uo hps hn ua
-  let a := u.feed (regionAnsi v ++ tabsAnsi v ++ savedAnsi v)
-  let b := a.feed (savedPendingAnsi v)
-  let c := b.feed (titleAnsi v ++ modesAnsi v ++ charsetAnsi v ++ penSgr v.pen ++ cursorAnsi v)
-  have ha := (((keeps_regionAnsi v).append (keeps_tabsAnsi v)).append (keeps_savedAnsi v)) u hps hn
+  let a := u.feed (savedAnsi v)
+  let c :=
+    a.feed
+      (regionAnsi v ++ tabsAnsi v ++ titleAnsi v ++ modesAnsi v ++ charsetAnsi v ++ penSgr v.pen ++
+        cursorAnsi v)
   have hc :=
-    (((((keeps_titleAnsi v).append (keeps_modesAnsi v)).append (keeps_charsetAnsi v)).append
-            (keeps_penSgr v.pen)).append
-        (keeps_cursorAnsi v))
-      b hf.1 hf.2.1
+    ((((((keeps_regionAnsi v).append (keeps_tabsAnsi v)).append (keeps_titleAnsi v)).append
+                  (keeps_modesAnsi v)).append
+              (keeps_charsetAnsi v)).append
+          (keeps_penSgr v.pen)).append
+      (keeps_cursorAnsi v) a hf.1 hf.2.1
   have he : (c.feed (cursorPendingAnsi v)).grid = v.grid :=
-    hf.2.2.2.2.2.2.1.trans (hc.2.2.trans (hf.2.2.1.trans (ha.2.2.trans hgrid)))
-  simpa only [restore_split, u, a, b, c, feed_append] using he
+    hf.2.2.2.2.2.2.1.trans (hc.2.2.trans (hf.2.2.1.trans hgrid))
+  simpa only [restore_split, u, a, c, feed_append] using he
 
 /-! ### `restore_grid_any` — Definition-of-done item 5
 
@@ -1792,9 +1807,9 @@ theorem alt_switch_entry {u : Vt} (halt : u.altGrid = none) (hg : u.pstate = .gr
   have hent :
     u.enterAlt true =
       { u with
-        altGrid := some (u.grid, u.cursor, u.pen),
-        grid := Array.replicate u.rows (blankRow u.cols {}), cursor := {},
-        saved := { cur := u.cursor, pen := u.pen }, top := 0, bot := u.rows - 1 } := by
+        altGrid := some (u.grid, u.cursorSaved),
+        grid := Array.replicate u.rows (blankRow u.cols {}), cursor := {}, saved := u.cursorSaved,
+        top := 0, bot := u.rows - 1 } := by
     unfold Vt.enterAlt
     dsimp only
     rw [ite_eq_right
@@ -1819,116 +1834,78 @@ theorem getRow_size_replicate {u : Vt} {n c : Nat} (hg : u.grid = Array.replicat
         from by simp [Array.getD, Array.size_replicate, hy]]
     simp only [blankRow, Array.size_replicate]; exact hc
 
-/-- **The state just before the alt switch is fully re-established.** Feed a receiver `z` (in
-the prologue's canonical entry state) the discarded main paint `gridAnsi mg` and then the park
-(`penSgr`/`CUP`); every field the second paint's entry state reads is left intact — dimensions,
-region top, no alt screen, the decoder quiesced, the three paint modes and the ASCII charsets.
-The main paint's *cells* are thrown away by the switch, so only these framed invariants matter:
-`insert`/`wrap` from `gridAnsi_writes_rows`'s exposed output, `origin` from the `Quiet` frame,
-the sticky fields from `SMap`, the dimensions from `dims_feed`; the park preserves all of them
-(`MMap`/`SMap`/`uaz_feed`). This is what carries the modes to the switch without an `origin`
-field on `Matches`. -/
-theorem alt_pre_switch {z : Vt} {mg : Array Row} {mc : Cursor} {mp : Pen} {cols rows : Nat}
-    (hcols : z.cols = cols) (hrows : z.rows = rows) (htop : z.top = 0) (hbot : z.bot = rows - 1)
-    (hg : z.pstate = .ground) (hun : z.u8need = 0) (hua : z.u8acc = 0)
-    (hins : z.modes.insert = false) (hwrap : z.modes.wrap = true) (horg : z.modes.origin = false)
-    (hg0 : z.g0Line = false) (hg1 : z.g1Line = false) (hgsz : z.grid.size = rows)
-    (hrlens : ∀ y', (z.getRow y').size = cols) (halt : z.altGrid = none) (hgood : Good z)
-    (hpos : 0 < cols) (hub : cols < 65533) (hmok : ∀ y', RowOk cols (mg.getD y' (blankRow cols {})))
-    (hmsz : mg.size = rows) :
-    ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).cols = cols ∧
-      ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).rows = rows ∧
-      ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).top = 0 ∧
-      ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).altGrid =
-        none ∧
-      ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).pstate =
-        .ground ∧
-      ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).u8need = 0 ∧
-      ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).u8acc = 0 ∧
-      ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).modes.insert =
-        false ∧
-      ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).modes.wrap =
-        true ∧
-      ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).modes.origin =
-        false ∧
-      ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).g0Line =
-        false ∧
-      ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).g1Line =
-        false := by
-  -- A: the main paint. Its result is discarded; only these framed facts survive.
-  obtain ⟨-, -, hAun, hAua, hAins, hAwrap, -⟩ :=
+/-- **The state the discarded main paint leaves.** Feed a receiver `z` in the prologue's
+canonical entry state the main paint `gridAnsi mg`: the grid becomes `mg` and every field the
+park and the second paint read is left intact — dimensions, region, no alt screen, the decoder
+quiesced, the three paint modes and the ASCII charsets. -/
+theorem alt_pre_park {z : Vt} {mg : Array Row} {cols rows : Nat} (hcols : z.cols = cols)
+    (hrows : z.rows = rows) (htop : z.top = 0) (hbot : z.bot = rows - 1) (hg : z.pstate = .ground)
+    (hun : z.u8need = 0) (hua : z.u8acc = 0) (hins : z.modes.insert = false)
+    (hwrap : z.modes.wrap = true) (horg : z.modes.origin = false) (hg0 : z.g0Line = false)
+    (hg1 : z.g1Line = false) (hgsz : z.grid.size = rows) (hrlens : ∀ y', (z.getRow y').size = cols)
+    (halt : z.altGrid = none) (hgood : Good z) (hpos : 0 < cols) (hub : cols < 65533)
+    (hmok : ∀ y', RowOk cols (mg.getD y' (blankRow cols {}))) (hmsz : mg.size = rows) :
+    let s := z.feed (gridAnsi mg)
+    s.cols = cols ∧
+      s.rows = rows ∧
+      s.top = 0 ∧
+      s.bot = rows - 1 ∧
+      s.altGrid = none ∧
+      s.pstate = .ground ∧
+      s.u8need = 0 ∧
+      s.u8acc = 0 ∧
+      s.modes.insert = false ∧
+      s.modes.wrap = true ∧
+      s.modes.origin = false ∧ s.g0Line = false ∧ s.g1Line = false ∧ s.grid = mg ∧ s.sb = z.sb := by
+  intro s
+  obtain ⟨hAgrid, -, hAun, hAua, hAins, hAwrap, hAsb⟩ :=
     gridAnsi_writes_rows (u := z) (tg := mg) hcols hrows hpos hub htop hbot hg hun hua hins hwrap
       horg hg0 hg1 hgsz hrlens hmok hmsz
-  have hAg : (z.feed (gridAnsi mg)).pstate = .ground := (quiet_gridAnsi mg z hg horg).1
-  have hAorg : (z.feed (gridAnsi mg)).modes.origin = false := (quiet_gridAnsi mg z hg horg).2
-  have hAstick : stick (z.feed (gridAnsi mg)) = stick z := (smap_id_gridAnsi mg z hg).2
-  have hAdims : dims (z.feed (gridAnsi mg)) = dims z := dims_feed _ hgood
-  have hgoodA : Good (z.feed (gridAnsi mg)) := Good.feed _ hgood
-  -- the park: `penSgr ++ CUP`. Modes / sticky bundle / decoder / dims all preserved.
-  have hMpark := mmap_id_append (mmap_id_penSgr mp) (mmap_id_cup (mc.y + 1) (mc.x + 1))
-  have hSpark := SMap.append (smap_id_penSgr mp) (smap_id_cup (mc.y + 1) (mc.x + 1))
-  have hAscii := (ascii_penSgr mp).append (ascii_csiNum2 (mc.y + 1) (mc.x + 1) 0x48 (by decide))
-  obtain ⟨hPg, hPn, hPmodes⟩ := hMpark _ hAg hAun
-  obtain ⟨-, hPstick⟩ := hSpark _ hAg
-  obtain ⟨-, hPua⟩ := uaz_feed _ hAscii hAun hAua
-  have hPdims :
-    dims ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)) =
-      dims (z.feed (gridAnsi mg)) :=
-    dims_feed _ hgoodA
-  refine ⟨?_, ?_, ?_, ?_, hPg, hPn, hPua, ?_, ?_, ?_, ?_, ?_⟩
-  · rw [← dims_fst, hPdims, hAdims, dims_fst, hcols]
-  · rw [← dims_snd, hPdims, hAdims, dims_snd, hrows]
-  · rw [← stick_top, hPstick, id_eq, hAstick, stick_top, htop]
-  · have hnone :
-      ((z.feed (gridAnsi mg)).feed
-            (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).altGrid.isSome =
-        false := by
-      rw [← stick_alt, hPstick, id_eq, hAstick, stick_alt, halt]; rfl
+  have hAg : s.pstate = .ground := (quiet_gridAnsi mg z hg horg).1
+  have hAorg : s.modes.origin = false := (quiet_gridAnsi mg z hg horg).2
+  have hAstick : stick s = stick z := (smap_id_gridAnsi mg z hg).2
+  have hAdims : dims s = dims z := dims_feed _ hgood
+  refine ⟨?_, ?_, ?_, ?_, ?_, hAg, hAun, hAua, hAins, hAwrap, hAorg, ?_, ?_, hAgrid, hAsb⟩
+  · rw [← dims_fst, hAdims, dims_fst, hcols]
+  · rw [← dims_snd, hAdims, dims_snd, hrows]
+  · rw [← stick_top, hAstick, stick_top, htop]
+  · rw [← stick_bot, hAstick, stick_bot, hbot]
+  · have hnone : s.altGrid.isSome = false := by
+      rw [← stick_alt, hAstick, stick_alt, halt]; rfl
     exact
       Option.not_isSome_iff_eq_none.mp
         (by
           rw [hnone]; simp)
-  · rw [hPmodes, id_eq, hAins]
-  · rw [hPmodes, id_eq, hAwrap]
-  · rw [hPmodes, id_eq, hAorg]
-  · rw [← stick_g0, hPstick, id_eq, hAstick, stick_g0, hg0]
-  · rw [← stick_g1, hPstick, id_eq, hAstick, stick_g1, hg1]
+  · rw [← stick_g0, hAstick, stick_g0, hg0]
+  · rw [← stick_g1, hAstick, stick_g1, hg1]
 
-/-- Reprinting the stashed margin cell preserves the complete paint entry
-context, including the ring that the following switch must retain. -/
-theorem pending_park_frame (s : Vt) (cols : Nat) (mg : Array Row) (mc : Cursor) (mp : Pen)
-    (hg : Good s) (hr : Renderable s) (hc : s.cols = cols) (hgrid : s.grid = mg)
-    (h0 : s.g0Line = false) (h1 : s.g1Line = false) (hw : s.modes.wrap = true)
-    (hi : s.modes.insert = false) (ho : s.modes.origin = false) (hp : s.pstate = .ground)
-    (hn : s.u8need = 0) (ha : s.u8acc = 0) :
-    let t := s.feed (pendingAnsi cols mg mc (mc.y + 1) mp)
-    t.cols = s.cols ∧
-      t.rows = s.rows ∧
-      t.top = s.top ∧
-      t.altGrid = s.altGrid ∧
-      t.pstate = .ground ∧
-      t.u8need = 0 ∧
-      t.u8acc = 0 ∧
-      t.modes = s.modes ∧
-      t.g0Line = s.g0Line ∧ t.g1Line = s.g1Line ∧ t.grid = s.grid ∧ t.sb = s.sb := by
-  have he :=
-    pendingAnsi_feed_eq s mc (mc.y + 1) mp hg hr h0 h1 hw hi
-      (fun hy => pending_row_absolute s mc hg ho hy) hp hn ha
-  dsimp only
-  rw [← hc, ← hgrid, he]
-  split <;> exact ⟨rfl, rfl, rfl, rfl, hp, hn, ha, rfl, rfl, rfl, rfl, rfl⟩
+/-- **DECOM off after a park that turned it on**: the reset homes the cursor and writes nothing
+else; without the saved origin mode there is nothing to emit. -/
+theorem originOffAnsi_frame (z : Vt) (sv : Saved) (hg : z.pstate = .ground) (hun : z.u8need = 0) :
+    ∃ c,
+      z.feed (originOffAnsi sv) =
+        { z with
+          cursor := c,
+          modes := if sv.origin then { z.modes with origin := false } else z.modes } := by
+  unfold originOffAnsi
+  cases hs : sv.origin
+  · exact ⟨z.cursor, by simp only [Bool.false_eq_true, ↓reduceIte, feed_nil]⟩
+  · simp only [↓reduceIte]
+    rw [modeSet_feed_eq 6 false (by decide) (by decide) hg hun]
+    simp only [Vt.setMode, Vt.moveTo, Bool.false_eq_true, ↓reduceIte, ← hg]
+    exact ⟨_, rfl⟩
 
 /-- **The screens, painted — alt screen.** `screensAnsi` paints the stashed main grid, parks
-its cursor/pen, reprints its margin cell, switches with `?1049h`, then paints the visible
-grid. `alt_pre_switch` carries the entry state across the discarded paint and the park, and
-`alt_switch_entry` hands the second paint a blank grid of the receiver's shape. **The
-discarded paint's row count is load-bearing for the ring**: a stashed grid taller than the
-receiver pushes before the switch runs, so `hvren.alt`'s `mainGrid.size = v.rows` is needed. -/
+the stashed cursor, pen and origin mode (reprinting its margin cell), switches with `?1049h`,
+turns DECOM back off, then paints the visible grid. `alt_pre_park` carries the entry state
+across the discarded paint, `parkAnsi_frame` across the park, and `alt_switch_entry` hands the
+second paint a blank grid of the receiver's shape. **The discarded paint's row count is
+load-bearing for the ring**: a stashed grid taller than the receiver pushes before the switch
+runs, so `hvren.alt`'s `mainGrid.size = v.rows` is needed. -/
 theorem screens_paint_alt (v w : Vt) (hgood : Good w) (hren : Renderable w)
     (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) (hua : w.u8acc = 0) (hun : w.u8need = 0)
-    {mainGrid : Array Row} {mcur : Cursor} {mpen : Pen}
-    (halt : v.altGrid = some (mainGrid, mcur, mpen)) (hpos : 0 < v.cols) (hub : v.cols < 65533)
-    (hvren : Renderable v) :
+    {mainGrid : Array Row} {ms : Saved} (halt : v.altGrid = some (mainGrid, ms)) (hpos : 0 < v.cols)
+    (hub : v.cols < 65533) (hvren : Renderable v) :
     let u := w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v)
     u.pstate = .ground ∧
       u.u8need = 0 ∧
@@ -1940,87 +1917,137 @@ theorem screens_paint_alt (v w : Vt) (hgood : Good w) (hren : Renderable w)
   intro u
   obtain ⟨e1, e2, -, -, e5, -, e7, -, -, -, -, -, -, -, -, est⟩ :=
     paint_entry v w hgood hren hcols hrows hua hun
-  obtain ⟨hmsz, hmok⟩ := hvren.alt mainGrid mcur mpen halt
+  obtain ⟨hmsz, hmok⟩ := hvren.alt mainGrid ms halt
   obtain ⟨f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, falt, -⟩ :=
     scrollback_entry (u := w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)) (v := v)
       (Good.feed _ hgood) (renderable_feed hren _) e1 e2 e5 e7 est
-  have hmain :=
-    gridAnsi_writes_rows (u :=
-      (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed (scrollbackAnsi v)) (tg :=
-      mainGrid) (cols := v.cols) (rows := v.rows) f1 f2 hpos hub f3 f4 f5 f6 f7 f8 f9 f10 f11 f12
-      (by rw [f13]) f14 hmok hmsz
-  obtain
-    ⟨hs2cols, hs2rows, hs2top, hs2alt, hs2g, hs2n, hs2ua, hs2ins, hs2wrap, hs2org, hs2g0, hs2g1⟩ :=
-    alt_pre_switch (z :=
+  have hgz :
+    Good ((w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed (scrollbackAnsi v)) :=
+    Good.feed _ (Good.feed _ hgood)
+  obtain ⟨sc, sr, st, sbt, salt, sg, sn, sa, sins, swrap, sorg, s0, s1, sgrid, ssb⟩ :=
+    alt_pre_park (z :=
       (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed (scrollbackAnsi v)) (mg :=
-      mainGrid) (mc := mcur) (mp := mpen) (cols := v.cols) (rows := v.rows) f1 f2 f3 f4 f5 f6 f7 f8
-      f9 f10 f11 f12 f13 f14 falt (Good.feed _ (Good.feed _ hgood)) hpos hub hmok hmsz
-  have hsg := (keeps_park (mcur.y + 1) (mcur.x + 1) mpen _ hmain.2.1 hmain.2.2.1).2.2.trans hmain.1
-  have hpark :=
-    ((fixes_penSgr psBlind_sb mpen sb_csiDispatch_sgr).append
-        (fixes_csiNum2 psBlind_sb (mcur.y + 1) (mcur.x + 1) 0x48 (by decide) (by decide)
-          sb_csiDispatch_cup))
-      _ hmain.2.1 hmain.2.2.1
-  -- an opaque name for the parked state: a `let` makes every hypothesis about it a defeq check
+      mainGrid) (cols := v.cols) (rows := v.rows) f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14
+      falt hgz hpos hub hmok hmsz
+  have hgs := Good.feed (gridAnsi mainGrid) hgz
+  have hrs :=
+    renderable_feed
+      (renderable_feed (renderable_feed hren (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A))
+        (scrollbackAnsi v))
+      (gridAnsi mainGrid)
+  -- an opaque name for the painted state: a `let` makes every hypothesis about it a defeq check
   -- that unfolds `Vt.feed`
   generalize hs :
-    (((w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed (scrollbackAnsi v)).feed
-          (gridAnsi mainGrid)).feed
-      (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48) =
-    s at hs2cols hs2rows hs2top hs2alt hs2g hs2n hs2ua hs2ins hs2wrap hs2org hs2g0 hs2g1 hsg hpark
-  obtain ⟨pc, pr, -, pa, pg, pn, pua, pm, p0, p1, -, psb⟩ :=
-    pending_park_frame s v.cols mainGrid mcur mpen
-      (hs ▸ Good.feed _ (Good.feed _ (Good.feed _ (Good.feed _ hgood))))
-      (hs ▸ renderable_feed (renderable_feed (renderable_feed (renderable_feed hren _) _) _) _)
-      hs2cols hsg hs2g0 hs2g1 hs2wrap hs2ins hs2org hs2g hs2n hs2ua
+    ((w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed (scrollbackAnsi v)).feed
+      (gridAnsi mainGrid) =
+    s at sc sr st sbt salt sg sn sa sins swrap sorg s0 s1 sgrid ssb hgs hrs
+  -- the park: cursor, pen and origin mode only
+  obtain ⟨pc, pp, hpk⟩ := parkAnsi_frame s ms hgs hrs s0 s1 swrap sins st (by rw [sbt, sr]) sg sn sa
+  have hpark :
+    s.feed (parkAnsi v.cols mainGrid ms) =
+      { s with
+        cursor := pc, pen := pp,
+        modes := if ms.origin then { s.modes with origin := true } else s.modes } := by
+    rw [← sc, ← sgrid]; exact hpk
+  -- the switch: a blank grid of the receiver's shape, the region whole
   obtain
     ⟨hZcols, hZrows, hZtop, hZbot, hZg, hZun, hZua, hZmodes, hZg0, hZg1, hZgrid, -, -, -, hZsb⟩ :=
-    alt_switch_entry (u := s.feed (pendingAnsi v.cols mainGrid mcur (mcur.y + 1) mpen))
-      (pa.trans hs2alt) pg pn
+    alt_switch_entry (u := s.feed (parkAnsi v.cols mainGrid ms))
+      (by
+        rw [hpark]; exact salt)
+      (by
+        rw [hpark]; exact sg)
+      (by
+        rw [hpark]; exact sn)
+  generalize hz : (s.feed (parkAnsi v.cols mainGrid ms)).feed (csiPriv 1049 0x68) =
+    z at hZcols hZrows hZtop hZbot hZg hZun hZua hZmodes hZg0 hZg1 hZgrid hZsb
+  -- DECOM off again
+  obtain ⟨oc, hoff⟩ :=
+    originOffAnsi_frame z ms hZg
+      (hZun.trans
+        (by
+          rw [hpark]; exact sn))
+  have hpm :
+    (s.feed (parkAnsi v.cols mainGrid ms)).modes =
+      if ms.origin then { s.modes with origin := true } else s.modes := by
+    rw [hpark]
+  have zins : z.modes.insert = false := by
+    rw [hZmodes, hpm]; split <;> exact sins
+  have zwrap : z.modes.wrap = true := by
+    rw [hZmodes, hpm]; split <;> exact swrap
+  have zorg : (if ms.origin then { z.modes with origin := false } else z.modes).origin = false := by
+    rw [hZmodes, hpm]; split <;> simp_all
+  have hpc : (s.feed (parkAnsi v.cols mainGrid ms)).cols = v.cols := by
+    rw [hpark]; exact sc
+  have hpr : (s.feed (parkAnsi v.cols mainGrid ms)).rows = v.rows := by
+    rw [hpark]; exact sr
+  have hp0 : (s.feed (parkAnsi v.cols mainGrid ms)).g0Line = false := by
+    rw [hpark]; exact s0
+  have hp1 : (s.feed (parkAnsi v.cols mainGrid ms)).g1Line = false := by
+    rw [hpark]; exact s1
+  have hpa : (s.feed (parkAnsi v.cols mainGrid ms)).u8acc = 0 := by
+    rw [hpark]; exact sa
+  have hpn : (s.feed (parkAnsi v.cols mainGrid ms)).u8need = 0 := by
+    rw [hpark]; exact sn
+  have hpsb : (s.feed (parkAnsi v.cols mainGrid ms)).sb = s.sb := by rw [hpark]
   have hfin :=
-    gridAnsi_writes_rows (u :=
-      (s.feed (pendingAnsi v.cols mainGrid mcur (mcur.y + 1) mpen)).feed (csiPriv 1049 0x68)) (tg :=
-      v.grid) (cols := v.cols) (rows := v.rows) (hZcols.trans (pc.trans hs2cols))
-      (hZrows.trans (pr.trans hs2rows)) hpos hub hZtop (by rw [hZbot, pr, hs2rows]) hZg
-      (hZun.trans pn) (hZua.trans pua)
+    gridAnsi_writes_rows (u := z.feed (originOffAnsi ms)) (tg := v.grid) (cols := v.cols) (rows :=
+      v.rows)
       (by
-        rw [hZmodes, pm]; exact hs2ins)
+        rw [hoff]; exact hZcols.trans hpc)
       (by
-        rw [hZmodes, pm]; exact hs2wrap)
+        rw [hoff]; exact hZrows.trans hpr)
+      hpos hub
       (by
-        rw [hZmodes, pm]; exact hs2org)
-      (hZg0.trans (p0.trans hs2g0)) (hZg1.trans (p1.trans hs2g1))
+        rw [hoff]; exact hZtop)
       (by
-        rw [hZgrid, Array.size_replicate]; exact pr.trans hs2rows)
-      (fun y' => (getRow_size_replicate hZgrid hZcols y').trans (pc.trans hs2cols)) hvren.main.2
-      hvren.main.1
+        rw [hoff]; exact hZbot.trans (by rw [hpr]))
+      (by
+        rw [hoff]; exact hZg)
+      (by
+        rw [hoff]; exact hZun.trans hpn)
+      (by
+        rw [hoff]; exact hZua.trans hpa)
+      (by
+        rw [hoff]; dsimp only; split <;> exact zins)
+      (by
+        rw [hoff]; dsimp only; split <;> exact zwrap)
+      (by
+        rw [hoff]; exact zorg)
+      (by
+        rw [hoff]; exact hZg0.trans hp0)
+      (by
+        rw [hoff]; exact hZg1.trans hp1)
+      (by
+        rw [hoff]; dsimp only; rw [hZgrid, Array.size_replicate]; exact hpr)
+      (fun y' => by
+        rw [hoff]
+        exact (getRow_size_replicate hZgrid hZcols y').trans hpc)
+      hvren.main.2 hvren.main.1
   -- `simp only [feed_append]`, not a hand-counted `rw` chain: `++` is left-associative, so a
   -- `rw` takes the outermost append first and splits the park before it reaches the history
   -- stage.
-  have hpeel :
-    u =
-      ((s.feed (pendingAnsi v.cols mainGrid mcur (mcur.y + 1) mpen)).feed (csiPriv 1049 0x68)).feed
-        (gridAnsi v.grid) := by
+  have hpeel : u = ((z.feed (originOffAnsi ms)).feed (gridAnsi v.grid)) := by
     dsimp only [u]
     rw [show
         screensAnsi v =
-          scrollbackAnsi v ++ gridAnsi mainGrid ++
-            (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48) ++
-            pendingAnsi v.cols mainGrid mcur (mcur.y + 1) mpen ++
+          scrollbackAnsi v ++ gridAnsi mainGrid ++ parkAnsi v.cols mainGrid ms ++
             csiPriv 1049 0x68 ++
+            originOffAnsi ms ++
             gridAnsi v.grid
         from by
         unfold screensAnsi; rw [halt]; simp only [List.append_assoc],
-      ← hs]
+      ← hz, ← hs]
     simp only [feed_append]
   rw [hpeel,
     show
       w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ scrollbackAnsi v) =
         (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed (scrollbackAnsi v)
       from by simp only [feed_append]]
+  have hoffsb : (z.feed (originOffAnsi ms)).sb = z.sb := by rw [hoff]
   exact
     ⟨hfin.2.1, hfin.2.2.1, hfin.1, hfin.2.2.2.2.1, hfin.2.2.2.2.2.1,
-      hfin.2.2.2.2.2.2.trans (hZsb.trans (psb.trans (hpark.2.2.trans hmain.2.2.2.2.2.2)))⟩
+      hfin.2.2.2.2.2.2.trans (hoffsb.trans (hZsb.trans (hpsb.trans ssb)))⟩
 
 /-- **The screens, painted**, on either screen; the paint's column bounds come from `Good w`
 through `hcols`. -/
@@ -2040,7 +2067,7 @@ theorem screens_paint (v w : Vt) (hgood : Good w) (hren : Renderable w) (hcols :
     have := hgood.colsLe; rw [hcols] at this; omega
   match halt : v.altGrid with
   | none => exact screens_paint_main v w hgood hren hcols hrows hua hun halt hpos hub hvren
-  | some (mainGrid, mcur, mpen) =>
+  | some (mainGrid, ms) =>
     exact screens_paint_alt v w hgood hren hcols hrows hua hun halt hpos hub hvren
 
 /-- **The grid, restored into any client — both screens (Definition-of-done item 5).** The

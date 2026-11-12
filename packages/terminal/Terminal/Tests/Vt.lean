@@ -449,6 +449,29 @@ example :
       true := by
   native_decide
 
+/-- The title an OSC payload leaves, as its text split at the first `;` sets it: what the
+emulator did before it split the payload as bytes. -/
+def splitTitle (old : String) (payload : List UInt8) : String :=
+  let txt := (String.fromUTF8? ⟨payload.toArray⟩).getD ""
+  match txt.splitOn ";" with
+  | code :: rest => if code == "0" || code == "2" then String.intercalate ";" rest else old
+  | [] => old
+
+/-- Splitting the payload as bytes sets the title its text split at the first `;` sets: OSC 0 and
+OSC 2 with and without text, several `;`, other codes, codes that only start with 0 or 2, text that
+is not UTF-8, and multibyte text. -/
+example :
+    ([[0x30], [0x32], [0x31], [], [0x3B], [0x32, 0x3B], [0x30, 0x3B, 0x61],
+            [0x32, 0x3B, 0x61, 0x3B, 0x62], [0x32, 0x3B, 0x3B], [0x30, 0x32, 0x3B, 0x78],
+            [0x32, 0x30, 0x3B, 0x78], [0x31, 0x3B, 0x78], [0x32, 0x3B, 0xFF],
+            [0xFF, 0x32, 0x3B, 0x78], [0x32, 0x3B, 0xC3, 0xA9, 0xE4, 0xB8, 0xAD],
+            [0x32, 0x3B, 0xC3]].all
+        fun payload =>
+        let v : Vt := { Vt.init 4 1 with title := "old" }
+        (v.oscFinish payload.toArray).title == splitTitle "old" payload) =
+      true := by
+  native_decide
+
 /-- Bracketed paste + mouse modes recorded for restore. -/
 example : (let v := screen 10 2 "\x1b[?2004h\x1b[?1002h\x1b[?1006h"
            v.modes.bracketedPaste && v.modes.mouse == 1002
