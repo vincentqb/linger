@@ -811,6 +811,10 @@ private def failureOf : SpawnFailure → Linger.Session.Spawn.Failure
   | .notFound why => .notFound why
   | .notRunnable why => .notRunnable why
 
+/-- What the operating system resets of a program's start, as linger's request says it. -/
+private def resetOf (reset : Linger.Session.Spawn.Reset) : SpawnReset :=
+  { dispositions := reset.dispositions, mask := reset.mask, descriptors := reset.descriptors }
+
 /-- Why a program could not start, for a person. -/
 private def failureText (failure : Linger.Session.Spawn.Failure) (prog cwd : String) : String :=
   match failure with
@@ -934,6 +938,7 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
             trySpawnPty (UInt32.ofNat (Terminal.Vt.clampDim vt0.colCount))
                 (UInt32.ofNat (Terminal.Vt.clampDim vt0.rowCount)) cwd prog args
                 ((Start.environment name).toArray.map fun (key, value) => s!"{key}={value}")
+                (resetOf Start.reset)
           catch err =>
             record.restore previous
             throw err

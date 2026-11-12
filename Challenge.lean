@@ -25,8 +25,8 @@ each with a kill, and says what it does not claim yet:
    owner, and every value linger reports has one source, which alone can change it.
 3. Exactness: a request takes effect exactly as given, or is refused with a reason and changes
    nothing.
-4. Program identity: a session runs exactly the program its creation named, and linger only
-   delivers bytes to it.
+4. Program identity: a session runs exactly the program its creation named, from a state its
+   start alone decides, and linger only delivers bytes to it.
 5. Accountability: every session ends once and one way, whether its program ends or a kill stops
    it, with an outcome recorded and reported truthfully to anyone who asks; every request gets a
    reply or a refusal, and every command exits with the code of an answer true of what happened.
@@ -218,6 +218,8 @@ def Linger.Session.Start.proceeds : Bool → Bool := sorry
 def Linger.Session.Start.answer : Bool → Bool → Start.Answer := sorry
 
 def Linger.Session.Start.environment : String → List (String × String) := sorry
+
+def Linger.Session.Start.reset : Spawn.Reset := sorry
 
 def Linger.Session.Start.failureStatus : Spawn.Failure → UInt8 := sorry
 
@@ -807,7 +809,15 @@ theorem metadata_dirs_rejects_silent :
 A session runs the program its creation named, with its words, or without a command the
 session's shell alone, which is what a resume runs again on the saved session's last screen
 (`resume_restores`, in part 7). The operating system runs it as asked: the world claim
-`Spawn.Runs`, which the agent and resume suites exercise. -/
+`Spawn.Runs`, which the agent and resume suites exercise.
+
+The program starts from what its start asks, never from how linger was started: every signal at
+its default action, none blocked, and its terminal on descriptors 0, 1 and 2 with no other open,
+whatever the command that asked for the session ignored, blocked or left open, as a shell's `&`
+job ignores SIGINT and SIGQUIT and `exec 3>&1` leaves a pipe open (`start_clean`, over the world
+claim `Spawn.Clean`, which the agent suite exercises). Not claimed: the rest of what a program
+inherits as any child does, such as resource limits, the file mode mask, scheduling priority and
+the user and groups it runs as. -/
 
 theorem programOf_exact (shell : String) (argv : List String) :
     Start.programOf shell argv = (argv.headD shell, (argv.drop 1).toArray) := by sorry
@@ -833,12 +843,13 @@ theorem shellOf_choice_rejects_fixed :
   sorry
 
 theorem start_runs (inherited : String → Option String)
-    (start : String → String → Array String → List (String × String) → Option Spawn.Started)
+    (start :
+      String → String → Array String → List (String × String) → Spawn.Reset → Option Spawn.Started)
     (runs : Spawn.Runs inherited start) (name dir shell : String) (argv : List String)
     {started : Spawn.Started}
     (ok :
       start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
-          (Start.environment name) =
+          (Start.environment name) Start.reset =
         some started) :
     started.argv = argv.headD shell :: argv.drop 1 ∧
       started.dir = dir ∧
@@ -853,11 +864,13 @@ theorem start_runs (inherited : String → Option String)
 
 theorem start_runs_rejects_unnamed :
     ¬∀ (inherited : String → Option String)
-        (start : String → String → Array String → List (String × String) → Option Spawn.Started),
+        (start :
+          String →
+            String → Array String → List (String × String) → Spawn.Reset → Option Spawn.Started),
         Spawn.Runs inherited start →
           ∀ (name dir shell : String) (argv : List String) {started : Spawn.Started},
             start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
-                  ((fun (_ : String) => ([] : List (String × String))) name) =
+                  ((fun (_ : String) => ([] : List (String × String))) name) Start.reset =
                 some started →
               started.argv = argv.headD shell :: argv.drop 1 ∧
                 started.dir = dir ∧
@@ -868,6 +881,36 @@ theorem start_runs_rejects_unnamed :
                 ∀ key,
                   key ∉ ["LINGER_SESSION", "TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"] →
                     started.env key = inherited key := by
+  sorry
+
+theorem start_clean
+    (start :
+      String → String → Array String → List (String × String) → Spawn.Reset → Option Spawn.Started)
+    (clean : Spawn.Clean start) (name dir shell : String) (argv : List String)
+    {started : Spawn.Started}
+    (ok :
+      start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
+          (Start.environment name) Start.reset =
+        some started) :
+    (∀ sig, started.ignored sig = false) ∧
+      (∀ sig, started.blocked sig = false) ∧
+      ∀ fd, started.descriptor fd = if fd < 3 then some .terminal else none := by
+  sorry
+
+theorem start_clean_rejects_inherited :
+    ¬∀
+        (start :
+          String →
+            String → Array String → List (String × String) → Spawn.Reset → Option Spawn.Started),
+        Spawn.Clean start →
+          ∀ (name dir shell : String) (argv : List String) {started : Spawn.Started},
+            start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
+                  (Start.environment name)
+                  ({ dispositions := false, mask := true, descriptors := true } : Spawn.Reset) =
+                some started →
+              (∀ sig, started.ignored sig = false) ∧
+                (∀ sig, started.blocked sig = false) ∧
+                ∀ fd, started.descriptor fd = if fd < 3 then some .terminal else none := by
   sorry
 
 /-! ## 5. Accountability

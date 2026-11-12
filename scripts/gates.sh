@@ -191,12 +191,13 @@ code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(
     'Main.lean' 'Verify/*' 'Linger/*/Suites/*' \
   || fail "a negative literal comparison looks like an errno number: compare the sign, or classify the errno in packages/os/c/shim.c"
 # Lean/libuv may have worker threads when the application forks. The child
-# paths and their two execution helpers must not allocate, format through
+# paths and the four helpers they run, which report a failure, reset what the
+# program would inherit and execute it, must not allocate, format through
 # stdio, mutate the environment, or use execvp's libc internals. Inventory the
 # regions as well: deleting a marker must fail rather than checking nothing.
 # This is a source guard for the listed calls, not a whole-program safety proof.
 awk '
-  /^static void (spawn_fail|exec_search)\(/ { helper = 1; helpers++ }
+  /^static void (spawn_fail|close_from_3|spawn_reset|exec_search)\(/ { helper = 1; helpers++ }
   /^    if \(pid == 0\) \{/ { child = 1; children++ }
   helper || child {
     if ($0 ~ /(^|[^[:alnum:]_])(malloc|calloc|realloc|free|getenv|setenv|putenv|execvp|snprintf|printf|strerror|lean_[[:alnum:]_]+)[[:space:]]*\(/) {
@@ -207,8 +208,8 @@ awk '
   helper && /^}/ { helper = 0 }
   child && /^    }/ { child = 0 }
   END {
-    if (helpers != 2 || children != 2) {
-      print "  fork guard expected two helpers and two child blocks, saw " helpers ", " children
+    if (helpers != 4 || children != 2) {
+      print "  fork guard expected four helpers and two child blocks, saw " helpers ", " children
       failed = 1
     }
     exit failed
@@ -1048,17 +1049,20 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def Rt[.]closeConn [(]rt : 
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let [(]prog, args[)] := Start[.]programOf [(]Linger[.]Os[.]Env[.]shellOf [(]← IO[.]getEnv "SHELL"[)][)] argv([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "a session's program bypasses Start.programOf or Env.shellOf"
 # The program reads the session's variables as `Start.environment` sets them (`start_runs`, over
-# the world claim `Spawn.Runs`, which the agent and resume suites exercise); a program that cannot
-# start reports `Start.failureStatus` (`failureStatus_exact`); and `info` reports the start as
-# `Start.metadata` says (`metadata_dirs`). The daemon asks the operating system with exactly these.
+# the world claim `Spawn.Runs`, which the agent and resume suites exercise), and starts without
+# what `Start.reset` resets (`start_clean`, over the world claim `Spawn.Clean`, which the agent
+# suite exercises); a program that cannot start reports `Start.failureStatus`
+# (`failureStatus_exact`); and `info` reports the start as `Start.metadata` says
+# (`metadata_dirs`). The daemon asks the operating system with exactly these.
 for tie in \
-  'trySpawnPty [(]UInt32[.]ofNat [(]Terminal[.]Vt[.]clampDim vt0[.]colCount[)][)] [(]UInt32[.]ofNat [(]Terminal[.]Vt[.]clampDim vt0[.]rowCount[)][)] cwd prog args [(][(]Start[.]environment name[)][.]toArray[.]map fun [(]key, value[)] => s!"[{]key[}]=[{]value[}]"[)]' \
+  'trySpawnPty [(]UInt32[.]ofNat [(]Terminal[.]Vt[.]clampDim vt0[.]colCount[)][)] [(]UInt32[.]ofNat [(]Terminal[.]Vt[.]clampDim vt0[.]rowCount[)][)] cwd prog args [(][(]Start[.]environment name[)][.]toArray[.]map fun [(]key, value[)] => s!"[{]key[}]=[{]value[}]"[)] [(]resetOf Start[.]reset[)]' \
+  'private def resetOf [(]reset : Linger[.]Session[.]Spawn[.]Reset[)] : SpawnReset := [{] dispositions := reset[.]dispositions, mask := reset[.]mask, descriptors := reset[.]descriptors [}]' \
   'req[.]tell [(][.]failed [(]Start[.]failureStatus failure[)] why[.]toUTF8[.]toList[)]' \
   'private def failureOf : SpawnFailure → Linger[.]Session[.]Spawn[.]Failure [|] [.]directory why => [.]directory why [|] [.]notFound why => [.]notFound why [|] [.]notRunnable why => [.]notRunnable why' \
   'if let [.]error reported := spawned then record[.]restore previous let failure := failureOf reported' \
   'State[.]boot vt0 [(][(]restore[.]map [(]·[.]2[)][)][.]getD [[][]][)] [(]Start[.]metadata name [(]toString pid[)] [(]toString created[)] [(]String[.]intercalate " " [(]prog :: args[.]toList[)][)] cwd [(]saved[.]map fun [(]_, dir, _[)] => dir[)][)]'; do
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
-    || fail "a session starts outside Start.environment, Start.failureStatus or Start.metadata: $tie"
+    || fail "a session starts outside Start.environment, Start.reset, Start.failureStatus or Start.metadata: $tie"
 done
 # A session's end sends its program and the rest of the program's terminal session the signals
 # of `Session.ending`, SIGHUP and then SIGKILL (`ending_clean`, over the world claim
@@ -1618,7 +1622,7 @@ role_bad="$(git ls-files -- Linger.lean 'Linger/*.lean' \
 # plus one lemma-name prefix. Every listed name must still be cited, so an extraction that
 # finds nothing fails too.
 cite_absent='mmap_id_gridAnsi sb_csiDispatch_any load_legacy_save save_no_legacy'
-cite_foreign="lean_chmod lean_io_process_get_pid pid_t tty_do_resize \
+cite_foreign="lean_chmod lean_io_process_get_pid pid_t tty_do_resize close_range \
   native_decide lean_exe workflow_dispatch org_ foldl_append"
 cite_scan() {                                # file:line:basename per backticked snake_case name
   git grep -noE '`[A-Za-z][A-Za-z0-9_.]*`' -- '*.lean' \

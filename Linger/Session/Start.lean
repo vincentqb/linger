@@ -75,6 +75,11 @@ def environment (name : String) : List (String × String) :=
   [("LINGER_SESSION", name), ("TERM", "xterm-256color"), ("TERM_PROGRAM", "linger"),
     ("TERM_PROGRAM_VERSION", Terminal.Mediation.versionNumber)]
 
+/-- What a session's program starts without, of the process state its daemon would pass on, and
+through the daemon the command that asked for the session: every signal goes back to its default
+action, none stays blocked, and no descriptor stays open past the three of its terminal. -/
+def reset : Spawn.Reset := { dispositions := true, mask := true, descriptors := true }
+
 /-- The status `start` returns for a program that could not start, as a shell or `env -C`
 reports it: 125 when its directory cannot be entered, 127 when no program of its name is found,
 and 126 when the program cannot be run. -/

@@ -306,6 +306,101 @@ private def startChecks (e : Env) : IO Unit := do
       s!"run is removed: it returns 2, points to start, resume and send, and starts nothing \
         ({runRc}, {shortRc}, {infoRc})"
 
+/-- A shell probe of the state its process would pass on, which opens no descriptor: `open` lists
+the descriptors from 3 to 64 open in it, each found by the `test -e /dev/fd/<n>` builtin, which
+stats the descriptor itself (through `/proc/self/fd` on Linux, `fdesc` on macOS), and `int` is
+`scripts/verify.sh`'s SIGINT probe, 9 when SIGINT reaches a fresh shell and 7 when it is ignored or
+blocked. -/
+private def stateProbe : String :=
+  "n=3; open=; while [ \"$n\" -le 64 ]; do if [ -e \"/dev/fd/$n\" ]; then open=\"$open $n\"; fi; " ++
+    "n=$((n + 1)); done; /bin/sh -c 'trap \"exit 9\" INT; kill -s INT $$; exit 7'; int=$?; " ++
+    "printf 'open:%s\\nint:%s\\n' \"$open\" \"$int\""
+
+/-- The value after `key:` on the first line of `text` that starts with it. -/
+private def reported (text key : String) : Option String :=
+  (lines text).findSome? fun line => (line.dropPrefix? s!"{key}:").map (·.toString)
+
+/-- `text`'s lines on one line, for a check's name. -/
+private def oneLine (text : String) : String :=
+  String.intercalate "; " (lines text.trimAscii.toString)
+
+/-- A session's program starts from its start request alone, not from how `start` itself was
+started. The command here ignores SIGINT and SIGQUIT, as a shell's `&` job without job control
+does, and holds descriptor 3 on its output pipe, as `exec 3>&1` leaves it; its own probe shows
+both. Its daemon must not hold the pipe, so a reader of the command's output sees the end once
+`start` returns, and the session's program must find no descriptor from 3 to 64 open and SIGINT
+able to reach it. On Linux the program's `/proc` entry shows it, after it `exec`s `sleep`, with no
+signal ignored or blocked and only descriptors 0, 1 and 2, all its terminal; without `/proc` those
+two checks say SKIP once the probe's part of each holds. -/
+private def cleanChecks (e : Env) : IO Unit := do
+  let out := s!"{e.dir}/fresh.out"
+  let parent :=
+    "trap '' INT QUIT; exec 3>&1; " ++ stateProbe ++
+      " > \"$2.parent\"; exec \"$0\" start fresh /bin/sh -c \"$1\" sh \"$2\""
+  let program := stateProbe ++ " > \"$1.part\" && mv \"$1.part\" \"$1\"; exec sleep 600"
+  let child ←
+    IO.Process.spawn
+        { cmd := "/bin/sh", args := #["-c", parent, e.bin, program, out], env := e.procEnv,
+          stdin := .null, stdout := .piped, stderr := .piped }
+  let output ← IO.asTask child.stdout.readToEnd Task.Priority.dedicated
+  let errors ← IO.asTask child.stderr.readToEnd Task.Priority.dedicated
+  let rc ← waitOrKill child hangMs
+  let released ← waitFor patienceMs (IO.hasFinished output)
+  let fixture ← readText s!"{out}.parent"
+  let mut why := ""
+  if ← IO.hasFinished errors then
+    why := (← IO.wait errors).toOption.getD ""
+  let held := ((reported fixture "open").getD "").splitOn " "
+  expect (rc == some 0 && held.contains "3" && reported fixture "int" == some "7")
+      s!"a start from a command that ignores SIGINT and holds descriptor 3 starts its session \
+        ({rc}; {oneLine fixture}; {oneLine why})"
+  expect released
+      "the daemon holds no descriptor of the command that started it: that command's output ends \
+        once start returns"
+  let shown ← waitFor patienceMs (System.FilePath.pathExists out)
+  let saw ← readText out
+  let probeClear := shown && reported saw "open" == some ""
+  let interrupts := shown && reported saw "int" == some "9"
+  let measured ← System.FilePath.pathExists "/proc/self/status"
+  let entry := s!"/proc/{((← e.info "fresh" "pid").getD "").trimAscii}"
+  -- the program's state once it is `sleep`, which changes none of it
+  let slept ←
+    if measured then
+      waitFor patienceMs (return (← readText s!"{entry}/cmdline").startsWith "sleep")
+    else
+      pure false
+  let status ←
+    if slept then
+      readText s!"{entry}/status"
+    else
+      pure ""
+  let masks :=
+    ["SigIgn", "SigBlk"].map fun key => ((reported status key).getD "").trimAscii.toString
+  let signalsClear := slept && masks.all fun mask => !mask.isEmpty && mask.all (· == '0')
+  let fds ←
+    if slept then
+      do
+        let names := (← System.FilePath.readDir s!"{entry}/fd").map (·.fileName)
+        pure (names.qsort (· < ·)).toList
+    else
+      pure []
+  let targets ←
+    fds.mapM fun fd => do
+        try
+          pure (← IO.FS.realPath s!"{entry}/fd/{fd}").toString
+        catch _ =>
+          pure ""
+  let terminal := targets.head?.filter (·.startsWith "/dev/pts/")
+  let onTerminal := terminal.isSome && targets.all (some · == terminal)
+  expectMeasured measured (probeClear && (!measured || fds == ["0", "1", "2"] && onTerminal))
+      s!"the session's program starts with descriptors 0, 1 and 2 alone, on its terminal \
+        ({oneLine saw}; {fds}; {targets})"
+  expectMeasured measured (interrupts && (!measured || signalsClear))
+      s!"the session's program starts with no signal ignored or blocked: SIGINT reaches it \
+        ({oneLine saw}; {masks})"
+  e.killAll #["fresh"]
+  discard <| waitFor patienceMs (IO.hasFinished output)
+
 /-- An ended session is a result: it stays listed with how its program ended and what it left on
 the screen, `start` refuses its name, and `kill` discards it, after which `wait` still answers
 from the name's end record. -/
@@ -367,12 +462,14 @@ private def endedChecks (e : Env) : IO Unit := do
 
 /-- The agent suite: the one-shot verbs that see and drive a session. `send -` checks that the
 program reads the bytes it is sent, byte for byte, and `start` that it runs with its words, in the
-caller's directory and with the caller's environment. -/
+caller's directory and with the caller's environment, and with none of the caller's ignored
+signals or open descriptors. -/
 @[exercises Linger.Session.Pty.Delivers, exercises Linger.Session.Spawn.Runs,
-  exercises Linger.Session.Record.Kept]
+  exercises Linger.Session.Spawn.Clean, exercises Linger.Session.Record.Kept]
 def run : IO UInt32 :=
   Env.suite "agent" fun e => do
     startChecks e
+    cleanChecks e
     endedChecks e
     for (mode, why) in
       [("eof", "connection lost"), ("timeout", "no reply"), ("refused", "info refused"),
@@ -492,10 +589,11 @@ def run : IO UInt32 :=
     -- fixed second, so a slow host cannot make this look like a broken `^C`. The
     -- extra check is a discriminator: "the child never started" and "^C did not reach
     -- it" are different bugs, and separating them is what identified the one
-    -- environment that breaks this assertion — a `&`-launched `./scripts/verify.sh`. That
-    -- environment is now refused rather than described: see the "SIGINT must be
-    -- deliverable" check in `scripts/verify.sh`, which holds the probe, the measurement and
-    -- the reasoning, and is the only copy of them.
+    -- environment that broke this assertion — a `&`-launched `./scripts/verify.sh`, whose
+    -- disabled SIGINT the session's program inherited until linger reset it (`cleanChecks`
+    -- starts a session from such a command). `scripts/verify.sh` still refuses that
+    -- environment for the processes the suites start themselves: see its "SIGINT must be
+    -- deliverable" check, which holds the probe, the measurement and the reasoning.
     let _ ← e.typeIn "ag" #["sh -c 'echo RUN\"\"NING-NOW; sleep 100'"]
     expect
         (←

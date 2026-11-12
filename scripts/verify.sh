@@ -36,11 +36,13 @@ fi
 
 # --- SIGINT must be deliverable ---------------------------------------------
 # A shell without job control starts a `&` job with SIGINT and SIGQUIT disabled,
-# and that survives `execve`, so every descendant inherits it: the `suites` binary,
-# the daemon, the session shell the daemon spawns on the pty, and the child that
-# shell runs. `^C` then generates a signal that kills nothing, and the agent suite's
-# `send - carries ^C` assertion fails — while passing standalone every time, which
-# is why it reads as a flake. Check inherited signal behavior before any suite runs.
+# and that survives `execve`, so every descendant inherits it until something resets
+# it: the `suites` binary and each process it starts without linger. `^C` then
+# generates a signal that kills nothing in them. linger resets it for the daemons and
+# session programs it starts (`start_clean`); before that, the agent suite's
+# `send - carries ^C` assertion failed this way — while passing standalone every
+# time, which is why it read as a flake. Check inherited signal behavior before any
+# suite runs.
 #
 # The probe is BEHAVIOURAL, so it holds on both halves of the CI matrix: a fresh
 # `sh -c` inherits the state, traps INT and signals itself. Delivered -> the trap
@@ -57,11 +59,9 @@ fi
 # diagnosis and not the check.
 #
 # Any exit but 9 refuses, deliberately: an unexpected probe result is not evidence
-# that SIGINT works. And this cannot false-positive, because the probe tests
-# exactly the precondition the agent suite already depends on — an environment that
-# fails it is an environment where the suite could not have passed anyway. It is NOT
-# in scripts/gates.sh: that file also runs from `pre-commit`, where a backgrounded
-# commit is nobody's bug.
+# that SIGINT works, and a process a suite starts itself would inherit what the probe
+# found. It is NOT in scripts/gates.sh: that file also runs from `pre-commit`, where
+# a backgrounded commit is nobody's bug.
 sigint=0
 sh -c 'trap "exit 9" INT; kill -s INT $$; exit 7' > /dev/null 2>&1 || sigint=$?
 if [ "$sigint" -ne 9 ]; then
@@ -69,7 +69,7 @@ if [ "$sigint" -ne 9 ]; then
   if [ -r /proc/self/status ]; then                    # Linux only, and diagnosis only
     grep -E '^Sig(Blk|Ign):' /proc/self/status >&2 || true
   fi
-  printf 'The agent suite asserts that ^C reaches the session child, so it would fail\n' >&2
+  printf 'A process a suite starts itself would inherit it, and a check would then fail\n' >&2
   printf 'for a reason that is not linger. Run this script in the FOREGROUND: a job\n' >&2
   printf 'started with & in a shell without job control gets SIGINT and SIGQUIT disabled,\n' >&2
   printf 'and that survives execve. setsid and nohup are fine alone; the & is what does it.\n' >&2
@@ -278,13 +278,13 @@ say "4. live suites (separate processes, at most four at once)"
 # Ordinary child spawning preserves SIGINT, unlike a shell's asynchronous list.
 # No suite shares an Env directory, and the runner waits for all of them on failure.
 if [ -d /proc/self ]; then
-  resume_skips=0 robust_skips=0 title_skips=0 quiet_skips=0
+  agent_skips=0 resume_skips=0 robust_skips=0 title_skips=0 quiet_skips=0
 else
-  resume_skips=1 robust_skips=2 title_skips=1 quiet_skips=4
+  agent_skips=2 resume_skips=1 robust_skips=2 title_skips=1 quiet_skips=4
 fi
 # shellcheck disable=SC2086  # each skip count is a number
 ./.lake/build/bin/suites --suites \
-  manager:128 delivery:37 attach:66 agent:64 \
+  manager:128 delivery:37 attach:66 agent:68:$agent_skips \
   resume:29:$resume_skips watch:50 title:18:$title_skips graphics:9 robust:33:$robust_skips \
   interop:72 recipes:56 status:18 terminal:12 overview:15 remote:68 shells:5 identity:25 \
   quiet:5:$quiet_skips \

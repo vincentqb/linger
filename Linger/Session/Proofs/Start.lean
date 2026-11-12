@@ -64,6 +64,11 @@ theorem environment_lookup (name key : String) (inherited : String → Option St
   simp [environment, List.lookup, beq_eq_false_iff_ne.2 h1, beq_eq_false_iff_ne.2 h2,
     beq_eq_false_iff_ne.2 h3, beq_eq_false_iff_ne.2 h4, h1, h2, h3, h4]
 
+/-- A session's program starts with every signal at its default action, none blocked, and no
+descriptor open past the three of its terminal. -/
+theorem reset_clean : reset.dispositions = true ∧ reset.mask = true ∧ reset.descriptors = true :=
+  ⟨rfl, rfl, rfl⟩
+
 /-- A program that could not start makes `start` return what a shell or `env -C` reports. -/
 theorem failureStatus_exact (why : String) :
     failureStatus (.directory why) = 125 ∧

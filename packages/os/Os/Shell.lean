@@ -106,6 +106,19 @@ private def failureWords : SpawnFailure → String
   | .directory why => s!"spawn_pty: chdir: {why}"
   | .notFound why | .notRunnable why => s!"spawn_pty: execve: {why}"
 
+/-- What a spawned program starts without, of the state this process would pass on to it: a
+handler it installed ends at exec by itself, but an ignored signal, the signal mask and each
+descriptor not marked close-on-exec survive exec, and with them whatever the command that started
+this process left there. -/
+structure SpawnReset where
+  /-- Every signal back at its default action. -/
+  dispositions : Bool := true
+  /-- No signal blocked. -/
+  mask : Bool := true
+  /-- No descriptor open from 3 up. -/
+  descriptors : Bool := true
+  deriving Repr, DecidableEq
+
 /-- posix_openpt + execve. A bare program is searched in the child's PATH;
 slash-qualified programs run directly. Executable text without a shebang runs
 through `/bin/sh`, preserving execvp's fallback.
@@ -113,12 +126,16 @@ through `/bin/sh`, preserving execvp's fallback.
 enter fails the start, whatever `$HOME` is: a resume chooses its directory before
 (`Linger.Os.Env.resumeDir`). Dimensions must fit 16 bits.
 
-Returns `(pid, master)`: the child, with SIGPIPE and SIGHUP at their defaults, and the
-pty master, close-on-exec and blocking. A program that cannot start is a `SpawnFailure`;
-the other setup failures in the child throw. The C side reports both over a close-on-exec
-pipe, so no pid is returned for a program that never ran. -/
+Returns `(pid, master)`: the child, with its terminal on descriptors 0, 1 and 2, SIGPIPE and
+SIGHUP at their defaults and, as `reset` asks, every signal at its default action, none blocked
+and no other descriptor open, and the pty master, close-on-exec and blocking. The C side closes
+the descriptors with `close_range` where Linux has it, and else one by one below the soft limit
+on open files. A program that cannot start is a `SpawnFailure`; the other setup failures in the
+child throw. The C side reports both over a close-on-exec pipe, so no pid is returned for a
+program that never ran. -/
 def trySpawnPty (cols rows : UInt32) (cwd prog : String) (args : Array String)
-    (extraEnv : Array String) : IO (Except SpawnFailure (UInt32 × UInt32)) := do
+    (extraEnv : Array String) (reset : SpawnReset) : IO (Except SpawnFailure (UInt32 × UInt32)) :=
+  do
   checkWinsize cols rows
   checkCString "spawnPty cwd" cwd
   checkCommand "spawnPty" prog args
@@ -126,7 +143,10 @@ def trySpawnPty (cols rows : UInt32) (cwd prog : String) (args : Array String)
     checkCString "spawnPty environment" entry
     unless entry.contains '=' && !entry.startsWith "=" do
       throw (IO.userError s!"spawnPty: environment entry '{entry}' is not K=V")
-  match ← Boundary.spawnPty cols rows cwd prog args extraEnv with
+  let spawned ←
+    Boundary.spawnPty cols rows cwd prog args extraEnv reset.dispositions reset.mask
+        reset.descriptors
+  match spawned with
   | .ok packed =>
     return .ok ((packed >>> 32).toUInt32, packed.toUInt32)
   | .error (1, why) =>
@@ -136,10 +156,11 @@ def trySpawnPty (cols rows : UInt32) (cwd prog : String) (args : Array String)
   | .error (_, why) =>
     return .error (.notRunnable why)
 
-/-- `trySpawnPty`, throwing when the program cannot start. -/
+/-- `trySpawnPty`, throwing when the program cannot start; `reset` asks for all three resets
+unless the caller says otherwise. -/
 def spawnPty (cols rows : UInt32) (cwd prog : String) (args : Array String)
-    (extraEnv : Array String) : IO (UInt32 × UInt32) := do
-  match ← trySpawnPty cols rows cwd prog args extraEnv with
+    (extraEnv : Array String) (reset : SpawnReset := {}) : IO (UInt32 × UInt32) := do
+  match ← trySpawnPty cols rows cwd prog args extraEnv reset with
   | .ok started =>
     return started
   | .error failure =>
@@ -202,7 +223,9 @@ def flock (path : String) : IO Int64 := do
   Boundary.flock path
 
 /-- Double-fork + setsid + exec, with stdin on /dev/null and stdout and stderr appended
-to `logPath` (created 0600), or on /dev/null when it is empty. Returns the program's pid
+to `logPath` (created 0600), or on /dev/null when it is empty, every signal at its default
+action but SIGHUP, which it ignores, none blocked and no other descriptor open, so the program
+holds nothing the command that started this process left open. Returns the program's pid
 once it is exec'd and the intermediate child is reaped: no zombie, and not our child.
 
 Setup and exec failures in the child reach us as an error rather than a silently dead

@@ -753,12 +753,13 @@ theorem shellOf_choice_rejects_fixed :
   exact absurd (h "fish" (by decide)).1 (by decide)
 
 theorem start_runs (inherited : String → Option String)
-    (start : String → String → Array String → List (String × String) → Option Spawn.Started)
+    (start :
+      String → String → Array String → List (String × String) → Spawn.Reset → Option Spawn.Started)
     (runs : Spawn.Runs inherited start) (name dir shell : String) (argv : List String)
     {started : Spawn.Started}
     (ok :
       start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
-          (Start.environment name) =
+          (Start.environment name) Start.reset =
         some started) :
     started.argv = argv.headD shell :: argv.drop 1 ∧
       started.dir = dir ∧
@@ -769,7 +770,7 @@ theorem start_runs (inherited : String → Option String)
       ∀ key,
         key ∉ ["LINGER_SESSION", "TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"] →
           started.env key = inherited key := by
-  obtain ⟨hargv, hdir, henv⟩ := runs _ _ _ _ _ ok
+  obtain ⟨hargv, hdir, henv⟩ := runs _ _ _ _ _ _ ok
   rw [Start.programOf_exact] at hargv
   refine ⟨by simpa using hargv, hdir, ?_, ?_, ?_, ?_, fun key hkey => ?_⟩
   all_goals rw [henv, Start.environment_lookup]
@@ -782,11 +783,13 @@ theorem start_runs (inherited : String → Option String)
 
 theorem start_runs_rejects_unnamed :
     ¬∀ (inherited : String → Option String)
-        (start : String → String → Array String → List (String × String) → Option Spawn.Started),
+        (start :
+          String →
+            String → Array String → List (String × String) → Spawn.Reset → Option Spawn.Started),
         Spawn.Runs inherited start →
           ∀ (name dir shell : String) (argv : List String) {started : Spawn.Started},
             start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
-                  ((fun (_ : String) => ([] : List (String × String))) name) =
+                  ((fun (_ : String) => ([] : List (String × String))) name) Start.reset =
                 some started →
               started.argv = argv.headD shell :: argv.drop 1 ∧
                 started.dir = dir ∧
@@ -799,14 +802,64 @@ theorem start_runs_rejects_unnamed :
                     started.env key = inherited key := by
   intro h
   have runs :
-    Spawn.Runs (fun _ => none) fun dir prog args extra =>
+    Spawn.Runs (fun _ => none) fun dir prog args extra _ =>
       some
         { argv := prog :: args.toList, dir,
-          env := fun key => (extra.reverse.lookup key).orElse fun _ => none } := by
-    intro dir prog args extra started hs
+          env := fun key => (extra.reverse.lookup key).orElse fun _ => none,
+          ignored := fun _ => false, blocked := fun _ => false, descriptor := fun _ => none } := by
+    intro dir prog args extra reset started hs
     cases hs
     exact ⟨rfl, rfl, fun _ => rfl⟩
   exact absurd (h _ _ runs "x" "" "sh" [] rfl).2.2.1 (by simp)
+
+theorem start_clean
+    (start :
+      String → String → Array String → List (String × String) → Spawn.Reset → Option Spawn.Started)
+    (clean : Spawn.Clean start) (name dir shell : String) (argv : List String)
+    {started : Spawn.Started}
+    (ok :
+      start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
+          (Start.environment name) Start.reset =
+        some started) :
+    (∀ sig, started.ignored sig = false) ∧
+      (∀ sig, started.blocked sig = false) ∧
+      ∀ fd, started.descriptor fd = if fd < 3 then some .terminal else none := by
+  obtain ⟨terminal, ignored, blocked, closed⟩ := clean _ _ _ _ _ _ ok
+  obtain ⟨dispositions, mask, descriptors⟩ := Start.reset_clean
+  refine ⟨ignored dispositions, blocked mask, fun fd => ?_⟩
+  by_cases low : fd < 3
+  · rw [ite_eq_left low]
+    exact terminal fd low
+  · rw [ite_eq_right low]
+    exact closed descriptors fd (Nat.le_of_not_lt low)
+
+theorem start_clean_rejects_inherited :
+    ¬∀
+        (start :
+          String →
+            String → Array String → List (String × String) → Spawn.Reset → Option Spawn.Started),
+        Spawn.Clean start →
+          ∀ (name dir shell : String) (argv : List String) {started : Spawn.Started},
+            start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
+                  (Start.environment name)
+                  ({ dispositions := false, mask := true, descriptors := true } : Spawn.Reset) =
+                some started →
+              (∀ sig, started.ignored sig = false) ∧
+                (∀ sig, started.blocked sig = false) ∧
+                ∀ fd, started.descriptor fd = if fd < 3 then some .terminal else none := by
+  intro h
+  -- a start that leaves every signal ignored unless it is asked to reset them
+  have clean :
+    Spawn.Clean fun _ _ _ _ reset =>
+      some
+        { argv := [], dir := "", env := fun _ => none, ignored := fun _ => !reset.dispositions,
+          blocked := fun _ => false,
+          descriptor := fun fd => if fd < 3 then some .terminal else none } := by
+    intro dir prog args extra reset started hs
+    cases hs
+    refine ⟨fun fd low => ite_eq_left low, fun asked _ => by simp [asked], fun _ _ => rfl, ?_⟩
+    exact fun _ fd high => ite_eq_right (Nat.not_lt_of_le high)
+  exact absurd ((h _ clean "x" "" "sh" [] rfl).1 2) (by simp)
 
 theorem step_kill_stops (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {rest : List Wire.Msg} (hc : s.client? id = some c)

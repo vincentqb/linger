@@ -415,8 +415,30 @@ inductive Spawn.Failure where
   | notRunnable (why : String)
   deriving Repr, DecidableEq
 
-/-- What a program sees of its start: its words, the directory it runs in, and each environment
-variable's value, `none` for a variable that is unset. -/
+/-- What a program's start resets, of the process state it would otherwise inherit from the
+process that starts it, and through that process from the command that asked for the session: a
+handler ends at exec by itself, but an ignored signal, the signal mask and each open descriptor
+survive exec. -/
+structure Spawn.Reset where
+  /-- Every signal goes back to its default action. -/
+  dispositions : Bool
+  /-- No signal stays blocked. -/
+  mask : Bool
+  /-- No descriptor stays open from 3 up, past the three of the program's terminal. -/
+  descriptors : Bool
+  deriving Repr, DecidableEq
+
+/-- What one of a started program's descriptors refers to. -/
+inductive Spawn.Descriptor where
+  /-- The terminal of the program's session. -/
+  | terminal
+  /-- Any other open file, such as one the command that asked for the session left open. -/
+  | other
+  deriving Repr, DecidableEq
+
+/-- What a program sees of its start: its words, the directory it runs in, each environment
+variable's value, `none` for a variable that is unset, and the signals and descriptors it starts
+with. -/
 structure Spawn.Started where
   /-- Its words, its program's name first. -/
   argv : List String
@@ -424,20 +446,45 @@ structure Spawn.Started where
   dir : String
   /-- Each environment variable's value. -/
   env : String → Option String
+  /-- Whether it ignores each signal, by number. One it does not ignore has its default action,
+  since no handler survives exec. -/
+  ignored : Nat → Bool
+  /-- Whether it blocks each signal, by number. -/
+  blocked : Nat → Bool
+  /-- What each descriptor, by number, refers to, `none` for one that is closed. -/
+  descriptor : Nat → Option Spawn.Descriptor
 
 /-- The operating system runs what linger asks, and nothing else. A program that `start dir prog
-args extra` starts sees the words `prog` and then `args`, runs in `dir`, and reads each variable
-as the last pair of `extra` that sets it, or else as `inherited` has it: the environment of the
-command that asked for the session, which its daemon runs with. A program that cannot start is
-`none`. A started program that sees other words, another directory or another value falsifies
-it. -/
+args extra reset` starts sees the words `prog` and then `args`, runs in `dir`, and reads each
+variable as the last pair of `extra` that sets it, or else as `inherited` has it: the environment
+of the command that asked for the session, which its daemon runs with. A program that cannot
+start is `none`. A started program that sees other words, another directory or another value
+falsifies it. -/
 WorldClaim Spawn.Runs (inherited : String → Option String)
-  (start : String → String → Array String → List (String × String) → Option Spawn.Started) :=
-  ∀ dir prog args extra started,
-    start dir prog args extra = some started →
+  (start :
+    String → String → Array String → List (String × String) → Spawn.Reset → Option Spawn.Started) :=
+  ∀ dir prog args extra reset started,
+    start dir prog args extra reset = some started →
       started.argv = prog :: args.toList ∧
         started.dir = dir ∧
         ∀ key, started.env key = (extra.reverse.lookup key).orElse fun _ => inherited key
+
+/-- The operating system starts a program as clean as its start asks. A program that `start dir
+prog args extra reset` starts has its session's terminal on descriptors 0, 1 and 2, and with
+`reset.dispositions` ignores no signal, with `reset.mask` blocks none, and with
+`reset.descriptors` has no other descriptor open, whatever the command that asked for the session
+ignored, blocked or left open. A program so started that finds a signal ignored or blocked, a
+descriptor from 3 up open, or another file than its terminal on 0, 1 or 2 falsifies it, as its
+`SigIgn`, `SigBlk` and `fd` entries under `/proc` show on Linux. -/
+WorldClaim Spawn.Clean
+  (start :
+    String → String → Array String → List (String × String) → Spawn.Reset → Option Spawn.Started) :=
+  ∀ dir prog args extra reset started,
+    start dir prog args extra reset = some started →
+      (∀ fd, fd < 3 → started.descriptor fd = some .terminal) ∧
+        (reset.dispositions = true → ∀ sig, started.ignored sig = false) ∧
+        (reset.mask = true → ∀ sig, started.blocked sig = false) ∧
+        (reset.descriptors = true → ∀ fd, 3 ≤ fd → started.descriptor fd = none)
 
 /-- SIGKILL ends every process it reaches within a second. `after sig ms alive` is what still
 runs of the processes `alive` once linger sent them signal `sig` and waited `ms` milliseconds:

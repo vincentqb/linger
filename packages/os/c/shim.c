@@ -17,6 +17,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdint.h>
@@ -25,6 +26,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/file.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/un.h>
@@ -36,12 +38,15 @@
 #include <sys/stat.h>  /* stat: check that path against the cwd vnode */
 #else
 #include <dirent.h>       /* the /proc listing of linger_signal_session */
-#include <sys/syscall.h>  /* pidfd_open and pidfd_send_signal, which glibc may not wrap */
+#include <sys/syscall.h>  /* pidfd_open, pidfd_send_signal and close_range, which glibc may not wrap */
 #ifndef SYS_pidfd_open
 #define SYS_pidfd_open 434 /* the same number on x86-64 and arm64 */
 #endif
 #ifndef SYS_pidfd_send_signal
 #define SYS_pidfd_send_signal 424
+#endif
+#if defined(__linux__) && !defined(SYS_close_range)
+#define SYS_close_range 436 /* Linux 5.9; the same number on x86-64 and arm64 */
 #endif
 #endif
 
@@ -151,6 +156,56 @@ static size_t read_full(int fd, void *buf, size_t len) {
 /* 1 = the child reported a failure (record filled in); 0 = clean EOF. */
 static int spawn_report(int fd, struct spawn_err *out) {
     return read_full(fd, out, sizeof *out) == sizeof *out;
+}
+
+/* One past the highest descriptor this process can hold, the soft RLIMIT_NOFILE, which bounds
+ * the close loop where close_range is missing. Read before fork: getrlimit is not on POSIX's
+ * async-signal-safe list. Linux and macOS both keep this limit finite. */
+static int fd_limit(void) {
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_NOFILE, &rl) < 0 || rl.rlim_cur >= (rlim_t)INT_MAX) return INT_MAX;
+    return (int)rl.rlim_cur;
+}
+
+/* Close every descriptor from 3 up but `keep`, the exec-error report pipe, which closes on exec
+ * by itself. close_range does it in at most two calls where the kernel has it (Linux 5.9);
+ * elsewhere, as on macOS, and where it fails, each descriptor below `limit` is closed. */
+static void close_from_3(int keep, int limit) {
+#ifdef SYS_close_range
+    unsigned low = 3;
+    int ok = 1;
+    if (keep >= 3) {
+        if (keep > 3) ok = syscall(SYS_close_range, 3u, (unsigned)keep - 1, 0u) == 0;
+        low = (unsigned)keep + 1;
+    }
+    if (ok && syscall(SYS_close_range, low, ~0u, 0u) == 0) return;
+#endif
+    for (int fd = 3; fd < limit; fd++)
+        if (fd != keep) close(fd);
+}
+
+/* What a spawned program starts without, of the state this process would pass on: with
+ * `dispositions`, every catchable signal goes back to its default action; with `mask`, no signal
+ * stays blocked; with `descriptors`, no descriptor from 3 up stays open but `keep`. A handler
+ * ends at exec by itself, but an ignored signal, the mask and every descriptor not marked
+ * close-on-exec survive it. Runs after fork, with plain syscalls only. */
+static void spawn_reset(int dispositions, int mask, int descriptors, int keep, int limit) {
+    if (dispositions) {
+        struct sigaction dfl;
+        memset(&dfl, 0, sizeof dfl);
+        dfl.sa_handler = SIG_DFL;
+        sigemptyset(&dfl.sa_mask);
+        /* SIGKILL and SIGSTOP have no other disposition, and glibc refuses the two it keeps for
+         * itself, which nothing can have ignored: those calls fail and change nothing. */
+        for (int sig = 1; sig < NSIG; sig++)
+            if (sig != SIGKILL && sig != SIGSTOP) sigaction(sig, &dfl, NULL);
+    }
+    if (mask) {
+        sigset_t none;
+        sigemptyset(&none);
+        sigprocmask(SIG_SETMASK, &none, NULL);
+    }
+    if (descriptors) close_from_3(keep, limit);
 }
 
 /* All argument vectors are built before fork; their strings remain borrowed. */
@@ -385,12 +440,13 @@ LEAN_EXPORT lean_obj_res linger_poll(b_lean_obj_arg fds, b_lean_obj_arg events,
 /* pty                                                                   */
 
 /* linger_spawn_pty : UInt32 -> UInt32 -> @& String -> @& String
- *                 -> @& Array String -> @& Array String
+ *                 -> @& Array String -> @& Array String -> Bool -> Bool -> Bool
  *                 -> IO (Except (UInt8 × String) UInt64)
  * open a pty and fork+execve a child on its slave, with PATH lookup. Returns
  * pid<<32 | masterFd. cwd "" = inherit; a cwd the child cannot enter is a
  * failure, whatever $HOME is. extraEnv entries are
- * "K=V". Child resets SIGPIPE/SIGHUP to default before exec.
+ * "K=V". Child resets SIGPIPE/SIGHUP to default before exec, and with
+ * dispositions, mask and descriptors does what spawn_reset says.
  *
  * A program that cannot start is answered Except.error (why, the OS's words):
  * why 1 is its directory (125, as env -C), 2 no such program (127), 3 found
@@ -405,7 +461,8 @@ LEAN_EXPORT lean_obj_res linger_poll(b_lean_obj_arg fds, b_lean_obj_arg events,
 LEAN_EXPORT lean_obj_res linger_spawn_pty(uint32_t cols, uint32_t rows,
                                        b_lean_obj_arg cwd,
                                        b_lean_obj_arg prog, b_lean_obj_arg args,
-                                       b_lean_obj_arg extra_env) {
+                                       b_lean_obj_arg extra_env, uint8_t dispositions,
+                                       uint8_t mask, uint8_t descriptors) {
     struct winsize ws;
     memset(&ws, 0, sizeof ws);
     ws.ws_col = (unsigned short)cols;
@@ -489,6 +546,7 @@ LEAN_EXPORT lean_obj_res linger_spawn_pty(uint32_t cols, uint32_t rows,
         close(master); free(argv); free(envp); free(shargv);
         return io_err_code("spawn_pipe", e);
     }
+    int limit = fd_limit();
 
     pid_t pid = fork();
     if (pid != 0) release_stdio((unsigned)held);
@@ -511,6 +569,7 @@ LEAN_EXPORT lean_obj_res linger_spawn_pty(uint32_t cols, uint32_t rows,
             spawn_fail(errPipe[1], "dup2", errno);
         if (slave > 2) close(slave);
         if (dir[0] != '\0' && chdir(dir) != 0) spawn_fail(errPipe[1], "chdir", errno);
+        spawn_reset(dispositions, mask, descriptors, errPipe[1], limit);
         exec_search(argv, shargv, envp, path);
         spawn_fail(errPipe[1], "execve", errno);
     }
@@ -685,8 +744,10 @@ LEAN_EXPORT lean_obj_res linger_flock(b_lean_obj_arg path) {
 
 /* linger_spawn_detached : @& String -> @& Array String -> @& String -> IO UInt32
  * Double-fork + setsid; grandchild execve's with PATH lookup and stdio on logPath
- * (append, 0600; /dev/null if logPath == ""). No zombie remains. Returns the
- * grandchild's pid, which the intermediate child writes before it exits. */
+ * (append, 0600; /dev/null if logPath == ""), every signal at its default action but
+ * SIGHUP, ignored, none blocked and no descriptor from 3 up (spawn_reset). No zombie
+ * remains. Returns the grandchild's pid, which the intermediate child writes before it
+ * exits. */
 LEAN_EXPORT lean_obj_res linger_spawn_detached(b_lean_obj_arg prog, b_lean_obj_arg args,
                                             b_lean_obj_arg log_path) {
     size_t nargs = lean_array_size(args);
@@ -715,6 +776,7 @@ LEAN_EXPORT lean_obj_res linger_spawn_detached(b_lean_obj_arg prog, b_lean_obj_a
         close(errPipe[0]); close(errPipe[1]); free(argv); free(shargv);
         return io_err_code("pid pipe", e);
     }
+    int limit = fd_limit();
 
     pid_t pid = fork();
     if (pid != 0) release_stdio((unsigned)held);
@@ -746,6 +808,7 @@ LEAN_EXPORT lean_obj_res linger_spawn_detached(b_lean_obj_arg prog, b_lean_obj_a
         if (fd < 0) spawn_fail(errPipe[1], "open(log)", errno);
         if (dup2(fd, 1) < 0 || dup2(fd, 2) < 0) spawn_fail(errPipe[1], "dup2(stdout)", errno);
         if (fd > 2) close(fd);
+        spawn_reset(1, 1, 1, errPipe[1], limit);
         signal(SIGHUP, SIG_IGN);
         exec_search(argv, shargv, environ, path);
         spawn_fail(errPipe[1], "execve", errno);
