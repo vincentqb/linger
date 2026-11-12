@@ -75,6 +75,91 @@ namespace Linger
 
 open Linger.Display Linger.Session Linger.Target Terminal
 
+theorem step_attach_repaint (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
+    {dec : Wire.Decoder} {mode : Mode} {cols rows : UInt32} (hc : s.client? id = some c)
+    (fresh : c.attached = false) (read : c.decoder.feed chunk = (dec, [.attach mode cols rows]))
+    (healthy : dec.errored = false) :
+    ∃ pty after,
+      (Session.step s (.bytes id chunk)).2 =
+          pty ++
+            Effect.replay id (Replay.start (Session.step s (.bytes id chunk)).1.terminal) :: after ∧
+        ∀ eff ∈ pty, (∃ bytes, eff = .writePty bytes) ∨ ∃ cols rows, eff = .resizePty cols rows :=
+  Session.step_attach_repaint s id chunk hc fresh read healthy
+
+theorem step_attach_repaint_rejects_blank :
+    ¬∀ (s : State) (id : Nat) (chunk : List UInt8) {c : Client} {dec : Wire.Decoder} {mode : Mode}
+        {cols rows : UInt32},
+        s.client? id = some c →
+          c.attached = false →
+          c.decoder.feed chunk = (dec, [.attach mode cols rows]) →
+          dec.errored = false →
+          ∃ pty after,
+            (Session.without Effect.replays Session.step s (.bytes id chunk)).2 =
+                pty ++
+                  Effect.replay id
+                      (Replay.start
+                        (Session.without Effect.replays Session.step s
+                            (.bytes id chunk)).1.terminal) ::
+                    after ∧
+              ∀ eff ∈ pty,
+                (∃ bytes, eff = .writePty bytes) ∨ ∃ cols rows, eff = .resizePty cols rows := by
+  intro h
+  obtain ⟨joined, -⟩ := Session.connected_client_witness
+  obtain ⟨pty, after, effects, -⟩ :=
+    @h (Session.trace Session.step (State.boot (Vt.Vt.init 1 1) [] []) [.connected 1]).1 1
+      (Wire.encode (.attach .writable 80 24)) { id := 1 } {} .writable 80 24 joined rfl
+      (Session.feed_encode_fresh _ trivial) rfl
+  have repainted := List.mem_iff_append.mpr ⟨pty, after, effects⟩
+  simp [Session.without, Effect.replays] at repainted
+
+theorem step_output_delivered (s : State) (chunk : List UInt8) :
+    (Session.step s (.ptyOut chunk)).1.terminal = s.terminal.feed chunk ∧
+      ∃ answers frames : List (List UInt8),
+        (Session.step s (.ptyOut chunk)).2 =
+            answers.map Effect.writePty ++
+              (s.roster.filter (·.attached)).flatMap
+                (fun c => frames.map fun frame => Effect.send c.id (.output frame)) ∧
+          answers.flatten = (Mediation.feed s.terminal s.scanner chunk).replies ∧
+          frames.flatten = (Mediation.feed s.terminal s.scanner chunk).visible ∧
+          ∀ frame ∈ frames,
+            frame ≠ [] ∧ frame.length ≤ 65536 := Session.step_ptyOut_delivered s chunk
+
+theorem step_output_delivered_rejects_drop :
+    ¬∀ (s : State) (chunk : List UInt8),
+        (Session.without Effect.rendered Session.step s (.ptyOut chunk)).1.terminal =
+            s.terminal.feed chunk ∧
+          ∃ answers frames : List (List UInt8),
+            (Session.without Effect.rendered Session.step s (.ptyOut chunk)).2 =
+                answers.map Effect.writePty ++
+                  (s.roster.filter (·.attached)).flatMap
+                    (fun c => frames.map fun frame => Effect.send c.id (.output frame)) ∧
+              answers.flatten = (Mediation.feed s.terminal s.scanner chunk).replies ∧
+              frames.flatten = (Mediation.feed s.terminal s.scanner chunk).visible ∧
+              ∀ frame ∈ frames, frame ≠ [] ∧ frame.length ≤ 65536 := by
+  intro h
+  obtain ⟨⟨c, joined, attached⟩, plain⟩ := Session.attached_output_witness
+  obtain ⟨-, answers, frames, effects, -, released, -⟩ :=
+    h
+      (Session.trace Session.step (State.boot (Vt.Vt.init 1 1) [] [])
+          [.connected 1, .bytes 1 (Wire.encode (.attach .writable 80 24))]).1
+      [0x41]
+  rw [plain] at released
+  obtain ⟨frame, framed⟩ : ∃ frame, frame ∈ frames := by
+    cases frames with
+    | nil => simp at released
+    | cons first _ => exact ⟨first, List.mem_cons_self⟩
+  have member :
+    (Effect.send c.id (.output frame) : Effect Replay.Plan) ∈
+      frames.map fun frame => Effect.send c.id (.output frame) :=
+    List.mem_map_of_mem framed
+  have sent :=
+    List.mem_append_right (answers.map Effect.writePty)
+      ((List.mem_flatMap (f := fun c : Client =>
+            frames.map fun frame => (Effect.send c.id (.output frame) : Effect Replay.Plan))).mpr
+        ⟨c, List.mem_filter.mpr ⟨joined, attached⟩, member⟩)
+  rw [← effects] at sent
+  simp [Session.without, Effect.rendered] at sent
+
 theorem step_input_exact (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {inputs : List (List UInt8)} (hc : s.client? id = some c)
     (typist : c.mode = .writable) (read : c.decoder.feed chunk = (dec, inputs.map Wire.Msg.input))
@@ -1270,6 +1355,48 @@ theorem step_unknown_refused_rejects_silence :
         (Session.feed_encode_fresh (.unknown 200 []) ⟨by simp, by decide⟩) rfl).1
   simp at refused
 
+theorem run_refines {World : Type}
+    (execute : State → World → (eff : Effect Replay.Plan) → Id (World × Driver.Reply eff))
+    (ending : Outcome)
+    (succeeds : ∀ st world eff, (execute st world eff).2 = Driver.success ending eff)
+    (r : Driver.Result State World) (events : List Event) (running : r.exiting = false) :
+    ∃ handled exits,
+      Driver.Handles Session.step ending r.st events handled exits ∧
+        (Driver.run execute r events).st = (Session.trace Session.step r.st handled).1 ∧
+        (Driver.run execute r events).world =
+          (Session.trace (Driver.withState Session.step) r.st handled).2.foldl
+            (fun world (asked : State × Effect Replay.Plan) => (execute asked.1 world asked.2).1)
+            r.world ∧
+        (Driver.run execute r events).exiting = exits :=
+  Driver.run_refines execute ending succeeds r events running
+
+theorem run_refines_rejects_inert :
+    ¬∀ {World : Type}
+        (execute : State → World → (eff : Effect Replay.Plan) → Id (World × Driver.Reply eff))
+        (ending : Outcome),
+        (∀ st world eff, (execute st world eff).2 = Driver.success ending eff) →
+          ∀ (r : Driver.Result State World) (events : List Event),
+            r.exiting = false →
+              ∃ handled exits,
+                Driver.Handles Session.step ending r.st events handled exits ∧
+                  (Driver.inert execute r events).st = (Session.trace Session.step r.st handled).1 ∧
+                  (Driver.inert execute r events).world =
+                    (Session.trace (Driver.withState Session.step) r.st handled).2.foldl
+                      (fun world (asked : State × Effect Replay.Plan) =>
+                        (execute asked.1 world asked.2).1)
+                      r.world ∧
+                  (Driver.inert execute r events).exiting = exits := by
+  intro h
+  obtain ⟨handled, exits, handles, -, -, stayed⟩ :=
+    @h Unit (fun _ world eff => (world, Driver.success .unknown eff)) .unknown (fun _ _ _ => rfl)
+      { st := State.boot (Vt.Vt.init 1 1) [] [], world := () } [.childExited .unknown] rfl
+  have ends :=
+    (Session.step_exit_iff (State.boot (Vt.Vt.init 1 1) [] []) (.childExited .unknown)).mpr
+      ⟨.unknown, .inl rfl⟩
+  cases handles with
+  | exit => simp [Driver.inert] at stayed
+  | next _ _ _ _ _ stays => exact stays ends
+
 theorem run_total_safe {World ε : Type}
     (execute : State → World → (eff : Effect Replay.Plan) → Except ε (World × Driver.Reply eff))
     (hw : Driver.Responds execute) (r : Driver.Result State World) (events : List Event)
@@ -1315,7 +1442,7 @@ theorem run_total_safe_rejects_jump :
   obtain ⟨-, -, wide, roster, -, scanner⟩ := Session.boot_observed (Vt.Vt.init 80 24) [] []
   obtain ⟨-, -, narrow, -, -, -⟩ := Session.boot_observed (Vt.Vt.init 1 1) [] []
   let execute : State → Unit → (eff : Effect Replay.Plan) → Except Unit (Unit × Driver.Reply eff) :=
-    fun _ world eff => .ok (world, Driver.success eff)
+    fun _ world eff => .ok (world, Driver.success .unknown eff)
   obtain ⟨out, jumped, bounds, -⟩ :=
     @h Unit Unit execute (fun _ _ _ => ⟨_, rfl⟩)
       { st := State.boot (Vt.Vt.init 80 24) [] [], world := () } []
@@ -1350,7 +1477,7 @@ theorem run_feedback_alive_rejects_halt :
           (Driver.halt execute r events).exiting = false := by
   intro h
   have stopped :=
-    @h Unit (fun _ world eff => (world, Driver.success eff))
+    @h Unit (fun _ world eff => (world, Driver.success .unknown eff))
       { st := State.boot (Vt.Vt.init 1 1) [] [], world := () } [] rfl (by simp)
   exact absurd stopped (by decide)
 
@@ -1367,7 +1494,7 @@ theorem run_exited_rejects_jump :
           Driver.jump (State.boot (Vt.Vt.init 1 1) [] []) execute r events = pure r := by
   intro h
   have moved :=
-    @h Id _ Unit (fun _ world eff => (world, Driver.success eff))
+    @h Id _ Unit (fun _ world eff => (world, Driver.success .unknown eff))
       { st := State.boot (Vt.Vt.init 1 1) [("a", "b")] [], world := (), exiting := true } [] rfl
   have labels := congrArg (fun (out : Driver.Result State Unit) => out.st.labelList) moved
   change
@@ -1397,7 +1524,7 @@ theorem run_stop_exits_rejects_jump :
     (Session.step_kill_stops _ 1 (Wire.encode .kill) joined rfl
         (Session.feed_encode_fresh .kill (by simp [Wire.Msg.Fits])) rfl).1
   have jumped :=
-    @h Unit (fun _ world eff => (world, Driver.success eff))
+    @h Unit (fun _ world eff => (world, Driver.success .unknown eff))
       { st := (Session.trace Session.step (State.boot (Vt.Vt.init 1 1) [] []) [.connected 1]).1,
         world := () }
       (.bytes 1 (Wire.encode .kill)) rfl
@@ -1739,29 +1866,6 @@ theorem poll_wakes_rejects_polling :
     fun _ _ waited => waited
   obtain ⟨_, none_due, -⟩ := h _ sleeps 0 [] (by simp) 100 ⟨by decide, by decide⟩
   simp at none_due
-
-theorem step_output_audience (s : State) (chunk : List UInt8) :
-    ∀ eff ∈ (Session.step s (.ptyOut chunk)).2,
-      (∃ bytes, eff = .writePty bytes) ∨
-        ∃ c ∈ s.roster,
-          c.attached = true ∧
-            ∃ payload, eff = .send c.id (.output payload) ∧ payload.length ≤ 65536 :=
-  Session.step_ptyOut_audience s chunk
-
-theorem step_output_audience_rejects_stranger :
-    ¬∀ (s : State) (chunk : List UInt8),
-        ∀
-          eff ∈
-            ((fun (s : State) (_ : Event) =>
-                  (s, ([.send 0 (.output [])] : List (Effect Replay.Plan))))
-                s (.ptyOut chunk)).2,
-          (∃ bytes, eff = .writePty bytes) ∨
-            ∃ c ∈ s.roster,
-              c.attached = true ∧
-                ∃ payload, eff = .send c.id (.output payload) ∧ payload.length ≤ 65536 := by
-  intro h
-  have sent := h (State.boot (Vt.Vt.init 1 1) [] []) [] (.send 0 (.output [])) (by simp)
-  simp [Session.boot_roster] at sent
 
 theorem start_answer_true (r : Start.Request) (h : Start.Reachable Start.proceeds Start.answer r) :
     (r.answer = some .started → r.runs = true) ∧ (r.answer = some .notStarted → r.runs = false) :=

@@ -2066,6 +2066,26 @@ theorem chunksOf_le {α : Type} (n : Nat) (hn : 0 < n) (l : List α) :
     · simpa only [List.length_take] using Nat.min_le_left n l.length
     · exact ih c hc
 
+/-- Cutting a nonempty list gives no empty piece. -/
+theorem chunksOf_ne_nil {α : Type} (n : Nat) (l : List α) (hl : l ≠ []) :
+    ∀ c ∈ chunksOf n l, c ≠ [] := by
+  induction l using chunksOf.induct n with
+  | case1 l h =>
+    rw [chunksOf]
+    simpa [h] using hl
+  | case2 l h ih =>
+    rw [chunksOf]
+    simp only [h, ↓reduceDIte, List.mem_cons]
+    have hlen : n < l.length := by omega
+    intro c hc
+    rcases hc with rfl | hc
+    · simp only [ne_eq, List.take_eq_nil_iff, not_or]
+      exact ⟨by omega, hl⟩
+    · have hrest : l.drop n ≠ [] := by
+        simp only [ne_eq, List.drop_eq_nil_iff]
+        omega
+      exact ih hrest c hc
+
 /-- The payloads of the frames `outputMsgs` produces are exactly its chunks.
 
 Factored out because *both* claims below have to be stated about `outputMsgs` rather
@@ -2108,6 +2128,45 @@ theorem outputMsgs_bounded (id : Nat) (bs : List UInt8) :
       c.length ≤ outputChunk := by
   rw [outputMsgs_payloads id bs]
   exact chunksOf_le outputChunk (by decide) bs
+
+/-- **Output reaches the terminal and every attached client, exactly**: a chunk of program output
+feeds the session's terminal exactly that chunk, writes the program the replies its queries ask,
+then sends every client attached to the session, writable or read-only, in roster order, the same
+frames, whose payloads are, in order, exactly the bytes the mediator releases, each nonempty and
+at most `outputChunk` bytes, 64 KiB, and asks for nothing else. -/
+theorem step_ptyOut_delivered (s : State) (chunk : List UInt8) :
+    (step s (.ptyOut chunk)).1.terminal = s.terminal.feed chunk ∧
+      ∃ answers frames : List (List UInt8),
+        (step s (.ptyOut chunk)).2 =
+            answers.map Effect.writePty ++
+              (s.roster.filter (·.attached)).flatMap
+                (fun c => frames.map fun frame => Effect.send c.id (.output frame)) ∧
+          answers.flatten = (Mediation.feed s.terminal s.scanner chunk).replies ∧
+          frames.flatten = (Mediation.feed s.terminal s.scanner chunk).visible ∧
+          ∀ frame ∈ frames, frame ≠ [] ∧ frame.length ≤ 65536 := by
+  refine ⟨step_ptyOut_vt s chunk, ?_⟩
+  rw [step_ptyOut_effects]
+  simp only [State.terminal, State.scanner, State.roster]
+  generalize Mediation.feed s.vt s.scan chunk = r
+  refine
+    ⟨if r.replies.isEmpty then [] else [r.replies],
+      if r.visible.isEmpty then [] else chunksOf outputChunk r.visible, ?_, ?_, ?_, ?_⟩
+  · unfold broadcast outputMsgs
+    cases hr : r.replies.isEmpty <;> cases hv : r.visible.isEmpty <;> simp
+  · cases hr : r.replies.isEmpty
+    · simp
+    · simp [List.isEmpty_iff.mp hr]
+  · cases hv : r.visible.isEmpty
+    · simpa using chunksOf_flatten outputChunk r.visible
+    · simp [List.isEmpty_iff.mp hv]
+  · intro frame hframe
+    cases hv : r.visible.isEmpty
+    · simp only [hv, Bool.false_eq_true, ↓reduceIte] at hframe
+      have hne : r.visible ≠ [] := fun he => by simp [he] at hv
+      exact
+        ⟨chunksOf_ne_nil outputChunk r.visible hne frame hframe,
+          chunksOf_le outputChunk (by decide) r.visible frame hframe⟩
+    · simp [hv] at hframe
 
 /-- The cap is inclusive, with exactly one completion after all info chunks. -/
 theorem infoMsgs_accepted (id : Nat) (bs : List UInt8) (h : bs.length ≤ infoReplyCap) :
@@ -3244,6 +3303,70 @@ theorem step_attach_mode (s : State) (id : Nat) (chunk : List UInt8) {c : Client
     ∃ c', (step s (.bytes id chunk)).1.client? id = some c' ∧ c'.attached = true ∧ c'.mode = mode :=
   ⟨_, step_attach_record hc fresh read healthy, rfl, rfl⟩
 
+/-- An attach from a connection not yet attached streams it the repaint of the terminal the
+attach leaves, after only the pty's resize and the program's focus report. -/
+theorem onMsg_attach_repaint (t : State) (c : Client) (mode : Mode) (cols rows : UInt32)
+    (fresh : c.attached = false) :
+    ∃ pty,
+      pty ++ [Effect.replay c.id (Replay.start (onMsg t c (.attach mode cols rows)).1.vt)] <+:
+          (onMsg t c (.attach mode cols rows)).2 ∧
+        ∀ eff ∈ pty,
+          (∃ bytes, eff = .writePty bytes) ∨ ∃ cols rows, eff = .resizePty cols rows := by
+  let c' : Client :=
+    { c with
+      attached := true, mode, seq := t.attachSeq, cols, rows }
+  let t1 : State :=
+    { t.setClient c' with
+      attachSeq := t.attachSeq + 1, lookSeq := t.outSeq }
+  have hro := resizeOwned_effects t1 c'
+  unfold onMsg
+  simp only [fresh, Bool.false_eq_true, ↓reduceIte]
+  refine
+    ⟨(resizeOwned t1 c').2 ++ focusEffects (mode == .writable) t.focused (resizeOwned t1 c').1,
+      List.prefix_append _ _, ?_⟩
+  intro eff h
+  rcases List.mem_append.mp h with h | h
+  · right
+    have := hro eff h
+    cases eff <;> simp_all [Effect.resizes]
+  · left
+    unfold focusEffects at h
+    split at h
+    · exact ⟨_, List.mem_singleton.mp h⟩
+    · simp at h
+
+/-- **An attach repaints**: a read that completes exactly one attach, from a connection not yet
+attached, streams it the repaint of the session's terminal as the attach leaves it, and nothing
+the session sends it comes first: only the pty's resize and the program's focus report precede
+the repaint. -/
+theorem step_attach_repaint (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
+    {dec : Wire.Decoder} {mode : Mode} {cols rows : UInt32} (hc : s.client? id = some c)
+    (fresh : c.attached = false) (read : c.decoder.feed chunk = (dec, [.attach mode cols rows]))
+    (healthy : dec.errored = false) :
+    ∃ pty after,
+      (step s (.bytes id chunk)).2 =
+          pty ++ Effect.replay id (Replay.start (step s (.bytes id chunk)).1.terminal) :: after ∧
+        ∀ eff ∈ pty,
+          (∃ bytes, eff = .writePty bytes) ∨ ∃ cols rows, eff = .resizePty cols rows := by
+  have he :
+    ({ c with
+            decoder := dec, answered := false } :
+          Client).id =
+      id :=
+    (client?_id hc : c.id = id)
+  rw [step_bytes_single hc read healthy]
+  obtain ⟨pty, ⟨after, effects⟩, front⟩ :=
+    onMsg_attach_repaint
+      (s.setClient
+        { c with
+          decoder := dec, answered := false })
+      { c with
+        decoder := dec, answered := false }
+      mode cols rows fresh
+  refine ⟨pty, after, ?_, front⟩
+  rw [← effects, he, List.append_assoc, List.singleton_append]
+  rfl
+
 /-- A resize records its size, 0 included, and keeps the sender's mode, whether its connection
 is attached or not. -/
 theorem onMsg_resize_mode (s : State) (c : Client) (cols rows : UInt32)
@@ -3600,6 +3723,28 @@ theorem attached_client_witness :
   rw [step_attach_record connected_client_witness.1 rfl (feed_encode_fresh _ trivial) rfl]
   rfl
 
+/-- In that session the connection is attached and the scanner idle, so a plain byte of program
+output is released as it is: the witness the kill of a step that drops output starts from. -/
+theorem attached_output_witness :
+    let s :=
+      (trace step (State.boot (Vt.Vt.init 1 1) [] [])
+          [.connected 1, .bytes 1 (Wire.encode (.attach .writable 80 24))]).1
+    (∃ c ∈ s.roster, c.attached = true) ∧
+      (Mediation.feed s.terminal s.scanner [0x41]).visible = [0x41] := by
+  intro s
+  refine ⟨⟨_, client?_mem attached_client_witness, rfl⟩, ?_⟩
+  have hscan : s.scanner = .ground := by
+    change
+      (step (trace step (State.boot (Vt.Vt.init 1 1) [] []) [.connected 1]).1
+            (.bytes 1 (Wire.encode (.attach .writable 80 24)))).1.scan =
+        .ground
+    rw [step_bytes_single connected_client_witness.1
+        (feed_encode_fresh (.attach .writable 80 24) trivial) rfl,
+      onMsg_scan]
+    rfl
+  rw [hscan]
+  simp [Mediation.feed, Mediation.Scan.step, Mediation.ESC]
+
 /-! ## How a session's processes end -/
 
 /-- A daemon ends its program and the rest of the program's terminal session with SIGHUP, then
@@ -3613,10 +3758,6 @@ and for an event however long that takes, `-1`, when it holds none. -/
 theorem pollTimeout_eq (now : Nat) (deadlines : List Nat) :
     pollTimeout now deadlines =
       (deadlines.min?.map fun due => Int32.ofNat (min (due - now) 2147483647)).getD (-1) := rfl
-
-/-- A daemon boots with no clients. -/
-theorem boot_roster (vt : Vt.Vt) (labels metaKv : List (String × String)) :
-    (State.boot vt labels metaKv).roster = [] := rfl
 
 /-- While a write runs, a write asked for waits, in place of any that waited. -/
 theorem run_ask_running {R W : Type} (start : W → R) (o : Offloop R W) (w : W)
@@ -3661,34 +3802,5 @@ theorem offloop_coalesces {R W : Type} (start : W → R) (ws : List W) :
     cases ws with
     | nil => simp
     | cons x xs => simp [List.getLast?_cons]
-
-/-- **Output reaches only its audience**: every effect of a chunk of program output is a write to
-the program, of the replies its queries ask, or an output frame of at most `outputChunk` bytes,
-64 KiB, to a client attached to the session. -/
-theorem step_ptyOut_audience (s : State) (chunk : List UInt8) :
-    ∀ eff ∈ (step s (.ptyOut chunk)).2,
-      (∃ bytes, eff = .writePty bytes) ∨
-        ∃ c ∈ s.roster,
-          c.attached = true ∧
-            ∃ payload, eff = .send c.id (.output payload) ∧ payload.length ≤ 65536 := by
-  intro eff h
-  rw [step_ptyOut_effects] at h
-  dsimp only at h
-  simp only [List.mem_append] at h
-  rcases h with h | h
-  · left
-    split at h
-    · simp at h
-    · exact ⟨_, List.mem_singleton.mp h⟩
-  · right
-    unfold broadcast at h
-    split at h
-    · simp at h
-    · simp only [List.mem_flatMap, List.mem_filter] at h
-      obtain ⟨c, ⟨hc, hatt⟩, hmem⟩ := h
-      unfold outputMsgs at hmem
-      simp only [List.mem_map] at hmem
-      obtain ⟨payload, hp, rfl⟩ := hmem
-      exact ⟨c, hc, hatt, payload, rfl, chunksOf_le outputChunk (by decide) _ payload hp⟩
 
 end Linger.Session

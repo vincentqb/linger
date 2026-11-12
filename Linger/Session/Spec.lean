@@ -11,9 +11,10 @@ The values a session exchanges with its clients and its runtime (messages, clien
 events and effects, and the end record a name keeps), the caps its state keeps, the contract on
 the effect interpreter, and predicates over the session's operations, which they take as
 parameters: which messages fit a frame and what a decoder reads from a chunked stream, the
-bounds a state keeps, the reachable states of the daemon's byte queues, and a model of how
-daemons and offline readers claim a session's resources. Bodies are exposed: each definition
-here is its own specification. -/
+bounds a state keeps, the events a session handles when every effect succeeds, the reachable
+states of the daemon's byte queues, and a model of how daemons and offline readers claim a
+session's resources; and the wrong transition and drivers the kills put in place of the program's.
+Bodies are exposed: each definition here is its own specification. -/
 
 namespace Linger.Session
 
@@ -364,6 +365,12 @@ def Effect.resizes {Plan : Type} : Effect Plan → Bool
   | .resizePty _ _ => true
   | _ => false
 
+/-- Whether an effect streams a repaint. -/
+@[expose]
+def Effect.replays {Plan : Type} : Effect Plan → Bool
+  | .replay .. => true
+  | _ => false
+
 /-- The session after a trace of events, given its transition: each event starts from the state
 the previous one left, and the effects come out in the order the events asked for them. -/
 @[expose]
@@ -373,6 +380,13 @@ def trace {S E F : Type} (step : S → E → S × List F) (s : S) : List E → S
     let r := step s ev
     let rest := trace step r.1 evs
     (rest.1, r.2 ++ rest.2)
+
+/-- A wrong transition: `step` with each effect `drop` picks removed, its states unchanged. The
+headlines about program output and about an attach's repaint are shown to reject it, without
+output frames and without repaints. -/
+@[expose]
+def without {S E Plan : Type} (drop : Effect Plan → Bool) (step : S → E → S × List (Effect Plan))
+    (s : S) (ev : E) : S × List (Effect Plan) := ((step s ev).1, (step s ev).2.filter (!drop ·))
 
 /-- The session bounds, read through a state's client roster, labels and pty scanner: the
 roster and the label store within their caps, every client's frame decoder healthy and
@@ -550,13 +564,50 @@ abbrev Reply {Plan : Type} : Effect Plan → Type
   | .stopProgram => Outcome
   | _ => Unit
 
-/-- The reply of an effect that succeeded: its target stayed connected, or the checkpoint was
-saved; a stopped program ended, as far as this reply tells, without linger seeing how. -/
+/-- The reply of an effect that succeeded, when a stopped program ended as `ending` says: its
+target stayed connected, its checkpoint was saved, or its program ended that way. -/
 @[expose]
-def success {Plan : Type} : (eff : Effect Plan) → Reply eff
+def success {Plan : Type} (ending : Outcome) : (eff : Effect Plan) → Reply eff
   | .send .. | .replay .. | .close .. | .checkpoint => false
-  | .stopProgram => .unknown
+  | .stopProgram => ending
   | .writePty .. | .resizePty .. | .dropCheckpoint | .exit => ()
+
+/-- What an effect that succeeded feeds back to the session: a stop's reply, how its program
+ended, as the event `stopped ending`, and nothing for any other effect, since its target stayed
+connected and its checkpoint was saved. -/
+@[expose]
+def fedBack {Plan : Type} (ending : Outcome) : Effect Plan → List Event
+  | .stopProgram => [.stopped ending]
+  | _ => []
+
+/-- A transition whose effects each carry the state its event leaves, the state a driver executes
+them with. -/
+@[expose]
+def withState {S E F : Type} (step : S → E → S × List F) (s : S) (ev : E) : S × List (S × F) :=
+  ((step s ev).1, (step s ev).2.map ((step s ev).1, ·))
+
+/-- The events a session handles when a driver hands it `events` and every effect succeeds:
+`Handles step ending s events handled exits` says that from state `s` a session with transition
+`step` handles `handled`, which is `events` in order, each followed by what its effects feed back
+before the next (`fedBack ending`). An event whose effects ask the daemon to exit is the last one
+handled, and `exits` says whether one did. At most one `handled` and `exits` fit `s` and
+`events`. -/
+inductive Handles {S Plan : Type} (step : S → Event → S × List (Effect Plan)) (ending : Outcome) :
+    S → List Event → List Event → Bool → Prop where
+  /-- No event is left, and none asked the daemon to exit. -/
+  | done (s : S) : Handles step ending s [] [] false
+  /-- An event whose effects ask the daemon to exit is the last one handled. -/
+  |
+  exit (s : S) (ev : Event) (rest : List Event) (asks : Effect.exit ∈ (step s ev).2) :
+    Handles step ending s (ev :: rest) [ev] true
+  /-- Any other event is handled, then what its effects feed back, then the events after it. -/
+  |
+  next (s : S) (ev : Event) (rest handled : List Event) (exits : Bool)
+    (stays : Effect.exit ∉ (step s ev).2)
+    (later :
+      Handles step ending (step s ev).1 ((step s ev).2.flatMap (fedBack ending) ++ rest) handled
+        exits) :
+    Handles step ending s (ev :: rest) (ev :: handled) exits
 
 /-- The driver's state between events. -/
 structure Result (S World : Type) where
@@ -580,6 +631,13 @@ failed saves is shown to reject it. -/
 def halt {S Plan : Type} {m : Type → Type} [Monad m] {World : Type}
     (_ : S → World → (eff : Effect Plan) → m (World × Reply eff)) (r : Result S World)
     (_ : List Event) : m (Result S World) := pure { r with exiting := true }
+
+/-- A wrong driver: it does nothing, handing the session no event and executing no effect, and
+returns its input. The headline that the driver runs the session's trace is shown to reject it. -/
+@[expose]
+def inert {S Plan : Type} {m : Type → Type} [Monad m] {World : Type}
+    (_ : S → World → (eff : Effect Plan) → m (World × Reply eff)) (r : Result S World)
+    (_ : List Event) : m (Result S World) := pure r
 
 /-- The effect executor answers every effect: `execute st world eff` gives the world it leaves and
 the effect's reply, which may say that the effect failed, its client gone, its checkpoint unsaved

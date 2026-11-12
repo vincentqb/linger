@@ -445,92 +445,136 @@ theorem run_feedback_alive (execute : Interpreter World) (r : Result State World
 
 /-! ## Succeeding effects
 
-When every effect succeeds and none stops the program, nothing is fed back, so the driver runs
-exactly the session's trace. This pins `run` to `Session.run` for `Challenge.lean`. -/
+When every effect succeeds, the only feedback is a stop's reply, how the program ended: the driver
+hands the session exactly the events `Handles` describes and executes exactly the effects of their
+trace, in order, each with the state its event left. This pins `run` to `Session.trace step` for
+`Challenge.lean`. -/
 
-/-- A succeeding effect feeds nothing back, unless it stops the program, whose reply is how the
-program ended. -/
-theorem feedback_success (eff : Effect Plan) (other : eff ≠ .stopProgram) :
-    feedback eff (success eff) = [] := by
-  cases eff <;> first | rfl | exact absurd rfl other
+/-- `Handles` leaves no choice: from a state, the events given decide the events handled and the
+exit flag. -/
+theorem handles_unique {S : Type} {step : S → Event → S × List (Effect Plan)}
+    {ending : Session.Outcome} {s : S} {events handled handled' : List Event} {exits exits' : Bool}
+    (h : Handles step ending s events handled exits)
+    (h' : Handles step ending s events handled' exits') : handled = handled' ∧ exits = exits' := by
+  induction h generalizing handled' exits' with
+  | done =>
+    cases h'
+    exact ⟨rfl, rfl⟩
+  | exit _ _ _ asks =>
+    cases h' with
+    | exit => exact ⟨rfl, rfl⟩
+    | next _ _ _ _ _ stays => exact absurd asks stays
+  | next _ _ _ _ _ stays _ ih =>
+    cases h' with
+    | exit _ _ _ asks => exact absurd asks stays
+    | next _ _ _ _ _ _ later =>
+      obtain ⟨rfl, rfl⟩ := ih later
+      exact ⟨rfl, rfl⟩
 
-/-- With succeeding effects, none of which stops the program, one event's batch feeds nothing
-back, and its state and exit flag are the session step's. -/
-theorem batch_success (execute : Interpreter World)
-    (succeeds : ∀ st w eff, (execute st w eff).2 = success eff) (r : Result State World)
-    (ev : Event) (running : Effect.stopProgram ∉ (step r.st ev).2) :
-    (batch execute r ev).2 = [] ∧ (batch execute r ev).1.st = (step r.st ev).1 ∧
-      (batch execute r ev).1.exiting = (step r.st ev).2.contains .exit := by
-  refine ⟨?_, rfl, rfl⟩
+/-- A succeeding effect feeds back what `fedBack` says: a stop's reply as the program's end, and
+nothing else. -/
+theorem feedback_success (ending : Session.Outcome) (eff : Effect Plan) :
+    feedback eff (success ending eff) = fedBack ending eff := by
+  cases eff <;> rfl
+
+/-- Executing effects that succeed threads the world through each in order and collects what each
+feeds back, in order. -/
+theorem foldl_success (execute : Interpreter World) (ending : Session.Outcome)
+    (succeeds : ∀ st w eff, (execute st w eff).2 = success ending eff) (st : State)
+    (effs : List (Effect Plan)) (acc : World × List Event) :
+    effs.foldl
+        (fun (acc : World × List Event) eff =>
+          ((execute st acc.1 eff).1, acc.2 ++ feedback eff (execute st acc.1 eff).2))
+        acc =
+      (effs.foldl (fun world eff => (execute st world eff).1) acc.1,
+        acc.2 ++ effs.flatMap (fedBack ending)) := by
+  induction effs generalizing acc with
+  | nil => simp
+  | cons eff rest ih =>
+    rw [List.foldl_cons, ih]
+    simp [succeeds, feedback_success, List.append_assoc]
+
+/-- With succeeding effects, one event's batch is the session's step: its state and exit flag are
+the step's, its world is the world after executing the step's effects in order with the state the
+step left, and its feedback is what those effects feed back. -/
+theorem batch_success (execute : Interpreter World) (ending : Session.Outcome)
+    (succeeds : ∀ st w eff, (execute st w eff).2 = success ending eff) (r : Result State World)
+    (ev : Event) :
+    (batch execute r ev).1.st = (step r.st ev).1 ∧
+      (batch execute r ev).1.world =
+        (withState step r.st ev).2.foldl
+          (fun world (asked : State × Effect Plan) => (execute asked.1 world asked.2).1) r.world ∧
+      (batch execute r ev).1.exiting = (step r.st ev).2.contains .exit ∧
+      (batch execute r ev).2 = (step r.st ev).2.flatMap (fedBack ending) := by
   have horder :=
     effects_in_order execute (step r.st ev).1 r.world (eventDepth ev) (step r.st ev).2
       (step_depth r.st ev)
   simp only at horder
-  have hnil :
-    ∀ (effs : List (Effect Plan)),
-      Effect.stopProgram ∉ effs →
-        ∀ (acc : World × List Event),
-          acc.2 = [] →
-            (effs.foldl
-                  (fun (acc : World × List Event) eff =>
-                    let answer := execute (step r.st ev).1 acc.1 eff
-                    (answer.1, acc.2 ++ feedback eff answer.2))
-                  acc).2 =
-              [] := by
-    intro effs
-    induction effs with
-    | nil => intro _ acc h; exact h
-    | cons eff rest ih =>
-      intro hstop acc h
-      simp only [List.mem_cons, not_or] at hstop
-      apply ih hstop.2
-      simp [h, succeeds, feedback_success eff (Ne.symm hstop.1)]
-  have hsnd := congrArg Prod.snd horder
-  simp only at hsnd
-  unfold batch
-  simp only
-  rw [hsnd]
-  exact hnil _ running _ rfl
+  rw [foldl_success execute ending succeeds] at horder
+  have hworld := congrArg Prod.fst horder
+  have hfeed := congrArg Prod.snd horder
+  simp only at hworld hfeed
+  refine ⟨rfl, ?_, rfl, ?_⟩
+  · unfold batch
+    simp only [withState, List.foldl_map]
+    exact hworld
+  · unfold batch
+    simpa using hfeed
 
-/-- With succeeding effects, no exit and no stop of the program, an execution ends in the
-session's state for the same events, still active. -/
-theorem execution_success {execute : Interpreter World}
-    (succeeds : ∀ st w eff, (execute st w eff).2 = success eff) {r out : Result State World}
-    {events : List Event} (h : Execution execute r events out) (active : r.exiting = false)
-    (stays : Effect.exit ∉ (Session.run r.st events).2)
-    (running : Effect.stopProgram ∉ (Session.run r.st events).2) :
-    out.st = (Session.run r.st events).1 ∧ out.exiting = false := by
+/-- With succeeding effects, an execution from an active driver ends where the trace of the events
+`Handles` describes ends, with the world its effects leave and the exit flag `Handles` gives. -/
+theorem execution_refines {execute : Interpreter World} {ending : Session.Outcome}
+    (succeeds : ∀ st w eff, (execute st w eff).2 = success ending eff) {r out : Result State World}
+    {events : List Event} (h : Execution execute r events out) (running : r.exiting = false) :
+    ∃ handled exits,
+      Handles step ending r.st events handled exits ∧
+        out.st = (Session.trace step r.st handled).1 ∧
+        out.world =
+          (Session.trace (withState step) r.st handled).2.foldl
+            (fun world (asked : State × Effect Plan) => (execute asked.1 world asked.2).1)
+            r.world ∧
+        out.exiting = exits := by
   induction h with
-  | idle r => exact ⟨rfl, active⟩
+  | idle r => exact ⟨[], false, .done _, rfl, rfl, running⟩
   | stopped r events hexit => simp_all
-  | @next r ev rest out hactive _ ih =>
-    have hrun :
-        Session.run r.st (ev :: rest) =
-          ((Session.run (step r.st ev).1 rest).1,
-            (step r.st ev).2 ++ (Session.run (step r.st ev).1 rest).2) :=
-      rfl
-    rw [hrun] at stays running
-    simp only [List.mem_append, not_or] at stays running
-    obtain ⟨hfb, hst, hex⟩ := batch_success execute succeeds r ev running.1
-    have hexit : (batch execute r ev).1.exiting = false := by
-      rw [hex]
-      simpa using stays.1
-    rw [hfb, List.nil_append, hst] at ih
-    rw [hrun]
-    exact ih hexit stays.2 running.2
+  | @next r ev rest out hactive hrest ih =>
+    obtain ⟨hst, hworld, hexits, hfeed⟩ := batch_success execute ending succeeds r ev
+    by_cases asks : Effect.exit ∈ (step r.st ev).2
+    · have hexit : (batch execute r ev).1.exiting = true := by
+        rw [hexits]
+        exact List.contains_iff_mem.mpr asks
+      rw [hrest.exited_eq hexit]
+      refine ⟨[ev], true, .exit _ _ _ asks, ?_, ?_, hexit⟩
+      · simp [Session.trace, hst]
+      · simp [Session.trace, hworld]
+    · have hexit : (batch execute r ev).1.exiting = false := by
+        rw [hexits]
+        simpa using asks
+      obtain ⟨handled, exits, hh, hout, hw, hx⟩ := ih hexit
+      rw [hfeed, hst] at hh
+      refine ⟨ev :: handled, exits, .next _ _ _ _ _ asks hh, ?_, ?_, hx⟩
+      · rw [hout, hst]
+        rfl
+      · rw [hw, hst, hworld]
+        simp only [Session.trace, List.foldl_append]
+        rfl
 
-/-- **With every effect succeeding, the driver ends in the state `Session.run` computes from the
-same events**, unless one of them asks the daemon to exit or to stop the program, whose end the
-driver then hands back to the session. -/
-theorem run_success
-    (execute : State → World → (eff : Effect Plan) → Id (World × Reply eff))
-    (succeeds : ∀ st w eff, (execute st w eff).run.2 = success eff) (r : Result State World)
-    (events : List Event) (active : r.exiting = false)
-    (stays : Effect.exit ∉ (Session.run r.st events).2)
-    (running : Effect.stopProgram ∉ (Session.run r.st events).2) :
-    (run execute r events).run.st = (Session.run r.st events).1 ∧
-      (run execute r events).run.exiting = false :=
-  execution_success (execute := execute) succeeds (run_execution execute r events) active stays
-    running
+/-- **With every effect succeeding, the driver runs the session's trace**: from an active driver,
+it hands the session the events `Handles` describes, the events and what their effects feed back,
+ends in the state of their trace through `step` and in the world the trace's effects give when
+executed in order, each with the state its event left, and exits exactly when one of them asked it
+to. -/
+theorem run_refines (execute : State → World → (eff : Effect Plan) → Id (World × Reply eff))
+    (ending : Session.Outcome) (succeeds : ∀ st w eff, (execute st w eff).2 = success ending eff)
+    (r : Result State World) (events : List Event) (running : r.exiting = false) :
+    ∃ handled exits,
+      Handles step ending r.st events handled exits ∧
+        (run execute r events).st = (Session.trace step r.st handled).1 ∧
+        (run execute r events).world =
+          (Session.trace (withState step) r.st handled).2.foldl
+            (fun world (asked : State × Effect Plan) => (execute asked.1 world asked.2).1)
+            r.world ∧
+        (run execute r events).exiting = exits :=
+  execution_refines (execute := execute) succeeds (run_execution execute r events) running
 
 end Linger.Session.Driver

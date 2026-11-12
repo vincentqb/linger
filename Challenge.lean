@@ -19,8 +19,9 @@ The guarantees linger must keep, in ten parts. Each part's section states its he
 each with a kill, and says what it does not claim yet:
 
 1. Transparency: a client that attaches shows the session's terminal, losing only history beyond
-   the replay budget, and a program whose terminal is in raw mode reads exactly what its writers
-   sent and hears focus as a terminal reports it.
+   the replay budget, and then receives the program's output as linger's mediator releases it;
+   a program whose terminal is in raw mode reads exactly what its writers sent and hears focus as
+   a terminal reports it.
 2. Authority and attribution: a connection changes only what its mode allows, a name has one
    owner, and every value linger reports has one source, which alone can change it.
 3. Exactness: a request takes effect exactly as given, or is refused with a reason and changes
@@ -273,23 +274,92 @@ namespace Linger
 /-! ## 1. Transparency
 
 What a repaint gives a client is claimed by the terminal package (`packages/terminal`), of the
-terminals a session can hold: fresh, fed, resized, quiesced, or admitted by the toolkit's
-decoder door, which every terminal linger's checkpoint decoder returns passes
+terminals a session can hold: fresh, fed, resized, quiesced, or admitted by the toolkit's decoder
+door, which every terminal linger's checkpoint decoder returns passes
 (`Checkpoint.live_of_decoded`). There a client receives the repaint as a stream, in steps of any
-positive byte budget, the stream ends, and a receiver of the same size that parses it shows what
-the terminal shows; that it keeps showing it as output continues is conjectured, for a repaint
-taken between control sequences and characters; and a terminal's history only gains rows at its
-end, unless output may ask to erase it. Here: linger writes to a session's terminal exactly the
-input it accepted for the program, in order, whatever mode the program set, and a program whose
-terminal is in raw mode reads exactly that, when the kernel hands raw input on unchanged
-(`Pty.Delivers`, which the agent suite exercises byte for byte); linger accepts each frame a
-writable client sends, whatever its terminal's size, whole, or refuses it whole when the
-program's queue is full; and `send` hands the program text of any length in frames the decoder
-takes, whose payloads are the text, in order. A program that enabled focus reporting hears that
-it gained focus when a writable client attaches to a session nobody could type into, whatever
-its size, and that it lost it when the last one leaves. Not claimed: what a program reads in any
-other mode, such as the cooked mode a terminal starts in, whose line discipline edits lines and
-turns ^C into a signal. -/
+positive byte budget, the stream ends, and a receiver of the same size that parses it shows what the
+terminal shows; that it keeps showing it as output continues is conjectured, for a repaint taken
+between control sequences and characters; and a terminal's history only gains rows at its end,
+unless output may ask to erase it. Here: a read that attaches a connection, writable or read-only,
+streams it the repaint of the session's terminal as the attach leaves it, and the read sends it
+nothing before the repaint: only the pty's resize and the program's focus report come first. A chunk
+of program output feeds the session's terminal exactly that chunk, reaches every attached client,
+writable or read-only, in roster order, as the same frames, each nonempty and of at most 64 KiB,
+whose payloads are exactly the bytes the terminal package's mediator releases, in order, and writes
+the program only the mediator's replies to its queries. The daemon does what the session asks: when
+every effect succeeds, its driver hands the session each event and then what the event's effects
+feed back, ends in the state of their trace, and executes exactly the trace's effects, in order,
+each with the state its event left (`run_refines`, in part 5). Linger writes to a session's terminal
+exactly the input it accepted for the program, in order, whatever mode the program set, and a
+program whose terminal is in raw mode reads exactly that, when the kernel hands raw input on
+unchanged (`Pty.Delivers`, which the agent suite exercises byte for byte); linger accepts each frame
+a writable client sends, whatever its terminal's size, whole, or refuses it whole when the program's
+queue is full; and `send` hands the program text of any length in frames the decoder takes, whose
+payloads are the text, in order. A program that enabled focus reporting hears that it gained focus
+when a writable client attaches to a session nobody could type into, whatever its size, and that it
+lost it when the last one leaves. Not claimed: which bytes the mediator releases, which
+`Terminal.Mediation` decides: all the program wrote but the queries linger answers itself, a request
+still incomplete at a chunk's end waiting for the next; an attach a read completes with other
+messages; that the runtime streams a repaint ahead of the output that follows it, which the delivery
+suite checks; and what a program reads in any other mode than raw, such as the cooked mode a
+terminal starts in, whose line discipline edits lines and turns ^C into a signal. -/
+
+theorem step_attach_repaint (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
+    {dec : Wire.Decoder} {mode : Mode} {cols rows : UInt32} (hc : s.client? id = some c)
+    (fresh : c.attached = false) (read : c.decoder.feed chunk = (dec, [.attach mode cols rows]))
+    (healthy : dec.errored = false) :
+    ∃ pty after,
+      (Session.step s (.bytes id chunk)).2 =
+          pty ++
+            Effect.replay id (Replay.start (Session.step s (.bytes id chunk)).1.terminal) :: after ∧
+        ∀ eff ∈ pty,
+          (∃ bytes, eff = .writePty bytes) ∨ ∃ cols rows, eff = .resizePty cols rows := by
+  sorry
+
+theorem step_attach_repaint_rejects_blank :
+    ¬∀ (s : State) (id : Nat) (chunk : List UInt8) {c : Client} {dec : Wire.Decoder} {mode : Mode}
+        {cols rows : UInt32},
+        s.client? id = some c →
+          c.attached = false →
+          c.decoder.feed chunk = (dec, [.attach mode cols rows]) →
+          dec.errored = false →
+          ∃ pty after,
+            (Session.without Effect.replays Session.step s (.bytes id chunk)).2 =
+                pty ++
+                  Effect.replay id
+                      (Replay.start
+                        (Session.without Effect.replays Session.step s
+                            (.bytes id chunk)).1.terminal) ::
+                    after ∧
+              ∀ eff ∈ pty,
+                (∃ bytes, eff = .writePty bytes) ∨ ∃ cols rows, eff = .resizePty cols rows := by
+  sorry
+
+theorem step_output_delivered (s : State) (chunk : List UInt8) :
+    (Session.step s (.ptyOut chunk)).1.terminal = s.terminal.feed chunk ∧
+      ∃ answers frames : List (List UInt8),
+        (Session.step s (.ptyOut chunk)).2 =
+            answers.map Effect.writePty ++
+              (s.roster.filter (·.attached)).flatMap
+                (fun c => frames.map fun frame => Effect.send c.id (.output frame)) ∧
+          answers.flatten = (Mediation.feed s.terminal s.scanner chunk).replies ∧
+          frames.flatten = (Mediation.feed s.terminal s.scanner chunk).visible ∧
+          ∀ frame ∈ frames, frame ≠ [] ∧ frame.length ≤ 65536 := by
+  sorry
+
+theorem step_output_delivered_rejects_drop :
+    ¬∀ (s : State) (chunk : List UInt8),
+        (Session.without Effect.rendered Session.step s (.ptyOut chunk)).1.terminal =
+            s.terminal.feed chunk ∧
+          ∃ answers frames : List (List UInt8),
+            (Session.without Effect.rendered Session.step s (.ptyOut chunk)).2 =
+                answers.map Effect.writePty ++
+                  (s.roster.filter (·.attached)).flatMap
+                    (fun c => frames.map fun frame => Effect.send c.id (.output frame)) ∧
+              answers.flatten = (Mediation.feed s.terminal s.scanner chunk).replies ∧
+              frames.flatten = (Mediation.feed s.terminal s.scanner chunk).visible ∧
+              ∀ frame ∈ frames, frame ≠ [] ∧ frame.length ≤ 65536 := by
+  sorry
 
 theorem step_input_exact (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {inputs : List (List UInt8)} (hc : s.client? id = some c)
@@ -1038,7 +1108,18 @@ every daemon of this version does (`infoFields_protocol`), so a daemon an older 
 is refused with a reason, never sent an attach it would refuse as unknown or drop unanswered.
 Not claimed: that the answer comes within the client's wait and that the refusal names the
 session and the level, which the attach suite checks against a level-2 daemon, one that reports
-no level and one that never answers. -/
+no level and one that never answers.
+
+The daemon's driver runs the session's trace. When every effect succeeds, a stop replying how the
+program ended, the driver hands the session each event and then what that event's effects feed
+back, a stop's reply as the event `stopped`, before the next event; it ends in the state of the
+trace of `Session.step` over those events, executes exactly that trace's effects, in order, each
+with the state its event left, and exits exactly when one of them asks it to (`run_refines`).
+Whatever its effects reply, an executor that answers every effect lets it return and keeps the
+session within its bounds (`run_total_safe`), disconnects and failed saves never stop it
+(`run_feedback_alive`), once it exits it handles no event (`run_exited`), and an event whose
+effects stop the program ends the session (`run_stop_exits`). Not claimed: which events the
+driver hands the session and which effects it executes when an effect fails. -/
 
 theorem step_kill_stops (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {rest : List Wire.Msg} (hc : s.client? id = some c)
@@ -1288,6 +1369,39 @@ theorem step_unknown_refused_rejects_silence :
               s.labelList := by
   sorry
 
+theorem run_refines {World : Type}
+    (execute : State → World → (eff : Effect Replay.Plan) → Id (World × Driver.Reply eff))
+    (ending : Outcome)
+    (succeeds : ∀ st world eff, (execute st world eff).2 = Driver.success ending eff)
+    (r : Driver.Result State World) (events : List Event) (running : r.exiting = false) :
+    ∃ handled exits,
+      Driver.Handles Session.step ending r.st events handled exits ∧
+        (Driver.run execute r events).st = (Session.trace Session.step r.st handled).1 ∧
+        (Driver.run execute r events).world =
+          (Session.trace (Driver.withState Session.step) r.st handled).2.foldl
+            (fun world (asked : State × Effect Replay.Plan) => (execute asked.1 world asked.2).1)
+            r.world ∧
+        (Driver.run execute r events).exiting = exits := by
+  sorry
+
+theorem run_refines_rejects_inert :
+    ¬∀ {World : Type}
+        (execute : State → World → (eff : Effect Replay.Plan) → Id (World × Driver.Reply eff))
+        (ending : Outcome),
+        (∀ st world eff, (execute st world eff).2 = Driver.success ending eff) →
+          ∀ (r : Driver.Result State World) (events : List Event),
+            r.exiting = false →
+              ∃ handled exits,
+                Driver.Handles Session.step ending r.st events handled exits ∧
+                  (Driver.inert execute r events).st = (Session.trace Session.step r.st handled).1 ∧
+                  (Driver.inert execute r events).world =
+                    (Session.trace (Driver.withState Session.step) r.st handled).2.foldl
+                      (fun world (asked : State × Effect Replay.Plan) =>
+                        (execute asked.1 world asked.2).1)
+                      r.world ∧
+                  (Driver.inert execute r events).exiting = exits := by
+  sorry
+
 theorem run_total_safe {World ε : Type}
     (execute : State → World → (eff : Effect Replay.Plan) → Except ε (World × Driver.Reply eff))
     (hw : Driver.Responds execute) (r : Driver.Result State World) (events : List Event)
@@ -1370,15 +1484,23 @@ theorem run_stop_exits_rejects_jump :
 
 /-! ## 6. Bounded and clean
 
-`run_total_safe` keeps the session's clients, labels, frame decoders and pty scanner within their
-caps. When a session ends, the daemon sends SIGHUP to its program and the rest of the program's
-terminal session, then SIGKILL to those still running a second later, and reaps the program last,
-so the program's pid, which is the session's id, stays reserved until then: of the processes of
-the terminal session its signals reach, none still runs once the ending is over (`ending_clean`),
-when SIGKILL ends within a second each process it reaches (`Signal.Ends`, which the attach suite
-exercises and a process stuck in the kernel falsifies). Not claimed: the processes linger's
-signals miss, as the claim's comment names them: one that left the terminal session with
-`setsid`, one of another user and one forked after the daemon looked. -/
+After every batch of events, the driver leaves the session's clients, labels, frame decoders and
+pty scanner within their caps, whatever its effects reply, when its executor answers every effect
+(`run_total_safe`, in part 5); when every effect succeeds, the states it leaves are those of the
+session's trace (`run_refines`, in part 5). The pty's input queue never owes more than its cap,
+nor does a client's output queue the daemon keeps (`reachableIn_bound`, `reachableOut_bound`); a
+read gets at most one rendered reply, its frames followed by `done`, and when it leaves its sender
+unattached at most one pty resize (`step_bytes_one_reply`); every frame of program output carries
+at most 64 KiB (`step_output_delivered`, in part 1); and a tmux capture's bytes are at most twice
+its limit (`captureBytes_bounded`). When a session ends, the daemon sends SIGHUP to its program
+and the rest of the program's terminal session, then SIGKILL to those still running a second
+later, and reaps the program last, so the program's pid, which is the session's id, stays
+reserved until then: of the processes of the terminal session its signals reach, none still runs
+once the ending is over (`ending_clean`), when SIGKILL ends within a second each process it
+reaches (`Signal.Ends`, which the attach suite exercises and a process stuck in the kernel
+falsifies). Not claimed: how many pty resizes a read asks for while its sender stays attached;
+and the processes linger's signals miss, as the claim's comment names them: one that left the
+terminal session with `setsid`, one of another user and one forked after the daemon looked. -/
 
 theorem reachableIn_bound {cap : Nat} {b : Buf.Buf}
     (h : Buf.InputReach Buf.Buf.empty Buf.bufOffer Buf.bufAdvance cap b) : Buf.owedLen b ≤ cap := by
@@ -1612,7 +1734,8 @@ theorem writes_clean_rejects_reset :
 /-! ## 9. Work follows events
 
 A daemon's state holds its own session alone, so no event's work depends on how many sessions
-exist. Program output costs work only for the clients attached to its session, and a daemon's
+exist. Program output costs work only for the clients attached to its session
+(`step_output_delivered`, in part 1), and a daemon's
 poll that no event or signal ends returns no sooner than the earliest deadline the daemon holds,
 and never when it holds none (`poll_wakes`), when poll(2) waits out its timeout (`Poll.Sleeps`,
 which the quiet suite exercises by timing quiet polls; it also counts the wakeups of idle
@@ -1650,27 +1773,6 @@ theorem poll_wakes_rejects_polling :
               ∀ (ms : Nat),
                 quiet ((fun (_ : Nat) (_ : List Nat) => (100 : Int32)) now deadlines) ms →
                   ∃ due, deadlines.min? = some due ∧ due - now ≤ ms := by
-  sorry
-
-theorem step_output_audience (s : State) (chunk : List UInt8) :
-    ∀ eff ∈ (Session.step s (.ptyOut chunk)).2,
-      (∃ bytes, eff = .writePty bytes) ∨
-        ∃ c ∈ s.roster,
-          c.attached = true ∧
-            ∃ payload, eff = .send c.id (.output payload) ∧ payload.length ≤ 65536 := by
-  sorry
-
-theorem step_output_audience_rejects_stranger :
-    ¬∀ (s : State) (chunk : List UInt8),
-        ∀
-          eff ∈
-            ((fun (s : State) (_ : Event) =>
-                  (s, ([.send 0 (.output [])] : List (Effect Replay.Plan))))
-                s (.ptyOut chunk)).2,
-          (∃ bytes, eff = .writePty bytes) ∨
-            ∃ c ∈ s.roster,
-              c.attached = true ∧
-                ∃ payload, eff = .send c.id (.output payload) ∧ payload.length ≤ 65536 := by
   sorry
 
 /-! ## 10. Graceful under load
