@@ -27,8 +27,9 @@ each with a kill, and says what it does not claim yet:
    nothing.
 4. Program identity: a session runs exactly the program its creation named, and linger only
    delivers bytes to it.
-5. Accountability: every session ends once, with an outcome recorded and reported truthfully to
-   anyone who asks, and every request gets a reply or a refusal.
+5. Accountability: every session ends once and one way, whether its program ends or a kill stops
+   it, with an outcome recorded and reported truthfully to anyone who asks; every request gets a
+   reply or a refusal, and every command exits with the code of an answer true of what happened.
 6. Bounded and clean: input cannot raise any buffer, loop or wait past its cap, and nothing a
    session started outlives it.
 7. Recovery: resuming from a checkpoint gives back the saved session, less any half-parsed
@@ -66,8 +67,10 @@ compiler, the runtime or the C shim; memory beyond the logical bytes the buffers
 ownership among processes that do not cooperate or replace the lock files; fidelity beyond
 linger's own terminal model, which stands in for every receiver; the incoming title content and
 the saved cursor slot, which fixtures cover; processes or images, since recovery restores
-screens; for tmux imports, captures other than the latest save's archive; and that an import
-never runs a pane's saved command, which a gate checks. -/
+screens; that an exit status tells linger's answers from a program's, since a program may exit
+with any status, as with `timeout` and `env`, so that `info` and the porcelain output are the
+exact channel; for tmux imports, captures other than the latest save's archive; and that an
+imported pane's saved command never runs, which a gate checks. -/
 
 public section
 
@@ -86,6 +89,14 @@ def Linger.App.Commands.lookup : String → Option App.Commands.Command := sorry
 def Linger.App.Commands.retired : List (String × String) := sorry
 
 def Linger.App.Commands.usageLine : App.Commands.Command → String := sorry
+
+def Linger.App.Answer.code : App.Answer → UInt32 := sorry
+
+def Linger.App.Answer.listed : List App.Answer := sorry
+
+def Linger.App.Wait.heldNameMs : Nat := sorry
+
+def Linger.App.Wait.decide : Option Nat → Option Nat → Nat → App.Wait.Heard → App.Wait.Next := sorry
 
 /-! ### Session targets -/
 
@@ -147,6 +158,8 @@ def Linger.Session.State.boot : Vt.Vt → List (String × String) → List (Stri
 def Linger.Session.Claim.enters : Bool → Bool → Bool := sorry
 
 def Linger.Session.ending : List (UInt32 × Nat) := sorry
+
+def Linger.Session.drainTimeoutMs : Nat := sorry
 
 def Linger.Session.pollTimeout : Nat → List Nat → Int32 := sorry
 
@@ -513,15 +526,15 @@ theorem run_readonly_rejects_kill :
         (fun (_ : State) (i : Nat) => some ({ id := i, attached := true } : Client)) s id = some c →
           c.attached = true →
           c.sizer = false →
-          (Session.trace (fun s _ => (s, ([.killChild] : List (Effect Replay.Plan)))) s
+          (Session.trace (fun s _ => (s, ([.stopProgram] : List (Effect Replay.Plan)))) s
                   (chunks.map (Event.bytes id))).1.terminal =
               s.terminal ∧
-            (Session.trace (fun s _ => (s, ([.killChild] : List (Effect Replay.Plan)))) s
+            (Session.trace (fun s _ => (s, ([.stopProgram] : List (Effect Replay.Plan)))) s
                   (chunks.map (Event.bytes id))).1.labelList =
               s.labelList ∧
             ∀
               eff ∈
-                (Session.trace (fun s _ => (s, ([.killChild] : List (Effect Replay.Plan)))) s
+                (Session.trace (fun s _ => (s, ([.stopProgram] : List (Effect Replay.Plan)))) s
                     (chunks.map (Event.bytes id))).2,
               (∃ m, eff = .send id m) ∨ eff = .close id ∨ eff = .checkpoint := by
   sorry
@@ -859,26 +872,90 @@ theorem start_runs_rejects_unnamed :
 
 /-! ## 5. Accountability
 
-A name's end record keeps how its last session's program ended, for whoever asks later, when the
-file system keeps what linger saves (`Record.Kept`, which the agent suite exercises). -/
+A session ends one way, whether its program ends by itself or a kill stops it: the daemon hands
+a stopped program's end back to the session, everyone attached or waiting hears how the program
+ended before the daemon exits, and only a kill discards the session. A name's end record keeps how its last session's program ended, for whoever asks later,
+when the file system keeps what linger saves (`Record.Kept`, which the agent suite exercises).
+`wait` answers with how the program ended when its daemon or the end record says, and that it
+could not find out only when that is so: the ending is unknown, or the name stays held, with no
+daemon answering, from the look that first found it so for longer than a daemon's ending lasts.
+Every command answers with one of the answers `Answer` names, and exits with its code. -/
 
-theorem step_ended_reports (s : State) (o : Outcome) {c : Client} (hc : c ∈ s.roster)
-    (listening : c.attached = true ∨ c.waiting = true) :
-    [Effect.send c.id (.ended o), Effect.send c.id (.exited o.status)] <:+:
-        (Session.step s (.childExited o)).2 ∧
-      (Session.step s (.childExited o)).2.getLast? = some .exit := by
+theorem step_kill_stops (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
+    {dec : Wire.Decoder} {rest : List Wire.Msg} (hc : s.client? id = some c)
+    (writable : c.attached = false ∨ c.sizer = true)
+    (read : c.decoder.feed chunk = (dec, .kill :: rest)) (healthy : dec.errored = false) :
+    (Session.step s (.bytes id chunk)).2 = [.stopProgram, .close id] ∧
+      (Session.step s (.bytes id chunk)).1.terminal = s.terminal ∧
+      (Session.step s (.bytes id chunk)).1.labelList = s.labelList := by
+  sorry
+
+theorem step_kill_stops_rejects_exit :
+    ¬∀ (s : State) (id : Nat) (chunk : List UInt8) {c : Client} {dec : Wire.Decoder}
+        {rest : List Wire.Msg},
+        s.client? id = some c →
+          (c.attached = false ∨ c.sizer = true) →
+          c.decoder.feed chunk = (dec, .kill :: rest) →
+          dec.errored = false →
+          ((fun (s : State) (_ : Event) => (s, ([.exit] : List (Effect Replay.Plan)))) s
+                  (.bytes id chunk)).2 =
+              [.stopProgram, .close id] ∧
+            ((fun (s : State) (_ : Event) => (s, ([.exit] : List (Effect Replay.Plan)))) s
+                  (.bytes id chunk)).1.terminal =
+              s.terminal ∧
+            ((fun (s : State) (_ : Event) => (s, ([.exit] : List (Effect Replay.Plan)))) s
+                  (.bytes id chunk)).1.labelList =
+              s.labelList := by
+  sorry
+
+theorem step_ended_reports (s : State) (ev : Event) :
+    (Effect.exit ∈ (Session.step s ev).2 ↔ ∃ o, ev = .childExited o ∨ ev = .stopped o) ∧
+      ∀ o,
+        ev = .childExited o ∨ ev = .stopped o →
+          (Session.step s ev).2.getLast? = some .exit ∧
+            ∀ c ∈ s.roster,
+              c.attached = true ∨ c.waiting = true →
+                [Effect.send c.id (.ended o), Effect.send c.id (.exited o.status)] <:+:
+                  (Session.step s ev).2 := by
   sorry
 
 theorem step_ended_reports_rejects_status :
-    ¬∀ (s : State) (o : Outcome) {c : Client},
-        c ∈ (fun (_ : State) => [({ id := 0, attached := true } : Client)]) s →
-          c.attached = true ∨ c.waiting = true →
-          [Effect.send c.id (.ended o), Effect.send c.id (.exited o.status)] <:+:
+    ¬∀ (s : State) (ev : Event),
+        (Effect.exit ∈
               ((fun s _ => (s, ([.send 0 (.exited 1), .exit] : List (Effect Replay.Plan)))) s
-                  (Event.childExited o)).2 ∧
-            ((fun s _ => (s, ([.send 0 (.exited 1), .exit] : List (Effect Replay.Plan)))) s
-                  (Event.childExited o)).2.getLast? =
-              some .exit := by
+                  ev).2 ↔
+            ∃ o, ev = .childExited o ∨ ev = .stopped o) ∧
+          ∀ o,
+            ev = .childExited o ∨ ev = .stopped o →
+              ((fun s _ => (s, ([.send 0 (.exited 1), .exit] : List (Effect Replay.Plan)))) s
+                      ev).2.getLast? =
+                  some .exit ∧
+                ∀ c ∈ (fun (_ : State) => [({ id := 0, attached := true } : Client)]) s,
+                  c.attached = true ∨ c.waiting = true →
+                    [Effect.send c.id (.ended o), Effect.send c.id (.exited o.status)] <:+:
+                      ((fun s _ => (s, ([.send 0 (.exited 1), .exit] : List (Effect Replay.Plan))))
+                          s ev).2 := by
+  sorry
+
+theorem step_stopped_discards (s : State) (o : Outcome) :
+    (∃ front,
+        (Session.step s (.stopped o)).2 = front ++ [.dropCheckpoint, .exit] ∧
+          Effect.checkpoint ∉ front) ∧
+      (Session.step s (.stopped o)).1.terminal = s.terminal := by
+  sorry
+
+theorem step_stopped_discards_rejects_save :
+    ¬∀ (s : State) (o : Outcome),
+        (∃ front,
+            ((fun (s : State) (_ : Event) =>
+                      (s, ([.checkpoint, .dropCheckpoint, .exit] : List (Effect Replay.Plan))))
+                    s (.stopped o)).2 =
+                front ++ [.dropCheckpoint, .exit] ∧
+              Effect.checkpoint ∉ front) ∧
+          ((fun (s : State) (_ : Event) =>
+                  (s, ([.checkpoint, .dropCheckpoint, .exit] : List (Effect Replay.Plan))))
+                s (.stopped o)).1.terminal =
+            s.terminal := by
   sorry
 
 theorem step_childExited_keeps (s : State) (o : Outcome) :
@@ -929,6 +1006,83 @@ theorem record_kept_rejects_blank :
               Record.answer (afterSave ((fun (_ : Record) => ([] : List UInt8)) (.running seen))) =
                 some .unknown := by
   sorry
+
+theorem wait_ending (deadline heldSince : Option Nat) (now : Nat) (o : Outcome) :
+    Wait.decide deadline heldSince now (.ended o) = .answer (Answer.ofOutcome o) ∧
+      Wait.decide deadline heldSince now (.recorded (some o)) = .answer (Answer.ofOutcome o) := by
+  sorry
+
+theorem wait_ending_rejects_failed :
+    ¬∀ (deadline heldSince : Option Nat) (now : Nat) (o : Outcome),
+        (fun (_ _ : Option Nat) (_ : Nat) (_ : Wait.Heard) => Wait.Next.answer .failed) deadline
+              heldSince now (.ended o) =
+            .answer (Answer.ofOutcome o) ∧
+          (fun (_ _ : Option Nat) (_ : Nat) (_ : Wait.Heard) => Wait.Next.answer .failed) deadline
+              heldSince now (.recorded (some o)) =
+            .answer (Answer.ofOutcome o) := by
+  sorry
+
+theorem wait_held (deadline heldSince : Option Nat) (now : Nat) (heard : Wait.Heard) :
+    (Wait.decide deadline heldSince now heard = .answer .failed ↔
+        heard = .ended .unknown ∨
+          heard = .recorded (some .unknown) ∨
+          heard = .held ∧ ∃ since, heldSince = some since ∧ since + Wait.heldNameMs ≤ now) ∧
+      (heard = .held →
+        (∀ due, deadline = some due → now < due) →
+        (∀ since, heldSince = some since → now < since + Wait.heldNameMs) →
+        Wait.decide deadline heldSince now heard = .again (some (heldSince.getD now))) := by
+  sorry
+
+theorem wait_held_rejects_eager :
+    ¬∀ (deadline heldSince : Option Nat) (now : Nat) (heard : Wait.Heard),
+        ((fun (_ _ : Option Nat) (_ : Nat) (_ : Wait.Heard) => Wait.Next.answer .failed) deadline
+                heldSince now heard =
+              .answer .failed ↔
+            heard = .ended .unknown ∨
+              heard = .recorded (some .unknown) ∨
+              heard = .held ∧ ∃ since, heldSince = some since ∧ since + Wait.heldNameMs ≤ now) ∧
+          (heard = .held →
+            (∀ due, deadline = some due → now < due) →
+            (∀ since, heldSince = some since → now < since + Wait.heldNameMs) →
+            (fun (_ _ : Option Nat) (_ : Nat) (_ : Wait.Heard) => Wait.Next.answer .failed) deadline
+                heldSince now heard =
+              .again (some (heldSince.getD now))) := by
+  sorry
+
+theorem held_covers_ending :
+    Session.drainTimeoutMs + (Session.ending.map (·.2)).sum ≤ Wait.heldNameMs := by sorry
+
+theorem held_covers_ending_rejects_drain :
+    ¬Session.drainTimeoutMs + (Session.ending.map (·.2)).sum ≤ Session.drainTimeoutMs := by sorry
+
+theorem code_documented (status : UInt32) :
+    Answer.code .done = 0 ∧
+      Answer.code .notDone = 1 ∧
+      Answer.code .usage = 2 ∧
+      Answer.code .timedOut = 124 ∧
+      Answer.code .failed = 125 ∧
+      Answer.code .cannotRun = 126 ∧
+      Answer.code .notFound = 127 ∧
+      Answer.code .interrupted = 130 ∧ Answer.code (.program status) = status := by
+  sorry
+
+theorem code_documented_rejects_zero :
+    ¬∀ (status : UInt32),
+        (fun (_ : Answer) => (0 : UInt32)) .done = 0 ∧
+          (fun (_ : Answer) => (0 : UInt32)) .notDone = 1 ∧
+          (fun (_ : Answer) => (0 : UInt32)) .usage = 2 ∧
+          (fun (_ : Answer) => (0 : UInt32)) .timedOut = 124 ∧
+          (fun (_ : Answer) => (0 : UInt32)) .failed = 125 ∧
+          (fun (_ : Answer) => (0 : UInt32)) .cannotRun = 126 ∧
+          (fun (_ : Answer) => (0 : UInt32)) .notFound = 127 ∧
+          (fun (_ : Answer) => (0 : UInt32)) .interrupted = 130 ∧
+          (fun (_ : Answer) => (0 : UInt32)) (.program status) = status := by
+  sorry
+
+theorem listed_once : Answer.listed.Nodup ∧ ∀ a, a ∈ Answer.listed ↔ a.Own := by sorry
+
+theorem listed_once_rejects_empty :
+    ¬(([] : List Answer).Nodup ∧ ∀ a, a ∈ ([] : List Answer) ↔ a.Own) := by sorry
 
 theorem outcomeFields_injective (o₁ o₂ : Outcome)
     (h : Session.outcomeFields o₁ = Session.outcomeFields o₂) : o₁ = o₂ := by sorry
@@ -1037,6 +1191,21 @@ theorem run_exited_rejects_jump :
         (r : Driver.Result State World) (events : List Event),
         r.exiting = true →
           Driver.jump (State.boot (Vt.Vt.init 1 1) [] []) execute r events = pure r := by
+  sorry
+
+theorem run_stop_exits {World : Type}
+    (execute : State → World → (eff : Effect Replay.Plan) → Id (World × Driver.Reply eff))
+    (r : Driver.Result State World) (ev : Event) (running : r.exiting = false)
+    (stops : Effect.stopProgram ∈ (Session.step r.st ev).2) :
+    (Driver.run execute r [ev]).exiting = true := by sorry
+
+theorem run_stop_exits_rejects_jump :
+    ¬∀ {World : Type}
+        (execute : State → World → (eff : Effect Replay.Plan) → Id (World × Driver.Reply eff))
+        (r : Driver.Result State World) (ev : Event),
+        r.exiting = false →
+          Effect.stopProgram ∈ (Session.step r.st ev).2 →
+          (Driver.jump (State.boot (Vt.Vt.init 1 1) [] []) execute r [ev]).exiting = true := by
   sorry
 
 /-! ## 6. Bounded and clean

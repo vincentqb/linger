@@ -302,6 +302,9 @@ inductive Event where
   /-- The session's program ended this way. The runtime reports it as soon as it reaps the
   program, whether or not anything else still holds the pty. -/
   | childExited (outcome : Outcome)
+  /-- The session's program ended this way once the daemon stopped it, as a kill asks: the
+  runtime's answer to `Effect.stopProgram`. -/
+  | stopped (outcome : Outcome)
   /-- A poll round ended; `nowMs` is the monotonic clock in milliseconds. -/
   | tick (nowMs : Nat)
   /-- The last `.checkpoint` effect failed to save. -/
@@ -320,8 +323,9 @@ inductive Effect (Plan : Type) where
   | writePty (bytes : List UInt8)
   /-- Set the pty's window size. -/
   | resizePty (cols rows : UInt32)
-  /-- Ask the program to end: SIGHUP to it and to every process of its terminal session. -/
-  | killChild
+  /-- End the program: each signal of the session's ending in turn, SIGHUP first, to it and to
+  every process of its terminal session, until it ends. The runtime answers how it ended. -/
+  | stopProgram
   /-- Save a checkpoint of the session. -/
   | checkpoint
   /-- Delete the session's checkpoint. -/
@@ -460,17 +464,20 @@ end Linger.Session
 namespace Linger.Session.Driver
 
 /-- A transport operation reports whether its target disconnected; a checkpoint
-reports whether saving failed. Other effects cannot enqueue feedback. -/
+reports whether saving failed; stopping the program reports how it ended. Other effects cannot
+enqueue feedback. -/
 abbrev Reply {Plan : Type} : Effect Plan → Type
   | .send .. | .replay .. | .close .. | .checkpoint => Bool
+  | .stopProgram => Outcome
   | _ => Unit
 
 /-- The reply of an effect that succeeded: its target stayed connected, or the checkpoint was
-saved. -/
+saved; a stopped program ended, as far as this reply tells, without linger seeing how. -/
 @[expose]
 def success {Plan : Type} : (eff : Effect Plan) → Reply eff
   | .send .. | .replay .. | .close .. | .checkpoint => false
-  | .writePty .. | .resizePty .. | .killChild | .dropCheckpoint | .exit => ()
+  | .stopProgram => .unknown
+  | .writePty .. | .resizePty .. | .dropCheckpoint | .exit => ()
 
 /-- The driver's state between events. -/
 structure Result (S World : Type) where

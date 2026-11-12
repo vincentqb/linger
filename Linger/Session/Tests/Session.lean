@@ -293,13 +293,14 @@ example :
        r.2 == [.close 1, .send 2 .done, .send 2 .done]) = true := by
   native_decide
 
-/-- Exit also stops the decoded packet; later input must not follow kill. -/
+/-- A kill stops the decoded packet too: it closes its sender, so later input must not follow
+it. -/
 example :
     (let s := (run [.connected 1]).1
      let packet :=
         encode .kill ++ encode (.labelSet "after=kill".toUTF8.toList) ++ encode (.input [0x78])
       let r := step s (.bytes 1 packet)
-      r.1.labels.isEmpty && r.2 == [.killChild, .dropCheckpoint, .exit]) =
+      r.1.labels.isEmpty && r.2 == [.stopProgram, .close 1]) =
       true := by
   native_decide
 
@@ -313,7 +314,7 @@ example :
           encode (.input [0x62])
       let r := step s (.bytes 1 packet)
       packet.length ≤ 65536 &&
-        r.2 == List.replicate n (.writePty [0x61]) ++ [.killChild, .dropCheckpoint, .exit]) =
+        r.2 == List.replicate n (.writePty [0x61]) ++ [.stopProgram, .close 1]) =
       true := by
   native_decide
 
@@ -449,6 +450,17 @@ example :
     (let (_, effs) := run [.connected 1, .bytes 1 (encode .wait), .childExited (.signaled 15)]
      effs.contains (.send 1 (.ended (.signaled 15))) && effs.contains (.send 1 (.exited 143))) =
       true := by
+  native_decide
+
+/-- A kill ends the session as its program's own end does: the waiter hears how the stopped
+program ended before the closes, and the session is discarded instead of saved. -/
+example :
+    (let (s, effs) := run [.connected 1, .bytes 1 (encode .wait), .connected 2,
+                           .bytes 2 (encode .kill)]
+     let r := step s (.stopped (.signaled 1))
+     effs == [.stopProgram, .close 2] &&
+       r.2 == [.send 1 (.ended (.signaled 1)), .send 1 (.exited 129), .close 1, .close 2,
+               .dropCheckpoint, .exit]) = true := by
   native_decide
 
 /-- An unknown tag in a real frame is refused and changes nothing else (§Frame). -/

@@ -1,6 +1,7 @@
 module
 
 public import Verify.Harness
+import Linger.App.Wait
 import Linger.Session.Shell.Daemon
 import Linger.Session.Checkpoint
 import Linger.Target.Name
@@ -401,6 +402,35 @@ def run : IO UInt32 :=
     let waitErr ← waiter.stderr.readToEnd
     expect (waitCode == some 125 && has waitErr "outcome unknown")
         "wait exits 125, its outcome unknown, when the daemon disappears"
+    -- However long a wait has lasted, the kill that ends its session tells it how the program
+    -- ended, and so does an attached client. The program ignores SIGHUP, so the daemon's ending
+    -- lasts until SIGKILL ends it, and the wait began longer ago than its patience for a name
+    -- held with no daemon answering.
+    let trap10 := s!"{e.dir}/w10.trapped"
+    let _ ←
+      e.typeIn "w10" #[s!"exec sh -c \"trap '' HUP; : > {trap10}; while :; do sleep 1; done\""]
+    let trapped10 ← waitFor patienceMs (System.FilePath.pathExists trap10)
+    let longWaiter ←
+      IO.Process.spawn
+          { cmd := e.bin, args := #["wait", "w10"], env := e.procEnv, stdout := .null,
+            stderr := .piped }
+    let viewer ← e.spawn #["attach", "--read-only", "w10"] cols rows
+    let viewing ← waitFor patienceMs (return (← e.info "w10" "clients") == some "1")
+    IO.sleep (Linger.App.Wait.heldNameMs + 1000).toUInt32
+    let stillWaiting := (← longWaiter.tryWait).isNone
+    let (longKillRc, _, _) ← e.cli #["kill", "w10"]
+    let longCode ← waitOrKill longWaiter hangMs
+    let longErr ← longWaiter.stderr.readToEnd
+    let viewerOut ← IO.mkRef ByteArray.empty
+    let viewerTold ← viewer.awaitText viewerOut (hasText · "ended (killed by signal 9)")
+    let viewerCode ← viewer.reap patienceMs
+    viewer.bye (sendDetach := false)
+    expect
+        (trapped10 && stillWaiting && longKillRc == 0 && longCode == some 137 &&
+          has longErr "killed by signal 9")
+        s!"a wait older than its patience hears how the killed program ended (rc={longCode})"
+    expect (viewing && viewerTold && viewerCode == 137)
+        s!"an attached client hears how the killed program ended (rc={viewerCode})"
     -- 8. An empty chooser offers the default name without creating it on entry.
     let defaults : Env := { e with dir := s!"{e.dir}/default" }
     let defaultName := Linger.Target.Name.defaultName

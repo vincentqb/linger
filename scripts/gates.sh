@@ -432,7 +432,7 @@ import_closure packages/input/Input/Proofs.lean 'public import Input;import all 
 import_closure packages/os/Os/Spec.lean 'import SoftwareChallenge.Commands;'
 import_closure packages/os/Os/Wait.lean ''
 import_closure Linger/App/Entry.lean 'public import Linger.App.Spec;import Linger.Target.Spec;import Linger.Target.Remote;'
-import_closure Linger/App/Spec.lean ''
+import_closure Linger/App/Spec.lean 'public import Linger.Session.Spec;'
 import_closure Linger/Target/Name.lean 'import Linger.Target.Spec;'
 import_closure Linger/Target/Remote.lean 'import Linger.Target.Name;import Linger.Target.Spec;'
 import_closure Linger/Display/Title.lean 'import Linger.Target.Name;'
@@ -454,7 +454,7 @@ import_closure Linger/Import/Shell.lean 'import Linger.Import.Resurrect;import L
 import_closure Linger/Selector/Shell.lean \
   'public import Linger.Selector.Spec;import Linger.Selector.Picker;import Os.Shell;import Linger.Target.Remote;import Terminal.Title;import Os.Shell.Command;import Linger.Display.View;import Std.Data.HashMap.Basic;import Linger.Display.Status;import Linger.Selector.Key;import Input;'
 import_closure Main.lean \
-  'import Linger.App.Shell;import Linger.App.Entry;import Linger.Selector.Shell;import Linger.Import.Shell;'
+  'import Linger.App.Answer;import Linger.App.Shell;import Linger.App.Entry;import Linger.Selector.Shell;import Linger.Import.Shell;'
 # `lean_lib Linger` builds the umbrella's closure, so this list is what `./lake build`
 # checks of the session library.
 import_closure Linger.lean "$(printf 'public import %s;' Linger.Session.Buf \
@@ -472,7 +472,7 @@ module_imports Linger/Session.lean ':(glob)Linger/Session/*.lean' 'Linger/Sessio
     packages/terminal/Terminal/Replay.lean Linger.lean \
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
-    if (mod !~ /^(Linger[.]Session|Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](Shell|Commands)|Std[.]Async[.](System|Signal))$/ \
+    if (mod !~ /^(Linger[.]Session|Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](Shell|Commands|Answer|Wait|Spec)|Std[.]Async[.](System|Signal))$/ \
         && mod != "SoftwareChallenge.Commands") {
       print "  " $0; bad = 1
     }
@@ -584,8 +584,8 @@ for tie in \
   'def main [(]args : List String[)] : IO UInt32 := do try match Linger[.]App[.]Entry[.]route args with' \
   '[|] [.]selector readOnly => Linger[.]Selector[.]Shell[.]run [(]← IO[.]appPath[)][.]toString readOnly' \
   '[|] [.]tmux rest => Linger[.]Import[.]Shell[.]run [(]← IO[.]appPath[)][.]toString rest' \
-  '[|] [.]session argv => Linger[.]App[.]Shell[.]main argv' \
-  '[|] [.]malformed => IO[.]eprintln "linger: malformed encoded command line" return 2'; do
+  '[|] [.]session argv => return [(]← Linger[.]App[.]Shell[.]main argv[)][.]code' \
+  '[|] [.]malformed => IO[.]eprintln "linger: malformed encoded command line" return Linger[.]App[.]Answer[.]usage[.]code'; do
   printf '%s\n' "$entry_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "entry point bypassed its proved route or fixed IO boundary: $tie"
 done
@@ -746,12 +746,16 @@ for tie in \
   '[|] some [(]porcelain, remoteFlag[)] => cmdList porcelain [(]← resolveRemotes remoteFlag[)]' \
   'let withColor := [(]← [(]← IO[.]getStdout[)][.]isTty[)] && [(]← IO[.]getEnv "NO_COLOR"[)][.]isNone let ordered := Linger[.]Display[.]View[.]sort [(]fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD ""[)][)] rows writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor ordered[)][.]toArray[)]' \
   'def summaryText : IO String := do let rows ← localRows [(]some [(][(]← monotonicMs[)] [+] 250[)][)] [(]statusOnly := true[)] return Linger[.]Display[.]Status[.]summary [(]rows[.]map fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD "unknown"[)][)]' \
-  'def cmdSummary : IO UInt32 := do let summary ← summaryText if !summary[.]isEmpty then IO[.]println summary return 0' \
+  'def cmdSummary : IO Answer := do let summary ← summaryText if !summary[.]isEmpty then IO[.]println summary return [.]done' \
   'let fd ← connectUpsert name cmd some <[$]> Client[.]attach name fd summaryText' \
   '[|] [[]"ls", "--summary"[]] [|] [[]"list", "--summary"[]] [|] [[]"l", "--summary"[]] => cmdSummary'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "listing or prompt bypassed its shared policy: $tie"
 done
+# `linger help` lists the exit statuses from the vocabulary every command answers in
+# (`code_documented`, `listed_once`), one line per answer of linger's own.
+printf '%s\n' "$cli_code" | CG_RE='(^|[[:space:]])Answer[.]legend[.]map [(]" +" [+][+] ·[)][)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "linger help no longer lists the exit statuses from Answer.legend"
 # The session inventory the listing, the prompt summary, `get` and the importer share.
 inventory_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Inventory.lean)"
 for tie in \
@@ -1065,6 +1069,13 @@ for tie in \
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "a session's processes end other than by Session.ending: $tie"
 done
+# A kill reaches the same ending as a program's own end (`step_kill_stops`,
+# `step_ended_reports`): the stop runs `Session.ending` and answers how the program ended, which
+# the driver hands back to the session as `.stopped`.
+printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])[|] [.]stopProgram => do let outcome ← stopProgram rt return [(][{] rt with ending := some outcome [}], outcome[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "the daemon stops a program other than by Session.ending, or keeps how it ended from the session"
+code_grep '^[[:space:]]+[|] [.]stopProgram, outcome => [[][.]stopped outcome[]]$' 'Linger/Session/Driver.lean' > /dev/null \
+  || fail "the driver no longer hands a stopped program's end back to the session"
 # A daemon's checkpoint saves and record writes start on a thread of their own, as
 # `Session.Offloop.ask` decides (`offloop_coalesces`): while one runs, a later one waits in place
 # of any that waited, so a slow disk holds up no answer and writes never queue.
@@ -1161,10 +1172,12 @@ done
 for tie in \
   'match Linger[.]Target[.]Remote[.]parseTarget target with [|] none => invalidTarget [|] some parsed => runTarget verb parsed args localAction options' \
   'let some targets := names[.]mapM Linger[.]Target[.]Remote[.]parseTarget [|] invalidTarget let deadline ← limit[.]mapM' \
-  'rc ← runTarget "wait" target [[]] [(]cmdWait deadline[)] options' \
+  'answer ← runTarget "wait" target [[]] [(]cmdWait deadline[)] options' \
+  'let [(]heard, why[)] ← hear name silenceMs match Wait[.]decide deadline heldSince [(]← monotonicMs[)] heard with' \
+  'heldSince := since if let some first := since then discard <[|] nap [(]first [+] Wait[.]heldNameMs[)] 20' \
   'let interactive := verb == "attach" if interactive && [(]![(]← stdinIsTty[)] [|][|] ![(]← [(]← IO[.]getStdout[)][.]isTty[)][)] then' \
   'let operands := if verb == "attach" [|][|] verb == "capture" then Linger[.]Target[.]Remote[.]targetOperands target[.]name else [[]target[.]name[]]' \
-  'IO[.]Process[.]spawn [{] cmd := "ssh", args := #[[]if interactive then "-t" else "-T", "--", host, Linger[.]Target[.]Remote[.]command verb [(]options [+][+] operands [+][+] args[)][]], stdin := [.]inherit [}] try child[.]wait finally if interactive then writeAll stdoutFd [(]ByteArray[.]mk Terminal[.]Render[.]leaveAnsi[.]toArray[)]' \
+  'IO[.]Process[.]spawn [{] cmd := "ssh", args := #[[]if interactive then "-t" else "-T", "--", host, Linger[.]Target[.]Remote[.]command verb [(]options [+][+] operands [+][+] args[)][]], stdin := [.]inherit [}] try return [.]program [(]← child[.]wait[)] finally if interactive then writeAll stdoutFd [(]ByteArray[.]mk Terminal[.]Render[.]leaveAnsi[.]toArray[)]' \
   'let readOnly := args[.]head[?] == some "--read-only" let args := if readOnly then args[.]tail else args let some [(]name, cmd[)] := Linger[.]Target[.]Remote[.]targetArgs args [|]' \
   'let history := args[.]head[?] == some "--history" let args := if history then args[.]tail else args let some [(]name, [[][]][)] := Linger[.]Target[.]Remote[.]targetArgs args [|]' \
   'withTarget "attach" name cmd [(]cmdAttach · cmd readOnly[)] [(]if readOnly then [[]"--read-only"[]] else [[][]][)]' \
@@ -1242,8 +1255,8 @@ for tie in \
   'let take : IO Bool := do if let some held← took[.]get then return held let held ← takeTicket report took[.]set [(]some held[)] return held let tell [(]r : Linger[.]Session[.]Start[.]Report[)] : IO Unit := do if ← take then writeReport report r return [{] take, tell [}]' \
   'IO[.]FS[.]withFile [(]ticketPath report[)] [.]writeNew fun _ => pure [(][)] try spawnDetached [(]← IO[.]appPath[)][.]toString ⟨args⟩ log catch err => discard <[|] takeTicket report throw err' \
   'if bounded then unless ← nap deadline 10 do if ← takeTicket report then return [.]took true bounded := false else pause 10' \
-  'match Linger[.]Session[.]Start[.]answer [(]waited matches [.]took _[)] [(]waited matches [.]told [(]some [.]started[)][)], waited with [|] [.]started, _ => return 0 [|] [.]notStarted,' \
-  'let runs := waited matches [.]told [(]some [.]started[)] [|][|] waited matches [.]told [(]some [.]running[)] match Linger[.]Session[.]Start[.]answer [(]waited matches [.]took _[)] runs, waited with [|] [.]started, [.]told [(]some [.]started[)] => do sayMoved name return 0 [|] [.]started, _ => return 0 [|] [.]notStarted,' \
+  'match Linger[.]Session[.]Start[.]answer [(]waited matches [.]took _[)] [(]waited matches [.]told [(]some [.]started[)][)], waited with [|] [.]started, _ => return [.]done [|] [.]notStarted,' \
+  'let runs := waited matches [.]told [(]some [.]started[)] [|][|] waited matches [.]told [(]some [.]running[)] match Linger[.]Session[.]Start[.]answer [(]waited matches [.]took _[)] runs, waited with [|] [.]started, [.]told [(]some [.]started[)] => do sayMoved name return [.]done [|] [.]started, _ => return [.]done [|] [.]notStarted,' \
   'let pid ← beginRequest report log [(][[]"__start", report, name, cwd[]] [+][+] argv[)] startStatus name log [(]← awaitReport pid report[)]' \
   'let pid ← beginRequest report log [[]"__resume", report, name, cwd[]] resumeStatus name log [(]← awaitReport pid report[)]'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
@@ -1764,7 +1777,8 @@ ed_n="$(code_count '(^|[^[:alnum:]_.])drain(Str)?[[:space:]]+[^[:space:]]+[[:spa
 #     daemon's socket, every 30 ms for socketWaitFloorMs (3 s), then while that daemon lives,
 #     up to socketWaitCapMs (30 s); remote listings, every 5 ms for at most
 #     remoteQueryTimeoutMs (3 s); `send -` wakes only for input, replies and closes; `wait`
-#     and `kill` look at a held name every 20 ms for at most heldNameMs (8 s).
+#     looks at a held name every 20 ms for at most heldNameMs (8 s) from the look that first
+#     found it so, as `Wait.decide` says, and `kill` for its release as long.
 #   Import/Shell: tmux's configuration and a pane archive, every 10 ms for at most 1 s and 5 s.
 #   packages/os, Os/Shell: `nap` and `pause`, the only sleeps; Os/Shell/Command: a stopped
 #     command's output, every 5 ms for its grace period.
@@ -1786,7 +1800,7 @@ Linger/App/Shell.lean: pause 10
 Linger/App/Shell.lean: unless ← nap (start + socketWaitCapMs) 30 do
 Linger/App/Shell.lean: unless ← nap deadline 5 do
 Linger/App/Shell.lean: let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] (-1)
-Linger/App/Shell.lean: unless ← nap heldUntil 20 do
+Linger/App/Shell.lean: discard <| nap (first + Wait.heldNameMs) 20
 Linger/App/Shell.lean: unless ← nap deadline 20 do
 Linger/Import/Shell.lean: unless ← Os.Shell.nap deadline 10 do
 Linger/Import/Shell.lean: unless ← Os.Shell.nap deadline 10 do
@@ -1795,9 +1809,9 @@ Linger/Session/Shell/Client.lean: let revs ← poll #[fd] #[POLLIN] silenceMs
 Linger/Session/Shell/Client.lean: let ready ← poll fds events 200
 Linger/Session/Shell/Client.lean: let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] 200
 Linger/Session/Shell/Daemon.lean: unless ← nap tellAt 10 do
+Linger/Session/Shell/Daemon.lean: unless ← nap deadline step do
 Linger/Session/Shell/Daemon.lean: let revs ← poll fds evts timeout
 Linger/Session/Shell/Daemon.lean: let revs ← poll fds (Array.replicate fds.size POLLOUT) (Int32.ofNat (min 100 (deadline - now)))
-Linger/Session/Shell/Daemon.lean: unless ← nap deadline step do
 Linger/Session/Shell/Daemon.lean: nap deadline 10
 Linger/Session/Shell/Inventory.lean: let revs ← poll #[fd] #[POLLIN] (Int32.ofNat (min 100 remaining))
 packages/os/Os/Shell.lean: def nap (deadline step : Nat) : IO Bool := do

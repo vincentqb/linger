@@ -10,7 +10,10 @@ import Linger.Target.Remote
 import Terminal.Render
 import Linger.Display.Listing
 import Linger.Display.View
+import Linger.App.Answer
+public import Linger.App.Spec
 import Linger.App.Commands
+import Linger.App.Wait
 import Os.Shell.Command
 import Linger.Session.Shell.Resume
 import Linger.Session.Shell.Record
@@ -41,21 +44,23 @@ open Linger.Session.Wire (Msg)
 stderr when `overview` cannot parse the arguments as listing options. -/
 private def usage : String := Linger.App.Commands.helpText
 
-/-- A command's usage error, its row of the command table (`Commands.usageLine`), and exit
-status 2. -/
-private def usageError (word : String) : IO UInt32 := do
+/-- A command's usage error, its row of the command table (`Commands.usageLine`), and the
+answer `usage`. -/
+private def usageError (word : String) : IO Answer := do
   if let some command := Linger.App.Commands.lookup word then
     IO.eprintln (Linger.App.Commands.usageLine command)
-  return 2
+  return .usage
 
-/-- A removed command's word: what to use instead (`Commands.retired`), and exit status 2. -/
-private def retiredCommand (word : String) : IO UInt32 := do
+/-- A removed command's word: what to use instead (`Commands.retired`), and the answer
+`usage`. -/
+private def retiredCommand (word : String) : IO Answer := do
   if let some advice := Linger.App.Commands.retired.lookup word then
     IO.eprintln s!"linger: {word} was removed: {advice}"
-  return 2
+  return .usage
 
 /-- What `linger help` prints after the commands: the seven statuses a session can show, which
-of them titles and `ls --summary` count, and the exit statuses every command shares. -/
+of them titles and `ls --summary` count, and the exit statuses every command shares, one line
+per answer (`Answer.legend`). -/
 private def helpFooter : String :=
   let glyphs :=
     String.intercalate " "
@@ -64,9 +69,8 @@ private def helpFooter : String :=
   String.intercalate "\n"
     (["", "Statuses"] ++ Linger.Display.Status.legend.map ("  " ++ ·) ++
       [s!"Titles and ls --summary count {glyphs}", "",
-        "Exit status: the program's own, when the command waits for it to end; otherwise",
-        "0 done, 1 refused or failed, 2 usage, 124 timed out, 125 linger failed, 126 cannot run,",
-        "127 not found, 130 interrupted"])
+        "Exit statuses: the program's own, when the command waits for it to end; otherwise"] ++
+      Answer.legend.map ("  " ++ ·))
 
 /-- Start `name`'s daemon detached, running this executable as `__daemon name cwd cmd...`
 with its output appended to `Paths.logPath`. Returns the daemon's pid once that program
@@ -124,7 +128,7 @@ private def daemonRequest (report : String) : IO Daemon.Request := do
   return { take, tell }
 
 /-- The daemon `start` began. It reports what it did once, and a failure before that is reported
-too: as `running` when a live session took the name first, else as a failure, 125. -/
+too: as `running` when a live session took the name first, else as linger's own failure. -/
 private def serveStart (report name cwd : String) (argv : List String) : IO Unit := do
   let req ← daemonRequest report
   let told ← IO.mkRef false
@@ -141,7 +145,7 @@ private def serveStart (report name cwd : String) (argv : List String) : IO Unit
         close fd
         tell .running
       | none =>
-        tell (.failed 125 err.toString.toUTF8.toList)
+        tell (.failed Answer.failed.code.toUInt8 err.toString.toUTF8.toList)
     throw err
 
 /-- How long `start` waits for its daemon's report. -/
@@ -155,11 +159,11 @@ private def takeReport (path : String) : IO (Option (Option Linger.Session.Start
   IO.FS.removeFile path
   return some (Linger.Session.Start.Report.decode bytes.toList)
 
-/-- A command named a session that does not exist: say so and return 127, which a shell reports
-for a command it cannot find. -/
-private def noSession (name : String) : IO UInt32 := do
+/-- A command named a session that does not exist: say so and answer `notFound`, as a shell
+does for a command it cannot find. -/
+private def noSession (name : String) : IO Answer := do
   IO.eprintln s!"linger: no session '{name}'"
-  return 127
+  return .notFound
 
 /-- How a command's wait for the daemon it began ended. -/
 private inductive Waited where
@@ -205,9 +209,9 @@ private def beginRequest (report log : String) (args : List String) : IO UInt32 
     discard <| takeTicket report
     throw err
 
-/-- What `start` says when a session holds the name, 1: that it is running, or for a saved one
-whether its program ended. -/
-private def startRefused (name : String) (saved : Bool) : IO UInt32 := do
+/-- What `start` says when a session holds the name, `notDone`: that it is running, or for a saved
+one whether its program ended. -/
+private def startRefused (name : String) (saved : Bool) : IO Answer := do
   if saved then
     let record := (← (Record.load name).toBaseIO).toOption.join
     match record.bind Linger.Session.Record.decode with
@@ -220,18 +224,18 @@ private def startRefused (name : String) (saved : Bool) : IO UInt32 := do
           s!"linger: session '{name}' is saved; attach to resume it, or kill it to discard it"
   else
     IO.eprintln s!"linger: session '{name}' is running"
-  return 1
+  return .notDone
 
-/-- `start`'s status once its wait ended: 0 exactly when the program runs (`Start.answer`); 1,
-saying which session holds the name, for a refusal (`startRefused`); for a program that could not
-start, the status a shell or `env` reports; and 124 when the daemon did not answer in time, so it
-starts nothing. A report that is no report, or a daemon that ended without one, is linger's own
-failure, 125. -/
-private def startStatus (name log : String) (waited : Waited) : IO UInt32 := do
+/-- `start`'s answer once its wait ended: `done` exactly when the program runs (`Start.answer`);
+`notDone`, saying which session holds the name, for a refusal (`startRefused`); for a program that
+could not start, the answer whose status a shell or `env` reports; and `timedOut` when the daemon
+did not answer in time, so it starts nothing. A report that is no report, or a daemon that ended
+without one, is linger's own failure. -/
+private def startStatus (name log : String) (waited : Waited) : IO Answer := do
   match Linger.Session.Start.answer (waited matches .took _) (waited matches .told (some .started)),
     waited with
   | .started, _ =>
-    return 0
+    return .done
   | .notStarted, .told (some .running) =>
     startRefused name false
   | .notStarted, .told (some .saved) =>
@@ -239,36 +243,36 @@ private def startStatus (name log : String) (waited : Waited) : IO UInt32 := do
   | .notStarted, .told (some (.failed status why)) =>
     do
       IO.eprintln s!"linger: session '{name}' did not start: {Client.replyText "no reason" why}"
-      return status.toUInt32
+      return Answer.ofCode status.toUInt32
   | .notStarted, .told none =>
     do
       IO.eprintln s!"linger: session '{name}' did not start: the daemon's report is unreadable"
-      return 125
+      return .failed
   | .notStarted, .took true =>
     do
       IO.eprintln
           s!"linger: session '{name}' did not start: its daemon did not answer within \
         {startWaitMs / 1000} s, so it starts nothing (see {log})"
-      return 124
+      return .timedOut
   | .notStarted, .took false =>
     do
       IO.eprintln s!"linger: session '{name}' did not start: its daemon ended first (see {log})"
-      return 125
+      return .failed
   | .notStarted, _ =>
     do
       IO.eprintln
           s!"linger: session '{name}': its daemon ended without saying whether it started \
         (see {log})"
-      return 125
+      return .failed
 
 /-- `start`: run `argv` exactly, with no shell, in a new session named `name`, in this directory
 and with this environment, and return once the program runs. A live or saved session, an ended
 one included, that holds the name is refused, saying which, and never resumed (`Start.plan`);
-the daemon decides again holding the name. A program that cannot start returns what a shell or
-`env` reports, 125 for its directory, 127 when not found and 126 when not runnable, and leaves
-no session, checkpoint or record behind. A daemon that does not answer within `startWaitMs`
-starts nothing, and `start` says so, 124. -/
-private def cmdStart (name : String) (argv : List String) : IO UInt32 := do
+the daemon decides again holding the name. A program that cannot start answers as a shell or
+`env` reports it, `failed` for its directory, `notFound` when not found and `cannotRun` when not
+runnable, and leaves no session, checkpoint or record behind. A daemon that does not answer
+within `startWaitMs` starts nothing, and `start` says so, `timedOut`. -/
+private def cmdStart (name : String) (argv : List String) : IO Answer := do
   let live ←
     match ← Client.connect name with
     | some fd =>
@@ -307,7 +311,7 @@ private def serveResume (report name cwd : String) : IO Unit := do
         close fd
         tell .running
       | none =>
-        tell (.failed 125 err.toString.toUTF8.toList)
+        tell (.failed Answer.failed.code.toUInt8 err.toString.toUTF8.toList)
     throw err
 
 /-- A resumed session whose directory is gone runs in `$HOME`: say where it runs and where it was
@@ -318,54 +322,56 @@ private def sayMoved (name : String) : IO Unit := do
       let ran := (info.lookup "start_dir").getD "$HOME"
       IO.eprintln s!"linger: session '{name}' resumed in {ran}: its directory {saved} is gone"
 
-/-- `resume`'s status once its wait ended: 0 exactly when the program runs (`Start.answer`), again,
-saying where when its directory is gone, or in a live session that already runs it; 127, as for
-a session that does not exist, when no session holds the name; for a saved session that cannot
-be read or a program that cannot start, 1 or what a shell or `env` reports; and 124 when the
-daemon did not answer in time, so it starts nothing. A report that is no report, or a daemon that
-ended without one, is linger's own failure, 125. -/
-private def resumeStatus (name log : String) (waited : Waited) : IO UInt32 := do
+/-- `resume`'s answer once its wait ended: `done` exactly when the program runs (`Start.answer`),
+again, saying where when its directory is gone, or in a live session that already runs it;
+`notFound`, as for a session that does not exist, when no session holds the name; for a saved
+session that cannot be read or a program that cannot start, `notDone` or the answer whose status
+a shell or `env` reports; and `timedOut` when the daemon did not answer in time, so it starts
+nothing. A report that is no report, or a daemon that ended without one, is linger's own
+failure. -/
+private def resumeStatus (name log : String) (waited : Waited) : IO Answer := do
   let runs := waited matches .told (some .started) || waited matches .told (some .running)
   match Linger.Session.Start.answer (waited matches .took _) runs, waited with
   | .started, .told (some .started) =>
     do
       sayMoved name
-      return 0
+      return .done
   | .started, _ =>
-    return 0
-  | .notStarted, .told (some (.failed 127 _)) =>
-    noSession name
+    return .done
   | .notStarted, .told (some (.failed status why)) =>
-    do
-      IO.eprintln s!"linger: session '{name}' did not resume: {Client.replyText "no reason" why}"
-      return status.toUInt32
+    if Answer.ofCode status.toUInt32 == .notFound then
+      noSession name
+    else
+      do
+        IO.eprintln s!"linger: session '{name}' did not resume: {Client.replyText "no reason" why}"
+        return Answer.ofCode status.toUInt32
   | .notStarted, .told _ =>
     do
       IO.eprintln s!"linger: session '{name}' did not resume: the daemon's report is unreadable"
-      return 125
+      return .failed
   | .notStarted, .took true =>
     do
       IO.eprintln
           s!"linger: session '{name}' did not resume: its daemon did not answer within \
         {startWaitMs / 1000} s, so it starts nothing (see {log})"
-      return 124
+      return .timedOut
   | .notStarted, .took false =>
     do
       IO.eprintln s!"linger: session '{name}' did not resume: its daemon ended first (see {log})"
-      return 125
+      return .failed
   | .notStarted, .silent =>
     do
       IO.eprintln
           s!"linger: session '{name}': its daemon ended without saying whether it resumed \
         (see {log})"
-      return 125
+      return .failed
 
 /-- `resume`: run a saved session's program again, an ended session's included, in its saved
 directory and on its last screen, without attaching, and return once it runs. A live session is
 left as it is, and a name no session holds starts nothing (`Start.resumePlan`); the daemon decides
 again holding the name. A daemon that does not answer within `startWaitMs` starts nothing, and
-`resume` says so, 124. -/
-private def cmdResume (name : String) : IO UInt32 := do
+`resume` says so, `timedOut`. -/
+private def cmdResume (name : String) : IO Answer := do
   let live ←
     match ← Client.connect name with
     | some fd =>
@@ -377,7 +383,7 @@ private def cmdResume (name : String) : IO UInt32 := do
   let saved ← System.FilePath.pathExists (← Paths.ckptPath name)
   match Linger.Session.Start.resumePlan live saved with
   | .running =>
-    return 0
+    return .done
   | .missing =>
     noSession name
   | .resume =>
@@ -414,10 +420,10 @@ private def connectUpsert (name : String) (cmd : List String) : IO UInt32 := do
       throw (IO.userError s!"daemon for '{name}' did not come up (see {log})")
 
 /-- Reject an operand that is neither an exact name nor a well-formed `name@host` target:
-print the name rule and return exit status 2. -/
-private def invalidTarget : IO UInt32 := do
+print the name rule and answer `usage`. -/
+private def invalidTarget : IO Answer := do
   IO.eprintln s!"linger: invalid session name or malformed name@host target (use {Paths.nameRule})"
-  return 2
+  return .usage
 
 /-- One transport boundary for all session verbs. SSH hands a command string to the login
 shell of the remote account, whichever shell that is; `Remote.command` spells the verb and every
@@ -426,9 +432,9 @@ remote linger routes exactly the original argv (`command_exact`). Encoding doubl
 length, and a Linux host takes a command line of at most 128 KiB, so `send name@host -`,
 whose inherited stdin stays byte-exact, carries longer text. The remote linger reads an attach
 or capture target with `targetArgs`, so it travels as `targetOperands`; the other verbs take it
-by position. -/
+by position. SSH's status, the remote command's, is the answer of a remote target. -/
 private def runTarget (verb : String) (target : Linger.Target.Remote.Target) (args : List String)
-    (localAction : String → IO UInt32) (options : List String := []) : IO UInt32 := do
+    (localAction : String → IO Answer) (options : List String := []) : IO Answer := do
   let interactive := verb == "attach"
   if interactive && (!(← stdinIsTty) || !(← (← IO.getStdout).isTty)) then
     throw
@@ -449,15 +455,15 @@ private def runTarget (verb : String) (target : Linger.Target.Remote.Target) (ar
                 Linger.Target.Remote.command verb (options ++ operands ++ args)],
             stdin := .inherit }
     try
-      child.wait
+      return .program (← child.wait)
     finally
       if interactive then
         writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
 
 /-- Run `verb` through `runTarget` once `Remote.parseTarget` accepts the operand; a
-malformed operand returns `invalidTarget`'s status 2 without connecting. -/
+malformed operand answers `usage` (`invalidTarget`) without connecting. -/
 private def withTarget (verb target : String) (args : List String)
-    (localAction : String → IO UInt32) (options : List String := []) : IO UInt32 :=
+    (localAction : String → IO Answer) (options : List String := []) : IO Answer :=
   match Linger.Target.Remote.parseTarget target with
   | none => invalidTarget
   | some parsed => runTarget verb parsed args localAction options
@@ -570,24 +576,30 @@ private def summaryText : IO String := do
       (rows.map fun info => Linger.Display.Status.ofName ((info.lookup "status").getD "unknown"))
 
 /-- `ls --summary`: print `summaryText`, or nothing when no local session needs
-attention; exit 0 either way. -/
-private def cmdSummary : IO UInt32 := do
+attention; `done` either way. -/
+private def cmdSummary : IO Answer := do
   let summary ← summaryText
   if !summary.isEmpty then
     IO.println summary
-  return 0
+  return .done
 
-/-- The exit status when no daemon answered for `name` and nothing saved could be read: 1 if a
-checkpoint exists that will not load, else 127, as for a session that does not exist. -/
-private def missingOrUnreadable (name : String) : IO UInt32 := do
-  return if ← System.FilePath.pathExists (← Paths.ckptPath name) then 1 else 127
+/-- The answer when no daemon answered for `name` and nothing saved could be read: `notDone` if
+a checkpoint exists that will not load, else `notFound`, as for a session that does not exist. -/
+private def missingOrUnreadable (name : String) : IO Answer := do
+  return if ← System.FilePath.pathExists (← Paths.ckptPath name) then .notDone else .notFound
+
+/-- The answer that tells how a session's program ended, as its daemon reported it
+(`Answer.ofOutcome`); an older daemon's status is the program's. -/
+private def endingAnswer : Client.Ending → Answer
+  | .outcome outcome => Answer.ofOutcome outcome
+  | .status status => .program status
 
 /-- A live connection is authoritative. Only read-only attachment can view an
 offline checkpoint, loaded with its end record while owning both resources and displayed after
 releasing them, under the status the listing shows for it. Writable attachment keeps the
 create/resume path, which resumes an ended session too. Live titles sample `summaryText` in this
 process. -/
-private def cmdAttach (name : String) (cmd : List String) (readOnly : Bool) : IO UInt32 := do
+private def cmdAttach (name : String) (cmd : List String) (readOnly : Bool) : IO Answer := do
   let result ←
     if readOnly then
       match ← Client.connect name with
@@ -609,22 +621,22 @@ private def cmdAttach (name : String) (cmd : List String) (readOnly : Bool) : IO
   match result with
   | .ended ending =>
     IO.eprintln s!"\r\nlinger: session '{name}' ended ({ending.describe})"
-    return ending.exitStatus
+    return endingAnswer ending
   | .detached =>
     IO.eprintln s!"\r\nlinger: detached from '{name}'"
-    return 0
+    return .done
   | .refused msg =>
     IO.eprintln s!"\r\nlinger: {msg}"
-    return 1
+    return .notDone
   | .lost why =>
     IO.eprintln s!"\r\nlinger: {why} for '{name}'"
-    return 1
+    return .notDone
 
 /-- `ls`: local rows, then each remote host's rows named `name@host`, printed as
 `k<TAB>v` records separated by blank lines (`porcelain`) or as the terminal listing.
-Remote rows keep only name, command, state and status. Returns 130 when a signal
+Remote rows keep only name, command, state and status. Answers `interrupted` when a signal
 cancels the remote queries. -/
-private def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
+private def cmdList (porcelain : Bool) (remotes : List String) : IO Answer := do
   let (locals, remote) ←
     if remotes.isEmpty then
       pure (← localRows, some #[])
@@ -637,7 +649,7 @@ private def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
           pure (locals, remote)
         finally
           discard <| IO.wait task
-  let some remote := remote | return 130
+  let some remote := remote | return .interrupted
   let mut rows := locals
   for (host, output) in remotes.zip remote.toList do
     for row in Linger.Target.Remote.parse output do
@@ -667,7 +679,7 @@ private def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
         (fun info => Linger.Display.Status.ofName ((info.lookup "status").getD "")) rows
     writeAll stdoutFd
         (ByteArray.mk (Linger.Display.Listing.terminalListing withColor ordered).toArray)
-  return 0
+  return .done
 
 /-- Parse the `ls` argument set: an optional `--porcelain` and an
 optional `-r`/`--remote [hosts]`, in any order. `-r` followed by a
@@ -684,12 +696,12 @@ def parseLs : List String → Option (Bool × Option (List String))
     | [] => some (false, some [])
   | _ => none
 
-/-- Exit status of a one-shot request: 0 when the daemon completed it with `done`,
-otherwise 1 after printing why it did not complete. -/
-private def requestStatus (name : String) (result : Client.Drained) : IO UInt32 := do
+/-- The answer to a one-shot request: `done` when the daemon completed it with `done`,
+otherwise `notDone` after printing why it did not complete. -/
+private def requestStatus (name : String) (result : Client.Drained) : IO Answer := do
   match result with
   | .done =>
-    return 0
+    return .done
   | .refused why =>
     IO.eprintln s!"linger: {why}"
   | .lost why =>
@@ -698,11 +710,11 @@ private def requestStatus (name : String) (result : Client.Drained) : IO UInt32 
     IO.eprintln s!"linger: session '{name}' ended before the request completed ({ending.describe})"
   | .silent =>
     IO.eprintln s!"linger: no reply from '{name}'"
-  return 1
+  return .notDone
 
 /-- One request to a live session, given up after `Client.replySilenceMs` of silence, as every
 one-shot request is (`Client.oneShot`). -/
-private def requireLive (name : String) (m : Msg) : IO UInt32 := do
+private def requireLive (name : String) (m : Msg) : IO Answer := do
   match ← Client.oneShot name m with
   | none =>
     noSession name
@@ -710,15 +722,15 @@ private def requireLive (name : String) (m : Msg) : IO UInt32 := do
     requestStatus name result
 
 /-- Like `requireLive`, but delivers `ms` without awaiting a reply: `send` text. -/
-private def requireLiveSend (name : String) (ms : List Msg) : IO UInt32 := do
+private def requireLiveSend (name : String) (ms : List Msg) : IO Answer := do
   if ← Client.sendOnly name ms then
-    return 0
+    return .done
   noSession name
 
 /-- A connected daemon is authoritative, including its errors. Only an absent
 connection followed by successful ownership acquisition permits an offline read.
 Hold both locks through loading and rendering; never start or modify a session. -/
-private def cmdRead (name : String) (m : Msg) (render : Terminal.Vt.Vt → List UInt8) : IO UInt32 :=
+private def cmdRead (name : String) (m : Msg) (render : Terminal.Vt.Vt → List UInt8) : IO Answer :=
   do
   match ← Client.oneShot name m with
   | some result =>
@@ -728,7 +740,7 @@ private def cmdRead (name : String) (m : Msg) (render : Terminal.Vt.Vt → List 
         match ← Resume.loadCkpt name with
         | some (vt, _, _) =>
           writeAll stdoutFd (ByteArray.mk (render vt).toArray)
-          return 0
+          return .done
         | none =>
           IO.eprintln s!"linger: no live session or readable checkpoint for '{name}'"
           missingOrUnreadable name
@@ -740,10 +752,10 @@ cannot carry (agent-cli Decision 5). Poll-then-read so EOF (`read` = `none`)
 is distinguished from would-block (`some #[]`, looped past) without spinning;
 no timeout on purpose — a slow producer feeding a pipe is legitimate, and every event the loop
 answers, input, a reply or either side closing, wakes the poll. Stdin EOF
-returns 0, and a missing session 127; a refusal, an invalid reply, the session's exit or a
-lost connection returns 1. Nothing accumulates (each chunk is sent and dropped), so no
-`Buf` is involved. -/
-private def cmdSendStdin (name : String) : IO UInt32 := do
+answers `done`, and a missing session `notFound`; a refusal, an invalid reply, the session's exit
+or a lost connection answers `notDone`. Nothing accumulates (each chunk is sent and dropped), so
+no `Buf` is involved. -/
+private def cmdSendStdin (name : String) : IO Answer := do
   match ← Client.connect name with
   | none =>
     noSession name
@@ -757,26 +769,26 @@ private def cmdSendStdin (name : String) : IO UInt32 := do
           match ← read fd 65536 with
           | none =>
             IO.eprintln s!"linger: connection lost for '{name}'"
-            return 1
+            return .notDone
           | some bs =>
             if !bs.isEmpty then
               let (dec', msgs) := dec.feed bs.toList
               dec := dec'
               if dec.errored then
                 IO.eprintln s!"linger: invalid response from daemon for '{name}'"
-                return 1
+                return .notDone
               for m in msgs do
                 match m with
                 | .err msg =>
                   IO.eprintln s!"linger: {Client.replyText "request refused" msg}"
-                  return 1
+                  return .notDone
                 | .ended outcome =>
                   let ending := Client.Ending.outcome outcome
                   IO.eprintln s!"linger: session '{name}' ended while sending ({ending.describe})"
-                  return 1
+                  return .notDone
                 | .exited status =>
                   IO.eprintln s!"linger: session '{name}' ended while sending (status {status})"
-                  return 1
+                  return .notDone
                 | _ =>
                   pure ()
         if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
@@ -786,19 +798,18 @@ private def cmdSendStdin (name : String) : IO UInt32 := do
           | some bs =>
             for m in Linger.Session.Wire.inputFrames bs.toList do
               Client.sendMsg fd m
-      return 0
+      return .done
     finally
       close fd
 
-/-- Return the status a shell would report for the ending, saying on stderr when a signal killed
-the program or how it ended is unknown. -/
-private def reportEnding (name : String) (ending : Client.Ending) : IO UInt32 := do
+/-- Say on stderr how the session's program ended when a signal killed it or how it ended is
+unknown; an exit status says the rest. -/
+private def sayEnding (name : String) (ending : Client.Ending) : IO Unit := do
   match ending with
   | .outcome (.exited _) | .status _ =>
     pure ()
   | .outcome _ =>
     IO.eprintln s!"linger: session '{name}' ended ({ending.describe})"
-  return ending.exitStatus
 
 /-- What answers for a name when no daemon does. -/
 private inductive Unanswered where
@@ -822,20 +833,39 @@ private def unanswered (name : String) : IO Unanswered := do
       return .held err.toString
   return .recorded (Linger.Session.Record.answer (← IO.ofExcept loaded))
 
-/-- How long `wait` keeps trying a name that another process holds while no daemon answers on
-it, as while a daemon starts or ends: past an ending daemon's drain and its program's stop. -/
-private def heldNameMs : Nat := Daemon.drainTimeoutMs + 5000
+/-- One look at `name` for `wait` (`Wait.Heard`): its daemon's reply, given up after `silenceMs`
+of silence, or, with no daemon to answer, its end record or that another process holds it; with
+why, for a refusal or a held name. -/
+private def hear (name : String) (silenceMs : Int32) : IO (Wait.Heard × String) := do
+  match ← Client.oneShot name .wait (untilDone := false) (silenceMs := silenceMs) with
+  | some (.exited (.outcome outcome)) =>
+    return (.ended outcome, "")
+  | some (.exited (.status status)) =>
+    return (.status status, "")
+  | some .silent =>
+    return (.silent, "")
+  | some (.refused why) =>
+    return (.refused, why)
+  | some .done =>
+    return (.refused, s!"no exit status from '{name}'")
+  | some (.lost _) | none =>
+    match ← unanswered name with
+    | .recorded answer =>
+      return (.recorded answer, "")
+    | .held why =>
+      return (.held, why)
 
-/-- `wait`: block until the session's program ends and return the status a shell would report
-for it (`reportEnding`). With no daemon to answer, the name's end record does once nothing else
-holds the name: how the last session's program ended, or 127, as a shell's `wait` reports an
-unknown job, when no session has taken the name. A daemon lost during the wait leaves its own
-record, never an older one. With a `deadline` on the monotonic clock, 124 once it has passed and
-the session is still running, as `timeout(1)` reports, leaving the session as it is. linger's
-own failures, a refusal, a reply without a status or a name held past `heldNameMs`, print a
-diagnostic and return 125. -/
-private def cmdWait (deadline : Option Nat) (name : String) : IO UInt32 := do
-  let heldUntil := (← monotonicMs) + heldNameMs
+/-- `wait`: block until the session's program ends and answer as `Wait.decide` does with what
+each look hears, saying why on stderr when that is not the program's own exit. The program's
+ending comes from its daemon or, with no daemon to answer, from the name's end record once
+nothing else holds the name; `notFound`, as a shell's `wait` reports an unknown job, when no
+session has taken the name. A daemon lost during the wait leaves its own record, never an older
+one. With a `deadline` on the monotonic clock, `timedOut` once it has passed and the session is
+still running, as `timeout(1)` reports, leaving the session as it is. A refusal answers
+`notDone`; that linger could not find out, only for an unknown ending or a name held with no
+daemon answering for `Wait.heldNameMs`, from the look that first found it so. -/
+private def cmdWait (deadline : Option Nat) (name : String) : IO Answer := do
+  let mut heldSince : Option Nat := none
   repeat
     -- a silence budget ends a held wait when the time is up; `Int32` bounds one round of it
     let now ← monotonicMs
@@ -843,32 +873,27 @@ private def cmdWait (deadline : Option Nat) (name : String) : IO UInt32 := do
       match deadline with
       | some limit => Int32.ofNat (min (limit - now) 2147483647)
       | none => -1
-    match ← Client.oneShot name .wait (untilDone := false) (silenceMs := silenceMs) with
-    | some (.exited ending) =>
-      return ← reportEnding name ending
-    | some .silent =>
-      pure ()
-    | some (.refused why) =>
-      IO.eprintln s!"linger: {why}"
-      return 125
-    | some .done =>
-      IO.eprintln s!"linger: no exit status from '{name}'"
-      return 125
-    | some (.lost _) | none =>
-      match ← unanswered name with
-      | .recorded none =>
-        IO.eprintln s!"linger: no session '{name}'"
-        return 127
-      | .recorded (some outcome) =>
-        return ← reportEnding name (.outcome outcome)
-      | .held why =>
-        unless ← nap heldUntil 20 do
-          IO.eprintln s!"linger: no answer for '{name}': {why}"
-          return 125
-    if let some limit := deadline then
-      if (← monotonicMs) ≥ limit then
+    let (heard, why) ← hear name silenceMs
+    match Wait.decide deadline heldSince (← monotonicMs) heard with
+    | .answer answer =>
+      match answer, heard with
+      | .timedOut, _ =>
         IO.eprintln s!"linger: timed out waiting for '{name}'"
-        return 124
+      | _, .ended outcome | _, .recorded (some outcome) =>
+        sayEnding name (.outcome outcome)
+      | _, .recorded none =>
+        IO.eprintln s!"linger: no session '{name}'"
+      | _, .refused =>
+        IO.eprintln s!"linger: {why}"
+      | _, .held =>
+        IO.eprintln s!"linger: no answer for '{name}': {why}"
+      | _, _ =>
+        pure ()
+      return answer
+    | .again since =>
+      heldSince := since
+      if let some first := since then
+        discard <| nap (first + Wait.heldNameMs) 20
 
 /-- Milliseconds in `text`, a number of seconds such as `timeout(1)` takes: digits, a point and
 digits, or both, counting at most three decimals. -/
@@ -895,28 +920,29 @@ private def secondsText (ms : Nat) : String :=
   let millis := toString (ms % 1000)
   s!"{ms / 1000}.{"".pushn '0' (3 - millis.length)}{millis}"
 
-/-- `wait` for each named session in turn and return the last one's status, as a shell's `wait`
+/-- `wait` for each named session in turn and give the last one's answer, as a shell's `wait`
 does with several jobs. With a time limit in milliseconds, all of them share one deadline, and
-124 means it passed. -/
-private def waitAll (names : List String) (limit : Option Nat) : IO UInt32 := do
+`timedOut` means it passed. -/
+private def waitAll (names : List String) (limit : Option Nat) : IO Answer := do
   if names.isEmpty then
     return ← usageError "wait"
   let some targets := names.mapM Linger.Target.Remote.parseTarget | invalidTarget
   let deadline ←
     limit.mapM fun ms => do
         return (← monotonicMs) + ms
-  let mut rc : UInt32 := 0
+  let mut answer : Answer := .done
   for target in targets do
     let now ← monotonicMs
     let options :=
       match deadline with
       | some due => ["--timeout", secondsText (due - now)]
       | none => []
-    rc ← runTarget "wait" target [] (cmdWait deadline) options
+    answer ← runTarget "wait" target [] (cmdWait deadline) options
+    -- a remote wait's answer is its status, so the codes tell whether its time ran out
     if let some due := deadline then
-      if rc == 124 && (← monotonicMs) ≥ due then
-        return 124
-  return rc
+      if answer.code == Answer.timedOut.code && (← monotonicMs) ≥ due then
+        return answer
+  return answer
 
 /-- Whether `name` had a checkpoint, which this discards. -/
 private def dropSaved (name : String) : IO Bool := do
@@ -937,19 +963,20 @@ private def discardSaved (name : String) : IO (Except String Bool) := do
   return .ok (← IO.ofExcept discarded)
 
 /-- `kill`: end the session and return once it has ended. Its daemon stops the program (SIGHUP to
-its terminal session, then SIGKILL after a second), records how it ended and gives the name up.
-With no daemon, a saved session is discarded instead, an ended one included, whose end record
-stays for `wait` and `info`. No session returns 127; a refusal, a name another process holds,
-or a session that has not ended within `heldNameMs`, prints a diagnostic and returns 1. -/
-private def cmdKill (name : String) : IO UInt32 := do
+its terminal session, then SIGKILL after a second), tells whoever is attached or waiting how it
+ended, records that and gives the name up. With no daemon, a saved session is discarded instead,
+an ended one included, whose end record stays for `wait` and `info`. No session answers
+`notFound`; a refusal, a name another process holds, or a session that has not ended within
+`Wait.heldNameMs`, prints a diagnostic and answers `notDone`. -/
+private def cmdKill (name : String) : IO Answer := do
   match ← Client.oneShot name .kill with
   | some (.refused why) =>
     IO.eprintln s!"linger: {why}"
-    return 1
+    return .notDone
   | some _ =>
     -- the session has ended once its daemon gives the name up, which it does after recording
     -- how the program ended and removing its socket
-    let deadline := (← monotonicMs) + heldNameMs
+    let deadline := (← monotonicMs) + Wait.heldNameMs
     repeat
       let released ←
         try
@@ -957,24 +984,24 @@ private def cmdKill (name : String) : IO UInt32 := do
         catch _ =>
           pure false
       if released then
-        return 0
+        return .done
       unless ← nap deadline 20 do
         IO.eprintln s!"linger: session '{name}' has not ended"
-        return 1
+        return .notDone
   | none =>
     match ← discardSaved name with
     | .ok true =>
-      return 0
+      return .done
     | .ok false =>
       noSession name
     | .error why =>
       IO.eprintln s!"linger: {why}"
-      return 1
+      return .notDone
 
 /-- `info`: the live session's fields; with no daemon to answer, the name and how the program of
-the last session to hold it ended, from the name's end record. No session returns 127; a refusal
-or a failed reply prints a diagnostic and returns 1. -/
-private def cmdInfo (name : String) : IO UInt32 := do
+the last session to hold it ended, from the name's end record. No session answers `notFound`; a
+refusal or a failed reply prints a diagnostic and answers `notDone`. -/
+private def cmdInfo (name : String) : IO Answer := do
   match ← Client.oneShot name .info with
   | some result =>
     requestStatus name result
@@ -983,47 +1010,47 @@ private def cmdInfo (name : String) : IO UInt32 := do
     | .recorded (some outcome) =>
       for (k, v) in ("name", name) :: Linger.Session.outcomeFields outcome do
         IO.println s!"{k}\t{v}"
-      return 0
+      return .done
     | .recorded none =>
       noSession name
     | .held why =>
       IO.eprintln s!"linger: no answer for '{name}': {why}"
-      return 1
+      return .notDone
 
 /-- `get`: print the session's labels as `key=value` lines from one info reply. No session
-returns 127, and a failed reply prints a diagnostic and returns 1. -/
-private def cmdGet (name : String) : IO UInt32 := do
+answers `notFound`, and a failed reply prints a diagnostic and answers `notDone`. -/
+private def cmdGet (name : String) : IO Answer := do
   match ← queryInfo name with
   | none =>
     noSession name
   | some (.error err) =>
     IO.eprintln s!"linger: {err} for '{name}'"
-    return 1
+    return .notDone
   | some (.ok info) =>
     for (k, v) in info do
       if k.startsWith "label." then
         IO.println s!"{(k.drop 6).toString}={v}"
-    return 0
+    return .done
 
 /-- `version`: print `linger` and `Mediation.versionNumber`, which sessions also see as
 `TERM_PROGRAM_VERSION`, then the socket and state directories this environment resolves. -/
-private def cmdVersion : IO UInt32 := do
+private def cmdVersion : IO Answer := do
   IO.println s!"linger {Terminal.Mediation.versionNumber}"
   IO.println s!"sockets: {← Paths.socketDir}"
   IO.println s!"state:   {← Paths.stateDir}"
-  return 0
+  return .done
 
 /-- Execute a validated listing request. -/
-private def overview (args : List String) : IO UInt32 := do
+private def overview (args : List String) : IO Answer := do
   match parseLs args with
   | some (porcelain, remoteFlag) =>
     cmdList porcelain (← resolveRemotes remoteFlag)
   | none =>
     IO.eprintln usage
-    return 2
+    return .usage
 
 /-- An optional `--read-only`, then the target as `Remote.targetArgs` reads it. -/
-private def attachArgs (args : List String) : IO UInt32 := do
+private def attachArgs (args : List String) : IO Answer := do
   let readOnly := args.head? == some "--read-only"
   let args := if readOnly then args.tail else args
   let some (name, cmd) := Linger.Target.Remote.targetArgs args |
@@ -1031,10 +1058,10 @@ private def attachArgs (args : List String) : IO UInt32 := do
       return ← usageError "attach"
   if readOnly && !cmd.isEmpty then
     IO.eprintln "linger: read-only attach does not accept a command"
-    return 2
+    return .usage
   withTarget "attach" name cmd (cmdAttach · cmd readOnly) (if readOnly then ["--read-only"] else [])
 
-private def captureArgs (args : List String) : IO UInt32 := do
+private def captureArgs (args : List String) : IO Answer := do
   let history := args.head? == some "--history"
   let args := if history then args.tail else args
   let some (name, []) := Linger.Target.Remote.targetArgs args |
@@ -1045,21 +1072,25 @@ private def captureArgs (args : List String) : IO UInt32 := do
         (if history then Terminal.Render.history else Terminal.Render.screenText))
       (if history then ["--history"] else [])
 
-/-- Run one session command and return its exit status: 2 for a usage error or invalid
-target, otherwise the verb's own status. `Main` routes interactive selection and tmux
-interchange elsewhere; `__daemon` runs a session's daemon in this process. -/
-def main (args : List String) : IO UInt32 := do
+/-- The worse of two answers to one command's requests, as its exit status should tell: the one
+with the higher code. -/
+private def worse (a b : Answer) : Answer := if a.code < b.code then b else a
+
+/-- Run one session command and give its answer, whose code is its exit status: `usage` for a
+usage error or invalid target, otherwise the verb's own. `Main` routes interactive selection and
+tmux interchange elsewhere; `__daemon` runs a session's daemon in this process. -/
+def main (args : List String) : IO Answer := do
   match args with
   | "__daemon" :: name :: cwd :: cmd =>
     Daemon.serve name cwd cmd (← Resume.saver name) (Resume.dropCkpt name) (Resume.loadCkpt name)
         (recordFile name)
-    return 0
+    return .done
   | "__start" :: report :: name :: cwd :: argv =>
     serveStart report name cwd argv
-    return 0
+    return .done
   | ["__resume", report, name, cwd] =>
     serveResume report name cwd
-    return 0
+    return .done
   | ["resume", name] =>
     withTarget "resume" name [] cmdResume
   | "resume" :: _ =>
@@ -1095,7 +1126,7 @@ def main (args : List String) : IO UInt32 := do
       if Terminal.Vt.clampDim cols != cols || Terminal.Vt.clampDim rows != rows then
         do
           IO.eprintln "linger: size must be 1..1000 (the emulator clamps at 1000)"
-          return 2
+          return .usage
       else
         withTarget "resize" name [cs, rs]
             (requireLive · (.resize (UInt32.ofNat cols) (UInt32.ofNat rows)))
@@ -1116,18 +1147,18 @@ def main (args : List String) : IO UInt32 := do
     if kvs.isEmpty || kvs.any (fun pair => !pair.contains '=' || pair.startsWith "=") then
       return ← usageError "set"
     withTarget "set" name kvs fun name => do
-        let mut rc : UInt32 := 0
+        let mut answer : Answer := .done
         for kvp in kvs do
-          rc := max rc (← requireLive name (.labelSet kvp.toUTF8.toList))
-        return rc
+          answer := worse answer (← requireLive name (.labelSet kvp.toUTF8.toList))
+        return answer
   | "unset" :: name :: ks | "un" :: name :: ks =>
     if ks.isEmpty || ks.any (·.isEmpty) then
       return ← usageError "unset"
     withTarget "unset" name ks fun name => do
-        let mut rc : UInt32 := 0
+        let mut answer : Answer := .done
         for k in ks do
-          rc := max rc (← requireLive name (.labelUnset k.toUTF8.toList))
-        return rc
+          answer := worse answer (← requireLive name (.labelUnset k.toUTF8.toList))
+        return answer
   | ["clear", name] | ["cl", name] =>
     withTarget "clear" name [] (requireLive · .labelClear)
   | ["ls", "--summary"] | ["list", "--summary"] | ["l", "--summary"] =>
@@ -1136,7 +1167,7 @@ def main (args : List String) : IO UInt32 := do
     cmdVersion
   | ["help"] | ["h"] | ["--help"] | ["-h"] =>
     IO.println (usage ++ "\n" ++ helpFooter)
-    return 0
+    return .done
   -- Explicit listing forms reach this backend.
   | "ls" :: rest | "list" :: rest | "l" :: rest =>
     overview rest

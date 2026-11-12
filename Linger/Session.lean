@@ -41,6 +41,10 @@ first, as a terminal that hangs up sends, so a program can save its work, then S
 whatever outlives a second of it. -/
 def ending : List (UInt32 × Nat) := [(1, 1000), (9, 1000)]
 
+/-- How long a daemon lets a connection finish the bytes it owes once it closes it, and every
+connection once the session has ended: one grace period for both. -/
+def drainTimeoutMs : Nat := 3000
+
 /-- How long a daemon's poll sleeps, from the time now and the deadlines the daemon holds: until
 the earliest of them, at once for one already past, and for an event however long that takes,
 `-1`, when it holds none. A deadline beyond `Int32`'s range of milliseconds, about 24.8 days,
@@ -435,8 +439,10 @@ private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Pla
       (s,
         (s.clients.filter (·.attached) |>.map (fun c' => Effect.close c'.id)) ++ [.send c.id .done])
   | .kill =>
+    -- the program's end, which the runtime answers, ends the session (`.stopped`); the kill's
+    -- connection closes, so nothing it sent after the kill takes effect
     if c.attached && !c.sizer then (s, [.send c.id (.err "read-only".toUTF8.toList)])
-    else (s, [.killChild, .dropCheckpoint, .exit])
+    else (s, [.stopProgram, .close c.id])
   | .info =>
     if c.answered then (s, [.send c.id (.err "one request per read".toUTF8.toList)])
     else (s.setClient { c with answered := true }, infoMsgs c.id (infoText s))
@@ -491,6 +497,23 @@ private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Pla
   -- a tag this version does not know is a request it cannot serve, and is refused
   | .output _ | .exited _ | .ended _ | .infoReply _ | .done | .err _ => (s, [])
   | .unknown _ _ => (s, [.send c.id (.err "unknown message".toUTF8.toList)])
+
+/-- How a session ends once its program has ended this way, whether by itself or because the
+daemon stopped it: the scanner's pending bytes reach the attached clients, every client attached
+or waiting hears how the program ended and then the status a shell would report for it, every
+connection closes, `last` keeps or discards the session, and the daemon exits. -/
+private def conclude (s : State) (outcome : Outcome) (last : Effect Plan) :
+    State × List (Effect Plan) :=
+  let flushed := Terminal.Mediation.finish s.scanner
+  let s :=
+    { s with
+      exited := some outcome, scan := flushed.2 }
+  let flush := broadcast s flushed.1
+  let notify :=
+    s.clients.filter (fun c => c.attached || c.waiting) |>.flatMap
+      (fun c => [Effect.send c.id (.ended outcome), Effect.send c.id (.exited outcome.status)])
+  let closes := s.clients.map (fun c => Effect.close c.id)
+  (s, flush ++ notify ++ closes ++ [last, .exit])
 
 /-! ## The step function -/
 
@@ -586,18 +609,12 @@ def step (s : State) (ev : Event) : State × List (Effect Plan) :=
         lookSeq := if s.clients.any (·.attached) then s.outSeq + 1 else s.lookSeq },
       (if r.replies.isEmpty then [] else [.writePty r.replies]) ++ broadcast s r.visible)
   | .childExited outcome =>
-    let flushed := Terminal.Mediation.finish s.scanner
-    let s :=
-      { s with
-        exited := some outcome, scan := flushed.2 }
-    let flush := broadcast s flushed.1
-    let notify :=
-      s.clients.filter (fun c => c.attached || c.waiting) |>.flatMap
-        (fun c => [Effect.send c.id (.ended outcome), Effect.send c.id (.exited outcome.status)])
-    let closes := s.clients.map (fun c => Effect.close c.id)
     -- an ended session is a result: its last screen is saved, and stays until `kill`
     -- discards it or a writable attach resumes it
-    (s, flush ++ notify ++ closes ++ [.checkpoint, .exit])
+    conclude s outcome .checkpoint
+  | .stopped outcome =>
+    -- a session the daemon stopped, as `kill` asks, ends the same way and is discarded
+    conclude s outcome .dropCheckpoint
   | .tick now =>
     -- the activity fields are refreshed in both branches by one helper: a `let` before the
     -- `if` would hide the `if` from the proofs that `split` on this handler
@@ -646,6 +663,15 @@ theorem closed_effects (s : State) (id : Nat) :
 
 /-- A failed checkpoint marks the state dirty without immediately retrying. -/
 theorem checkpointFailed_effects (s : State) : (step s .checkpointFailed).2 = [] := by rfl
+
+/-- The end of a session the daemon stopped asks for no other stop. Used by the driver's
+termination argument. -/
+theorem stopped_effects (s : State) (outcome : Outcome) :
+    ∀ eff ∈ (step s (.stopped outcome)).2, eff ≠ .stopProgram := by
+  intro eff h hstop
+  subst hstop
+  simp only [step, conclude, broadcast, outputMsgs] at h
+  split at h <;> simp at h
 
 /-- Fold the supplied event trace through `step`, preserving effect order.
 For the runtime this trace consists of the events actually consumed, including

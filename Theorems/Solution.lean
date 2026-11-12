@@ -1,7 +1,9 @@
 module
 
+public import Linger.App.Answer
 public import Linger.App.Commands
 public import Linger.App.Entry
+public import Linger.App.Wait
 public import Linger.Display.Listing
 public import Linger.Display.Status
 public import Linger.Display.View
@@ -23,8 +25,10 @@ public import Terminal.Render
 public import Terminal.Replay
 public import Terminal.Spec
 public import Terminal.Title
+import all Linger.App.Proofs.Answer
 import all Linger.App.Proofs.Commands
 import all Linger.App.Proofs.Entry
+import all Linger.App.Proofs.Wait
 import Linger.Display.Proofs.Clean
 import all Linger.Display.Proofs.Listing
 import all Linger.Display.Proofs.Status
@@ -413,21 +417,21 @@ theorem run_readonly_rejects_kill :
         (fun (_ : State) (i : Nat) => some ({ id := i, attached := true } : Client)) s id = some c →
           c.attached = true →
           c.sizer = false →
-          (Session.trace (fun s _ => (s, ([.killChild] : List (Effect Replay.Plan)))) s
+          (Session.trace (fun s _ => (s, ([.stopProgram] : List (Effect Replay.Plan)))) s
                   (chunks.map (Event.bytes id))).1.terminal =
               s.terminal ∧
-            (Session.trace (fun s _ => (s, ([.killChild] : List (Effect Replay.Plan)))) s
+            (Session.trace (fun s _ => (s, ([.stopProgram] : List (Effect Replay.Plan)))) s
                   (chunks.map (Event.bytes id))).1.labelList =
               s.labelList ∧
             ∀
               eff ∈
-                (Session.trace (fun s _ => (s, ([.killChild] : List (Effect Replay.Plan)))) s
+                (Session.trace (fun s _ => (s, ([.stopProgram] : List (Effect Replay.Plan)))) s
                     (chunks.map (Event.bytes id))).2,
               (∃ m, eff = .send id m) ∨ eff = .close id ∨ eff = .checkpoint := by
   intro h
   obtain ⟨-, -, effects⟩ :=
     @h (State.boot (Vt.Vt.init 1 1) [] []) 0 [[]] { id := 0, attached := true } rfl rfl rfl
-  rcases effects .killChild (by simp [Session.trace]) with ⟨_, sent⟩ | closed | saved
+  rcases effects .stopProgram (by simp [Session.trace]) with ⟨_, sent⟩ | closed | saved
   · cases sent
   · cases closed
   · cases saved
@@ -804,29 +808,96 @@ theorem start_runs_rejects_unnamed :
     exact ⟨rfl, rfl, fun _ => rfl⟩
   exact absurd (h _ _ runs "x" "" "sh" [] rfl).2.2.1 (by simp)
 
-theorem step_ended_reports (s : State) (o : Outcome) {c : Client} (hc : c ∈ s.roster)
-    (listening : c.attached = true ∨ c.waiting = true) :
-    [Effect.send c.id (.ended o), Effect.send c.id (.exited o.status)] <:+:
-        (Session.step s (.childExited o)).2 ∧
-      (Session.step s (.childExited o)).2.getLast? = some .exit :=
-  Session.step_ended_reports s o hc listening
+theorem step_kill_stops (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
+    {dec : Wire.Decoder} {rest : List Wire.Msg} (hc : s.client? id = some c)
+    (writable : c.attached = false ∨ c.sizer = true)
+    (read : c.decoder.feed chunk = (dec, .kill :: rest)) (healthy : dec.errored = false) :
+    (Session.step s (.bytes id chunk)).2 = [.stopProgram, .close id] ∧
+      (Session.step s (.bytes id chunk)).1.terminal = s.terminal ∧
+      (Session.step s (.bytes id chunk)).1.labelList = s.labelList :=
+  Session.step_kill_stops s id chunk hc writable read healthy
+
+theorem step_kill_stops_rejects_exit :
+    ¬∀ (s : State) (id : Nat) (chunk : List UInt8) {c : Client} {dec : Wire.Decoder}
+        {rest : List Wire.Msg},
+        s.client? id = some c →
+          (c.attached = false ∨ c.sizer = true) →
+          c.decoder.feed chunk = (dec, .kill :: rest) →
+          dec.errored = false →
+          ((fun (s : State) (_ : Event) => (s, ([.exit] : List (Effect Replay.Plan)))) s
+                  (.bytes id chunk)).2 =
+              [.stopProgram, .close id] ∧
+            ((fun (s : State) (_ : Event) => (s, ([.exit] : List (Effect Replay.Plan)))) s
+                  (.bytes id chunk)).1.terminal =
+              s.terminal ∧
+            ((fun (s : State) (_ : Event) => (s, ([.exit] : List (Effect Replay.Plan)))) s
+                  (.bytes id chunk)).1.labelList =
+              s.labelList := by
+  intro h
+  obtain ⟨joined, -⟩ := Session.connected_client_witness
+  have stopped :=
+    (@h (Session.trace Session.step (State.boot (Vt.Vt.init 1 1) [] []) [.connected 1]).1 1
+        (Wire.encode .kill) { id := 1 } {} [] joined (.inl rfl)
+        (Session.feed_encode_fresh .kill (by simp [Wire.Msg.Fits])) rfl).1
+  simp at stopped
+
+theorem step_ended_reports (s : State) (ev : Event) :
+    (Effect.exit ∈ (Session.step s ev).2 ↔ ∃ o, ev = .childExited o ∨ ev = .stopped o) ∧
+      ∀ o,
+        ev = .childExited o ∨ ev = .stopped o →
+          (Session.step s ev).2.getLast? = some .exit ∧
+            ∀ c ∈ s.roster,
+              c.attached = true ∨ c.waiting = true →
+                [Effect.send c.id (.ended o), Effect.send c.id (.exited o.status)] <:+:
+                  (Session.step s ev).2 := Session.step_ended_reports s ev
 
 theorem step_ended_reports_rejects_status :
-    ¬∀ (s : State) (o : Outcome) {c : Client},
-        c ∈ (fun (_ : State) => [({ id := 0, attached := true } : Client)]) s →
-          c.attached = true ∨ c.waiting = true →
-          [Effect.send c.id (.ended o), Effect.send c.id (.exited o.status)] <:+:
+    ¬∀ (s : State) (ev : Event),
+        (Effect.exit ∈
               ((fun s _ => (s, ([.send 0 (.exited 1), .exit] : List (Effect Replay.Plan)))) s
-                  (Event.childExited o)).2 ∧
-            ((fun s _ => (s, ([.send 0 (.exited 1), .exit] : List (Effect Replay.Plan)))) s
-                  (Event.childExited o)).2.getLast? =
-              some .exit := by
+                  ev).2 ↔
+            ∃ o, ev = .childExited o ∨ ev = .stopped o) ∧
+          ∀ o,
+            ev = .childExited o ∨ ev = .stopped o →
+              ((fun s _ => (s, ([.send 0 (.exited 1), .exit] : List (Effect Replay.Plan)))) s
+                      ev).2.getLast? =
+                  some .exit ∧
+                ∀ c ∈ (fun (_ : State) => [({ id := 0, attached := true } : Client)]) s,
+                  c.attached = true ∨ c.waiting = true →
+                    [Effect.send c.id (.ended o), Effect.send c.id (.exited o.status)] <:+:
+                      ((fun s _ => (s, ([.send 0 (.exited 1), .exit] : List (Effect Replay.Plan))))
+                          s ev).2 := by
   intro h
-  obtain ⟨heard, -⟩ :=
-    @h (State.boot (Vt.Vt.init 1 1) [] []) .unknown { id := 0, attached := true } (by simp)
-      (.inl rfl)
+  have heard :=
+    ((h (State.boot (Vt.Vt.init 1 1) [] []) (.childExited .unknown)).2 .unknown (.inl rfl)).2
+      { id := 0, attached := true } (by simp) (.inl rfl)
   have same := heard.eq_of_length rfl
   simp at same
+
+theorem step_stopped_discards (s : State) (o : Outcome) :
+    (∃ front,
+        (Session.step s (.stopped o)).2 = front ++ [.dropCheckpoint, .exit] ∧
+          Effect.checkpoint ∉ front) ∧
+      (Session.step s (.stopped o)).1.terminal = s.terminal := Session.step_stopped_discards s o
+
+theorem step_stopped_discards_rejects_save :
+    ¬∀ (s : State) (o : Outcome),
+        (∃ front,
+            ((fun (s : State) (_ : Event) =>
+                      (s, ([.checkpoint, .dropCheckpoint, .exit] : List (Effect Replay.Plan))))
+                    s (.stopped o)).2 =
+                front ++ [.dropCheckpoint, .exit] ∧
+              Effect.checkpoint ∉ front) ∧
+          ((fun (s : State) (_ : Event) =>
+                  (s, ([.checkpoint, .dropCheckpoint, .exit] : List (Effect Replay.Plan))))
+                s (.stopped o)).1.terminal =
+            s.terminal := by
+  intro h
+  obtain ⟨⟨front, effects, unsaved⟩, -⟩ := h (State.boot (Vt.Vt.init 1 1) [] []) .unknown
+  have saved :
+    [Effect.checkpoint] ++ [.dropCheckpoint, .exit] = front ++ [.dropCheckpoint, .exit] := effects
+  rw [← List.append_cancel_right saved] at unsaved
+  exact unsaved (List.mem_singleton_self _)
 
 theorem step_childExited_keeps (s : State) (o : Outcome) :
     (∃ front,
@@ -885,6 +956,92 @@ theorem record_kept_rejects_blank :
   intro h
   have blank := (h some (fun _ => rfl) (.exited 0) none).1
   simp [Record.answer, Record.decode] at blank
+
+theorem wait_ending (deadline heldSince : Option Nat) (now : Nat) (o : Outcome) :
+    App.Wait.decide deadline heldSince now (.ended o) = .answer (App.Answer.ofOutcome o) ∧
+      App.Wait.decide deadline heldSince now (.recorded (some o)) =
+        .answer (App.Answer.ofOutcome o) := App.Wait.wait_ending deadline heldSince now o
+
+theorem wait_ending_rejects_failed :
+    ¬∀ (deadline heldSince : Option Nat) (now : Nat) (o : Outcome),
+        (fun (_ _ : Option Nat) (_ : Nat) (_ : App.Wait.Heard) => App.Wait.Next.answer .failed)
+              deadline heldSince now (.ended o) =
+            .answer (App.Answer.ofOutcome o) ∧
+          (fun (_ _ : Option Nat) (_ : Nat) (_ : App.Wait.Heard) => App.Wait.Next.answer .failed)
+              deadline heldSince now (.recorded (some o)) =
+            .answer (App.Answer.ofOutcome o) := by
+  intro h
+  have told := (h none none 0 (.exited 0)).1
+  simp [App.Answer.ofOutcome] at told
+
+theorem wait_held (deadline heldSince : Option Nat) (now : Nat) (heard : App.Wait.Heard) :
+    (App.Wait.decide deadline heldSince now heard = .answer .failed ↔
+        heard = .ended .unknown ∨
+          heard = .recorded (some .unknown) ∨
+          heard = .held ∧ ∃ since, heldSince = some since ∧ since + App.Wait.heldNameMs ≤ now) ∧
+      (heard = .held →
+        (∀ due, deadline = some due → now < due) →
+        (∀ since, heldSince = some since → now < since + App.Wait.heldNameMs) →
+        App.Wait.decide deadline heldSince now heard = .again (some (heldSince.getD now))) :=
+  App.Wait.wait_held deadline heldSince now heard
+
+theorem wait_held_rejects_eager :
+    ¬∀ (deadline heldSince : Option Nat) (now : Nat) (heard : App.Wait.Heard),
+        ((fun (_ _ : Option Nat) (_ : Nat) (_ : App.Wait.Heard) => App.Wait.Next.answer .failed)
+                deadline heldSince now heard =
+              .answer .failed ↔
+            heard = .ended .unknown ∨
+              heard = .recorded (some .unknown) ∨
+              heard = .held ∧ ∃ since, heldSince = some since ∧ since + App.Wait.heldNameMs ≤ now) ∧
+          (heard = .held →
+            (∀ due, deadline = some due → now < due) →
+            (∀ since, heldSince = some since → now < since + App.Wait.heldNameMs) →
+            (fun (_ _ : Option Nat) (_ : Nat) (_ : App.Wait.Heard) => App.Wait.Next.answer .failed)
+                deadline heldSince now heard =
+              .again (some (heldSince.getD now))) := by
+  intro h
+  have failed := ((h none none 0 .held).1).mp rfl
+  simp at failed
+
+theorem held_covers_ending :
+    Session.drainTimeoutMs + (Session.ending.map (·.2)).sum ≤ App.Wait.heldNameMs :=
+  App.Wait.held_covers_ending
+
+theorem held_covers_ending_rejects_drain :
+    ¬Session.drainTimeoutMs + (Session.ending.map (·.2)).sum ≤ Session.drainTimeoutMs := by decide
+
+theorem code_documented (status : UInt32) :
+    App.Answer.code .done = 0 ∧
+      App.Answer.code .notDone = 1 ∧
+      App.Answer.code .usage = 2 ∧
+      App.Answer.code .timedOut = 124 ∧
+      App.Answer.code .failed = 125 ∧
+      App.Answer.code .cannotRun = 126 ∧
+      App.Answer.code .notFound = 127 ∧
+      App.Answer.code .interrupted = 130 ∧ App.Answer.code (.program status) = status :=
+  App.Answer.code_documented status
+
+theorem code_documented_rejects_zero :
+    ¬∀ (status : UInt32),
+        (fun (_ : App.Answer) => (0 : UInt32)) .done = 0 ∧
+          (fun (_ : App.Answer) => (0 : UInt32)) .notDone = 1 ∧
+          (fun (_ : App.Answer) => (0 : UInt32)) .usage = 2 ∧
+          (fun (_ : App.Answer) => (0 : UInt32)) .timedOut = 124 ∧
+          (fun (_ : App.Answer) => (0 : UInt32)) .failed = 125 ∧
+          (fun (_ : App.Answer) => (0 : UInt32)) .cannotRun = 126 ∧
+          (fun (_ : App.Answer) => (0 : UInt32)) .notFound = 127 ∧
+          (fun (_ : App.Answer) => (0 : UInt32)) .interrupted = 130 ∧
+          (fun (_ : App.Answer) => (0 : UInt32)) (.program status) = status := by
+  intro h
+  exact absurd (h 0).2.1 (by decide)
+
+theorem listed_once : App.Answer.listed.Nodup ∧ ∀ a, a ∈ App.Answer.listed ↔ a.Own :=
+  App.Answer.listed_once
+
+theorem listed_once_rejects_empty :
+    ¬(([] : List App.Answer).Nodup ∧ ∀ a, a ∈ ([] : List App.Answer) ↔ a.Own) := by
+  intro h
+  exact absurd ((h.2 .done).mpr trivial) List.not_mem_nil
 
 theorem outcomeFields_injective (o₁ o₂ : Outcome)
     (h : Session.outcomeFields o₁ = Session.outcomeFields o₂) : o₁ = o₂ :=
@@ -1046,6 +1203,33 @@ theorem run_exited_rejects_jump :
   obtain ⟨-, -, -, -, labelled, -⟩ := Session.boot_observed (Vt.Vt.init 1 1) [("a", "b")] []
   rw [empty, labelled] at labels
   simp [maxLabels] at labels
+
+theorem run_stop_exits {World : Type}
+    (execute : State → World → (eff : Effect Replay.Plan) → Id (World × Driver.Reply eff))
+    (r : Driver.Result State World) (ev : Event) (running : r.exiting = false)
+    (stops : Effect.stopProgram ∈ (Session.step r.st ev).2) :
+    (Driver.run execute r [ev]).exiting = true := Driver.run_stop_exits execute r ev running stops
+
+theorem run_stop_exits_rejects_jump :
+    ¬∀ {World : Type}
+        (execute : State → World → (eff : Effect Replay.Plan) → Id (World × Driver.Reply eff))
+        (r : Driver.Result State World) (ev : Event),
+        r.exiting = false →
+          Effect.stopProgram ∈ (Session.step r.st ev).2 →
+          (Driver.jump (State.boot (Vt.Vt.init 1 1) [] []) execute r [ev]).exiting = true := by
+  intro h
+  obtain ⟨joined, -⟩ := Session.connected_client_witness
+  have stops :=
+    (Session.step_kill_stops _ 1 (Wire.encode .kill) joined (.inl rfl)
+        (Session.feed_encode_fresh .kill (by simp [Wire.Msg.Fits])) rfl).1
+  have jumped :=
+    @h Unit (fun _ world eff => (world, Driver.success eff))
+      { st := (Session.trace Session.step (State.boot (Vt.Vt.init 1 1) [] []) [.connected 1]).1,
+        world := () }
+      (.bytes 1 (Wire.encode .kill)) rfl
+      (by
+        rw [stops]; simp)
+  simp [Driver.jump] at jumped
 
 theorem reachableIn_bound {cap : Nat} {b : Buf.Buf}
     (h : Buf.InputReach Buf.Buf.empty Buf.bufOffer Buf.bufAdvance cap b) : Buf.owedLen b ≤ cap :=

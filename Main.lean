@@ -1,5 +1,6 @@
 module
 
+import Linger.App.Answer
 import Linger.App.Shell
 import Linger.App.Entry
 import Linger.Selector.Shell
@@ -11,8 +12,9 @@ public section
 The session library and VT toolkit do not import the manager. -/
 
 /-- The executable: `Entry.route` sends the argv to interactive selection, tmux
-interchange or a session command, and refuses an encoded command line that does not decode with
-status 2. An uncaught error prints `linger: <error>` and exits 1. -/
+interchange or a session command, which exits with its answer's code, and refuses an encoded
+command line that does not decode as a usage error. An uncaught error prints
+`linger: <error>` and answers `notDone`. -/
 def main (args : List String) : IO UInt32 := do
   try
     match Linger.App.Entry.route args with
@@ -21,10 +23,10 @@ def main (args : List String) : IO UInt32 := do
     | .tmux rest =>
       Linger.Import.Shell.run (← IO.appPath).toString rest
     | .session argv =>
-      Linger.App.Shell.main argv
+      return (← Linger.App.Shell.main argv).code
     | .malformed =>
       IO.eprintln "linger: malformed encoded command line"
-      return 2
+      return Linger.App.Answer.usage.code
   catch e =>
     IO.eprintln s!"linger: {e}"
-    return 1
+    return Linger.App.Answer.notDone.code

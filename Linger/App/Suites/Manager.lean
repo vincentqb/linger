@@ -1,5 +1,6 @@
 module
 
+import Linger.App.Answer
 import Linger.Selector.Shell
 import Linger.Import.Shell
 import Linger.Display.Listing
@@ -687,7 +688,7 @@ private def usageChecks (e : Env) : IO Unit := do
                   String.intercalate " "
                     (Linger.Display.Status.attention.map
                       (String.singleton ∘ Linger.Display.Status.icon)))) &&
-          footer.any (fun line => has line "127 not found") &&
+          Linger.App.Answer.legend.all (fun line => footer.contains ("  " ++ line)) &&
           has out "--summary" &&
           has out "--read-only" &&
           has out "--history" &&

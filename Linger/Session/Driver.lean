@@ -15,16 +15,20 @@ def feedback : (eff : Effect Plan) → Reply eff → List Event
   | .replay id _, gone => if gone then [.closed id] else []
   | .close id, gone => if gone then [.closed id] else []
   | .checkpoint, failed => if failed then [.checkpointFailed] else []
-  | .writePty _, _ | .resizePty .., _ | .killChild, _ | .dropCheckpoint, _ | .exit, _ => []
+  | .stopProgram, outcome => [.stopped outcome]
+  | .writePty _, _ | .resizePty .., _ | .dropCheckpoint, _ | .exit, _ => []
 
-/-- Feedback strictly descends: external input, disconnect, checkpoint failure. -/
+/-- Feedback strictly descends: external input, which may stop the program; the program's end
+once the daemon stopped it; disconnect; checkpoint failure. -/
 def eventDepth : Event → Nat
   | .checkpointFailed => 0
   | .closed _ => 1
-  | _ => 2
+  | .stopped _ => 2
+  | _ => 3
 
 /-- A strict upper bound on the depth of the events an effect's reply feeds back. -/
 def effectDepth : Effect Plan → Nat
+  | .stopProgram => 3
   | .send .. | .replay .. | .close .. => 2
   | .checkpoint => 1
   | _ => 0
@@ -40,6 +44,10 @@ theorem step_depth (s : State) (ev : Event) :
     intro eff h
     rcases Session.closed_effects s id eff h with rfl | rfl <;> simp [effectDepth, eventDepth]
   | checkpointFailed => simp [Session.checkpointFailed_effects]
+  | stopped outcome =>
+    intro eff h
+    have := Session.stopped_effects s outcome eff h
+    cases eff <;> simp_all [effectDepth, eventDepth]
   | _ =>
     intro eff _
     cases eff <;> simp [effectDepth, eventDepth]

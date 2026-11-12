@@ -29,8 +29,10 @@ deadline. Final shutdown also has a finite drain grace period.
 The session ends when its program does. The daemon hears a child end through the descriptor
 `childEndFd` makes, whether or not a background job still holds the terminal, and then reaps
 the program without blocking and reports how it ended; the terminal's end of file ends nothing
-by itself. Between events it sleeps until the session's next tick (`State.nextTick`), so an
-idle session costs no wakeup.
+by itself. A kill stops the program first, with each signal of `Session.ending` in turn
+(`Effect.stopProgram`), and the session then ends as it does when its program ends by itself.
+Between events it sleeps until the session's next tick (`State.nextTick`), so an idle session
+costs no wakeup.
 
 `Linger/Session/Proofs/Buf.lean` proves the byte-buffer caps, shared allowance and removal of
 written prefixes. `packages/terminal/Terminal/Proofs/Replay.lean` proves the cursor's exact stream,
@@ -48,7 +50,7 @@ the output changes (`publish`), so a summary reads the record instead of waking 
 namespace Linger.Session.Shell.Daemon
 
 open Os.Shell
-open Linger.Session (State Event Effect Outcome maxClients)
+open Linger.Session (State Event Effect Outcome maxClients drainTimeoutMs)
 open Linger.Session.Buf (Buf owedLen bufOffer bufEnqueue bufAdvance followingCap)
 open Terminal
 open Terminal.Replay (Plan)
@@ -77,9 +79,6 @@ def outbufCap : Nat := 4194304
 
 /-- Payload plus the wire encoder's own frame overhead. -/
 def replayFrameCap : Nat := Linger.Session.outputChunk + (Wire.encode (.output [])).length
-
-/-- Ordinary close and final shutdown share one finite drain grace period. -/
-def drainTimeoutMs : Nat := 3000
 
 /-- Retry admission without spinning on a readable listener under resource pressure. -/
 def acceptRetryMs : Nat := 1000
@@ -409,6 +408,55 @@ def queuePty (rt : Rt) (bytes : List UInt8) : IO Rt := do
     return { rt with ptyInFull := true }
   return { rt with ptyIn := q }
 
+/-- How the program ended, if it has: its exit code or signal, or `unknown` when it is no longer
+ours to wait for. It stays unreaped, so its zombie keeps its pid, which is its session's id,
+until `serve` has ended the session's other processes (`signalSession`). -/
+private def programEnd (pid : UInt32) : IO (Option Outcome) := do
+  match ← peekNohang pid with
+  | .running =>
+    return none
+  | .exited code =>
+    return some (.exited code)
+  | .signaled signal =>
+    return some (.signaled signal)
+  | .unreapable =>
+    return some .unknown
+
+/-- Whether `done` holds within `ms` milliseconds, asked every `step`. -/
+private def within (ms step : Nat) (done : IO Bool) : IO Bool := do
+  let deadline := (← monotonicMs) + ms
+  repeat
+    if ← done then
+      return true
+    unless ← nap deadline step do
+      break
+  done
+
+/-- How the program ended, ending it first if it still runs: each signal of `Session.ending`, to
+it and to the rest of its terminal session, until it ends, SIGHUP first and then SIGKILL, and
+`unknown` if it has not ended once the last wait is over. The program stays unreaped
+(`programEnd`). -/
+private def stopProgram (rt : Rt) : IO Outcome := do
+  if let some outcome := rt.ending then
+    return outcome
+  let pid := rt.childPid
+  let ending ← IO.mkRef (none : Option Outcome)
+  let ended : IO Bool := do
+    if (← ending.get).isNone then
+      ending.set (← programEnd pid)
+    return (← ending.get).isSome
+  try
+    for (sig, ms) in Linger.Session.ending do
+      if ← ended then
+        break
+      kill pid sig
+      discard <| signalSession pid sig
+      if ← within ms 10 ended then
+        break
+  catch err =>
+    report s!"linger: stopping the program failed: {err}"
+  return (← ending.get).getD .unknown
+
 /-- Execute one effect against the world. Its result type admits only the
 feedback that the total driver has proved will terminate. Session state is
 read-only here; the driver supplies the state after the current event. -/
@@ -471,12 +519,10 @@ private def executeEffect (st : State) (rt : Rt) : (eff : Effect Plan) → IO (R
     catch err =>
       report s!"linger: pty resize failed: {err}"
     return (rt, ())
-  | .killChild => do
-    -- hang up the program's whole terminal session; `serve` ends what outlives that
-    if rt.ending.isNone then
-      kill rt.childPid 1 -- SIGHUP
-    discard <| signalSession rt.childPid 1
-    return (rt, ())
+  -- the program's end is the session's: `serve` ends what of its terminal session outlives it
+  | .stopProgram => do
+    let outcome ← stopProgram rt
+    return ({ rt with ending := some outcome }, outcome)
   -- a save waits on the disk, which answers and output must never wait on: it runs on its own
   -- thread, one at a time, and a request that finds one running replaces any that waits for
   -- it; `collectSave` feeds a failure back to the session later
@@ -513,20 +559,6 @@ private def closedFd : UInt32 := 0xFFFFFFFF
 
 /-- How many reads of the terminal the program's last output may take once it has ended. -/
 private def finalReads : Nat := 16
-
-/-- How the program ended, if it has: its exit code or signal, or `unknown` when it is no longer
-ours to wait for. It stays unreaped, so its zombie keeps its pid, which is its session's id,
-until `serve` has ended the session's other processes (`signalSession`). -/
-private def programEnd (pid : UInt32) : IO (Option Outcome) := do
-  match ← peekNohang pid with
-  | .running =>
-    return none
-  | .exited code =>
-    return some (.exited code)
-  | .signaled signal =>
-    return some (.signaled signal)
-  | .unreapable =>
-    return some .unknown
 
 /-- One poll round: gather events from fd readiness. It sleeps until an event or its first
 deadline (`Session.pollTimeout`): the session's next tick, a retired transport's drain,
@@ -713,41 +745,6 @@ def drainConns (rt : Rt) : IO Rt := do
   for c in rt.conns do
     close c.fd
   return { rt with conns := [] }
-
-/-- Whether `done` holds within `ms` milliseconds, asked every `step`. -/
-private def within (ms step : Nat) (done : IO Bool) : IO Bool := do
-  let deadline := (← monotonicMs) + ms
-  repeat
-    if ← done then
-      return true
-    unless ← nap deadline step do
-      break
-  done
-
-/-- How the program ended, ending it first if it still runs: each signal of `Session.ending`, to
-it and to the rest of its terminal session, until it ends, SIGHUP first and then SIGKILL, and
-`unknown` if it has not ended once the last wait is over. The program stays unreaped
-(`programEnd`). -/
-private def stopProgram (rt : Rt) : IO Outcome := do
-  if let some outcome := rt.ending then
-    return outcome
-  let pid := rt.childPid
-  let ending ← IO.mkRef (none : Option Outcome)
-  let ended : IO Bool := do
-    if (← ending.get).isNone then
-      ending.set (← programEnd pid)
-    return (← ending.get).isSome
-  try
-    for (sig, ms) in Linger.Session.ending do
-      if ← ended then
-        break
-      kill pid sig
-      discard <| signalSession pid sig
-      if ← within ms 10 ended then
-        break
-  catch err =>
-    report s!"linger: stopping the program failed: {err}"
-  return (← ending.get).getD .unknown
 
 /-- End every other process of the program's terminal session with the signals of
 `Session.ending`: SIGHUP, then SIGKILL to whatever outlives a second of it. Run while the program
