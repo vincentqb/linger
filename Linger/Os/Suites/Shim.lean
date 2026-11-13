@@ -178,6 +178,23 @@ def testWinsize : IO Unit := do
   -- stty prints "rows cols"
   check "pty spawned with requested winsize" ((String.fromUTF8! out).contains "43 121")
 
+/-- The foreground binding reports a pty's foreground leader, its words and its directory; a
+pty whose program ended has none, and `cmdlineOf` rejects a selector. -/
+def testForeground : IO Unit := do
+  let (pid, master) ← spawnPty 80 24 "/" "sleep" #["30"] #[]
+  let deadline := (← monotonicMs) + 5000
+  let mut report ← foreground master
+  while (report.map (·.2.1)) != some ["sleep", "30"] && (← monotonicMs) < deadline do
+    IO.sleep 20
+    report ← foreground master
+  kill pid 9
+  let _ ← reap pid
+  check "foreground reports a pty's program, its words and its directory"
+      (report == some (pid, ["sleep", "30"], "/"))
+  check "foreground of a pty whose program ended is none" ((← foreground master).isNone)
+  Os.Shell.close master
+  check "cmdlineOf rejects pid 0" (← throws (cmdlineOf 0))
+
 /-- The process wrappers must reject values POSIX reads as process-group or
 "any child" selectors, and a wait status must only be read for a completed
 requested child. Without this boundary, `waitpid(0, …, WNOHANG)` can report
@@ -680,6 +697,7 @@ public def main (args : List String) : IO UInt32 := do
   testFullWrite
   testFullWriteAll
   testWinsize
+  testForeground
   testProcessSelectors
   testReapEnding
   testPeekKeepsChild

@@ -140,18 +140,31 @@ theorem humanRow_no_lf (nameCol : Nat) (info : List (String × String)) :
 
 /-- Pieces remove controls before width calculation or styling. A terminal
 renderer therefore never clips inside an untrusted escape sequence. -/
-theorem rowPieces_printable (nameCol : Nat) (info : List (String × String)) :
-    ∀ piece ∈ Linger.Display.Listing.rowPieces nameCol info,
+theorem piecesOf_printable (width : Option Nat) (nameCol : Nat) (name status : String)
+    (rest : List (String × String)) :
+    ∀ piece ∈ piecesOf width nameCol name status rest,
       ∀ c ∈ piece.text, 32 ≤ c.toNat ∧ (c.toNat < 127 ∨ 160 ≤ c.toNat) := by
   intro piece hp c hc
-  simp only [rowPieces, List.mem_cons, List.not_mem_nil, or_false] at hp
+  simp only [piecesOf, List.mem_cons, List.not_mem_nil, or_false] at hp
   rcases hp with rfl | rfl
   · simp only [List.mem_singleton] at hc
     subst c
-    cases Status.ofName ((info.lookup "status").getD "") <;> decide
+    cases Status.ofName status <;> decide
   · obtain ⟨raw, _, rfl⟩ := List.mem_map.mp hc
     have := Terminal.Render.textChar_safe raw
     omega
+
+/-- A row of any width is printable piece by piece. -/
+theorem rowPiecesIn_printable (width : Option Nat) (nameCol : Nat) (info : List (String × String)) :
+    ∀ piece ∈ rowPiecesIn width nameCol info,
+      ∀ c ∈ piece.text, 32 ≤ c.toNat ∧ (c.toNat < 127 ∨ 160 ≤ c.toNat) :=
+  piecesOf_printable _ _ _ _ _
+
+/-- The row a listing and the picker share is printable piece by piece. -/
+theorem rowPieces_printable (nameCol : Nat) (info : List (String × String)) :
+    ∀ piece ∈ Linger.Display.Listing.rowPieces nameCol info,
+      ∀ c ∈ piece.text, 32 ≤ c.toNat ∧ (c.toNat < 127 ∨ 160 ≤ c.toNat) :=
+  rowPiecesIn_printable none nameCol info
 
 /-- **A printed row, character by character**: the UTF-8 encoding of codepoints that are no
 C0 control, DEL or C1 control. `humanRow_printable` is the byte-level half, which an encoded
@@ -170,6 +183,16 @@ theorem humanRow_text (nameCol : Nat) (info : List (String × String)) :
   rw [Terminal.Render.safeChar_eq_self (by omega) (by omega)]
   omega
 
+/-- **Every field of a row is clean text**: each character a row of any width shows is
+printable, whatever the record holds. -/
+theorem rowText_printable (width : Option Nat) (nameCol : Nat) (info : List (String × String)) :
+    ∀ c ∈ rowText width nameCol info, Linger.Display.Printable c := by
+  intro c hc
+  obtain ⟨piece, hp, hc⟩ := List.mem_flatMap.mp hc
+  have h := rowPiecesIn_printable width nameCol info piece hp c hc
+  simp only [Linger.Display.Printable]
+  omega
+
 /-- Exactly the badge is styled; the name, details, labels and watchers are plain. -/
 theorem rowPieces_styles (nameCol : Nat) (info : List (String × String)) :
     (Linger.Display.Listing.rowPieces nameCol info).map (·.status) =
@@ -180,6 +203,103 @@ Its length comes from the actual name, independently of padding or metadata. -/
 theorem rowPieces_nameSpan (nameCol : Nat) (info : List (String × String)) :
     (Linger.Display.Listing.rowPieces nameCol info).map (·.nameSpan) =
       [none, some (1, ((info.lookup "name").getD "").toList.length)] := rfl
+
+/-- A row's two pieces: the styled badge, then the text whose name span is the name's. -/
+theorem rowPieces_eq (nameCol : Nat) (info : List (String × String)) :
+    ∃ text,
+      Linger.Display.Listing.rowPieces nameCol info =
+        [{ text := [Status.icon (Status.ofName ((info.lookup "status").getD ""))],
+           status := some (Status.ofName ((info.lookup "status").getD "")) },
+          { text, nameSpan := some (1, ((info.lookup "name").getD "").toList.length) }] := ⟨_, rfl⟩
+
+/-! ## Each field from its one source -/
+
+/-- `filterMap` reads its function only on the list's elements. -/
+theorem filterMap_congr' {α β : Type} {f g : α → Option β} :
+    ∀ {l : List α}, (∀ x ∈ l, f x = g x) → l.filterMap f = l.filterMap g
+  | [], _ => rfl
+  | x :: xs, h => by
+    simp only [List.filterMap_cons, h x List.mem_cons_self,
+      filterMap_congr' fun y hy => h y (List.mem_cons_of_mem x hy)]
+
+/-- Two records that agree on the `sources` fields project to the same record. -/
+theorem project_congr {info info' : List (String × String)}
+    (h : ∀ key ∈ sources, info.lookup key = info'.lookup key) : project info = project info' := by
+  unfold project
+  exact filterMap_congr' fun key hk => by rw [h key hk]
+
+/-- **Each displayed field comes from its one source**: a row reads only the `sources` fields,
+so no other field of a reply, and no label but the description, changes what it shows. -/
+theorem rowText_sources (width : Option Nat) (nameCol : Nat) (info info' : List (String × String))
+    (h : ∀ key ∈ sources, info.lookup key = info'.lookup key) :
+    rowText width nameCol info = rowText width nameCol info' := by
+  have hn : look info "name" = look info' "name" := by
+    simp only [look, h "name" (by simp [sources])]
+  have hs : look info "status" = look info' "status" := by
+    simp only [look, h "status" (by simp [sources])]
+  simp only [rowText, rowPiecesIn, hn, hs, project_congr h]
+
+/-- **The user's words over the program's over the operating system's**: a nonempty description
+is the caption; without one, the program's title is; and the foreground program shows only when
+the caption does not already name it. -/
+theorem caption_precedence (info : List (String × String)) :
+    ((info.lookup "label.description").getD "" ≠ "" →
+        caption info = (info.lookup "label.description").getD "") ∧
+      ((info.lookup "label.description").getD "" = "" →
+        caption info = (info.lookup "title").getD "") ∧
+      (program info = "" ∨ ¬(command (program info)).toList <:+: (caption info).toList) := by
+  refine ⟨fun h => ?_, fun h => ?_, ?_⟩
+  · simp [caption, look, String.isEmpty_iff, h]
+  · simp [caption, look, String.isEmpty_iff, h]
+  · unfold program
+    split
+    · exact .inl rfl
+    · rename_i hn
+      exact .inr (by simpa using hn)
+
+/-! ## The width rule -/
+
+/-- Dropping trailing blanks never lengthens. -/
+theorem dropTrailingBlanks_length (cs : List Char) :
+    (Terminal.Render.dropTrailingBlanks cs).length ≤ cs.length := by
+  simpa [Terminal.Render.dropTrailingBlanks] using
+    (List.dropWhile_suffix (l := cs.reverse) (· == ' ')).length_le
+
+/-- A cut fits its room. -/
+theorem cut_length (room : Nat) (cs : List Char) : (cut room cs).length ≤ room := by
+  unfold cut
+  split
+  · assumption
+  · split
+    · simp
+    · have := dropTrailingBlanks_length (cs.take (room - 1))
+      simp only [List.length_append, List.length_singleton, List.length_take] at this ⊢
+      omega
+
+/-- **The width rule never cuts the glyph or the name**: every row, of any width, starts with
+its status glyph, a space and its whole name. -/
+theorem rowText_head (width : Option Nat) (nameCol : Nat) (info : List (String × String)) :
+    Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
+        ' ' :: ((info.lookup "name").getD "").toList.map Terminal.Render.textChar <+:
+      rowText width nameCol info := by
+  simp only [rowText, rowPiecesIn, piecesOf, look, List.flatMap_cons, List.flatMap_nil,
+    List.append_nil, List.cons_append, List.nil_append, List.map_cons, List.map_append]
+  exact ⟨_, rfl⟩
+
+/-- **…and fits the rest within the width**: a row given a width is no wider than it, unless its
+glyph and name alone are. -/
+theorem rowText_width (width nameCol : Nat) (info : List (String × String)) :
+    (rowText (some width) nameCol info).length ≤
+      max width (2 + ((info.lookup "name").getD "").toList.length) := by
+  simp only [rowText, rowPiecesIn, piecesOf, look, List.flatMap_cons, List.flatMap_nil,
+    List.append_nil, List.length_append, List.length_cons, List.length_map, List.length_nil]
+  have :=
+    cut_length (width - 2 - ((info.lookup "name").getD "").toList.length)
+      (Terminal.Render.dropTrailingBlanks
+        (List.replicate (nameCol - ((info.lookup "name").getD "").toList.length) ' ' ++
+          (if (String.intercalate "  " (details (project info))).isEmpty then []
+          else ' ' :: (String.intercalate "  " (details (project info))).toList)))
+  omega
 
 theorem nameWidth_empty : Linger.Display.Listing.nameWidth [] = 0 := rfl
 
@@ -211,19 +331,21 @@ theorem renderPieces_plain (pieces : List RowPiece) :
   | cons piece pieces ih =>
     cases hs : piece.status <;> simp_all [renderPieces, Terminal.Render.utf8s, List.flatMap_append]
 
-/-- Uncoloured terminal output is exactly the plain rows: one `humanRow` per
-session over the shared name column, each LF-terminated, or the empty-state line. -/
-theorem terminalListing_plain (rows : List (List (String × String))) :
-    Linger.Display.Listing.terminalListing false rows =
+/-- Uncoloured terminal output is exactly the plain rows: one row per session over the shared
+name column, within the width when one is given, each LF-terminated, or the empty-state line. -/
+theorem terminalListing_plain (width : Option Nat) (rows : List (List (String × String))) :
+    Linger.Display.Listing.terminalListing false width rows =
       if rows.isEmpty then Terminal.Render.utf8s "no sessions".toList ++ [0x0A]
-      else rows.flatMap (fun r => humanRow (nameWidth rows) r ++ [0x0A]) := by
-  simp [terminalListing, renderPieces_plain, humanRow]
+      else
+        rows.flatMap
+          (fun r => Terminal.Render.utf8s (rowText width (nameWidth rows) r) ++ [0x0A]) := by
+  simp [terminalListing]
 
 /-- **Every byte of the whole uncoloured listing is printable content or a row-terminating
-newline** — the only bytes are what the rows render (safe by `humanRow_printable`) and the
-`0x0A` separators. -/
-theorem terminalListing_plain_printable (rows : List (List (String × String))) :
-    ∀ b ∈ terminalListing false rows, (0x20 ≤ b ∧ b ≠ 0x7F) ∨ b = 0x0A := by
+newline** — the only bytes are what the rows render and the `0x0A` separators. -/
+theorem terminalListing_plain_printable (width : Option Nat)
+    (rows : List (List (String × String))) :
+    ∀ b ∈ terminalListing false width rows, (0x20 ≤ b ∧ b ≠ 0x7F) ∨ b = 0x0A := by
   intro b hb
   rw [terminalListing_plain] at hb
   by_cases hz : rows.isEmpty
@@ -235,7 +357,7 @@ theorem terminalListing_plain_printable (rows : List (List (String × String))) 
     rw [List.mem_flatMap] at hb
     obtain ⟨r, -, hbr⟩ := hb
     rcases List.mem_append.mp hbr with h | h
-    · exact Or.inl (humanRow_printable _ r b h)
+    · exact Or.inl (utf8s_no_ctl _ b h)
     · exact Or.inr (by simpa using h)
 
 end Linger.Display.Listing

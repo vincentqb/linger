@@ -166,7 +166,8 @@ private def commandNotice (details : Details) : String :=
   else "\x1b[0m\x1b(B\x0f\x1b[?7h\r\nSaved foreground command: " ++ diagnostic command ++ "\r\n"
 
 /-- Seed screen and scrollback through the terminal's public parser, and retain
-exact commands and source identity in labels. Quiesce captured controls before
+exact commands and source identity in labels, with the window's name as the session's
+description. Quiesce captured controls before
 appending the informational command notice. -/
 def checkpoint (pane : Pane) (contents : Option String) :
     Linger.Session.Checkpoint.Ckpt Terminal.Vt.Vt :=
@@ -178,10 +179,13 @@ def checkpoint (pane : Pane) (contents : Option String) :
     cwd := pane.dir,
     labels :=
       [("tmux.session", pane.details.session), ("tmux.window", pane.details.window),
-        ("tmux.pane", pane.details.index), ("tmux.title", pane.details.title),
-        ("tmux.command", pane.details.command), ("tmux.saved-command", pane.details.savedCommand),
-        ("tmux.window-title", pane.details.windowTitle),
-        ("tmux.capture", if contents.isSome then "saved" else "none")] }
+          ("tmux.pane", pane.details.index), ("tmux.title", pane.details.title),
+          ("tmux.command", pane.details.command), ("tmux.saved-command", pane.details.savedCommand),
+          ("tmux.window-title", pane.details.windowTitle),
+          ("tmux.capture", if contents.isSome then "saved" else "none")] ++
+        -- the window's name, which tmux shows, is what the row shows of the session
+        if pane.details.windowTitle.isEmpty then []
+        else [("description", pane.details.windowTitle)] }
 
 /-- One ordered catalog for human listing and the selector. Display the saved
 foreground command line, falling back to its name. Display text is printable;

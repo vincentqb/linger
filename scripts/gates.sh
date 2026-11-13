@@ -615,7 +615,7 @@ printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])[|] _ => writeSave [(]paths
 for tie in \
   'let save ← readSave origin home file let rows := catalogRows save[.]content save[.]panes' \
   'let value := if [[]"directory", "session", "window", "pane", "title", "command", "saved-command", "window-title"[]][.]contains key then value[.]quote else diagnostic value' \
-  'Os[.]Shell[.]writeAll Os[.]Shell[.]stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor rows[)][.]toArray[)]' \
+  'Os[.]Shell[.]writeAll Os[.]Shell[.]stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor none rows[)][.]toArray[)]' \
   'let save ← readSave origin home file createPanes executable origin save[.]panes [(]readArchive save[.]path[)]' \
   'let path ← savePath origin home file let stops ← Os[.]Shell[.]watch Os[.]Shell[.]handbackSignals try while true do match ← Linger[.]Selector[.]Shell[.]choose executable [(]some path[.]toString[)] [(]stopped := stops[.]heard[)] with' \
   '[|] [.]attach target displayed => unless displayed[.]candidates[.]contains target do throw [(]IO[.]userError "selected pane was absent from the displayed save"[)] let row := displayed[.]row target' \
@@ -697,7 +697,7 @@ picker_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Selector/WorldCode.lea
 # application binding before dispatch.
 for tie in \
   'for byte in bytes do let [(]next, emitted[)] := Input[.]feed decoder byte decoder := next keys := keys [+][+] [(]emitted[.]filterMap Linger[.]Selector[.]Key[.]ofInput[)][.]toArray else if Input[.]pending decoder && [(]← monotonicMs[)] - lastInput ≥ 150 then let [(]next, emitted[)] := Input[.]flush decoder decoder := next keys := [(]emitted[.]filterMap Linger[.]Selector[.]Key[.]ofInput[)][.]toArray for key in keys do' \
-  'let incomingStatuses := statusesOf incoming let ordered := Linger[.]Display[.]View[.]sort [(]incomingStatuses[.]getD · [.]unknown[)] incoming[.]candidates let next := if loaded then Linger[.]Selector[.]Picker[.]refresh state ordered else [{] [(]Linger[.]Selector[.]Picker[.]init ordered state[.]allowCreate[)] with query := state[.]query [}] dirty := dirty [|][|] !loaded [|][|] next != state [|][|] incoming != snapshot state := next snapshot := incoming statuses := incomingStatuses loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
+  'let incomingStatuses := statusesOf incoming let ordered := Linger[.]Display[.]View[.]sort [(]incomingStatuses[.]getD · [.]unknown[)] incoming[.]candidates let next := if loaded then Linger[.]Selector[.]Picker[.]refresh state ordered incoming[.]descriptions else [{] [(]Linger[.]Selector[.]Picker[.]init ordered state[.]allowCreate[)] with query := state[.]query, descriptions := incoming[.]descriptions [}] let atHome := incoming[.]atHome home dirty := dirty [|][|] !loaded [|][|] next != state [|][|] atHome != snapshot state := next snapshot := atHome statuses := incomingStatuses loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
   'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let rows := Linger[.]Selector[.]Picker[.]frameRows state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor savedTmux current[.]1[.]toNat current[.]2[.]toNat let frame := match shown with [|] some before => if current == size then Linger[.]Selector[.]Picker[.]update before rows else Linger[.]Selector[.]Picker[.]frame state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor savedTmux current[.]1[.]toNat current[.]2[.]toNat [|] none => Linger[.]Selector[.]Picker[.]frame state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor savedTmux current[.]1[.]toNat current[.]2[.]toNat if !frame[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk frame[.]toArray[)] shown := some rows size := current dirty := false let ready ← poll fds events 50' \
   'for key in keys do if !loaded && key == [.]accept then continue match Linger[.]Selector[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target snapshot [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Os[.]Shell[.]Command[.]poll pending then' \
   'if full then lastFull := listed nextRemote := [(]← monotonicMs[)] [+] remoteRefreshMs let incoming := if full then listed else listed[.]withRemote lastFull' \
@@ -741,7 +741,7 @@ for tie in \
   'match Linger[.]Target[.]Remote[.]checkHosts hosts with [|] [.]ok l => return l [|] [.]error e => throw [(]IO[.]userError e[)]' \
   'for [(]host, output[)] in remotes[.]zip remote[.]toList do for row in Linger[.]Target[.]Remote[.]parse output do' \
   '[|] some [(]porcelain, remoteFlag[)] => cmdList porcelain [(]← resolveRemotes remoteFlag[)]' \
-  'let withColor := [(]← [(]← IO[.]getStdout[)][.]isTty[)] && [(]← IO[.]getEnv "NO_COLOR"[)][.]isNone let ordered := Linger[.]Display[.]View[.]sort [(]fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD ""[)][)] rows writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor ordered[)][.]toArray[)]' \
+  'let withColor := [(]← [(]← IO[.]getStdout[)][.]isTty[)] && [(]← IO[.]getEnv "NO_COLOR"[)][.]isNone let ordered := Linger[.]Display[.]View[.]sort [(]fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD ""[)][)] rows let width ← humanWidth let home ← accountHome writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor width [(]ordered[.]map [(]Linger[.]Display[.]Listing[.]atHome home[)][)][)][.]toArray[)]' \
   'def summaryText : IO String := do let rows ← localRows [(]some [(][(]← monotonicMs[)] [+] 250[)][)] [(]statusOnly := true[)] return Linger[.]Display[.]Status[.]summary [(]rows[.]map fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD "unknown"[)][)]' \
   'def cmdSummary : IO Answer := do let summary ← summaryText if !summary[.]isEmpty then IO[.]println summary return [.]done' \
   'match ← connectUpsert name cmd with [|] [.]ok fd => attachSpoken name fd false' \
@@ -947,8 +947,10 @@ code_grep "$VT_ALL_RE" '*.lean' \
 # shim-size ratchet: the C trust boundary must not grow silently. This
 # number only ever goes DOWN without discussion; raising it is a
 # deliberate, reviewable act — the checkpoint for "does this genuinely
-# need a syscall wrapper, or does Lean core already have it?".
-SHIM_CAP=24
+# need a syscall wrapper, or does Lean core already have it?". 26: a pty's
+# foreground group (tcgetpgrp) and a process's words, which macOS keeps only
+# behind sysctl, as a row shows what runs in a session; Lean core has neither.
+SHIM_CAP=26
 shim_n="$(code_count 'LEAN_EXPORT' 'packages/os/c/shim.c')"
 [ "$shim_n" -le "$SHIM_CAP" ] \
   || fail "shim grew to $shim_n wrappers (cap $SHIM_CAP); justify the new syscall and bump the cap"
@@ -1888,7 +1890,8 @@ $timers"
 # bytes are printers `writes_clean` (Challenge part 8) proves clean; the session's own are its
 # output and the repaint of its screen. A new write joins this list, and the headline when its
 # bytes are linger's own.
-#   App/WorldCode: the handback after a remote command (`leaveAnsi`); `ls` (`terminalListing`);
+#   App/WorldCode: the handback after a remote command (`leaveAnsi`); `ls` (`terminalListing`), at
+#     the terminal's width;
 #     `capture` of a saved session (`screenText` or `history`, as `cmdRead`'s caller passes,
 #     rendered at the plan's `render` step and written at its `write` step, tied above).
 #   Import/WorldCode: `tmux ls` (`terminalListing`).
@@ -1903,6 +1906,7 @@ term_writes="$(code_grep 'stdoutFd' 'Linger/*.lean' \
     'packages/*.lean' ':!packages/*/Suites/*' ':!packages/*/Proofs/*' ':!packages/*/Tests/*' \
   | sed -E 's/^([^:]+):[0-9]+:[[:space:]]*/\1: /')"
 expected_term_writes='Linger/App/WorldCode.lean: writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
+Linger/App/WorldCode.lean: let (cols, _) ← winsizeGet stdoutFd
 Linger/App/WorldCode.lean: writeAll stdoutFd
 Linger/App/WorldCode.lean: writeAll stdoutFd (ByteArray.mk bytes.toArray)
 Linger/Import/WorldCode.lean: Os.Shell.writeAll Os.Shell.stdoutFd

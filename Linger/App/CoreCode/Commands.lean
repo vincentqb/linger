@@ -41,6 +41,8 @@ def table : List Command :=
     { word := "set", args := "<name> <k=v>...", summary := "Set labels" },
     { word := "unset", aliases := ["un"], args := "<name> <key>...", summary := "Remove labels" },
     { word := "clear", aliases := ["cl"], args := "<name>", summary := "Remove all labels" },
+    { word := "describe", args := "<name> [text...]",
+      summary := "Describe a session; no text clears it" },
     { word := "version", aliases := ["v"], args := "", summary := "Print version and state paths" },
     { word := "help", aliases := ["h", "--help", "-h"], args := "", summary := "Show commands" }]
 

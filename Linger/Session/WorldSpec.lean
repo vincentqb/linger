@@ -10,7 +10,7 @@ public section
 The world claims the session headlines take as hypotheses, each over the foreign behaviour it
 constrains, which it takes as a parameter, and each with the observation that would falsify it:
 what the file system keeps of what linger saves, what a program in raw mode reads, what a started
-program sees of its start, how SIGKILL and poll(2) behave, that the effect executor answers every
+program sees of its start, what a pty reports of its foreground, how SIGKILL and poll(2) behave, that the effect executor answers every
 effect, and that the operating system grants a lock only when no process holds it. -/
 
 namespace Linger.Session
@@ -45,6 +45,18 @@ other. Of any other mode it says nothing: in the cooked mode a terminal starts i
 discipline edits lines and turns ^C into SIGINT instead of a byte to read. -/
 WorldClaim Pty.Delivers (reads : Pty.Mode → ByteArray → ByteArray) :=
   ∀ written, reads .raw written = written
+
+/-- The operating system reports a pty's foreground process, its words and its directory, as the
+process sees them. `reported master` is what linger reads of the terminal whose master is
+`master` (`Os.Shell.foreground`): the leader of its foreground process group, with that process's
+words and directory; `seen master` is the same leader as it sees itself, the words it runs with
+and the directory it is in. A report that names a process other than the foreground group's
+leader, or other words or another directory than that process sees, falsifies it. Of a terminal
+with no foreground group, or whose group's leader has ended, the report is `none`, and the claim
+says nothing. On Linux `/proc` answers; on macOS `sysctl` and `libproc` do, which no macOS host
+has checked yet. -/
+WorldClaim Pty.Foreground (reported seen : UInt32 → Option Foreground) :=
+  ∀ master fg, reported master = some fg → seen master = some fg
 
 /-- The operating system runs what linger asks, and nothing else. A program that `start dir prog
 args extra reset` starts sees the words `prog` and then `args`, runs in `dir`, and reads each

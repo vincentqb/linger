@@ -217,6 +217,71 @@ Check Spawn.Runs inherited started := do
 def textOf (path : String) : IO String := do
   return ((← (IO.FS.readFile path).toBaseIO).toOption).getD ""
 
+/-- What linger reads of the foreground of the terminal whose master is the argument: the
+observation `Pty.Foreground` constrains. -/
+opaque reportedForeground : UInt32 → Option Foreground
+
+/-- The foreground's leader of the terminal whose master is the argument, as it sees itself: the
+observation `Pty.Foreground` compares the report with. -/
+opaque seenForeground : UInt32 → Option Foreground
+
+/-- What `Os.Shell.foreground` reports of the terminal `master`, once it reports `words` or the
+clock reaches `deadline`. -/
+def reportsWithin (master : UInt32) (words : List String) (deadline : Nat) :
+    IO (Option (UInt32 × List String × String)) := do
+  let mut report ← foreground master
+  while (report.map (·.2.1)) != some words && (← monotonicMs) < deadline do
+    IO.sleep 20
+    report ← foreground master
+  return report
+
+-- The operating system reports a pty's foreground as its leader sees itself: a shell started in a
+-- new terminal, with words a shell would split or quote, moves to a directory of its own and
+-- writes the directory it sees there, while it is its terminal's foreground, and is reported with
+-- its pid, its words and that directory; then an interactive shell in a new terminal runs a
+-- `sleep`, a job of its own, in another directory it moves to, and the foreground reported is
+-- that `sleep`, with its words and that directory. It runs on macOS too, where `sysctl` and
+-- `libproc` answer, but no macOS host has run it yet.
+Check Pty.Foreground reportedForeground seenForeground := do
+  IO.FS.withTempDir fun dir => do
+      let out := (dir / "seen").toString
+      IO.FS.createDir (dir / "moved")
+      IO.FS.createDir (dir / "job")
+      let script := "cd moved && pwd -P > \"$1.part\" && mv \"$1.part\" \"$1\" && exec sleep 60"
+      let words := #["-c", script, "two words", out, "ü ✓"]
+      let (pid, master) ← spawnPty 80 24 dir.toString "/bin/sh" words #[]
+      try
+        unless ← within ((← monotonicMs) + 10000) (System.FilePath.pathExists out) do
+          refute "the started shell did not say where it is"
+        let seen := ((← IO.FS.readFile out).splitOn "\n").headD ""
+        match ← reportsWithin master ["sleep", "60"] ((← monotonicMs) + 10000) with
+        | some (group, argv, cwd) =>
+          unless group == pid && argv == ["sleep", "60"] && cwd == seen do
+            refute
+                s!"the foreground of a started program, {pid} running sleep 60 in {seen}, \
+            was reported as {group} running {argv} in {cwd}"
+        | none =>
+          refute "a started program's terminal reported no foreground"
+      finally
+        stop pid master
+      let (shell, master) ← spawnPty 80 24 dir.toString "/bin/sh" #["-i"] #[]
+      try
+        writeAll master ("cd job && sleep 61\n".toUTF8)
+        let job := (← IO.FS.realPath (dir / "job")).toString
+        match ← reportsWithin master ["sleep", "61"] ((← monotonicMs) + 10000) with
+        | some (group, argv, cwd) =>
+          try
+            unless group != shell && argv == ["sleep", "61"] && cwd == job do
+              refute
+                  s!"the foreground job sleep 61 in {job} of an interactive shell {shell} was \
+              reported as {group} running {argv} in {cwd}"
+          finally
+            kill group 9
+        | none =>
+          refute "an interactive shell's terminal reported no foreground job"
+      finally
+        stop shell master
+
 -- A started program holds no more than its start asks for, whatever the process that starts it
 -- holds: that process ignores SIGHUP, as a daemon does, and the program, a shell, finds its
 -- terminal on descriptors 0, 1 and 2, no other descriptor from 3 to 64 open, and SIGHUP and

@@ -556,12 +556,12 @@ def run : IO UInt32 :=
     -- designed state for it — so this pins that a row is named by its socket
     -- (`rowFields_name`) *and* that a busy row is not shown as healthy. Compared
     -- against the core's own rendering of that row rather than against a copy of it:
-    -- `cmdList` in `Linger.App.Shell` writes `terminalListing withColor` of its rows
-    -- straight to stdout, without color into this pipe, and for a socket that
+    -- `cmdList` in `Linger.App.Shell` writes `terminalListing withColor width` of its rows
+    -- straight to stdout, without color or width into this pipe, and for a socket that
     -- connected but sent nothing back the row is `rowFields name []` plus
     -- `state=live` and `rowStatus (.live [])`.
     let expected :=
-      terminalListing false
+      terminalListing false none
         [rowFields "busy"
             [("state", "live"), ("status", Linger.Display.Status.name (rowStatus (.live [])))]]
     expect (out.toUTF8.toList == expected)

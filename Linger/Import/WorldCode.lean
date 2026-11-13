@@ -345,7 +345,7 @@ private def listSave (file : Option String) (porcelain : Bool) : IO Unit :=
       out.flush
       let withColor := (← out.isTty) && (← IO.getEnv "NO_COLOR").isNone
       Os.Shell.writeAll Os.Shell.stdoutFd
-          (ByteArray.mk (Linger.Display.Listing.terminalListing withColor rows).toArray)
+          (ByteArray.mk (Linger.Display.Listing.terminalListing withColor none rows).toArray)
 
 /-- Act on the selected snapshot's exact directory, never on a reread of `last`.
 Resolve default discovery once per visit; the picker follows that path on refresh. A cancellation

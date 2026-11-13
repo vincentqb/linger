@@ -148,13 +148,21 @@ def Linger.Display.Status.summary : List Status.Status → String := sorry
 
 def Linger.Display.Status.name : Status.Status → String := sorry
 
+def Linger.Display.Status.ofName : String → Status.Status := sorry
+
 def Linger.Display.Listing.rowFields : String → List (String × String) → List (String × String) :=
   sorry
 
 def Linger.Display.Listing.rowStatus : Listing.Row → Status.Status := sorry
 
-def Linger.Display.Listing.terminalListing : Bool → List (List (String × String)) → List UInt8 :=
-  sorry
+def Linger.Display.Listing.terminalListing :
+    Bool → Option Nat → List (List (String × String)) → List UInt8 := sorry
+
+def Linger.Display.Listing.rowText : Option Nat → Nat → List (String × String) → List Char := sorry
+
+def Linger.Display.Listing.caption : List (String × String) → String := sorry
+
+def Linger.Display.Listing.program : List (String × String) → String := sorry
 
 def Linger.Display.View.sort {α : Type} : (α → Status.Status) → List α → List α := sorry
 
@@ -531,7 +539,14 @@ size yet never reaches the pty. Not claimed: which client sizes the session, the
 one whose terminal has a size, which the session fixtures and the attach suite check.
 `start` takes no name a session holds (`start_plan`); the daemon decides that holding the name,
 which has one owner (`one_owner`). The labels, the boot metadata and the terminal a session
-reports each have one source, and a listing names each row by its socket. -/
+reports each have one source, and a listing names each row by its socket. A human row reads only
+the fields `Listing.sources` names (`rowText_sources`): the user's description outranks the
+program's title, and the foreground program, which the operating system reports, shows only when
+that caption does not name it (`caption_precedence`); its glyph and name are never cut, the rest
+fits a width (`rowText_fits`), and each character is printable (`rowText_clean`). Not claimed:
+that the daemon reports the title, foreground and idle time it read, which the overview suite
+checks, and what the operating system reports of the foreground, which `Pty.Foreground` assumes
+and its check tests. -/
 
 theorem one_owner (grant : Claim.State → Nat → Nat → Bool) (exclusive : Claim.Exclusive grant)
     {s : Claim.State} (reached : Claim.Reachable grant Claim.enters s) {a b resource : Nat}
@@ -777,6 +792,91 @@ theorem rowFields_name_rejects_reply :
     ¬∀ (socketName : String) (info : List (String × String)),
         ((fun (_ : String) (info : List (String × String)) => info) socketName info).lookup "name" =
           some socketName := by
+  sorry
+
+theorem rowText_sources (width : Option Nat) (nameCol : Nat) (info info' : List (String × String))
+    (h : ∀ key ∈ Listing.sources, info.lookup key = info'.lookup key) :
+    Listing.rowText width nameCol info = Listing.rowText width nameCol info' := by sorry
+
+@[kills rowText_sources]
+theorem rowText_sources_rejects_labels :
+    ¬∀ (width : Option Nat) (nameCol : Nat) (info info' : List (String × String)),
+        (∀ key ∈ Listing.sources, info.lookup key = info'.lookup key) →
+          (fun (_ : Option Nat) (_ : Nat) (info : List (String × String)) =>
+                info.flatMap fun kv => kv.2.toList)
+              width nameCol info =
+            (fun (_ : Option Nat) (_ : Nat) (info : List (String × String)) =>
+                info.flatMap fun kv => kv.2.toList)
+              width nameCol info' := by
+  sorry
+
+theorem caption_precedence (info : List (String × String)) :
+    ((info.lookup "label.description").getD "" ≠ "" →
+        Listing.caption info = (info.lookup "label.description").getD "") ∧
+      ((info.lookup "label.description").getD "" = "" →
+        Listing.caption info = (info.lookup "title").getD "") ∧
+      (Listing.program info = "" ∨
+        ¬(Listing.command (Listing.program info)).toList <:+: (Listing.caption info).toList) := by
+  sorry
+
+@[kills caption_precedence]
+theorem caption_precedence_rejects_title :
+    ¬∀ (info : List (String × String)),
+        ((info.lookup "label.description").getD "" ≠ "" →
+            (fun (info : List (String × String)) => (info.lookup "title").getD "") info =
+              (info.lookup "label.description").getD "") ∧
+          ((info.lookup "label.description").getD "" = "" →
+            (fun (info : List (String × String)) => (info.lookup "title").getD "") info =
+              (info.lookup "title").getD "") ∧
+          (Listing.program info = "" ∨
+            ¬(Listing.command (Listing.program info)).toList <:+:
+                ((fun (info : List (String × String)) => (info.lookup "title").getD "")
+                    info).toList) := by
+  sorry
+
+theorem rowText_fits (width : Option Nat) (nameCol : Nat) (info : List (String × String)) :
+    (Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
+          ' ' :: ((info.lookup "name").getD "").toList.map Terminal.Render.textChar <+:
+        Listing.rowText width nameCol info) ∧
+      ∀ w,
+        width = some w →
+          (Listing.rowText width nameCol info).length ≤
+            max w (2 + ((info.lookup "name").getD "").toList.length) := by
+  sorry
+
+@[kills rowText_fits]
+theorem rowText_fits_rejects_overflow :
+    ¬∀ (width : Option Nat) (nameCol : Nat) (info : List (String × String)),
+        (Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
+              ' ' :: ((info.lookup "name").getD "").toList.map Terminal.Render.textChar <+:
+            (fun (_ : Option Nat) (_ : Nat) (info : List (String × String)) =>
+                Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
+                  ' ' ::
+                  (((info.lookup "name").getD "").toList.map Terminal.Render.textChar ++
+                    ['…', '…', '…']))
+              width nameCol info) ∧
+          ∀ w,
+            width = some w →
+              ((fun (_ : Option Nat) (_ : Nat) (info : List (String × String)) =>
+                      Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
+                        ' ' ::
+                        (((info.lookup "name").getD "").toList.map Terminal.Render.textChar ++
+                          ['…', '…', '…']))
+                    width nameCol info).length ≤
+                max w (2 + ((info.lookup "name").getD "").toList.length) := by
+  sorry
+
+theorem rowText_clean (width : Option Nat) (nameCol : Nat) (info : List (String × String)) :
+    ∀ c ∈ Listing.rowText width nameCol info, Display.Printable c := by sorry
+
+@[kills rowText_clean]
+theorem rowText_clean_rejects_escape :
+    ¬∀ (width : Option Nat) (nameCol : Nat) (info : List (String × String)),
+        ∀
+          c ∈
+            (fun (_ : Option Nat) (_ : Nat) (_ : List (String × String)) => ['\x1b']) width nameCol
+              info,
+          Display.Printable c := by
   sorry
 
 theorem picker_attach_listed (s : Selector.Picker.State) (key : Selector.Key) (target : String)
@@ -2137,7 +2237,7 @@ theorem infoText_text_rejects_escape :
   sorry
 
 theorem writes_clean :
-    (∀ withColor rows, Display.Clean (Display.Listing.terminalListing withColor rows)) ∧
+    (∀ withColor width rows, Display.Clean (Display.Listing.terminalListing withColor width rows)) ∧
       (∀ state snapshot statusOf loaded withColor savedTmux cols rows,
         Display.Clean
           (Selector.Picker.frame state snapshot statusOf loaded withColor savedTmux cols rows)) ∧
@@ -2159,10 +2259,11 @@ theorem writes_clean :
 
 @[kills writes_clean]
 theorem writes_clean_rejects_reset :
-    ¬((∀ withColor rows,
+    ¬((∀ withColor width rows,
           Display.Clean
-            ((fun (_ : Bool) (_ : List (List (String × String))) => ([0x1B, 0x63] : List UInt8))
-              withColor rows)) ∧
+            ((fun (_ : Bool) (_ : Option Nat) (_ : List (List (String × String))) =>
+                ([0x1B, 0x63] : List UInt8))
+              withColor width rows)) ∧
         (∀ state snapshot statusOf loaded withColor savedTmux cols rows,
           Display.Clean
             (Selector.Picker.frame state snapshot statusOf loaded withColor savedTmux cols rows)) ∧

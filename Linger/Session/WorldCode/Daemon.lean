@@ -622,6 +622,28 @@ def pump (rt : Rt) (evs : List Event) : BaseIO Rt := do
   return { result.world with
       st := result.st, exiting := result.exiting }
 
+/-- A round's events, after what the daemon reads of the world when a connection that has not
+attached sent bytes, as a request does: the clocks, whether the session's program is its login
+shell, and its terminal's foreground as the operating system reports it (`Os.Shell.foreground`,
+whose report the world claim `Pty.Foreground` is about), as one `observed` event ahead of the
+round's, which `info` then reports. An attached client's keys read nothing. -/
+def observing (rt : Rt) (login : Bool) (events : List Event) : IO (List Event) := do
+  let asks :=
+    events.any fun
+      | .bytes id _ => !((rt.st.client? id).any (·.attached))
+      | _ => false
+  if !asks then
+    return events
+  let reported ←
+    try
+      foreground rt.ptyFd
+    catch _ =>
+      pure none
+  let observation : Linger.Session.Observation :=
+    { nowMs := ← monotonicMs, wallS := (← realtimeS).toNat, login,
+      foreground := reported.map fun (pid, argv, dir) => { pid := pid.toNat, argv, dir } }
+  return .observed observation :: events
+
 /-- poll(2) skips a negative descriptor: the pty's slot holds this one after the terminal
 closes, so the closed terminal cannot wake every poll. -/
 private def closedFd : UInt32 := 0xFFFFFFFF
@@ -1073,6 +1095,7 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
             let (rt', events) ← pollRound rt
             latest.set rt'
             let now ← monotonicMs
+            let events ← observing rt' argv.isEmpty events
             rt ← pump rt' (events ++ [.tick now])
             rt ← flushPty rt
             if !rt.exiting then

@@ -17,7 +17,7 @@ label with an ESC — the injection a hostile porcelain or a crafted checkpoint
 name could attempt. -/
 def hostile : List (String × String) :=
   [("name", "x"), ("status", "idle"), ("pid", "1"), ("cmd", "vi\x1b[31m\tm\ny"),
-    ("label.a", "b\x1bc"), ("clients", "2")]
+    ("fg", "vi\x1b[31m\tm\ny"), ("label.description", "b\x1bc"), ("clients", "2")]
 
 -- C1 metadata is text too; selectors and listings must not emit a CSI codepoint.
 example :
@@ -32,24 +32,25 @@ example : (humanRow 8 hostile).contains 0xEF = true := by native_decide
 
 /-- One line per row: a `cmd`/label/name with an embedded newline cannot forge a
 listing row. Two hostile rows → exactly two line terminators. -/
-example : (terminalListing false [hostile, hostile]).count 0x0A = 2 := by native_decide
+example : (terminalListing false none [hostile, hostile]).count 0x0A = 2 := by native_decide
 
 /-- The empty state is its own single line. -/
-example : (terminalListing false []).count 0x0A = 1 := by native_decide
+example : (terminalListing false none []).count 0x0A = 1 := by native_decide
 
 example :
-    terminalListing true [[("name", "work"), ("status", "working"), ("cmd", "vim")]] =
+    terminalListing true none [[("name", "work"), ("status", "working"), ("cmd", "vim")]] =
       "\x1b[36m⣷\x1b[0m work vim\n".toUTF8.toList := by
   native_decide
 
 example :
-    terminalListing true [[("name", "saved"), ("status", "resumable"), ("state", "resumable")]] =
+    terminalListing true none
+        [[("name", "saved"), ("status", "resumable"), ("state", "resumable")]] =
       "\x1b[2;39m~\x1b[0m saved (resumable)\n".toUTF8.toList := by
   native_decide
 
 example :
-    (terminalListing true [hostile]).count 0x1B = 2 ∧
-      (terminalListing true [hostile]).count 0x0A = 1 := by
+    (terminalListing true none [hostile]).count 0x1B = 2 ∧
+      (terminalListing true none [hostile]).count 0x0A = 1 := by
   native_decide
 
 example :
@@ -57,6 +58,62 @@ example :
   native_decide
 
 example : nameWidth [[("name", "a")], [("name", "work@host")]] = 9 := by native_decide
+
+/-- A shell session as a daemon reports it: its login shell runs `vim` in the foreground. -/
+def present : List (String × String) :=
+  [("name", "work"), ("pid", "10"), ("cmd", "/bin/zsh"), ("status", "idle"), ("login", "true"),
+    ("fg", "vim notes.md"), ("fgpid", "22"), ("fgdir", "/home/u/src"), ("idle", "400"),
+    ("clients", "1"), ("label.owner", "me")]
+
+-- The row shows the foreground program, its directory, how long ago it printed and its watcher,
+-- and neither the pid, the start command nor another label.
+example :
+    String.ofList (rowText none 4 (atHome "/home/u" present)) =
+      "⣀ work vim notes.md  ~/src  6m  +1" := by
+  native_decide
+
+-- The description outranks the title, which outranks nothing it names: `vim` is in the title.
+example :
+    String.ofList (rowText none 4 (present ++ [("title", "notes.md - VIM - vim")])) =
+        "⣀ work notes.md - VIM - vim  /home/u/src  6m  +1" ∧
+      String.ofList
+          (rowText none 4
+            (("label.description", "fixing the parser") :: present ++ [("title", "t")])) =
+        "⣀ work fixing the parser  vim notes.md  /home/u/src  6m  +1" := by
+  native_decide
+
+-- A login shell at its prompt shows no program, and a title that holds its directory hides it.
+example :
+    String.ofList
+          (rowText none 4
+            [("name", "work"), ("pid", "10"), ("status", "idle"), ("login", "true"),
+              ("fg", "/bin/zsh"), ("fgpid", "10"), ("fgdir", "/home/u/src"), ("idle", "5")]) =
+        "⣀ work /home/u/src  5s" ∧
+      String.ofList
+          (rowText none 4
+            [("name", "work"), ("pid", "10"), ("status", "idle"), ("login", "true"),
+              ("fg", "/bin/zsh"), ("fgpid", "10"), ("fgdir", "/home/u/src"),
+              ("title", "u@host: /home/u/src")]) =
+        "⣀ work u@host: /home/u/src" := by
+  native_decide
+
+-- A program started as the session's command shows, though it is the session's own process.
+example :
+    String.ofList
+        (rowText none 4
+          [("name", "work"), ("pid", "10"), ("status", "working"), ("fg", "sleep 100"),
+            ("fgpid", "10"), ("fgdir", "/tmp")]) =
+      "⣷ work sleep 100  /tmp" := by
+  native_decide
+
+-- A narrow terminal cuts the fields from the right, and never the glyph or the name.
+example :
+    String.ofList (rowText (some 20) 4 present) = "⣀ work vim notes.md…" ∧
+      String.ofList (rowText (some 3) 4 present) = "⣀ work" := by
+  native_decide
+
+example : tilde "/home/u" "/home/u" = "~" ∧ tilde "/home/u" "/home/user" = "/home/user" := by
+  native_decide
 
 open Linger.Display.Status in
 example :

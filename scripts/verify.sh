@@ -278,8 +278,8 @@ shim_out="$logs/shim.out"
   || { tail -25 "$shim_out"; fail "lingertest"; }
 tail -1 "$shim_out" | grep -q '^ALL PASS$' || fail "lingertest"
 shim_n="$(grep -c '^PASS ' "$shim_out")"
-[ "$shim_n" -eq 78 ] \
-  || fail "lingertest ran $shim_n checks (expected exactly 78)"
+[ "$shim_n" -eq 81 ] \
+  || fail "lingertest ran $shim_n checks (expected exactly 81)"
 
 # Keep one real session in another state directory through every suite. A suite
 # may clean up its own Env, never the user's process namespace. State directories hold
@@ -341,7 +341,7 @@ fi
 ./.lake/build/bin/suites --suites \
   manager:132 delivery:38 attach:81 agent:70:$agent_skips \
   resume:42:$resume_skips watch:52 title:18:$title_skips graphics:9 robust:35:$robust_skips \
-  interop:72 recipes:56 status:18 terminal:12 overview:15 remote:68 shells:5 identity:25 \
+  interop:72 recipes:56 status:18 terminal:12 overview:21 remote:68 shells:5 identity:25 \
   quiet:7:$quiet_skips \
   || fail "live suites (see $logs/linger-*.out)"
 defaults_after="$(default_listing)"

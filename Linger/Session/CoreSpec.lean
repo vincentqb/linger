@@ -363,6 +363,32 @@ structure Client where
   decoder : Wire.Decoder := {}
   deriving Repr, Inhabited
 
+/-- What the operating system reports of the foreground of a session's terminal: the leader of
+its foreground process group, with the words that process runs with and its directory, as the
+world claim `Pty.Foreground` says. -/
+structure Foreground where
+  /-- The process's id, which is its group's. -/
+  pid : Nat
+  /-- Its words, its program's name first. -/
+  argv : List String
+  /-- The directory it runs in. -/
+  dir : String
+  deriving DecidableEq, Repr
+
+/-- What the daemon read of the world as it was about to answer a request: the clocks, so that
+`info` can say how long ago the program last wrote, and its terminal's foreground, so that
+`info` can say what runs there. -/
+structure Observation where
+  /-- The monotonic clock in milliseconds, as `.tick` reads it. -/
+  nowMs : Nat
+  /-- The real-time clock, in seconds since the epoch. -/
+  wallS : Nat
+  /-- Whether the session's program is its login shell: it started with no command. -/
+  login : Bool
+  /-- The terminal's foreground, when the operating system reports one. -/
+  foreground : Option Foreground
+  deriving DecidableEq, Repr
+
 /-- What the runtime feeds in. All byte payloads are `List UInt8`; the
 runtime converts at the fd boundary. -/
 inductive Event where
@@ -385,6 +411,9 @@ inductive Event where
   | signal (signal : UInt8)
   /-- A poll round ended; `nowMs` is the monotonic clock in milliseconds. -/
   | tick (nowMs : Nat)
+  /-- The daemon read the world, as it does before it answers a request: what `info` then
+  reports of the session's present. -/
+  | observed (observation : Observation)
   /-- The last `.checkpoint` effect failed to save. -/
   | checkpointFailed
   deriving Repr

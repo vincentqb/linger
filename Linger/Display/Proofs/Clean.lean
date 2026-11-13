@@ -148,8 +148,9 @@ theorem clean_utf8s {cs : List Char} (h : ∀ c ∈ cs, Printable c) :
 
 /-- `ls` prints clean bytes: each row's pieces are printable text, its badge in a status
 style followed by an SGR reset, and each row ends with a line feed. -/
-theorem terminalListing_clean (withColor : Bool) (rows : List (List (String × String))) :
-    Clean (Listing.terminalListing withColor rows) := by
+theorem terminalListing_clean (withColor : Bool) (width : Option Nat)
+    (rows : List (List (String × String))) :
+    Clean (Listing.terminalListing withColor width rows) := by
   unfold Listing.terminalListing
   split
   · have empty : ∀ c ∈ "no sessions".toList, Printable c := by
@@ -157,16 +158,16 @@ theorem terminalListing_clean (withColor : Bool) (rows : List (List (String × S
       decide
     exact clean_append (clean_utf8s empty) (clean_piece (p := .lf) trivial)
   · refine clean_flatMap fun row _ => clean_append ?_ (clean_piece (p := .lf) trivial)
-    unfold Listing.renderPieces
-    refine clean_flatMap fun piece hpiece => ?_
-    have text : Clean (Terminal.Render.utf8s piece.text) :=
-      clean_utf8s fun c hc =>
-        printable_of_bounds (Listing.rowPieces_printable _ row piece hpiece c hc)
     split
-    · split
+    · unfold Listing.renderPieces
+      refine clean_flatMap fun piece hpiece => ?_
+      have text : Clean (Terminal.Render.utf8s piece.text) :=
+        clean_utf8s fun c hc =>
+          printable_of_bounds (Listing.rowPiecesIn_printable _ _ row piece hpiece c hc)
+      split
       · exact clean_append (clean_append (clean_sgr _) text) (clean_sgr _)
       · exact text
-    · exact text
+    · exact clean_utf8s fun c hc => Listing.rowText_printable _ _ row c hc
 
 /-- A window title linger sets is clean: one OSC 2 whose payload is printable. -/
 theorem title_ansi_clean (title : String) : Clean (Terminal.Title.ansi title) := by

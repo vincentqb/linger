@@ -98,6 +98,22 @@ inductive Row where
   | published (fresh unseen : Bool)
   deriving Repr
 
+/-- The fields of a listing record a human row reads, each from its one source: the socket's
+name; the status and how a saved session ended, from the caller and the name's end record;
+`pid` and `cmd`, which tell a busy daemon or a peer's row; the description, which only the user
+sets, as the label `description`; the title, which the session's program gave its window; the
+login shell and the foreground program, its process and its directory, which the operating
+system reports; the seconds since the program last wrote; and the watchers. No other field, and
+no other label, changes what a human row shows. -/
+@[expose]
+def sources : List String :=
+  ["name", "status", "state", "saved", "signal", "outcome", "exit", "pid", "cmd",
+    "label.description", "title", "login", "fg", "fgpid", "fgdir", "idle", "clients"]
+
+/-- The name of the program a command line runs: its first word, after the word's last `/`. -/
+@[expose]
+def command (line : String) : String := (((line.splitOn " ").headD "").splitOn "/").getLast?.getD ""
+
 end Linger.Display.Listing
 
 namespace Linger.Display

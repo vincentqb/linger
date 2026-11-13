@@ -165,16 +165,31 @@ namespace Linger.Selector.Picker.Tests
   | .error _ => false
 
 -- The better consecutive alignment is emphasized in the name only, even when
--- command and label text repeat the query.
+-- the command and the description repeat the query; the description, which names the command,
+-- hides it.
 #guard
-  match parseSnapshot "name\taxab\nstatus\tworking\ncmd\tab\nlabel.project\tab\nclients\t2\n" with
+  match
+    parseSnapshot "name\taxab\nstatus\tworking\ncmd\tab\nlabel.description\tab\nclients\t2\n" with
   | .ok snapshot =>
     let chars := highlightedPresentation snapshot 8 "ab" (.existing "axab")
     (chars.zipIdx.filterMap fun (char, index) => if char.matched then some index else none) ==
         [4, 5] &&
-      String.ofList (chars.map (·.char)) == "⣷ axab     ab  [project=ab]  +2" &&
+      String.ofList (chars.map (·.char)) == "⣷ axab     ab  +2" &&
       chars.head?.map (·.status) == some (some .working) &&
       (chars.filter (·.matched)).all (fun char => char.status.isNone)
+  | .error _ => false
+
+-- The query finds a row by its description as by its name, and the snapshot carries each row's.
+#guard
+  match parseSnapshot "name\twork\nlabel.description\tfixing the parser\nname\tother\n" with
+  | .ok snapshot =>
+    snapshot.descriptions == [("work", "fixing the parser")] &&
+      items snapshot.candidates "parser" false snapshot.descriptions == [.existing "work"] &&
+      items snapshot.candidates "oth" false snapshot.descriptions == [.existing "other"] &&
+      matchCount
+          { (init snapshot.candidates false) with
+            query := "fix", descriptions := snapshot.descriptions } ==
+        1
   | .error _ => false
 
 #guard

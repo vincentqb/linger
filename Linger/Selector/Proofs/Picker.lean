@@ -10,6 +10,7 @@ import Fuzzy.Proofs
 import Linger.Target.Proofs.Remote
 import Input.Proofs
 import all Linger.Display.Proofs.View
+import all Linger.Display.Proofs.Listing
 
 /-! Selection contracts within and between listing snapshots.
 
@@ -532,21 +533,16 @@ theorem highlightedPresentation_existing_marked_iff (snapshot : Snapshot) (nameC
         Fuzzy.align query target = some alignment ∧
           2 ≤ index ∧ index < 2 + target.length ∧ alignment.marks[index - 2]? = some true := by
   let marks := ((Fuzzy.align query target).map (·.marks)).getD []
+  obtain ⟨text, hrow⟩ := Linger.Display.Listing.rowPieces_eq nameCol (snapshot.row target)
   let body :=
     ((Linger.Display.Listing.rowPieces nameCol (snapshot.row target))[1]?).getD { text := [] }
   have span : body.nameSpan = some (1, target.length) := by
-    simp [body, Linger.Display.Listing.rowPieces, snapshot_row_name, String.length_toList]
+    simp [body, hrow, snapshot_row_name, String.length_toList]
   cases index with
   | zero =>
-    simp only [highlightedPresentation, presentation, Linger.Display.Listing.rowPieces, ge_iff_le,
-      Bool.and_eq_true, ↓Char.isValue, List.cons_append, List.nil_append, List.append_assoc,
-      beq_iff_eq, String.isEmpty_iff, String.startsWith_string_iff, String.reduceToList,
-      String.Slice.toString_eq, List.isEmpty_iff, List.filterMap_eq_nil_iff, ite_eq_right_iff,
-      reduceCtorEq, imp_false, Prod.forall, Bool.or_eq_true, String.toList_append,
-      List.flatMap_cons, markPiece, List.zipIdx_cons, Nat.zero_add, List.zipIdx_nil, List.map_cons,
-      List.map_nil, List.getElem?_toArray, List.flatMap_nil, List.append_nil, List.length_cons,
-      List.length_map, List.length_zipIdx, Nat.zero_lt_succ, getElem?_pos, List.getElem_cons_zero,
-      Option.some.injEq] at h
+    simp only [highlightedPresentation, presentation, hrow, List.flatMap_cons, List.flatMap_nil,
+      List.append_nil, markPiece, List.zipIdx_cons, List.zipIdx_nil, List.map_cons, List.map_nil,
+      List.cons_append, List.getElem?_cons_zero, Option.some.injEq] at h
     subst char
     simp
   | succ
@@ -554,8 +550,7 @@ theorem highlightedPresentation_existing_marked_iff (snapshot : Snapshot) (nameC
     have row :
       (highlightedPresentation snapshot nameCol query (.existing target))[index + 1]? =
         (markPiece marks.toArray body)[index]? := by
-      simp [highlightedPresentation, presentation, body, Linger.Display.Listing.rowPieces,
-        markPiece, marks]
+      simp [highlightedPresentation, presentation, body, hrow, markPiece, marks]
     rw [row] at h
     rw [markPiece_marked_iff marks.toArray body index char h]
     simp only [span, Option.some.injEq, Prod.mk.injEq]
@@ -614,38 +609,41 @@ theorem emphasizeCells_projection (chars : List HighlightedChar) :
   | nil => rfl
   | cons char chars ih => simp [emphasizeCells, ih]
 
-theorem mem_visible (candidates : List String) (query target : String) :
-    target ∈ visible candidates query ↔
-      target ∈ candidates ∧ Linger.Selector.Picker.matches query target = true := by
+theorem mem_visible (candidates : List String) (query target : String)
+    (descriptions : List (String × String) := []) :
+    target ∈ visible candidates query descriptions ↔
+      target ∈ candidates ∧ found descriptions query target = true := by
   simp [visible]
 
 /-- Sublist preservation states order and multiplicity, not just set membership. -/
-theorem visible_order (candidates : List String) (query : String) :
-    (visible candidates query).Sublist candidates := List.filter_sublist
+theorem visible_order (candidates : List String) (query : String)
+    (descriptions : List (String × String) := []) :
+    (visible candidates query descriptions).Sublist candidates := List.filter_sublist
 
-theorem visible_empty_query (candidates : List String) : visible candidates "" = candidates := by
-  simp [visible, matches_empty]
+theorem visible_empty_query (candidates : List String)
+    (descriptions : List (String × String) := []) :
+    visible candidates "" descriptions = candidates := by simp [visible, found, matches_empty]
 
 /-- All existing matches precede the optional creation choice. -/
 theorem items_existing_prefix (candidates : List String) (query : String)
-    (allowCreate : Bool := true) :
-    ((visible candidates query).map Item.existing).IsPrefix
-      (items candidates query allowCreate) := by
+    (allowCreate : Bool := true) (descriptions : List (String × String) := []) :
+    ((visible candidates query descriptions).map Item.existing).IsPrefix
+      (items candidates query allowCreate descriptions) := by
   unfold items
   exact List.prefix_append _ _
 
 theorem mem_items_existing (candidates : List String) (query target : String)
-    (allowCreate : Bool := true) :
-    Item.existing target ∈ items candidates query allowCreate ↔
-      target ∈ candidates ∧ Linger.Selector.Picker.matches query target = true := by
+    (allowCreate : Bool := true) (descriptions : List (String × String) := []) :
+    Item.existing target ∈ items candidates query allowCreate descriptions ↔
+      target ∈ candidates ∧ found descriptions query target = true := by
   unfold items
   split <;> simp [mem_visible]
 
 /-- Creation requires the enabled mode and an exact valid, absent target,
 independently of whether the query also matches any existing targets. -/
 theorem mem_items_create (candidates : List String) (query target : String)
-    (allowCreate : Bool := true) :
-    Item.create target ∈ items candidates query allowCreate ↔
+    (allowCreate : Bool := true) (descriptions : List (String × String) := []) :
+    Item.create target ∈ items candidates query allowCreate descriptions ↔
       allowCreate = true ∧
         target = (if query.isEmpty then Linger.Target.Name.defaultName else query) ∧
         Linger.Target.Remote.targetValid target = true ∧ target ∉ candidates := by
@@ -663,21 +661,26 @@ theorem mem_items_create (candidates : List String) (query target : String)
       exact ⟨⟨⟨enabled, valid⟩, absent⟩, rfl⟩
 
 /-- Disabling creation leaves exactly the existing matches in their displayed order. -/
-theorem items_disabled (candidates : List String) (query : String) :
-    items candidates query false = (visible candidates query).map Item.existing := by simp [items]
+theorem items_disabled (candidates : List String) (query : String)
+    (descriptions : List (String × String) := []) :
+    items candidates query false descriptions =
+      (visible candidates query descriptions).map Item.existing := by
+  simp [items]
 
 theorem selected_mem (s : State) (target : String) (h : selected s = some (.existing target)) :
-    target ∈ s.candidates ∧ Linger.Selector.Picker.matches s.query target = true :=
-  (mem_items_existing _ _ _ s.allowCreate).mp (List.mem_of_getElem? h)
+    target ∈ s.candidates ∧ found s.descriptions s.query target = true :=
+  (mem_items_existing _ _ _ s.allowCreate s.descriptions).mp (List.mem_of_getElem? h)
 
-theorem selected_empty (s : State) (h : items s.candidates s.query s.allowCreate = []) :
-    selected s = none := by simp [selected, h]
+theorem selected_empty (s : State)
+    (h : items s.candidates s.query s.allowCreate s.descriptions = []) : selected s = none := by
+  simp [selected, h]
 
 /-- This holds even for a forged cursor, without a state-validity premise. -/
 theorem selected_no_create (s : State) (target : String) (disabled : s.allowCreate = false) :
     selected s ≠ some (.create target) := by
   intro h
-  have enabled := ((mem_items_create _ _ _ s.allowCreate).mp (List.mem_of_getElem? h)).1
+  have enabled :=
+    ((mem_items_create _ _ _ s.allowCreate s.descriptions).mp (List.mem_of_getElem? h)).1
   simp [disabled] at enabled
 
 /-- Identity is the exact target, independent of whether Enter creates or attaches. -/
@@ -699,19 +702,21 @@ theorem refresh_valid (s : State) (candidates : List String)
   simp only [refresh, State.Valid]
   refine ⟨?_, hquery⟩
   cases hf :
-    (items candidates s.query s.allowCreate).findIdx?
+    (items candidates s.query s.allowCreate s.descriptions).findIdx?
       (fun item => some item.target == (selected s).map Item.target) with
   | none => exact Nat.min_le_right _ _
   | some index =>
     have bound := (List.findIdx?_eq_some_iff_findIdx_eq.mp hf).1
-    simpa using (show index ≤ (items candidates s.query s.allowCreate).length - 1 by omega)
+    simpa using
+      (show index ≤ (items candidates s.query s.allowCreate s.descriptions).length - 1 by omega)
 
 /-- A surviving target stays selected even after reordering or changing row kind. -/
 theorem refresh_selected (s : State) (candidates : List String) (item : Item)
     (hselected : selected s = some item)
-    (hpresent : ∃ next ∈ items candidates s.query s.allowCreate, next.target = item.target) :
+    (hpresent :
+      ∃ next ∈ items candidates s.query s.allowCreate s.descriptions, next.target = item.target) :
     (selected (refresh s candidates)).map Item.target = some item.target := by
-  let choices := items candidates s.query s.allowCreate
+  let choices := items candidates s.query s.allowCreate s.descriptions
   let predicate := fun next : Item => some next.target == (selected s).map Item.target
   have found : ∃ next, next ∈ choices ∧ predicate next = true := by
     obtain ⟨next, member, target⟩ := hpresent
@@ -734,12 +739,12 @@ theorem refresh_selected (s : State) (candidates : List String) (item : Item)
 /-- When the former target is gone, refresh keeps its row when possible. -/
 theorem refresh_missing (s : State) (candidates : List String)
     (hmissing :
-      ∀ item ∈ items candidates s.query s.allowCreate,
+      ∀ item ∈ items candidates s.query s.allowCreate s.descriptions,
         some item.target ≠ (selected s).map Item.target) :
     (refresh s candidates).cursor =
-      min s.cursor ((items candidates s.query s.allowCreate).length - 1) := by
+      min s.cursor ((items candidates s.query s.allowCreate s.descriptions).length - 1) := by
   have hf :
-    (items candidates s.query s.allowCreate).findIdx?
+    (items candidates s.query s.allowCreate s.descriptions).findIdx?
         (fun item => some item.target == (selected s).map Item.target) =
       none :=
     List.findIdx?_eq_none_iff.mpr (by simpa using hmissing)
@@ -753,10 +758,10 @@ theorem init_allowCreate (candidates : List String) (allowCreate : Bool) :
 
 /-- The arithmetic invariant means either an in-range cursor or the unique empty cursor. -/
 theorem valid_cursor (s : State) (h : s.Valid) :
-    s.cursor < (items s.candidates s.query s.allowCreate).length ∨
-      (items s.candidates s.query s.allowCreate = [] ∧ s.cursor = 0) := by
+    s.cursor < (items s.candidates s.query s.allowCreate s.descriptions).length ∨
+      (items s.candidates s.query s.allowCreate s.descriptions = [] ∧ s.cursor = 0) := by
   obtain ⟨cursor, -⟩ := h
-  cases hs : items s.candidates s.query s.allowCreate with
+  cases hs : items s.candidates s.query s.allowCreate s.descriptions with
   | nil =>
     right
     simp only [hs, List.length_nil, Nat.zero_sub] at cursor
@@ -854,16 +859,16 @@ theorem step_no_create (s : State) (key : Linger.Selector.Key) (target : String)
 An empty result or out-of-range cursor leaves the picker editable. -/
 theorem step_accept_disabled (s : State) (disabled : s.allowCreate = false) :
     step s .accept =
-      match (visible s.candidates s.query)[s.cursor]? with
+      match (visible s.candidates s.query s.descriptions)[s.cursor]? with
       | some target => .attach target
       | none => .stay s := by
   simp only [step, selected, disabled, items_disabled, List.getElem?_map]
-  cases (visible s.candidates s.query)[s.cursor]? <;> rfl
+  cases (visible s.candidates s.query s.descriptions)[s.cursor]? <;> rfl
 
 /-- No valid-state premise: even a forged or stale cursor cannot manufacture a target. -/
 theorem step_attach_mem (s : State) (key : Linger.Selector.Key) (target : String)
     (h : step s key = .attach target) :
-    target ∈ s.candidates ∧ Linger.Selector.Picker.matches s.query target = true :=
+    target ∈ s.candidates ∧ found s.descriptions s.query target = true :=
   selected_mem s target ((step_attach_iff s key target).mp h).2
 
 /-- No state-validity premise: even a forged cursor cannot create a rewritten,
@@ -879,14 +884,15 @@ theorem step_create_valid (s : State) (key : Linger.Selector.Key) (target : Stri
       ((target.splitOn "@").tail = [] ∨ String.intercalate "@" (target.splitOn "@").tail ≠ "") := by
   have selected := ((step_create_iff s key target).mp h).2
   obtain ⟨_, exactTarget, valid, absent⟩ :=
-    (mem_items_create _ _ _ s.allowCreate).mp (List.mem_of_getElem? selected)
+    (mem_items_create _ _ _ s.allowCreate s.descriptions).mp (List.mem_of_getElem? selected)
   obtain ⟨nonempty, nameValid, printable, suffix⟩ :=
     (Linger.Target.Remote.targetValid_iff target).mp valid
   exact
     ⟨exactTarget, absent, nonempty, (Linger.Target.Name.sanitize_eq_self_iff _).mpr nameValid,
       nameValid, printable, suffix⟩
 
-theorem step_empty_accept (s : State) (h : items s.candidates s.query s.allowCreate = []) :
+theorem step_empty_accept (s : State)
+    (h : items s.candidates s.query s.allowCreate s.descriptions = []) :
     step s .accept = .stay s := by simp [step, selected_empty s h]
 
 /-- An empty listing offers the default session name for explicit creation. -/
@@ -920,41 +926,51 @@ theorem matches_push (query target : String) (c : Char)
 
 /-- **Typing narrows**: a character added to the query keeps only rows the shorter query kept,
 in their order. -/
-theorem visible_push_sublist (candidates : List String) (query : String) (c : Char) :
-    (visible candidates (query.push c)).Sublist (visible candidates query) := by
+theorem visible_push_sublist (candidates : List String) (query : String) (c : Char)
+    (descriptions : List (String × String) := []) :
+    (visible candidates (query.push c) descriptions).Sublist
+      (visible candidates query descriptions) := by
   have heq :
-    visible candidates (query.push c) =
-      (visible candidates query).filter (Linger.Selector.Picker.matches (query.push c)) := by
+    visible candidates (query.push c) descriptions =
+      (visible candidates query descriptions).filter (found descriptions (query.push c)) := by
     unfold visible
     rw [List.filter_filter]
     apply List.filter_congr
     intro x _
-    cases h : Linger.Selector.Picker.matches (query.push c) x
+    cases h : found descriptions (query.push c) x
     · simp
-    · simp [matches_push query x c h]
+    · simp only [found, Bool.or_eq_true] at h
+      simp only [found, Bool.true_and]
+      rcases h with h | h
+      · simp [matches_push _ _ c h]
+      · simp [matches_push _ _ c h]
   rw [heq]
   exact List.filter_sublist
 
 /-- …so the count beside the query never grows as it is typed. -/
 theorem matchCount_push (s : State) (c : Char) :
     matchCount { s with query := s.query.push c } ≤ matchCount s :=
-  (visible_push_sublist s.candidates s.query c).length_le
+  (visible_push_sublist s.candidates s.query c s.descriptions).length_le
 
 /-- **Groups are typeable**: typing a group's name keeps every row of the group. -/
 theorem stem_visible (candidates : List String) (target : String) (depth : Nat)
-    (h : target ∈ candidates) :
-    target ∈ visible candidates (Linger.Display.View.stem depth target) := by
-  rw [mem_visible]
+    (h : target ∈ candidates) (descriptions : List (String × String) := []) :
+    target ∈ visible candidates (Linger.Display.View.stem depth target) descriptions := by
+  rw [mem_visible candidates _ target descriptions]
   refine ⟨h, ?_⟩
+  simp only [found, Bool.or_eq_true]
+  left
   rw [matches_iff_sublist]
   exact (Linger.Display.View.stem_prefix depth target).sublist.map _
 
 /-- …so a group's name, typed as the query, leaves each of its rows to choose. -/
 theorem stem_items (candidates : List String) (target : String) (depth : Nat) (allowCreate : Bool)
-    (h : target ∈ candidates) :
-    Item.existing target ∈ items candidates (Linger.Display.View.stem depth target) allowCreate :=
-  (mem_items_existing candidates _ target allowCreate).mpr
-    ((mem_visible candidates _ target).mp (stem_visible candidates target depth h))
+    (h : target ∈ candidates) (descriptions : List (String × String) := []) :
+    Item.existing target ∈
+      items candidates (Linger.Display.View.stem depth target) allowCreate descriptions :=
+  (mem_items_existing candidates _ target allowCreate descriptions).mpr
+    ((mem_visible candidates _ target descriptions).mp
+      (stem_visible candidates target depth h descriptions))
 
 /-- **A frame never has more lines than the terminal.** -/
 theorem frameLines_length (state : State) (snapshot : Snapshot)

@@ -125,6 +125,9 @@ structure StateRec where
   private freshFlag : Bool := false
   /-- When the last output arrived, as the first tick after it saw it; `none` before any. -/
   private lastOutMs : Option Nat := none
+  /-- What the daemon last read of the world, as it was about to answer; `none` before it read
+  any. -/
+  private observed : Option Observation := none
 
 /-- The session's state, as the headline theorems name it: a definition over the sealed record
 `StateRec`, because `Challenge.lean` declares the type as a hole the program fills. -/
@@ -277,6 +280,32 @@ def endingFields : Ending → List (String × String)
   | .program outcome => outcomeFields outcome
   | .saved signal => [("saved", toString signal.toNat)]
 
+/-- How `info` reports the title the session's program last gave its window: `title`, when it
+gave a nonempty one. -/
+def titleFields (title : String) : List (String × String) :=
+  if title.isEmpty then [] else [("title", title)]
+
+/-- How `info` reports the session's present, as the daemon last read it before it answered:
+`idle`, the whole seconds since the program last wrote, and `lastout`, that time on the real-time
+clock in seconds, once it wrote at all; `login` when the session's program is its login shell;
+and the foreground of its terminal, `fg` its words joined by spaces, `fgpid` its process and
+`fgdir` its directory, when the operating system reports one. -/
+def presentFields (observed : Option Observation) (lastOutMs : Option Nat) :
+    List (String × String) :=
+  match observed with
+  | none => []
+  | some o =>
+    (match lastOutMs with
+      | some t =>
+        [("idle", toString ((o.nowMs - t) / 1000)),
+          ("lastout", toString (o.wallS - (o.nowMs - t) / 1000))]
+      | none => []) ++
+      (if o.login then [("login", "true")] else []) ++
+      match o.foreground with
+      | some fg =>
+        [("fg", String.intercalate " " fg.argv), ("fgpid", toString fg.pid), ("fgdir", fg.dir)]
+      | none => []
+
 /-- The fields one listing record carries, as a named stage. Split out from
 `infoText` because the framing below is only unambiguous if no field contains a
 framing byte, and that is a claim about *these* — see `infoText_framing`. -/
@@ -300,6 +329,8 @@ def infoFields (s : State) : List (String × String) :=
     (match s.ended with
     | some ending => endingFields ending
     | none => []) ++
+    titleFields s.vt.windowTitle ++
+    presentFields s.observed s.lastOutMs ++
     s.labels.map (fun (k, v) => (s!"label.{k}", v))
 
 /-- Frame the fields as `k` TAB `v` LF records.
@@ -650,6 +681,7 @@ def step (s : State) (ev : Event) : State × List (Effect Plan) :=
           dirty := false, lastCkptMs := now },
         [.checkpoint])
     else (s.ticked now, [])
+  | .observed observation => ({ s with observed := some observation }, [])
   | .checkpointFailed =>
     -- Keep the attempt time: retry at the next cadence, without needing more
     -- output and without spinning while storage remains unavailable.

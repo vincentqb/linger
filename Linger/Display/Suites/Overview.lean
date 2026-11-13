@@ -15,14 +15,63 @@ separately checks bare help in every stream mode, explicit terminal selection an
 Selector acceptance chooses either an existing target or an explicit creation
 row (`Linger/Selector/Proofs/Picker.lean`).
 
-`cmdList` in `Linger.App.Shell` writes `terminalListing withColor` of its rows straight to
-stdout, without color when stdout is not a terminal, so `terminalListing false []` **is** the
-empty-state line and the suite cannot drift from its wording. -/
+`cmdList` in `Linger.App.Shell` writes `terminalListing withColor width` of its rows straight to
+stdout, without color or width when stdout is not a terminal, so `terminalListing false none []`
+**is** the empty-state line and the suite cannot drift from its wording. A row shows the
+session's present: its description, which `describe` sets and clears, the program in its
+terminal's foreground and that program's directory, and a shell at its prompt by its directory
+alone. -/
 
 namespace Linger.Display.Suites.Overview
 
 open Verify.Harness
 open Linger.Display.Listing (terminalListing)
+
+/-- The row of session `name` in a plain `linger ls`, or `""` when none lists it. -/
+def rowOf (e : Env) (name : String) : IO String := do
+  let rows ← lines <$> e.out #["ls"]
+  return (rows.find? fun row => (row.splitOn " ").getD 1 "" == name).getD ""
+
+/-- A row shows the session's present: its description, which `describe` sets and, with no
+text, clears; the program in its foreground with that program's directory; and a shell at its
+prompt by its directory alone. -/
+def present (e : Env) : IO Unit :=
+  IO.FS.withTempDir fun scratch => do
+    let dir := (← IO.FS.realPath scratch).toString
+    let _ ← e.typeIn "described" #["true"]
+    let (drc, _, _) ← e.cli #["describe", "described", "fixing", "the", "parser"]
+    let shown ← waitFor patienceMs (return has (← rowOf e "described") "fixing the parser")
+    expect (drc == 0 && shown) "a described session shows its description"
+    expect ((← e.field "described" "label.description") == some "fixing the parser")
+        "porcelain carries the description as its label"
+    let (crc, _, _) ← e.cli #["describe", "described"]
+    let row ← rowOf e "described"
+    expect
+        (crc == 0 && !has row "fixing" && row != "" &&
+          (← e.field "described" "label.description").isNone)
+        "describe with no text clears the description"
+    let _ ← e.typeIn "sleeper" #["cd", shellQuote dir, "&&", "sleep", "100"]
+    let busy ←
+      waitFor patienceMs do
+          let row ← rowOf e "sleeper"
+          return has row "sleep 100" && has row dir
+    expect busy
+        s!"a session running sleep 100 shows sleep 100 and its directory: {← rowOf e "sleeper"}"
+    expect
+        ((← e.field "sleeper" "fgdir") == some dir &&
+          (← e.field "sleeper" "fg") == some "sleep 100")
+        "porcelain carries the foreground program and its directory"
+    let client ← e.spawn #["attach", "prompt"]
+    let _ ← waitFor patienceMs (return (← e.info "prompt" "pid").isSome)
+    client.bye
+    let _ ← e.cli #["send", "prompt", s!"cd {shellQuote dir}\n"]
+    let atPrompt ←
+      waitFor patienceMs do
+          let row ← rowOf e "prompt"
+          return has row dir && !has row "/bin/sh"
+    expect atPrompt
+        s!"a shell at its prompt shows its directory but not its shell: {← rowOf e "prompt"}"
+    e.killAll #["described", "sleeper", "prompt"]
 
 /-- The overview suite: explicit `linger ls` lists, exits and never reads stdin. -/
 def run : IO UInt32 :=
@@ -34,7 +83,7 @@ def run : IO UInt32 :=
     expect (vrc == 0 && has vout s!"state:   /tmp/linger-{uid}/state/")
         "HOME-less state fallback is namespaced by uid"
     -- empty state: the explicit listing says so and exits 0 within the deadline
-    let emptyLine := terminalListing false []
+    let emptyLine := terminalListing false none []
     match ← e.cliTimeout #["ls"] 15000 with
     | none =>
       expect false "linger ls exits (it hung — a picker?)"
@@ -67,5 +116,7 @@ def run : IO UInt32 :=
     let out ← e.out #["ls"]
     expect (out.toUTF8 == ByteArray.mk emptyLine.toArray)
         "a hostile checkpoint filename neither injects an escape nor creates an alias"
+    IO.FS.removeFile ((System.FilePath.mk e.dir) / hostile)
+    present e
 
 end Linger.Display.Suites.Overview

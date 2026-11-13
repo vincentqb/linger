@@ -821,6 +821,17 @@ private def cmdAttach (name : String) (cmd : List String) (readOnly : Bool) : IO
     IO.eprintln s!"\r\nlinger: {why} for '{name}'"
     return .notDone
 
+/-- The width a human listing fits: the terminal's columns when standard output is one with a
+size, else none. -/
+private def humanWidth : IO (Option Nat) := do
+  unless ← (← IO.getStdout).isTty do
+    return none
+  try
+    let (cols, _) ← winsizeGet stdoutFd
+    return if cols == 0 then none else some cols.toNat
+  catch _ =>
+    return none
+
 /-- `ls`: local rows, then each remote host's rows named `name@host`, printed as
 `k<TAB>v` records separated by blank lines (`porcelain`) or as the terminal listing.
 Remote rows keep only name, command, state and status. Answers `interrupted` when a signal
@@ -861,13 +872,18 @@ private def cmdList (porcelain : Bool) (remotes : List String) : IO Answer := do
   else
     -- The selector consumes these same row pieces. Only the status badge has
     -- a palette style; redirected output and NO_COLOR retain the plain row. What asks for
-    -- someone comes first, as in the selector (`View.sort`).
+    -- someone comes first, as in the selector (`View.sort`). A terminal's rows fit its width, and
+    -- a directory under the account's home shows as `~`.
     let withColor := (← (← IO.getStdout).isTty) && (← IO.getEnv "NO_COLOR").isNone
     let ordered :=
       Linger.Display.View.sort
         (fun info => Linger.Display.Status.ofName ((info.lookup "status").getD "")) rows
+    let width ← humanWidth
+    let home ← accountHome
     writeAll stdoutFd
-        (ByteArray.mk (Linger.Display.Listing.terminalListing withColor ordered).toArray)
+        (ByteArray.mk
+          (Linger.Display.Listing.terminalListing withColor width
+              (ordered.map (Linger.Display.Listing.atHome home))).toArray)
   return .done
 
 /-- Parse the `ls` argument set: an optional `--porcelain` and an
@@ -1409,6 +1425,13 @@ def main (args : List String) : IO Answer := do
         return answer
   | ["clear", name] | ["cl", name] =>
     withTarget "clear" name [] (requireLive · .labelClear)
+  | "describe" :: name :: words =>
+    -- the description is the label `description`: no words clear it
+    withTarget "describe" name words fun name =>
+        if words.isEmpty then requireLive name (.labelUnset "description".toUTF8.toList)
+        else
+          requireLive name
+            (.labelSet ("description=" ++ String.intercalate " " words).toUTF8.toList)
   | ["ls", "--summary"] | ["list", "--summary"] | ["l", "--summary"] =>
     cmdSummary
   | ["version"] | ["v"] =>

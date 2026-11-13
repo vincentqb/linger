@@ -812,7 +812,7 @@ private def captureImport (f : Fixture) : IO Bool := do
   let (secondRc, secondHistory, _) ← f.cli #["capture", "--history", "captured-w3-p1"]
   let labels ←
     ["tmux.session", "tmux.window", "tmux.pane", "tmux.title", "tmux.command", "tmux.saved-command",
-            "tmux.window-title", "tmux.capture"].mapM
+            "tmux.window-title", "tmux.capture", "description"].mapM
         (fun key => f.info "captured-w3-p0" ("label." ++ key))
   let barrier := f.root / "shell-ready"
   let secondBarrier := f.root / "second-shell-ready"
@@ -839,7 +839,7 @@ private def captureImport (f : Fixture) : IO Bool := do
       !has secondHistory "first old" &&
       labels ==
         [some "captured", some "3", some "0", some "title", some "sh", some command,
-          some "Build window", some "saved"] &&
+          some "Build window", some "saved", some "Build window"] &&
       ran == 0 &&
       secondRan == 0 &&
       ready &&

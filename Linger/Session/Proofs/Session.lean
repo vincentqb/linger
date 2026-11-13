@@ -1057,6 +1057,8 @@ theorem step_bounded (s : State) (ev : Event) (h : Bounded s) : Bounded (step s 
     split
     · exact ⟨hcl, hlb, hdec, hscan⟩
     · exact ⟨hcl, hlb, hdec, hscan⟩
+  · -- an observation changes only what `info` reports
+    exact ⟨hcl, hlb, hdec, hscan⟩
   · -- failed checkpoint changes only persistence bookkeeping
     exact ⟨hcl, hlb, hdec, hscan⟩
 
@@ -1102,6 +1104,7 @@ theorem step_vt_preserves {P : Vt.Vt → Prop}
   · split
     · exact h
     · exact h
+  · exact h
   · exact h
 
 open Terminal.Vt (Good) in
@@ -3014,6 +3017,7 @@ theorem step_exit_iff (s : State) (ev : Event) (seen : Bool) :
       simp only [step] at h
       split at h <;> simp at h
     | checkpointFailed => simp [checkpointFailed_effects] at h
+    | observed o => simp [step] at h
   · intro h
     cases ev with
     | childExited o => simp [step_childExited_effects, conclude_effects]
@@ -3237,6 +3241,7 @@ theorem step_labels_sources (s : State) (ev : Event)
     dsimp only [step]
     split <;> rfl
   | checkpointFailed => exact absurd rfl changed
+  | observed o => exact absurd rfl changed
 
 /-- Closing a connection keeps the boot metadata. -/
 theorem closeClient_metaKv (s : State) (id : Nat) : (closeClient s id).1.metaKv = s.metaKv := by
@@ -3348,6 +3353,7 @@ theorem step_vt_sources (s : State) (ev : Event) :
     dsimp only [step]
     split <;> exact kept
   | checkpointFailed => exact .inr kept
+  | observed o => exact .inr kept
 
 /-- Resizes keep a cursor at the origin there: the witness that the terminal's one source
 rejects a session that prints on its own. -/
@@ -3853,6 +3859,7 @@ theorem step_resizePty_source (s : State) (ev : Event) (cols rows : UInt32)
     simp only [step] at resized
     split at resized <;> simp at resized
   | checkpointFailed => simp [checkpointFailed_effects] at resized
+  | observed o => simp [step] at resized
 
 /-- **No pty resize has a zero dimension**: whatever event arrives, every resize the session asks
 for has positive dimensions, and is the size, clamped, of an attach or resize in the read that
@@ -4029,6 +4036,7 @@ theorem step_changed_dirty (s : State) (ev : Event)
   cases ev with
   | ptyOut chunk => rfl
   | checkpointFailed => rfl
+  | observed o => simp [step] at h
   | connected id =>
     simp only [step] at h ⊢
     split at h <;> simp_all
@@ -4075,6 +4083,7 @@ theorem step_unsaved_kept (s : State) (ev : Event) (h : Effect.checkpoint ∉ (s
   cases ev with
   | ptyOut chunk => exact ⟨rfl, fun _ => rfl⟩
   | checkpointFailed => exact ⟨rfl, fun _ => rfl⟩
+  | observed o => exact ⟨rfl, fun d => d⟩
   | connected i =>
     simp only [step]
     split <;> exact ⟨rfl, fun d => d⟩
@@ -4139,6 +4148,7 @@ theorem step_lastCkptMs (s : State) (ev : Event) :
   | stopped o => exact .inl rfl
   | signal n => exact .inl rfl
   | checkpointFailed => exact .inl rfl
+  | observed o => exact .inl rfl
 
 /-- The save clock is the boot's or a tick's time: never later than the clock the events give. -/
 theorem trace_lastCkptMs_le (s : State) (evs : List Event) :

@@ -46,6 +46,8 @@ structure State where
   /-- Whether `items` may offer a creation row; false for read-only visits and saved
   catalogs. -/
   allowCreate : Bool := true
+  /-- Each target's description, which the query matches as it matches the target. -/
+  descriptions : List (String × String) := []
   deriving BEq, Repr
 
 /-- Exact targets plus the complete metadata records that produced them. Equality

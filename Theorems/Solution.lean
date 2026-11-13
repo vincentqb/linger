@@ -669,6 +669,99 @@ theorem rowFields_name_rejects_reply :
   intro h
   exact absurd (h "s" []) (by simp)
 
+theorem rowText_sources (width : Option Nat) (nameCol : Nat) (info info' : List (String × String))
+    (h : ∀ key ∈ Listing.sources, info.lookup key = info'.lookup key) :
+    Listing.rowText width nameCol info = Listing.rowText width nameCol info' :=
+  Listing.rowText_sources width nameCol info info' h
+
+theorem rowText_sources_rejects_labels :
+    ¬∀ (width : Option Nat) (nameCol : Nat) (info info' : List (String × String)),
+        (∀ key ∈ Listing.sources, info.lookup key = info'.lookup key) →
+          (fun (_ : Option Nat) (_ : Nat) (info : List (String × String)) =>
+                info.flatMap fun kv => kv.2.toList)
+              width nameCol info =
+            (fun (_ : Option Nat) (_ : Nat) (info : List (String × String)) =>
+                info.flatMap fun kv => kv.2.toList)
+              width nameCol info' := by
+  intro h
+  have := h none 0 [("label.k", "a")] [("label.k", "b")] (by simp [Listing.sources, List.lookup])
+  simp at this
+
+theorem caption_precedence (info : List (String × String)) :
+    ((info.lookup "label.description").getD "" ≠ "" →
+        Listing.caption info = (info.lookup "label.description").getD "") ∧
+      ((info.lookup "label.description").getD "" = "" →
+        Listing.caption info = (info.lookup "title").getD "") ∧
+      (Listing.program info = "" ∨
+        ¬(Listing.command (Listing.program info)).toList <:+: (Listing.caption info).toList) :=
+  Listing.caption_precedence info
+
+theorem caption_precedence_rejects_title :
+    ¬∀ (info : List (String × String)),
+        ((info.lookup "label.description").getD "" ≠ "" →
+            (fun (info : List (String × String)) => (info.lookup "title").getD "") info =
+              (info.lookup "label.description").getD "") ∧
+          ((info.lookup "label.description").getD "" = "" →
+            (fun (info : List (String × String)) => (info.lookup "title").getD "") info =
+              (info.lookup "title").getD "") ∧
+          (Listing.program info = "" ∨
+            ¬(Listing.command (Listing.program info)).toList <:+:
+                ((fun (info : List (String × String)) => (info.lookup "title").getD "")
+                    info).toList) := by
+  intro h
+  have := (h [("label.description", "d"), ("title", "t")]).1 (by simp [List.lookup])
+  simp [List.lookup] at this
+
+theorem rowText_fits (width : Option Nat) (nameCol : Nat) (info : List (String × String)) :
+    (Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
+          ' ' :: ((info.lookup "name").getD "").toList.map Terminal.Render.textChar <+:
+        Listing.rowText width nameCol info) ∧
+      ∀ w,
+        width = some w →
+          (Listing.rowText width nameCol info).length ≤
+            max w (2 + ((info.lookup "name").getD "").toList.length) := by
+  refine ⟨Listing.rowText_head width nameCol info, fun w hw => ?_⟩
+  subst hw
+  exact Listing.rowText_width w nameCol info
+
+theorem rowText_fits_rejects_overflow :
+    ¬∀ (width : Option Nat) (nameCol : Nat) (info : List (String × String)),
+        (Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
+              ' ' :: ((info.lookup "name").getD "").toList.map Terminal.Render.textChar <+:
+            (fun (_ : Option Nat) (_ : Nat) (info : List (String × String)) =>
+                Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
+                  ' ' ::
+                  (((info.lookup "name").getD "").toList.map Terminal.Render.textChar ++
+                    ['…', '…', '…']))
+              width nameCol info) ∧
+          ∀ w,
+            width = some w →
+              ((fun (_ : Option Nat) (_ : Nat) (info : List (String × String)) =>
+                      Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
+                        ' ' ::
+                        (((info.lookup "name").getD "").toList.map Terminal.Render.textChar ++
+                          ['…', '…', '…']))
+                    width nameCol info).length ≤
+                max w (2 + ((info.lookup "name").getD "").toList.length) := by
+  intro h
+  have := (h (some 0) 0 []).2 0 rfl
+  simp at this
+
+theorem rowText_clean (width : Option Nat) (nameCol : Nat) (info : List (String × String)) :
+    ∀ c ∈ Listing.rowText width nameCol info, Display.Printable c :=
+  Listing.rowText_printable width nameCol info
+
+theorem rowText_clean_rejects_escape :
+    ¬∀ (width : Option Nat) (nameCol : Nat) (info : List (String × String)),
+        ∀
+          c ∈
+            (fun (_ : Option Nat) (_ : Nat) (_ : List (String × String)) => ['\x1b']) width nameCol
+              info,
+          Display.Printable c := by
+  intro h
+  have := h none 0 [] '\x1b' (by simp)
+  simp [Display.Printable] at this
+
 theorem picker_attach_listed (s : Selector.Picker.State) (key : Selector.Key) (target : String)
     (h : Selector.Picker.step s key = .attach target) : target ∈ s.candidates :=
   (Selector.Picker.step_attach_mem s key target h).1
@@ -2167,7 +2260,7 @@ theorem infoText_text_rejects_escape :
     exact absurd (Render.utf8_no_ctl c printable notDel _ byte).1 (by decide)
 
 theorem writes_clean :
-    (∀ withColor rows, Display.Clean (Display.Listing.terminalListing withColor rows)) ∧
+    (∀ withColor width rows, Display.Clean (Display.Listing.terminalListing withColor width rows)) ∧
       (∀ state snapshot statusOf loaded withColor savedTmux cols rows,
         Display.Clean
           (Selector.Picker.frame state snapshot statusOf loaded withColor savedTmux cols rows)) ∧
@@ -2199,10 +2292,11 @@ theorem writes_clean :
       Display.history_clean, info, Display.leaveAnsi_clean⟩
 
 theorem writes_clean_rejects_reset :
-    ¬((∀ withColor rows,
+    ¬((∀ withColor width rows,
           Display.Clean
-            ((fun (_ : Bool) (_ : List (List (String × String))) => ([0x1B, 0x63] : List UInt8))
-              withColor rows)) ∧
+            ((fun (_ : Bool) (_ : Option Nat) (_ : List (List (String × String))) =>
+                ([0x1B, 0x63] : List UInt8))
+              withColor width rows)) ∧
         (∀ state snapshot statusOf loaded withColor savedTmux cols rows,
           Display.Clean
             (Selector.Picker.frame state snapshot statusOf loaded withColor savedTmux cols rows)) ∧
@@ -2222,7 +2316,7 @@ theorem writes_clean_rejects_reset :
         (∀ v, Display.Clean (Terminal.Render.screenText v)) ∧
         (∀ v, Display.Clean (Terminal.Render.history v)) ∧
         (∀ s, Display.Clean (Session.infoText s)) ∧ Display.Clean Terminal.Render.leaveAnsi) :=
-  fun h => Display.not_clean_reset (h.1 true [])
+  fun h => Display.not_clean_reset (h.1 true none [])
 
 theorem ticks_settle (s : State) (now t₁ t₂ : Nat)
     (h₁ : (Session.trace Session.step s [.tick now]).1.nextTick = some t₁)

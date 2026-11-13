@@ -71,6 +71,21 @@ def Snapshot.row (snapshot : Snapshot) (target : String) : List (String × Strin
       | [key, value] => some (key, value)
       | _ => none
 
+/-- Each target's description: the label `description` of its row. -/
+def Snapshot.descriptions (snapshot : Snapshot) : List (String × String) :=
+  snapshot.candidates.filterMap fun target =>
+    ((snapshot.row target).lookup "label.description").map (target, ·)
+
+/-- The snapshot whose rows show a foreground directory under `home` with `~`, as `ls` shows
+it. -/
+def Snapshot.atHome (home : String) (snapshot : Snapshot) : Snapshot :=
+  { snapshot with
+    records :=
+      snapshot.records.map fun fields =>
+        if fields.head? == some "fgdir" then
+          ["fgdir", Linger.Display.Listing.tilde home (fields[1]?.getD "")]
+        else fields }
+
 /-- Remote rows are named `name@host`. A local session name never contains `@`
 (`Name.okChar`), so the character partitions every listing's rows. -/
 private def remoteTarget (target : String) : Bool := target.toList.contains '@'
@@ -92,9 +107,15 @@ def Snapshot.withRemote (latest full : Snapshot) : Snapshot where
   records :=
     rowRecords (!remoteTarget ·) true latest.records ++ rowRecords remoteTarget false full.records
 
-/-- The candidates the query matches, in listing order. -/
-private def visible (candidates : List String) (query : String) : List String :=
-  candidates.filter (Linger.Selector.Picker.matches query)
+/-- Whether the query finds a target: it matches the target, or the target's description. -/
+private def found (descriptions : List (String × String)) (query target : String) : Bool :=
+  Linger.Selector.Picker.matches query target ||
+    Linger.Selector.Picker.matches query ((descriptions.lookup target).getD "")
+
+/-- The candidates the query finds, by name or description, in listing order. -/
+private def visible (candidates : List String) (query : String)
+    (descriptions : List (String × String) := []) : List String :=
+  candidates.filter (found descriptions query)
 
 /-- A selectable row: a listed target or the explicit creation choice. -/
 inductive Item where
@@ -159,9 +180,10 @@ def emphasizeCells : List HighlightedChar → List HighlightedChar
 
 /-- Existing matches come first. Creation, when enabled, is explicit and never
 rewrites the query. Saved catalogs disable it entirely. -/
-def items (candidates : List String) (query : String) (allowCreate : Bool := true) : List Item :=
+def items (candidates : List String) (query : String) (allowCreate : Bool := true)
+    (descriptions : List (String × String) := []) : List Item :=
   let target := if query.isEmpty then Linger.Target.Name.defaultName else query
-  (visible candidates query).map Item.existing ++
+  (visible candidates query descriptions).map Item.existing ++
     if allowCreate && Linger.Target.Remote.targetValid target && !candidates.contains target then
       [.create target]
     else []
@@ -171,25 +193,28 @@ def maxQueryLength : Nat := 256
 
 /-- A zero cursor represents an empty result; otherwise it indexes a selectable row. -/
 def State.Valid (s : State) : Prop :=
-  s.cursor ≤ (items s.candidates s.query s.allowCreate).length - 1 ∧ s.query.length ≤ maxQueryLength
+  s.cursor ≤ (items s.candidates s.query s.allowCreate s.descriptions).length - 1 ∧
+    s.query.length ≤ maxQueryLength
 
 /-- A state over these candidates with an empty query and the cursor on the first row. -/
 def init (candidates : List String) (allowCreate : Bool := true) : State :=
   { candidates, allowCreate }
 
 /-- The row under the cursor, or none when the cursor indexes no row. -/
-def selected (s : State) : Option Item := (items s.candidates s.query s.allowCreate)[s.cursor]?
+def selected (s : State) : Option Item :=
+  (items s.candidates s.query s.allowCreate s.descriptions)[s.cursor]?
 
 /-- Keep the selected target across snapshots, even when its creation row becomes
 an existing session. A vanished target leaves the cursor clamped in place. -/
-def refresh (s : State) (candidates : List String) : State :=
-  let choices := items candidates s.query s.allowCreate
+def refresh (s : State) (candidates : List String)
+    (descriptions : List (String × String) := s.descriptions) : State :=
+  let choices := items candidates s.query s.allowCreate descriptions
   let target := (selected s).map Item.target
   let cursor :=
     (choices.findIdx? (fun item => some item.target == target)).getD
       (min s.cursor (choices.length - 1))
   { s with
-    candidates, cursor }
+    candidates, descriptions, cursor }
 
 /-- Editing resets the cursor. Navigation clamps; acceptance acts on the selected
 row. No selectable row stays editable. Effects remain the caller's job. -/
@@ -213,9 +238,12 @@ def step (s : State) (key : Linger.Selector.Key) : Outcome :=
   | .down =>
     .stay
       { s with
-        cursor := min (s.cursor + 1) ((items s.candidates s.query s.allowCreate).length - 1) }
+        cursor :=
+          min (s.cursor + 1)
+            ((items s.candidates s.query s.allowCreate s.descriptions).length - 1) }
   | .first => .stay { s with cursor := 0 }
-  | .last => .stay { s with cursor := (items s.candidates s.query s.allowCreate).length - 1 }
+  | .last =>
+    .stay { s with cursor := (items s.candidates s.query s.allowCreate s.descriptions).length - 1 }
   | .accept =>
     match selected s with
     | some (.existing target) => .attach target
@@ -224,7 +252,7 @@ def step (s : State) (key : Linger.Selector.Key) : Outcome :=
   | .cancel => .cancel
 
 /-- How many listed rows the query matches: what the query line shows beside it. -/
-def matchCount (s : State) : Nat := (visible s.candidates s.query).length
+def matchCount (s : State) : Nat := (visible s.candidates s.query s.descriptions).length
 
 /-- What a picker shows, as lines of text pieces with their styles, for a terminal `rows` tall
 (a style is the parameters of the SGR sequences that select it, in order):
@@ -236,7 +264,7 @@ def frameLines (state : State) (snapshot : Snapshot)
     (statusOf : String → Linger.Display.Status.Status) (loaded withColor savedTmux : Bool)
     (rows : Nat) : List (List (String × List (List Nat))) :=
   let height := max 1 rows
-  let choices := items state.candidates state.query state.allowCreate
+  let choices := items state.candidates state.query state.allowCreate state.descriptions
   let nameCol :=
     Linger.Display.Listing.nameWidth (snapshot.candidates.map fun target => [("name", target)])
   let labels := if savedTmux then ["tmux save"] else if state.allowCreate then [] else ["read-only"]

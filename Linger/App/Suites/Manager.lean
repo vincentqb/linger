@@ -686,7 +686,7 @@ private def usageChecks (e : Env) : IO Unit := do
           out.endsWith "\n" &&
           rows.map (fun line => (line.splitOn " ").headD "") ==
             ["attach", "ls", "tmux", "start", "resume", "send", "detach", "kill", "info", "capture",
-              "resize", "wait", "get", "set", "unset", "clear", "version", "help"] &&
+              "resize", "wait", "get", "set", "unset", "clear", "describe", "version", "help"] &&
           rows.all
             (fun line =>
               line == line.trimAscii.toString &&
@@ -1253,22 +1253,21 @@ private def statusChecks (e : Env) : IO Unit := do
       "picker redraws changed metadata with unchanged names and preserves query, target and all details"
       fun f => do
       f.listing
-          "name\talpha\nstatus\tidle\ncmd\told\npid\t1\nlabel.project\tbefore\nclients\t1\nname\tbeta\nstatus\tworking\ncmd\tother\n"
+          "name\talpha\nstatus\tidle\ncmd\tsh\npid\t1\nfg\told\nfgpid\t7\nlabel.description\tbefore\nclients\t1\nname\tbeta\nstatus\tworking\ncmd\tother\n"
       withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "a" "a" do
             return false
           let before ← s.capture "metadata-before"
           let start ← s.mark
           f.listing
-              "name\talpha\nstatus\texited-bad\ncmd\tnew\npid\t2\nlabel.project\tafter\nclients\t3\nname\tbeta\nstatus\tworking\ncmd\tother\n"
-          unless ← s.until "pid 2  new" start do
+              "name\talpha\nstatus\texited-bad\ncmd\tsh\npid\t2\nfg\tnew\nfgpid\t8\nlabel.description\tafter\nclients\t3\nname\tbeta\nstatus\tworking\ncmd\tother\n"
+          unless ← s.until "after  new" start do
             return false
           let after ← s.capture "metadata-after"
           -- what asks for someone comes first, and the cursor stays on the row it was on
           let changed :=
-            rowText before 4 == "  ▸ ⣷ beta  other" &&
-              has (rowText before 5) "old  [project=before]  +1" &&
-              rowText after 4 == "    ! alpha pid 2  new  [project=after]  +3" &&
+            rowText before 4 == "  ▸ ⣷ beta  other" && has (rowText before 5) "before  old  +1" &&
+              rowText after 4 == "    ! alpha after  new  +3" &&
               rowText after 5 == "  ▸ ⣷ beta  other" &&
               rowText after 2 == "  › a 2" &&
               (after.getCell 4 4).pen.fg == .idx 1 &&
@@ -1278,14 +1277,14 @@ private def statusChecks (e : Env) : IO Unit := do
       "picker keeps hostile metadata out of terminal controls while retaining ordinary details"
       fun f => do
       f.listing
-          "name\talpha\nstatus\tworking\ncmd\tvi\x1b[31m\u009b31m\nlabel.project\tok\x07\nclients\t2\nname\tbeta\n"
+          "name\talpha\nstatus\tworking\ncmd\tvi\x1b[31m\u009b31m\nlabel.description\tok\x07\nclients\t2\nname\tbeta\n"
       withPrompt f.picker #[] fun s => do
           let vt ← s.capture "metadata-controls"
           -- beta reports no status, so it asks for someone and comes first
           let row := rowText vt 5
           let output ← s.output.get
           let safe :=
-            has row "vi�[31m�31m" && has row "[project=ok�]" && !hasText output "\u009b" &&
+            has row "vi�[31m�31m" && has row "ok�" && !hasText output "\u009b" &&
               !hasText output "vi\x1b" &&
               (vt.getCell 6 5).pen.fg == .default &&
               rowText vt 4 == "  ▸ ? beta  (busy)"

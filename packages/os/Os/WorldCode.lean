@@ -382,6 +382,45 @@ def getpid : IO UInt32 := IO.Process.getPID
 "" if unreadable, including a path too long to read whole. -/
 def getcwdOf (pid : UInt32) : IO String := Boundary.getcwdOf pid
 
+/-- The account's home directory, as the account database has it, `""` when it has none. It
+reads no environment variable. -/
+def accountHome : IO String := do
+  try
+    return ((← Std.Async.System.getCurrentUser).homeDir.map (·.toString)).getD ""
+  catch _ =>
+    return ""
+
+/-- tcgetpgrp(3) on the terminal open on `fd`, a pty master: its foreground process group, or
+`none` when it has none or `fd` is no terminal. -/
+def foregroundGroup (fd : UInt32) : IO (Option UInt32) := do
+  let group ← Boundary.tcgetpgrp fd
+  return if 0 < group && group ≤ 0x7FFFFFFF then some group.toNatClampNeg.toUInt32 else none
+
+/-- The words `pid` runs with, as the process holds them (`/proc/<pid>/cmdline` on Linux,
+sysctl's `KERN_PROCARGS2` on macOS, untested there), at most 4096 bytes of them: `[]` when they
+cannot be read, as for a process that has ended. A word that is no UTF-8 shows its bytes as
+U+FFFD. -/
+def cmdlineOf (pid : UInt32) : IO (List String) := do
+  let ⟨valid⟩ ← checkPid "cmdlineOf" pid
+  let bytes ← Boundary.cmdlineOf pid valid
+  let words :=
+    (bytes.toList.splitOn 0).map fun word =>
+      (String.fromUTF8? (ByteArray.mk word.toArray)).getD
+        (String.ofList (word.map fun b => if b < 0x80 then Char.ofNat b.toNat else '\uFFFD'))
+  -- every word ends with NUL, so the split leaves an empty last piece
+  return if words.getLast? == some "" then words.dropLast else words
+
+/-- What the operating system reports of the foreground of the terminal open on `fd`, a pty
+master: the leader of its foreground process group, that process's words and its directory, as
+`foregroundGroup`, `cmdlineOf` and `getcwdOf` read them; `none` when the terminal has no
+foreground group or its leader has ended, so that neither its words nor its directory can be
+read. -/
+def foreground (fd : UInt32) : IO (Option (UInt32 × List String × String)) := do
+  let some group ← foregroundGroup fd | return none
+  let words ← cmdlineOf group
+  let dir ← getcwdOf group
+  return if words.isEmpty && dir.isEmpty then none else some (group, words, dir)
+
 /-- Machine hostname; empty only if the platform call fails. -/
 def gethostname : IO String := do
   try

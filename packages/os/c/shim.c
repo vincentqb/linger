@@ -36,6 +36,7 @@
 #ifdef __APPLE__
 #include <libproc.h>   /* PROC_PIDVNODEPATHINFO: the /proc-less cwd read */
 #include <sys/stat.h>  /* stat: check that path against the cwd vnode */
+#include <sys/sysctl.h>  /* KERN_PROCARGS2: the /proc-less command line read */
 #else
 #include <dirent.h>       /* the /proc listing of linger_signal_session */
 #include <sys/syscall.h>  /* pidfd_open, pidfd_send_signal and close_range, which glibc may not wrap */
@@ -1107,4 +1108,66 @@ LEAN_EXPORT lean_obj_res linger_getcwd_of(uint32_t pid) {
     buf[n] = '\0';
     return lean_io_result_mk_ok(lean_mk_string(buf));
 #endif
+}
+
+/* linger_tcgetpgrp : UInt32 -> IO Int64
+ * The foreground process group of the terminal open on fd, the session's pty
+ * master: tcgetpgrp(3), which reports the group of the terminal's foreground
+ * job as the line discipline holds it, or -errno. */
+LEAN_EXPORT lean_obj_res linger_tcgetpgrp(uint32_t fd) {
+    pid_t g = tcgetpgrp((int)fd);
+    int64_t r = g < 0 ? -(int64_t)errno : (int64_t)g;
+    return lean_io_result_mk_ok(lean_box_uint64((uint64_t)r));
+}
+
+/* linger_cmdline_of : UInt32 -> IO ByteArray
+ * The words pid runs with, each ended by NUL, as the process holds them,
+ * at most CMDLINE_MAX bytes; empty when unreadable, as for a process that
+ * has ended. /proc/<pid>/cmdline on Linux. macOS has no /proc: there it is
+ * sysctl's KERN_PROCARGS2, argc then the executable's path, NUL padding and
+ * the words, read for a process of our own uid. That path is untested here:
+ * no macOS host runs the suites. */
+#define CMDLINE_MAX 4096
+LEAN_EXPORT lean_obj_res linger_cmdline_of(uint32_t pid) {
+    char buf[CMDLINE_MAX];
+    size_t n = 0;
+#ifdef __APPLE__
+    int mib[3] = { CTL_KERN, KERN_PROCARGS2, (int)pid };
+    size_t size = 0;
+    if (sysctl(mib, 3, NULL, &size, NULL, 0) == 0 && size > sizeof(int)) {
+        char *all = malloc(size);
+        if (all && sysctl(mib, 3, all, &size, NULL, 0) == 0 && size > sizeof(int)) {
+            int argc;
+            memcpy(&argc, all, sizeof argc);
+            size_t i = sizeof argc;
+            while (i < size && all[i] != '\0') i++;   /* the executable's path */
+            while (i < size && all[i] == '\0') i++;   /* its padding */
+            size_t start = i;
+            for (int w = 0; w < argc && i < size; w++) {
+                while (i < size && all[i] != '\0') i++;
+                if (i < size) i++;
+            }
+            n = i - start;
+            if (n > sizeof buf) n = sizeof buf;
+            memcpy(buf, all + start, n);
+        }
+        free(all);
+    }
+#else
+    char path[64];
+    snprintf(path, sizeof path, "/proc/%u/cmdline", pid);
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd >= 0) {
+        while (n < sizeof buf) {
+            ssize_t r = read(fd, buf + n, sizeof buf - n);
+            if (r < 0 && errno == EINTR) continue;
+            if (r <= 0) break;
+            n += (size_t)r;
+        }
+        close(fd);
+    }
+#endif
+    lean_object *arr = lean_alloc_sarray(1, n, n);
+    memcpy(lean_sarray_cptr(arr), buf, n);
+    return lean_io_result_mk_ok(arr);
 }

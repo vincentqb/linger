@@ -102,6 +102,47 @@ structure RowPiece where
   nameSpan : Option (Nat × Nat) := none
   deriving BEq, Repr
 
+/-! ## What a row shows
+
+A row shows the session's present after its status and name, each field from its one source
+(`sources`): the user's description, else the program's own title (`caption`); the program in the
+terminal's foreground, unless it is the session's login shell at its prompt (`program`); that
+program's directory; how long ago the session last printed; and its watchers. A field appears
+only when it adds something: the program when the caption does not already name it, the
+directory when the caption does not already hold it, and no text twice. The user's words outrank
+the program's, which outrank the operating system's. -/
+
+/-- A field of a record, `""` when the record lacks it. -/
+def look (info : List (String × String)) (key : String) : String := (info.lookup key).getD ""
+
+/-- The row's words: the user's description, else the title the program gave its window. -/
+def caption (info : List (String × String)) : String :=
+  if (look info "label.description").isEmpty then look info "title"
+  else look info "label.description"
+
+/-- The foreground program's command line, from the operating system's report: nothing while
+that is the session's login shell itself, as at its prompt. A row whose daemon reports no
+foreground but which has no `pid`, as a peer's, has its command. -/
+def foregroundText (info : List (String × String)) : String :=
+  if (info.lookup "fg").isSome then
+    if look info "login" == "true" && look info "fgpid" == look info "pid" then ""
+    else look info "fg"
+  else if (look info "pid").isEmpty then look info "cmd" else ""
+
+/-- The program in the terminal's foreground, as its command line: nothing while that is the
+session's login shell itself, as at its prompt, or when the caption already names it. A row
+whose daemon reports no foreground but which has no `pid`, as a peer's, shows its command. -/
+def program (info : List (String × String)) : String :=
+  if decide ((command (foregroundText info)).toList <:+: (caption info).toList) then ""
+  else foregroundText info
+
+/-- A count of seconds, in its largest whole unit: `42s`, `5m`, `3h` or `2d`. -/
+def ago (seconds : Nat) : String :=
+  if seconds < 60 then s!"{seconds}s"
+  else
+    if seconds < 3600 then s!"{seconds / 60}m"
+    else if seconds < 86400 then s!"{seconds / 3600}h" else s!"{seconds / 86400}d"
+
 /-- How a saved row's program ended, in the words a client prints when a session ends, from the
 `exit`, `signal` and `outcome` fields `Session.outcomeFields` writes: `none` for a row that
 carries none of them. -/
@@ -112,39 +153,93 @@ def endingText (info : List (String × String)) : Option String :=
   | none, _, some code => some s!"status {code}"
   | none, _, none => none
 
-/-- One shared row: status badge, aligned name, command/pid, labels and watchers.
-Every untrusted value is made printable before a renderer sees it, including C1
-controls that can otherwise be interpreted as terminal commands. A saved row whose program
-ended says how, where another saved row says it is resumable, and which signal stopped its
-daemon when one saved it (the `saved` field `Session.endingFields` writes). -/
-def rowPieces (nameCol : Nat) (info : List (String × String)) : List RowPiece :=
-  let f := fun k => (info.lookup k).getD ""
-  let st := Status.ofName (f "status")
-  let labels :=
-    info.filterMap
-      (fun (k, v) => if k.startsWith "label." then some s!"{(k.drop 6).toString}={v}" else none)
-  let labelStr := if labels.isEmpty then "" else "  [" ++ String.intercalate " " labels ++ "]"
-  -- `(busy)` is only for a *local* daemon that did not answer (status unknown,
-  -- no pid/cmd); a live remote row carries no pid but is not busy.
-  let detail :=
-    if f "state" == "resumable" then
-      if st == .exitedOk || st == .exitedBad then
-        "ended" ++ ((endingText info).map (s!" ({·})")).getD ""
-      else
-        match info.lookup "saved" with
-        | some signal => s!"(resumable, saved by signal {signal})"
-        | none => "(resumable)"
+/-- What a row says of a session that is not running: that it ended, and how, or that it is
+resumable, and which signal stopped its daemon when one saved it (the `saved` field
+`Session.endingFields` writes); `(busy)` for a local daemon that did not answer, which carries
+no `pid` and no `cmd`; and nothing for a running session. -/
+def stateText (info : List (String × String)) : String :=
+  let st := Status.ofName (look info "status")
+  if look info "state" == "resumable" then
+    if st == .exitedOk || st == .exitedBad then
+      "ended" ++ ((endingText info).map (s!" ({·})")).getD ""
     else
-      if st == .unknown && (f "pid").isEmpty && (f "cmd").isEmpty then "(busy)"
-      else if (f "pid").isEmpty then f "cmd" else s!"pid {f "pid"}  {f "cmd"}"
-  let watch := if (f "clients").isEmpty || f "clients" == "0" then "" else s!"  +{f "clients"}"
-  let name := (f "name").toList
-  let text :=
-    (dropTrailingBlanks
-          ([' '] ++ name ++ List.replicate (nameCol - name.length) ' ' ++ [' '] ++
-            (detail ++ labelStr ++ watch).toList)).map
-      textChar
-  [{ text := [Status.icon st], status := some st }, { text, nameSpan := some (1, name.length) }]
+      match info.lookup "saved" with
+      | some signal => s!"(resumable, saved by signal {signal})"
+      | none => "(resumable)"
+  else
+    if st == .unknown && (look info "pid").isEmpty && (look info "cmd").isEmpty then "(busy)"
+    else ""
+
+/-- The fields after the name, in order, each shown once: how a session that is not running
+stands, the caption, the program, its directory unless the caption holds it, how long ago the
+session last printed unless it prints now, and `+N` watchers. -/
+def details (info : List (String × String)) : List String :=
+  let dir := look info "fgdir"
+  let idle :=
+    if Status.ofName (look info "status") == .working then ""
+    else ((look info "idle").toNat?.map ago).getD ""
+  let watch :=
+    if (look info "clients").isEmpty || look info "clients" == "0" then ""
+    else s!"+{look info "clients"}"
+  let fields :=
+    [stateText info, caption info, program info,
+      if decide (dir.toList <:+: (caption info).toList) then "" else dir, idle, watch]
+  (fields.filter (!·.isEmpty)).eraseDups
+
+/-- The record a row reads: the `sources` fields of `info`, in their order. A row built from it
+cannot show any other field. -/
+def project (info : List (String × String)) : List (String × String) :=
+  sources.filterMap fun key => (info.lookup key).map ((key, ·))
+
+/-- Cut `cs` to `room` characters from the right: whole when it fits, else what fits before an
+ellipsis, its trailing blanks dropped. -/
+def cut (room : Nat) (cs : List Char) : List Char :=
+  if cs.length ≤ room then cs
+  else if room = 0 then [] else dropTrailingBlanks (cs.take (room - 1)) ++ ['…']
+
+/-- A row's pieces within `width` characters, if any: the status badge, then the name, padded to
+`nameCol`, and the fields `details` reads from `rest`, after a space and two spaces apart. The badge and the name
+are never cut; what follows shrinks from the right to fit. Every untrusted value is made
+printable before a renderer sees it, including C1 controls that can otherwise be interpreted as
+terminal commands. -/
+def piecesOf (width : Option Nat) (nameCol : Nat) (name status : String)
+    (rest : List (String × String)) : List RowPiece :=
+  let st := Status.ofName status
+  let name := name.toList
+  let detail := String.intercalate "  " (details rest)
+  let tail :=
+    dropTrailingBlanks
+      (List.replicate (nameCol - name.length) ' ' ++
+        (if detail.isEmpty then [] else ' ' :: detail.toList))
+  let tail :=
+    match width with
+    | some w => cut (w - 2 - name.length) tail
+    | none => tail
+  [{ text := [Status.icon st], status := some st },
+    { text := (' ' :: name ++ tail).map textChar, nameSpan := some (1, name.length) }]
+
+/-- A row's pieces within `width` characters, if any, from the fields `sources` names. -/
+def rowPiecesIn (width : Option Nat) (nameCol : Nat) (info : List (String × String)) :
+    List RowPiece := piecesOf width nameCol (look info "name") (look info "status") (project info)
+
+/-- One shared row of any width: status badge, aligned name and the session's present. -/
+def rowPieces (nameCol : Nat) (info : List (String × String)) : List RowPiece :=
+  rowPiecesIn none nameCol info
+
+/-- A row's characters within `width`, if any: what a terminal shows of it. -/
+def rowText (width : Option Nat) (nameCol : Nat) (info : List (String × String)) : List Char :=
+  (rowPiecesIn width nameCol info).flatMap (·.text)
+
+/-- A home directory's place in a directory: `~` for the home itself and `~/…` below it. -/
+def tilde (home dir : String) : String :=
+  if home.isEmpty || home == "/" then dir
+  else
+    if dir == home then "~"
+    else if dir.startsWith (home ++ "/") then "~" ++ (dir.drop home.length).toString else dir
+
+/-- A row with its foreground directory shortened with `~` under `home`, for a human reader. -/
+def atHome (home : String) (info : List (String × String)) : List (String × String) :=
+  info.map fun (k, v) => if k == "fgdir" then (k, tilde home v) else (k, v)
 
 /-- Plain bytes, including when redirected: styles are deliberately absent. -/
 def humanRow (nameCol : Nat) (info : List (String × String)) : List UInt8 :=
@@ -169,11 +264,17 @@ private def renderPieces (withColor : Bool) (pieces : List RowPiece) : List UInt
     | none => text
 
 /-- The whole human-readable listing, one LF-terminated row per session (or the
-empty-state line), with the same row pieces as the picker. The name column is as
-wide as the widest name in the set, so the detail columns align. Callers choose
+empty-state line), with the same row pieces as the picker, each within `width` characters when
+it is given. The name column is as wide as the widest name in the set, so the detail columns
+align. Callers choose
 whether color is enabled from terminal detection and `NO_COLOR`. -/
-def terminalListing (withColor : Bool) (rows : List (List (String × String))) : List UInt8 :=
+def terminalListing (withColor : Bool) (width : Option Nat) (rows : List (List (String × String))) :
+    List UInt8 :=
   if rows.isEmpty then utf8s "no sessions".toList ++ [0x0A]
-  else rows.flatMap (fun r => renderPieces withColor (rowPieces (nameWidth rows) r) ++ [0x0A])
+  else
+    rows.flatMap fun r =>
+      (if withColor then renderPieces true (rowPiecesIn width (nameWidth rows) r)
+        else utf8s (rowText width (nameWidth rows) r)) ++
+        [0x0A]
 
 end Linger.Display.Listing

@@ -81,6 +81,7 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
     else #["ls", "-r", "--porcelain"]
   let pending ← IO.mkRef (none : Option Os.Shell.Command.Job)
   let withColor := (← IO.getEnv "NO_COLOR").isNone
+  let home ← accountHome
   let saved ← termRaw stdinFd
   try
     writeAll stdoutFd (ByteArray.mk Linger.Selector.Picker.enterAnsi.toArray)
@@ -162,16 +163,20 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
           lastFull := listed
           nextRemote := (← monotonicMs) + remoteRefreshMs
         let incoming := if full then listed else listed.withRemote lastFull
-        -- what asks for someone first, as `ls` lists it (`View.sort`)
+        -- what asks for someone first, as `ls` lists it (`View.sort`); the query finds a row by
+        -- its description too, and a directory under the account's home shows as `~`, as in `ls`
         let incomingStatuses := statusesOf incoming
         let ordered :=
           Linger.Display.View.sort (incomingStatuses.getD · .unknown) incoming.candidates
         let next :=
-          if loaded then Linger.Selector.Picker.refresh state ordered
-          else { (Linger.Selector.Picker.init ordered state.allowCreate) with query := state.query }
-        dirty := dirty || !loaded || next != state || incoming != snapshot
+          if loaded then Linger.Selector.Picker.refresh state ordered incoming.descriptions
+          else
+            { (Linger.Selector.Picker.init ordered state.allowCreate) with
+              query := state.query, descriptions := incoming.descriptions }
+        let atHome := incoming.atHome home
+        dirty := dirty || !loaded || next != state || atHome != snapshot
         state := next
-        snapshot := incoming
+        snapshot := atHome
         statuses := incomingStatuses
         loaded := true
         nextListing := (← monotonicMs) + 1000
