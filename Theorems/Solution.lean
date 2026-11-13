@@ -2548,21 +2548,93 @@ theorem classify_iff_rejects_idle :
   intro h
   exact absurd ((h { known := false } .unknown).mpr rfl) (by decide)
 
+theorem step_asks (s : State) (ev : Event) :
+    (∀ chunk,
+        ev = .ptyOut chunk →
+          (Status.classify
+                { fresh := (Session.step s ev).1.seen.fresh,
+                  unseen := (Session.step s ev).1.seen.unseen,
+                  asks := (Session.step s ev).1.seen.asks } =
+              .asks ↔
+            seenBy s.roster = false ∧
+              ((Mediation.feed s.terminal s.scanner chunk).asks = true ∨ s.seen.asks = true))) ∧
+      (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
+        ev = .bytes id chunk →
+          s.client? id = some c →
+          c.attached = false →
+          c.decoder.feed chunk = (dec, [m]) →
+          dec.errored = false → m.Looks → (Session.step s ev).1.seen.asks = false) ∧
+      ((Session.step s ev).1.seen.asks = true → s.seen.asks = true ∨ ∃ chunk, ev = .ptyOut chunk) ∧
+      (s.seen.asks = true →
+        (Session.step s ev).1.seen.asks = false →
+        (∃ chunk, ev = .ptyOut chunk) ∨
+          ∃ id chunk c,
+            ev = .bytes id chunk ∧
+              s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks) := by
+  refine
+    ⟨fun chunk hev => ?_, fun id chunk c dec m hev hc fresh read healthy looks => ?_,
+      Session.step_asking_raised s ev, Session.step_asking_cleared s ev⟩
+  · subst hev
+    rw [Status.classify_running_asks, Session.step_ptyOut_asking]
+    cases seenBy s.roster <;> cases (Mediation.feed s.terminal s.scanner chunk).asks <;>
+      cases s.seen.asks <;>
+      decide
+  · subst hev
+    exact (Session.step_look_clears s id chunk hc fresh read healthy looks).1
+
+theorem step_asks_rejects_lumped :
+    ¬∀ (s : State) (ev : Event),
+        (∀ chunk,
+            ev = .ptyOut chunk →
+              (Status.lumped Status.classify
+                    { fresh := (Session.step s ev).1.seen.fresh,
+                      unseen := (Session.step s ev).1.seen.unseen,
+                      asks := (Session.step s ev).1.seen.asks } =
+                  .asks ↔
+                seenBy s.roster = false ∧
+                  ((Mediation.feed s.terminal s.scanner chunk).asks = true ∨ s.seen.asks = true))) ∧
+          (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
+            ev = .bytes id chunk →
+              s.client? id = some c →
+              c.attached = false →
+              c.decoder.feed chunk = (dec, [m]) →
+              dec.errored = false → m.Looks → (Session.step s ev).1.seen.asks = false) ∧
+          ((Session.step s ev).1.seen.asks = true →
+            s.seen.asks = true ∨ ∃ chunk, ev = .ptyOut chunk) ∧
+          (s.seen.asks = true →
+            (Session.step s ev).1.seen.asks = false →
+            (∃ chunk, ev = .ptyOut chunk) ∨
+              ∃ id chunk c,
+                ev = .bytes id chunk ∧
+                  s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks) := by
+  -- today's rule lists a session whose program rang the bell by its output, never as asking
+  intro h
+  have heard :=
+    ((h (State.boot (Vt.Vt.init 80 24) [] []) (.ptyOut [0x07])).1 [0x07] rfl).mpr
+      ⟨rfl, .inl (Session.feed_bel_asks _)⟩
+  have never : ∀ o : Status.Obs, Status.lumped Status.classify o ≠ .asks := fun o hasks => by
+    unfold Status.lumped at hasks
+    have := (Status.classify_iff _ _).mp hasks
+    simp [Status.Is] at this
+  exact never _ heard
+
 theorem icon_glyphs :
-    Status.icon .working = '⣷' ∧
+    Status.icon .asks = '⚑' ∧
+      Status.icon .working = '⣷' ∧
       Status.icon .wantsYou = '⣿' ∧
       Status.icon .idle = '⣀' ∧
       Status.icon .exitedOk = '✓' ∧
-      Status.icon .exitedBad = '!' ∧
+      Status.icon .exitedBad = '✗' ∧
       Status.icon .resumable = '~' ∧
-      Status.icon .unknown = '?' := ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+      Status.icon .unknown = '?' := ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 theorem icon_glyphs_rejects_unknown :
-    ¬((fun (_ : Status.Status) => '?') .working = '⣷' ∧
+    ¬((fun (_ : Status.Status) => '?') .asks = '⚑' ∧
+        (fun (_ : Status.Status) => '?') .working = '⣷' ∧
         (fun (_ : Status.Status) => '?') .wantsYou = '⣿' ∧
         (fun (_ : Status.Status) => '?') .idle = '⣀' ∧
         (fun (_ : Status.Status) => '?') .exitedOk = '✓' ∧
-        (fun (_ : Status.Status) => '?') .exitedBad = '!' ∧
+        (fun (_ : Status.Status) => '?') .exitedBad = '✗' ∧
         (fun (_ : Status.Status) => '?') .resumable = '~' ∧
         (fun (_ : Status.Status) => '?') .unknown = '?') := by
   intro h
@@ -2571,7 +2643,9 @@ theorem icon_glyphs_rejects_unknown :
 theorem summary_exact (statuses : List Status.Status) :
     Status.summary statuses =
       String.intercalate " "
-        ((if statuses.count .wantsYou = 0 then []
+        ((if statuses.count .asks = 0 then []
+          else [(toString (statuses.count .asks)).push (Status.icon .asks)]) ++
+          (if statuses.count .wantsYou = 0 then []
           else [(toString (statuses.count .wantsYou)).push (Status.icon .wantsYou)]) ++
           (if statuses.count .exitedBad = 0 then []
           else [(toString (statuses.count .exitedBad)).push (Status.icon .exitedBad)]) ++
@@ -2583,7 +2657,9 @@ theorem summary_exact_rejects_count :
     ¬∀ (statuses : List Status.Status),
         (fun (all : List Status.Status) => toString all.length) statuses =
           String.intercalate " "
-            ((if statuses.count .wantsYou = 0 then []
+            ((if statuses.count .asks = 0 then []
+              else [(toString (statuses.count .asks)).push (Status.icon .asks)]) ++
+              (if statuses.count .wantsYou = 0 then []
               else [(toString (statuses.count .wantsYou)).push (Status.icon .wantsYou)]) ++
               (if statuses.count .exitedBad = 0 then []
               else [(toString (statuses.count .exitedBad)).push (Status.icon .exitedBad)]) ++
@@ -2630,8 +2706,11 @@ theorem sort_attention_first {α : Type} (status : α → Status.Status) (rows :
     (View.sort status rows).Perm rows ∧
       ∃ first rest,
         View.sort status rows = first ++ rest ∧
-          (∀ x ∈ first, status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) ∧
-          ∀ x ∈ rest, ¬(status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) := by
+          (∀ x ∈ first,
+            status x = .asks ∨ status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) ∧
+          ∀ x ∈ rest,
+            ¬(status x = .asks ∨
+                status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) := by
   obtain ⟨first, rest, split, front, back⟩ := View.sort_attention_first status rows
   exact
     ⟨View.sort_perm status rows, first, rest, split, fun x hx =>
@@ -2643,9 +2722,12 @@ theorem sort_attention_first_rejects_arrival :
         (View.arrival status rows).Perm rows ∧
           ∃ first rest,
             View.arrival status rows = first ++ rest ∧
-              (∀ x ∈ first, status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) ∧
+              (∀ x ∈ first,
+                status x = .asks ∨
+                  status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) ∧
               ∀ x ∈ rest,
-                ¬(status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) := by
+                ¬(status x = .asks ∨
+                    status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) := by
   intro h
   obtain ⟨-, first, rest, split, front, back⟩ := h id [Status.Status.idle, .wantsYou]
   match first, split with

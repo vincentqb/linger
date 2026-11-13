@@ -2,7 +2,9 @@ module
 
 import Linger.Display.CoreCode.Listing
 import all Linger.Display.CoreCode.Status
+import Terminal.CoreCode.Vt
 meta import Linger.Display.CoreCode.Listing
+meta import Terminal.CoreCode.Vt
 
 /-! # Listing tests — the human row is safe and forgery-proof
 
@@ -117,8 +119,8 @@ example : tilde "/home/u" "/home/u" = "~" ∧ tilde "/home/u" "/home/user" = "/h
 
 open Linger.Display.Status in
 example :
-    [.working, .wantsYou, .unknown, .exitedOk, .exitedBad, .idle, .resumable].map style =
-      [[36], [33], [33], [32], [31], [2, 39], [2, 39]] := by
+    [.asks, .working, .wantsYou, .unknown, .exitedOk, .exitedBad, .idle, .resumable].map style =
+      [[33], [36], [33], [33], [32], [31], [2, 39], [2, 39]] := by
   decide
 
 -- Each style's sequence keeps the bytes the listing always wrote.
@@ -129,11 +131,14 @@ example :
 open Linger.Display.Status in
 example :
     summary [.working, .exitedBad, .wantsYou, .idle, .wantsYou, .exitedOk, .resumable] =
-      "2⣿ 1!" := by
+      "2⣿ 1✗" := by
   native_decide
 
 open Linger.Display.Status in
-example : summary [.unknown, .exitedBad, .wantsYou, .unknown] = "1⣿ 1! 2?" := by native_decide
+example : summary [.unknown, .exitedBad, .wantsYou, .unknown] = "1⣿ 1✗ 2?" := by native_decide
+
+open Linger.Display.Status in
+example : summary [.unknown, .asks, .wantsYou, .asks] = "2⚑ 1⣿ 1?" := by native_decide
 
 open Linger.Display.Status in
 example : summary [.idle, .working, .exitedOk, .resumable] = "" := by native_decide
@@ -143,8 +148,34 @@ example : summary (List.replicate 12 .unknown) = "12?" := by native_decide
 
 open Linger.Display.Status in
 example :
-    attentionCounts [.unknown, .exitedBad, .wantsYou, .unknown] =
-      [(.wantsYou, 1), (.exitedBad, 1), (.unknown, 2)] := by
+    attentionCounts [.unknown, .exitedBad, .wantsYou, .unknown, .asks] =
+      [(.asks, 1), (.wantsYou, 1), (.exitedBad, 1), (.unknown, 2)] := by
+  native_decide
+
+-- Every glyph, `⚑` and `✗` among them, takes one column in the toolkit's width table.
+open Linger.Display.Status in
+example :
+    [Status.unknown, .exitedBad, .exitedOk, .resumable, .asks, .wantsYou, .working, .idle].all
+        (fun s => Terminal.Vt.charWidth (icon s) == 1) =
+      true := by
+  native_decide
+
+/-- A session whose program asked, with the text of its notification, as a daemon reports it. -/
+def asking : List (String × String) :=
+  [("name", "agent"), ("pid", "10"), ("status", "asks-you"), ("login", "true"),
+    ("label.description", "fix parser"), ("notice", "edit src/Foo.lean?"), ("fg", "claude"),
+    ("fgpid", "22"), ("fgdir", "/home/u/src"), ("idle", "120")]
+
+-- While it asks, the row shows the notification's text right after the caption; once it no longer
+-- asks, the text is gone.
+example :
+    String.ofList (rowText none 5 (atHome "/home/u" asking)) =
+        "⚑ agent fix parser  edit src/Foo.lean?  claude  ~/src  2m" ∧
+      String.ofList
+          (rowText none 5
+            (atHome "/home/u"
+              (asking.map fun (k, v) => if k == "status" then (k, "idle") else (k, v)))) =
+        "⣀ agent fix parser  claude  ~/src  2m" := by
   native_decide
 
 end Linger.Display.Listing.Tests

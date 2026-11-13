@@ -61,7 +61,7 @@ private def retiredCommand (word : String) : IO Answer := do
     IO.eprintln s!"linger: {word} was removed: {advice}"
   return .usage
 
-/-- What `linger help` prints after the commands: the seven statuses a session can show, which
+/-- What `linger help` prints after the commands: the eight statuses a session can show, which
 of them titles and `ls --summary` count, and the exit statuses every command shares, one line
 per answer (`Answer.legend`). -/
 private def helpFooter : String :=

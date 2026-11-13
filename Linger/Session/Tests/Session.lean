@@ -873,4 +873,51 @@ example :
       true := by
   native_decide
 
+/-- A notification: `ESC ] 9 ; text BEL`. -/
+def osc9 (text : String) : List UInt8 := [0x1B, 0x5D, 0x39, 0x3B] ++ text.toUTF8.toList ++ [0x07]
+
+/-- A bell with nobody attached asks, and so does later output until someone looks; `info`
+reports the ask, and a notification's text, which an attach clears with it. A bell while a client
+is attached is seen as it rings and asks nothing, nor does a notification then. -/
+example :
+    (let (rang, _) := run [.ptyOut [0x61, 0x07]]
+     let (later, _) := step rang (.ptyOut "more".toUTF8.toList)
+      let (posted, _) := step later (.ptyOut (osc9 "edit src/Foo.lean?"))
+      let (looked, _) := run [.connected 1, .bytes 1 (encode (.attach .writable 80 24))] posted
+      let (seen, _) := run [.ptyOut [0x07], .ptyOut (osc9 "seen")] looked
+      (infoFields rang).contains ("asks", "true") && rang.seen.asks && later.seen.asks &&
+        (infoFields posted).contains ("notice", "edit src/Foo.lean?") &&
+        (infoFields looked).contains ("asks", "false") &&
+        !looked.seen.asks &&
+        !(infoFields looked).any (·.1 == "notice") &&
+        !seen.seen.asks &&
+        !(infoFields seen).any (·.1 == "notice")) =
+      true := by
+  native_decide
+
+/-- A capture is a look: it clears an ask and its text, as an attach does. -/
+example :
+    (let (posted, _) := run [.ptyOut (osc9 "done")]
+      let (captured, _) := run [.connected 9, .bytes 9 (encode .screen)] posted
+      posted.seen.asks && (infoFields posted).contains ("notice", "done") && !captured.seen.asks &&
+        !(infoFields captured).any (·.1 == "notice")) =
+      true := by
+  native_decide
+
+/-- The title's terminating BEL, a ConEmu progress report and plain output ask nothing. -/
+example :
+    (let (titled, _) := run [.ptyOut ([0x1B, 0x5D, 0x32, 0x3B, 0x74, 0x07] ++ "x".toUTF8.toList)]
+      let (progress, _) := run [.ptyOut (osc9 "4;1;50")]
+      !titled.seen.asks && !progress.seen.asks && titled.seen.unseen &&
+        !(infoFields progress).any (·.1 == "notice")) =
+      true := by
+  native_decide
+
+/-- What a daemon publishes to its name's end record carries the ask, and reads back. -/
+example :
+    (let (rang, _) := run [.ptyOut [0x07]]
+     Record.published (Record.encode (.running (some rang.seen))) == some ⟨false, true, true⟩) =
+      true := by
+  native_decide
+
 end Linger.Session.Tests

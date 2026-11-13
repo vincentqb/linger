@@ -6,11 +6,11 @@ public section
 
 /-! # Session status — what a listing row reports
 
-**One glyph, one observation.** Every session has exactly one of seven statuses. Each is
-something linger saw directly, shown as one glyph, and says what to do next: leave `⣷`, look at
-`⣿`, nothing for `⣀`, read or discard `✓` and `!`, resume `~` when wanted, and check `?`. A new
-status belongs here only when these seven cannot say what someone needs. Titles and
-`ls --summary` count the three that ask for someone: `⣿`, `!` and `?` (`summary`).
+**One glyph, one observation.** Every session has exactly one of eight statuses. Each is
+something linger saw directly, shown as one glyph, and says what to do next: answer `⚑`, leave
+`⣷`, look at `⣿`, nothing for `⣀`, read or discard `✓` and `✗`, resume `~` when wanted, and check
+`?`. A new status belongs here only when these eight cannot say what someone needs. Titles and
+`ls --summary` count the four that ask for someone: `⚑`, `⣿`, `✗` and `?` (`summary`).
 
 The states, the observation record and the legend live in `Linger/Display/CoreSpec.lean`. The
 classifier is a pure function of an observation record, so the states
@@ -21,7 +21,8 @@ state is reachable (a state no observation produces would be a lie in the legend
 
 namespace Linger.Display.Status
 
-/-- The classifier: a priority cascade. -/
+/-- The classifier: a priority cascade. A program that asks for you outranks one that
+prints. -/
 def classify (o : Obs) : Status :=
   if !o.known then .unknown
   else
@@ -30,17 +31,20 @@ def classify (o : Obs) : Status :=
     | some _ => .exitedBad
     | none =>
       if !o.daemonUp then .resumable
-      else if o.fresh then .working else if o.unseen then .wantsYou else .idle
+      else
+        if o.asks then .asks
+        else if o.fresh then .working else if o.unseen then .wantsYou else .idle
 
-/-- The glyph for a state. All seven are single-column *by our own
-`charWidth`*; note that table covers East-Asian Wide and Fullwidth but not
-Ambiguous, so `✓` may render double-width under a CJK-ambiguous locale. The
-cost there is one column of drift in a listing, not corruption. -/
+/-- The glyph for a state. All eight are single-column *by our own
+`charWidth`*, and East Asian Width neutral or narrow, none an emoji; note that table covers
+East-Asian Wide and Fullwidth but not Ambiguous, so `✓` may render double-width under a
+CJK-ambiguous locale. The cost there is one column of drift in a listing, not corruption. -/
 def icon : Status → Char
   | .unknown => '?'
-  | .exitedBad => '!'
+  | .exitedBad => '✗'
   | .exitedOk => '✓'
   | .resumable => '~'
+  | .asks => '⚑'
   | .wantsYou => '⣿'
   | .working => '⣷'
   | .idle => '⣀'
@@ -52,6 +56,7 @@ def name : Status → String
   | .exitedBad => "exited-bad"
   | .exitedOk => "exited-ok"
   | .resumable => "resumable"
+  | .asks => "asks-you"
   | .wantsYou => "wants-you"
   | .working => "working"
   | .idle => "idle"
@@ -63,24 +68,26 @@ def ofName : String → Status
   | "exited-bad" => .exitedBad
   | "exited-ok" => .exitedOk
   | "resumable" => .resumable
+  | "asks-you" => .asks
   | "wants-you" => .wantsYou
   | "working" => .working
   | "idle" => .idle
   | _ => .unknown
 
 /-- A status's style, as the parameters of the SGR sequence that selects it. Foreground styles
-use the terminal's standard palette. Quiet states dim the default foreground; no background or
-selection attribute belongs to a status. -/
+use the terminal's standard palette: what asks for someone is yellow, a failure red, success
+green and activity cyan. Quiet states dim the default foreground; no background or selection
+attribute belongs to a status. -/
 def style : Status → List Nat
   | .working => [36]
-  | .wantsYou | .unknown => [33]
+  | .asks | .wantsYou | .unknown => [33]
   | .exitedOk => [32]
   | .exitedBad => [31]
   | .idle | .resumable => [2, 39]
 
 /-- The statuses that ask for someone, in display order: titles and `ls --summary` count only
 these. Ordinary activity and successful completion do not ask for attention. -/
-def attention : List Status := [.wantsYou, .exitedBad, .unknown]
+def attention : List Status := [.asks, .wantsYou, .exitedBad, .unknown]
 
 /-- Attention groups in display order, retaining only positive exact counts. -/
 private def attentionCounts (statuses : List Status) : List (Status × Nat) :=
@@ -96,6 +103,7 @@ def summary (statuses : List Status) : String :=
 
 /-- What linger saw, in the words `linger help` gives each status. -/
 def seen : Status → String
+  | .asks => "a bell or a notification since you looked"
   | .working => "output right now"
   | .wantsYou => "new output, then it stopped"
   | .idle => "nothing new since you looked"
@@ -104,10 +112,10 @@ def seen : Status → String
   | .resumable => "not running, saved: attach resumes it"
   | .unknown => "no answer"
 
-/-- The statuses in the order `linger help` lists them: a running program's, an ended one's,
-then a session with no program running. -/
+/-- The statuses in the order `linger help` lists them: a running program's, the one that asks
+for you first, an ended one's, then a session with no program running. -/
 def legendOrder : List Status :=
-  [.working, .wantsYou, .idle, .exitedOk, .exitedBad, .resumable, .unknown]
+  [.asks, .working, .wantsYou, .idle, .exitedOk, .exitedBad, .resumable, .unknown]
 
 /-- The legend `linger help` prints: one line per status, its glyph and what linger saw. -/
 def legend : List String := legendOrder.map fun status => s!"{icon status}  {seen status}"

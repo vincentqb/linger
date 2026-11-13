@@ -29,9 +29,10 @@ def place : Status → Status
   | .idle => .working
   | st => st
 
-/-- The order a view shows places in, those that ask for someone first: `? ! ⣿ ✓`, then the
-running sessions, `⣷` and `⣀` together, then `~`. -/
-def order : List Status := [.unknown, .exitedBad, .wantsYou, .exitedOk, .working, .resumable]
+/-- The order a view shows places in, those that ask for someone first: `⚑ ? ✗ ⣿`, then `✓`, the
+running sessions, `⣷` and `⣀` together, then `~`. A program waiting for you comes before
+everything. -/
+def order : List Status := [.asks, .unknown, .exitedBad, .wantsYou, .exitedOk, .working, .resumable]
 
 /-- Rows in `order` of their status's `place`, each place's rows in listing order. -/
 def sort {α : Type} (status : α → Status) (rows : List α) : List α :=

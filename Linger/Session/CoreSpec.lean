@@ -11,7 +11,8 @@ The values a session exchanges with its clients and its runtime (messages, clien
 events and effects, and the end record a name keeps), what a command answers for each way a
 session ends, the caps its state keeps and how long its changes may go unsaved, the time its
 events tell it, and predicates over the session's operations, which they take as parameters:
-which messages fit a frame and what a decoder reads from a chunked stream, the bounds a state
+which messages fit a frame, change the labels or look at the session, and what a decoder reads from
+a chunked stream, the bounds a state
 keeps, the events a session handles when every effect succeeds, the reachable states of the
 daemon's byte queues, and a model of how daemons and offline readers claim a session's
 resources; and the wrong transition, decision and drivers the kills put in place of the
@@ -46,14 +47,16 @@ def Outcome.answer : Outcome → Os.Answer
   | .unknown => .failed
   | outcome => .program outcome.status
 
-/-- What a daemon last saw of its program's output: whether output is fresh (`⣷`), and whether
-some arrived since the session was last looked at (`⣿`), as `info` reports `fresh` and
-`unseen`. -/
+/-- What a daemon last saw of its program's output: whether output is fresh (`⣷`), whether some
+arrived since the session was last looked at (`⣿`), and whether, since then, the program rang the
+bell or posted a desktop notification (`⚑`), as `info` reports `fresh`, `unseen` and `asks`. -/
 structure Seen where
   /-- Output within the freshness window. -/
   fresh : Bool
   /-- Output since the session was last looked at. -/
   unseen : Bool
+  /-- A bell or a notification since the session was last looked at. -/
+  asks : Bool
   deriving Repr, DecidableEq
 
 /-- What a connection may do, as it asks when it attaches: type into the session, or only watch
@@ -291,6 +294,13 @@ def Msg.Fits : Msg → Prop
 @[expose]
 def Msg.ChangesLabels : Msg → Prop
   | .labelSet _ | .labelUnset _ | .labelClear => True
+  | _ => False
+
+/-- A request that looks at the session: an attach, which shows its screen, or a capture of
+it. -/
+@[expose]
+def Msg.Looks : Msg → Prop
+  | .attach _ _ _ | .screen => True
   | _ => False
 
 /-- What a decoder reads from chunks fed one after another, starting in state `d`, as the

@@ -1194,7 +1194,7 @@ private def statusChecks (e : Env) : IO Unit := do
         s!"picker shares listing rows and keeps match underline independent of selection and status ({slug})"
         fun f => do
         let statuses : List Linger.Display.Status.Status :=
-          [.working, .wantsYou, .exitedOk, .exitedBad, .idle, .resumable, .unknown]
+          [.asks, .working, .wantsYou, .exitedOk, .exitedBad, .idle, .resumable, .unknown]
         let fields :=
           statuses.zipIdx |>.map fun (status, index) =>
             [("name", s!"case{index}"), ("status", Linger.Display.Status.name status),
@@ -1208,7 +1208,7 @@ private def statusChecks (e : Env) : IO Unit := do
         -- the picker lists them as `ls` does, what asks for someone first (`View.sort`), each
         -- with its badge's color and dimness
         let expectedColors : List Terminal.Vt.Color :=
-          [.idx 6, .idx 3, .idx 2, .idx 1, .default, .default, .idx 3]
+          [.idx 3, .idx 6, .idx 3, .idx 2, .idx 1, .default, .default, .idx 3]
         let shown :=
           Linger.Display.View.sort (fun (_, status, _) => status)
             ((fields.zip statuses).zip expectedColors |>.map fun ((info, status), color) =>
@@ -1268,7 +1268,7 @@ private def statusChecks (e : Env) : IO Unit := do
           -- comes first, and the cursor stays on the row it was on
           let changed :=
             rowText before 4 == "  ▸ ⣷ beta  other" && has (rowText before 5) "before  old  +1" &&
-              rowText after 4 == "    ! alpha after  new  +3" &&
+              rowText after 4 == "    ✗ alpha after  new  +3" &&
               rowText after 5 == "  ▸ ⣷ beta  other" &&
               rowText after 2 == "  › a 2" &&
               (after.getCell 4 4).pen.fg == .idx 1 &&

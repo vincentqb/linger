@@ -18,16 +18,16 @@ theorem decode_encode (r : Record) : decode (encode r) = some r := by
     cases seen with
     | none => rfl
     | some seen =>
-      obtain ⟨fresh, unseen⟩ := seen
-      cases fresh <;> cases unseen <;> rfl
+      obtain ⟨fresh, unseen, asks⟩ := seen
+      cases fresh <;> cases unseen <;> cases asks <;> rfl
   | ended outcome => cases outcome <;> rfl
   | saved signal => rfl
 
-/-- Each of the four answers to a daemon's two questions has its own byte. -/
+/-- Each of the eight answers to a daemon's three questions has its own byte. -/
 theorem seenByte_injective (a b : Seen) (h : seenByte a = seenByte b) : a = b := by
-  obtain ⟨f₁, u₁⟩ := a
-  obtain ⟨f₂, u₂⟩ := b
-  cases f₁ <;> cases u₁ <;> cases f₂ <;> cases u₂ <;> simp_all [seenByte]
+  obtain ⟨f₁, u₁, a₁⟩ := a
+  obtain ⟨f₂, u₂, a₂⟩ := b
+  cases f₁ <;> cases u₁ <;> cases a₁ <;> cases f₂ <;> cases u₂ <;> cases a₂ <;> simp_all [seenByte]
 
 /-- A reader reads back what a daemon published that it saw: a summary that reads records shows
 what the daemon would have answered. -/

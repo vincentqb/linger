@@ -67,10 +67,11 @@ theorem infoFields_protocol (s : State) :
   simp [infoFields]
 
 /-- What the name's end record publishes is what `info` reports: a summary that reads the record
-sees the daemon's own `fresh` and `unseen`. -/
+sees the daemon's own `fresh`, `unseen` and `asks`. -/
 theorem infoFields_seen (s : State) :
     ("fresh", toString s.seen.fresh) ∈ infoFields s ∧
-      ("unseen", toString s.seen.unseen) ∈ infoFields s := by
+      ("unseen", toString s.seen.unseen) ∈ infoFields s ∧
+      ("asks", toString s.seen.asks) ∈ infoFields s := by
   simp [infoFields, State.seen]
 
 /-- Distinct numbers print differently. -/
@@ -294,7 +295,8 @@ theorem step_ptyOut_no_clients (s : State) (chunk : List UInt8) (h : s.clients =
     step s (.ptyOut chunk) =
       let r := Terminal.Mediation.feed s.vt s.scan chunk
       ({ s with
-          vt := r.vt, scan := r.scan, dirty := true, outSeq := s.outSeq + 1 },
+          vt := r.vt, scan := r.scan, dirty := true, outSeq := s.outSeq + 1,
+          asking := s.asking || r.asks, notice := r.notice.or s.notice },
         if r.replies.isEmpty then [] else [Effect.writePty r.replies]) := by
   simp [step, broadcast, h]
 
@@ -1150,7 +1152,8 @@ answer being recorded. An exact equation, so any smuggled side effect (a vt
 touch, a label change) breaks it. -/
 theorem onMsg_screen (s : State) (c : Client) (ha : c.answered = false) :
     onMsg s c .screen =
-      ({ s.setClient { c with answered := true } with lookSeq := s.outSeq },
+      ({ s.setClient { c with answered := true } with
+          lookSeq := s.outSeq, asking := false, notice := none },
         outputMsgs c.id (Render.screenText s.vt) ++ [.send c.id .done]) := by
   simp [onMsg, ha]
 
@@ -1776,7 +1779,7 @@ theorem onMsg_attach_focus (s : State) (c : Client) (cols rows : UInt32)
       attached := true, mode := .writable, seq := s.attachSeq, cols, rows }
   let s1 : State :=
     { s.setClient c' with
-      attachSeq := s.attachSeq + 1, lookSeq := s.outSeq }
+      attachSeq := s.attachSeq + 1, lookSeq := s.outSeq, asking := false, notice := none }
   have hfocused : (resizeOwned s1 c').1.focused = true := by
     have hf : s1.focused = true := focused_setClient (c := c') hc rfl rfl
     simp only [State.focused, (resizeOwned_frame s1 c').1]
@@ -2742,7 +2745,8 @@ theorem onMsg_attach_writePty (t : State) (c : Client) (mode : Mode) (cols rows 
                   t.setClient
                     { c with
                       attached := true, mode, seq := t.attachSeq, cols, rows } with
-                  attachSeq := t.attachSeq + 1, lookSeq := t.outSeq }
+                  attachSeq := t.attachSeq + 1, lookSeq := t.outSeq, asking := false,
+                  notice := none }
                 { c with
                   attached := true, mode, seq := t.attachSeq, cols, rows }).1 := by
   let c' : Client :=
@@ -2750,7 +2754,7 @@ theorem onMsg_attach_writePty (t : State) (c : Client) (mode : Mode) (cols rows 
       attached := true, mode, seq := t.attachSeq, cols, rows }
   let t1 : State :=
     { t.setClient c' with
-      attachSeq := t.attachSeq + 1, lookSeq := t.outSeq }
+      attachSeq := t.attachSeq + 1, lookSeq := t.outSeq, asking := false, notice := none }
   have hro := resizeOwned_effects t1 c'
   unfold onMsg
   dsimp only
@@ -2801,7 +2805,7 @@ theorem step_attach_focus (s : State) (id : Nat) (chunk : List UInt8) {c : Clien
       attached := true, mode, seq := t.attachSeq, cols, rows }
   let t1 : State :=
     { t.setClient c' with
-      attachSeq := t.attachSeq + 1, lookSeq := t.outSeq }
+      attachSeq := t.attachSeq + 1, lookSeq := t.outSeq, asking := false, notice := none }
   show
     (c1.attached = false ∧
         Effect.writePty bytes ∈ focusEffects (mode == .writable) t.focused (resizeOwned t1 c').1) ↔
@@ -3497,7 +3501,7 @@ theorem onMsg_attach_repaint (t : State) (c : Client) (mode : Mode) (cols rows :
       attached := true, mode, seq := t.attachSeq, cols, rows }
   let t1 : State :=
     { t.setClient c' with
-      attachSeq := t.attachSeq + 1, lookSeq := t.outSeq }
+      attachSeq := t.attachSeq + 1, lookSeq := t.outSeq, asking := false, notice := none }
   have hro := resizeOwned_effects t1 c'
   unfold onMsg
   simp only [fresh, Bool.false_eq_true, ↓reduceIte]
@@ -3743,7 +3747,7 @@ theorem onMsg_resizePty_source (s : State) (c : Client) (m : Msg) (ec er : UInt3
         attached := true, mode, seq := s.attachSeq, cols, rows }
     let s1 : State :=
       { s.setClient c' with
-        attachSeq := s.attachSeq + 1, lookSeq := s.outSeq }
+        attachSeq := s.attachSeq + 1, lookSeq := s.outSeq, asking := false, notice := none }
     revert h
     unfold onMsg
     dsimp only
@@ -4211,5 +4215,263 @@ theorem unsaved_due (s : State) (ev : Event) (post : List Event) {t : Nat}
         (by
           simp [marked]; omega)).1]
   exact List.mem_singleton.mpr rfl
+
+/-! ## Asking for someone
+
+`asking` is "the program rang the bell or posted a notification since the session was last
+looked at", a property of the session, as `unseen` is: output with nobody attached raises it as
+the mediator hears it, every look — an attach, a capture, output while a client is attached —
+clears it, and no other event changes it. The last notification's text since then, `notice`,
+follows it: raised with it, cleared with it, and within the OSC buffer's cap. -/
+
+/-- A bell from ground asks, whatever the terminal: the fact a kill needs of the mediator. -/
+theorem feed_bel_asks (v : Terminal.Vt.Vt) :
+    (Terminal.Mediation.feed v .ground [0x07]).asks = true :=
+  Terminal.Mediation.feed_bell v [] [] (by simp)
+
+/-- **Output asks as it is heard**: output with nobody attached asks when it rang the bell or
+posted a notification, or when the session asked already; output while a client is attached is
+seen as it arrives, and asks nothing. -/
+theorem step_ptyOut_asking (s : State) (chunk : List UInt8) :
+    (step s (.ptyOut chunk)).1.seen.asks =
+      (!seenBy s.roster &&
+        ((Terminal.Mediation.feed s.terminal s.scanner chunk).asks || s.seen.asks)) := by
+  simp only [step, State.seen, seenBy, State.roster, State.terminal, State.scanner]
+  cases s.clients.any (·.attached) <;> simp [Bool.or_comm]
+
+/-- Resizing on behalf of the size owner leaves the ask and its text alone. -/
+theorem resizeOwned_asking (s : State) (c : Client) :
+    (resizeOwned s c).1.asking = s.asking ∧ (resizeOwned s c).1.notice = s.notice := by
+  unfold resizeOwned resize
+  repeat' split
+  all_goals exact ⟨rfl, rfl⟩
+
+/-- **A look clears the ask**: an attach from a connection not yet attached, or a capture, read
+alone from a healthy decoder, leaves the session asking nothing, and no notification's text. -/
+theorem step_look_clears (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
+    {dec : Wire.Decoder} {m : Msg} (hc : s.client? id = some c) (fresh : c.attached = false)
+    (read : c.decoder.feed chunk = (dec, [m])) (healthy : dec.errored = false) (looks : m.Looks) :
+    (step s (.bytes id chunk)).1.seen.asks = false ∧
+      (step s (.bytes id chunk)).1.notice = none := by
+  rw [step_bytes_single hc read healthy]
+  cases m <;> simp only [Msg.Looks] at looks
+  · unfold onMsg
+    simp only [fresh, Bool.false_eq_true, ↓reduceIte, State.seen]
+    exact ⟨(resizeOwned_asking _ _).1, (resizeOwned_asking _ _).2⟩
+  · rw [onMsg_screen _ _ rfl]
+    exact ⟨rfl, rfl⟩
+
+/-- A message that is no look leaves the ask and its text as they were. -/
+theorem onMsg_asking_kept (s : State) (c : Client) (m : Msg) (h : ¬m.Looks) :
+    (onMsg s c m).1.asking = s.asking ∧ (onMsg s c m).1.notice = s.notice := by
+  cases m
+  all_goals simp only [Msg.Looks, not_true_eq_false] at h
+  all_goals
+    unfold onMsg controlResize resizeOwned resize focusEffects infoMsgs outputMsgs
+    dsimp only
+    repeat' split
+  all_goals simp_all [State.setClient]
+
+/-- Every message leaves the ask and its text as they were, or clears both. -/
+theorem onMsg_asking (s : State) (c : Client) (m : Msg) :
+    ((onMsg s c m).1.asking = s.asking ∧ (onMsg s c m).1.notice = s.notice) ∨
+      ((onMsg s c m).1.asking = false ∧ (onMsg s c m).1.notice = none) := by
+  cases m
+  all_goals
+    unfold onMsg controlResize resizeOwned resize focusEffects infoMsgs outputMsgs
+    dsimp only
+    repeat' split
+  all_goals simp_all [State.setClient]
+
+/-- No message raises an ask: a look clears it, and any other leaves it. -/
+theorem onMsg_asking_le (s : State) (c : Client) (m : Msg) (h : (onMsg s c m).1.asking = true) :
+    s.asking = true := by
+  rcases onMsg_asking s c m with ⟨ha, -⟩ | ⟨ha, -⟩
+  · rwa [ha] at h
+  · rw [ha] at h
+    exact absurd h (by decide)
+
+/-- …nor posts a notification's text. -/
+theorem onMsg_notice_le (s : State) (c : Client) (m : Msg) (text : List UInt8)
+    (h : (onMsg s c m).1.notice = some text) : s.notice = some text := by
+  rcases onMsg_asking s c m with ⟨-, hn⟩ | ⟨-, hn⟩
+  · rwa [hn] at h
+  · rw [hn] at h
+    cases h
+
+/-- No batch of messages raises an ask. -/
+theorem feedMsgs_asking_le (id : Nat) (msgs : List Msg) (acc : State × List (Effect Plan))
+    (h : (feedMsgs id msgs acc).1.asking = true) : acc.1.asking = true :=
+  feedMsgs_induct id msgs acc (P := fun r => r.1.asking = true → acc.1.asking = true)
+    (fun current c m _ _ _ _ hs hr => hs (onMsg_asking_le current.1 c m hr)) (fun h => h) h
+
+/-- …nor posts a notification's text. -/
+theorem feedMsgs_notice_le (id : Nat) (msgs : List Msg) (acc : State × List (Effect Plan))
+    (text : List UInt8) (h : (feedMsgs id msgs acc).1.notice = some text) :
+    acc.1.notice = some text :=
+  feedMsgs_induct id msgs acc (P := fun r => r.1.notice = some text → acc.1.notice = some text)
+    (fun current c m _ _ _ _ hs hr => hs (onMsg_notice_le current.1 c m text hr)) (fun h => h) h
+
+/-- What a read changes of the session it reaches through no message: closing an errored peer,
+or ignoring a peer the session no longer holds, keeps the ask and its text. -/
+theorem step_bytes_cases (s : State) (id : Nat) (chunk : List UInt8) :
+    ((step s (.bytes id chunk)).1.asking = s.asking ∧
+        (step s (.bytes id chunk)).1.notice = s.notice) ∨
+      ∃ c,
+        s.client? id = some c ∧
+          (c.decoder.feed chunk).1.errored = false ∧
+          (step s (.bytes id chunk)).1 =
+            (feedMsgs id (c.decoder.feed chunk).2
+                (s.setClient
+                    { c with
+                      decoder := (c.decoder.feed chunk).1, answered := false },
+                  [])).1 := by
+  unfold step
+  dsimp only
+  split
+  · exact .inl ⟨rfl, rfl⟩
+  · rename_i c hc
+    split
+    · left
+      unfold closeClient
+      dsimp only
+      split <;> exact ⟨rfl, rfl⟩
+    · rename_i hok
+      exact .inr ⟨c, hc, by simpa using hok, rfl⟩
+
+/-- **Only output raises an ask**: an event after which the session asks is output, or the session
+asked already. -/
+theorem step_asking_raised (s : State) (ev : Event) (h : (step s ev).1.seen.asks = true) :
+    s.seen.asks = true ∨ ∃ chunk, ev = .ptyOut chunk := by
+  simp only [State.seen] at h ⊢
+  cases ev with
+  | ptyOut chunk => exact .inr ⟨chunk, rfl⟩
+  | bytes id chunk =>
+    left
+    rcases step_bytes_cases s id chunk with ⟨ha, -⟩ | ⟨c, -, -, heq⟩
+    · rwa [ha] at h
+    · rw [heq] at h
+      simpa [State.setClient] using feedMsgs_asking_le id _ _ h
+  | closed id =>
+    left
+    revert h
+    unfold step closeClient
+    dsimp only
+    split <;> exact fun h => h
+  | connected id =>
+    left
+    revert h
+    unfold step
+    dsimp only
+    split <;> exact fun h => h
+  | childExited o => exact .inl h
+  | stopped o => exact .inl h
+  | signal n => exact .inl h
+  | tick now =>
+    left
+    revert h
+    unfold step
+    dsimp only
+    split <;> exact fun h => h
+  | observed o => exact .inl h
+  | checkpointFailed => exact .inl h
+
+/-- A batch with no look leaves the ask and its text as they were. -/
+theorem feedMsgs_asking (id : Nat) (msgs : List Msg) (acc : State × List (Effect Plan))
+    (none : ∀ m ∈ msgs, ¬m.Looks) : (feedMsgs id msgs acc).1.asking = acc.1.asking := by
+  exact
+    feedMsgs_induct id msgs acc (P := fun r => r.1.asking = acc.1.asking)
+      (fun current c m hm _ _ _ hs => (onMsg_asking_kept current.1 c m (none m hm)).1.trans hs) rfl
+
+/-- **Only a look clears an ask**: an event after which a session that asked asks no longer is
+output, which a client attached saw, or a read, from a connection the session holds, that holds
+an attach or a capture. -/
+theorem step_asking_cleared (s : State) (ev : Event) (was : s.seen.asks = true)
+    (cleared : (step s ev).1.seen.asks = false) :
+    (∃ chunk, ev = .ptyOut chunk) ∨
+      ∃ id chunk c,
+        ev = .bytes id chunk ∧ s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks := by
+  simp only [State.seen] at was cleared
+  have kept : (step s ev).1.asking = s.asking → False := fun h => by simp_all
+  cases ev with
+  | ptyOut chunk => exact .inl ⟨chunk, rfl⟩
+  | bytes id chunk =>
+    right
+    cases hc : s.client? id with
+    | none => exact absurd (by simp [step, hc]) kept
+    | some c =>
+      refine ⟨id, chunk, c, rfl, hc, ?_⟩
+      apply Classical.byContradiction
+      intro hnone
+      apply kept
+      simp only [not_exists, not_and] at hnone
+      simp only [step, hc]
+      split
+      · unfold closeClient
+        dsimp only
+        split <;> rfl
+      · rw [feedMsgs_asking]
+        · simp [State.setClient]
+        · exact fun m hm => hnone m hm
+  | closed id =>
+    refine absurd ?_ kept
+    unfold step closeClient
+    dsimp only
+    split <;> rfl
+  | connected id =>
+    refine absurd ?_ kept
+    dsimp only [step]
+    split <;> rfl
+  | childExited o => exact absurd rfl kept
+  | stopped o => exact absurd rfl kept
+  | signal n => exact absurd rfl kept
+  | tick now =>
+    refine absurd ?_ kept
+    dsimp only [step]
+    split <;> rfl
+  | observed o => exact absurd rfl kept
+  | checkpointFailed => exact absurd rfl kept
+
+/-- **A notification's text is bounded**: from a state whose scanner is within its caps and whose
+notification's text fits the OSC buffer's cap, every event leaves a text that fits it. -/
+theorem step_notice_le (s : State) (ev : Event) (hs : s.scan.Bounded)
+    (hn : ∀ text, s.notice = some text → text.length ≤ Terminal.Mediation.oscCap) :
+    ∀ text, (step s ev).1.notice = some text → text.length ≤ Terminal.Mediation.oscCap := by
+  cases ev with
+  | ptyOut chunk =>
+    intro text h
+    simp only [step] at h
+    split at h
+    · simp at h
+    · cases hr : (Terminal.Mediation.feed s.vt s.scan chunk).notice with
+      | some t =>
+        rw [hr, Option.some_or] at h
+        cases h
+        exact Terminal.Mediation.feed_notice_le s.vt s.scan chunk hs _ hr
+      | none =>
+        rw [hr, Option.none_or] at h
+        exact hn text h
+  | bytes id chunk =>
+    intro text h
+    rcases step_bytes_cases s id chunk with ⟨-, hkept⟩ | ⟨c, -, -, heq⟩
+    · rw [hkept] at h
+      exact hn text h
+    · rw [heq] at h
+      exact hn text (by simpa [State.setClient] using feedMsgs_notice_le id _ _ text h)
+  | closed id =>
+    unfold step closeClient
+    dsimp only
+    split <;> exact hn
+  | connected id =>
+    dsimp only [step]
+    split <;> exact hn
+  | childExited o => exact hn
+  | stopped o => exact hn
+  | signal n => exact hn
+  | tick now =>
+    dsimp only [step]
+    split <;> exact hn
+  | observed o => exact hn
+  | checkpointFailed => exact hn
 
 end Linger.Session

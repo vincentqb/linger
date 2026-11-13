@@ -327,20 +327,22 @@ theorem feed_replies_noNl (v : Vt) (s : Scan) (bs : Bytes) : NoNl (feed v s bs).
 
 /-! ## Stream laws -/
 
-/-- The full chunk law: re-chunking preserves the final VT and scanner, and
-concatenates visible bytes and child replies in order. -/
+/-- The full chunk law: re-chunking preserves the final VT and scanner, concatenates visible
+bytes and child replies in order, asks when either part asks, and keeps the later part's last
+notification, else the earlier one's. -/
 theorem feed_append (v : Vt) (s : Scan) (a b : Bytes) :
     feed v s (a ++ b) =
       let first := feed v s a
       let second := feed first.vt first.scan b
       { vt := second.vt, scan := second.scan, visible := first.visible ++ second.visible,
-        replies := first.replies ++ second.replies } := by
+        replies := first.replies ++ second.replies, asks := first.asks || second.asks,
+        notice := second.notice.or first.notice } := by
   induction a generalizing v s with
-  | nil => rfl
+  | nil => simp [feed, Option.or_none]
   | cons x xs ih =>
     simp only [List.cons_append, feed]
     rw [ih]
-    simp only [List.append_assoc]
+    simp only [List.append_assoc, Bool.or_assoc, Option.or_assoc]
 
 /-- The mediator observes every byte but does not alter emulator semantics. -/
 theorem feed_vt (v : Vt) (s : Scan) (bytes : Bytes) : (feed v s bytes).vt = v.feed bytes := by
@@ -470,5 +472,309 @@ theorem finish_pending_le_caps (s : Scan) (h : s.Bounded) :
     (finish s).1.length ≤ max csiCap (max oscCap dcsCap) := by
   rw [finish_exact]
   exact Scan.pending_le_caps h
+
+/-! ## A program that asks for someone
+
+What `Scan.hears` hears, byte by byte: a BEL rings where a terminal executes it, and nowhere
+else, and an OSC string asks exactly when it posts a notification. Over a whole stream: plain
+output asks nothing, a bell asks, and an OSC within the cap, ended by BEL or ST, asks exactly
+when its payload posts a notification, with that notification's text, whatever the chunks. A
+notification's text is never longer than the OSC buffer's cap. -/
+
+/-- A BEL in ground rings: it asks, with no notification. -/
+theorem hears_bell : Scan.ground.hears BEL = { asks := true } := rfl
+
+/-- …as it does after ESC and within a control sequence, where a terminal executes a control. -/
+theorem hears_bell_sequence (rev : Bytes) :
+    Scan.esc.hears BEL = { asks := true } ∧
+      (Scan.csi rev).hears BEL = { asks := true } ∧ Scan.csiPass.hears BEL = { asks := true } :=
+  ⟨rfl, rfl, rfl⟩
+
+/-- Outside a string, every other byte asks nothing. -/
+theorem hears_outside (b : UInt8) (h : b ≠ BEL) (rev : Bytes) :
+    Scan.ground.hears b = {} ∧
+      Scan.esc.hears b = {} ∧ (Scan.csi rev).hears b = {} ∧ Scan.csiPass.hears b = {} := by
+  simp [Scan.hears, h]
+
+/-- A byte within a DCS, SOS, PM or APC string, or within an OSC string past its cap, asks
+nothing, a BEL included: it is the string's. -/
+theorem hears_string (escSeen : Bool) (kind : UInt8) (payloadRev : Bytes) (b : UInt8) :
+    (Scan.strPass escSeen).hears b = {} ∧
+      Scan.dcsIntro.hears b = {} ∧
+      (Scan.dcsKind kind).hears b = {} ∧
+      (Scan.dcs kind payloadRev escSeen).hears b = {} ∧ (Scan.oscPass escSeen).hears b = {} :=
+  ⟨rfl, rfl, rfl, rfl, rfl⟩
+
+/-- The BEL that ends an OSC string rings no bell: the string asks only when it posts a
+notification. -/
+theorem hears_osc_end (rev : Bytes) (escSeen : Bool) :
+    (Scan.osc rev escSeen).hears BEL = heardOsc (heldPayload rev) := by simp [Scan.hears]
+
+/-- What an OSC payload tells is a notification exactly when it posts one. -/
+theorem heardOsc_eq (payload : Bytes) :
+    heardOsc payload = { asks := (noticeOf payload).isSome, notice := noticeOf payload } := by
+  unfold heardOsc
+  split <;> simp_all
+
+/-- An OSC 9 payload posts its text, unless that is a ConEmu sub-command. -/
+theorem noticeOf_osc9 (text : Bytes) :
+    noticeOf (0x39 :: 0x3B :: text) = if subcommand text then none else some text := rfl
+
+/-- ConEmu's progress report, `9;4;…`, posts nothing. -/
+theorem noticeOf_progress (rest : Bytes) :
+    noticeOf (0x39 :: 0x3B :: 0x34 :: 0x3B :: rest) = none := by simp [noticeOf, subcommand, digit]
+
+/-- A byte is heard as a notification only where the scanner lets go of an OSC: as BEL or ST
+completes it, or as the scanner releases one past its cap unclassified. -/
+theorem hears_notice_releases (s : Scan) (v : Vt) (b : UInt8) (h : (s.hears b).notice.isSome) :
+    ∃ rev escSeen,
+      s = .osc rev escSeen ∧
+        ((s.step v b).scan = .ground ∨ (s.step v b).scan = .oscPass (b == ESC)) := by
+  cases s with
+  | osc rev escSeen =>
+    refine ⟨rev, escSeen, rfl, ?_⟩
+    simp only [Scan.hears] at h
+    simp only [Scan.step]
+    split
+    · exact .inl (complete_scan _ _)
+    · rename_i hend
+      simp only [hend] at h
+      split
+      · rename_i hfit
+        simp [hfit] at h
+      · exact .inr rfl
+  | _ => simp [Scan.hears] at h
+
+/-- Feeding a byte, then the rest, asks when the byte or the rest asks, and posts the rest's last
+notification, else the byte's. -/
+theorem hears_feed_cons (v : Vt) (s : Scan) (b : UInt8) (bs : Bytes) :
+    (feed v s (b :: bs)).asks =
+        ((s.hears b).asks || (feed (v.step b) (s.step (v.step b) b).scan bs).asks) ∧
+      (feed v s (b :: bs)).notice =
+        (feed (v.step b) (s.step (v.step b) b).scan bs).notice.or (s.hears b).notice := ⟨rfl, rfl⟩
+
+/-- One byte asks as `Scan.hears` hears it, and posts what it hears. -/
+theorem feed_single (v : Vt) (s : Scan) (b : UInt8) :
+    (feed v s [b]).asks = (s.hears b).asks ∧
+      (feed v s [b]).notice = (s.hears b).notice ∧
+      (feed v s [b]).scan = (s.step (v.step b) b).scan := by
+  simp [feed]
+
+/-- `feed_append`, read through what the chunk tells of asking and where it leaves the
+scanner. -/
+theorem feed_append_heard (v : Vt) (s : Scan) (a b : Bytes) :
+    (feed v s (a ++ b)).asks =
+        ((feed v s a).asks || (feed (feed v s a).vt (feed v s a).scan b).asks) ∧
+      (feed v s (a ++ b)).notice =
+        (feed (feed v s a).vt (feed v s a).scan b).notice.or (feed v s a).notice ∧
+      (feed v s (a ++ b)).scan = (feed (feed v s a).vt (feed v s a).scan b).scan := by
+  rw [feed_append]
+  exact ⟨rfl, rfl, rfl⟩
+
+/-- **Plain output asks nothing**: bytes with no BEL and no ESC, fed from ground, ring no bell
+and post no notification. -/
+theorem feed_plain_quiet (v : Vt) (bs : Bytes) (h : ∀ b ∈ bs, b ≠ BEL ∧ b ≠ ESC) :
+    (feed v .ground bs).asks = false ∧ (feed v .ground bs).notice = none := by
+  induction bs generalizing v with
+  | nil => exact ⟨rfl, rfl⟩
+  | cons b bs ih =>
+    obtain ⟨hbel, hesc⟩ := h b List.mem_cons_self
+    have hstep : (Scan.ground.step (v.step b) b).scan = .ground := by simp [Scan.step, hesc]
+    have hrest := ih (v.step b) fun c hc => h c (List.mem_cons_of_mem b hc)
+    rw [(hears_feed_cons v .ground b bs).1, (hears_feed_cons v .ground b bs).2, hstep,
+      (hears_outside b hbel []).1]
+    simp [hrest.1, hrest.2]
+
+/-- **A bell asks**: a chunk that holds a BEL in ground asks, wherever it is in the chunk. -/
+theorem feed_bell (v : Vt) (before after : Bytes) (h : ∀ b ∈ before, b ≠ ESC) :
+    (feed v .ground (before ++ BEL :: after)).asks = true := by
+  induction before generalizing v with
+  | nil => simp [feed, Scan.hears]
+  | cons b bs ih =>
+    have hesc := h b List.mem_cons_self
+    have hstep : (Scan.ground.step (v.step b) b).scan = .ground := by simp [Scan.step, hesc]
+    rw [List.cons_append, (hears_feed_cons v .ground b _).1, hstep,
+      ih (v.step b) fun c hc => h c (List.mem_cons_of_mem b hc), Bool.or_true]
+
+/-- Payload bytes an OSC holds as it reads them: none ends the string or begins its
+terminator. -/
+def Plain (payload : Bytes) : Prop := ∀ b ∈ payload, b ≠ BEL ∧ b ≠ ESC
+
+/-- An OSC within its cap reads plain payload bytes into its buffer, and hears nothing yet. -/
+theorem feed_osc_plain (v : Vt) (rev payload : Bytes) (h : Plain payload)
+    (fits : rev.length + payload.length ≤ oscCap) :
+    (feed v (.osc rev false) payload).scan = .osc (payload.reverse ++ rev) false ∧
+      (feed v (.osc rev false) payload).asks = false ∧
+      (feed v (.osc rev false) payload).notice = none := by
+  induction payload generalizing v rev with
+  | nil => exact ⟨rfl, rfl, rfl⟩
+  | cons b bs ih =>
+    obtain ⟨hbel, hesc⟩ := h b List.mem_cons_self
+    simp only [List.length_cons] at fits
+    have hfit : rev.length < oscCap := by omega
+    have hstep : ((Scan.osc rev false).step (v.step b) b).scan = .osc (b :: rev) false := by
+      simp [Scan.step, hbel, hfit, hesc]
+    have hheard : (Scan.osc rev false).hears b = {} := by simp [Scan.hears, hbel, hfit]
+    have hrest :=
+      ih (v.step b) (b :: rev) (fun c hc => h c (List.mem_cons_of_mem b hc))
+        (by
+          simp only [List.length_cons]; omega)
+    have hscan :
+      (feed v (.osc rev false) (b :: bs)).scan =
+        (feed (v.step b) ((Scan.osc rev false).step (v.step b) b).scan bs).scan :=
+      rfl
+    rw [hscan, (hears_feed_cons v _ b bs).1, (hears_feed_cons v _ b bs).2, hstep, hheard]
+    simp [hrest.1, hrest.2.1, hrest.2.2]
+
+/-- The payload of an OSC buffer that holds `ESC ]` and plain payload bytes is those bytes, with
+or without the ESC that begins ST after them. -/
+theorem heldPayload_plain (payload : Bytes) (h : Plain payload) :
+    heldPayload (payload.reverse ++ [0x5D, ESC]) = payload ∧
+      heldPayload (ESC :: (payload.reverse ++ [0x5D, ESC])) = payload := by
+  have hopen : heldPayload (payload.reverse ++ [0x5D, ESC]) = payload := by
+    unfold heldPayload
+    cases hp : payload.reverse with
+    | nil =>
+      have : payload = [] := List.reverse_eq_nil_iff.mp hp
+      subst this
+      rfl
+    | cons last
+      front =>
+      have hlast : last ≠ ESC := by
+        have hm : last ∈ payload := by
+          rw [← List.mem_reverse, hp]
+          exact List.mem_cons_self
+        exact (h last hm).2
+      rw [List.cons_append, List.dropWhile_cons_of_neg (by simpa using hlast), ← List.cons_append, ←
+        hp, List.reverse_append, List.reverse_reverse]
+      rfl
+  refine ⟨hopen, ?_⟩
+  have hesc : ∀ held : Bytes, heldPayload (ESC :: held) = heldPayload held := by
+    intro held
+    simp [heldPayload]
+  exact (hesc _).trans hopen
+
+/-- `ESC ]` from ground opens an OSC and hears nothing. -/
+theorem feed_osc_open (v : Vt) :
+    (feed v .ground [ESC, 0x5D]).scan = .osc [0x5D, ESC] false ∧
+      (feed v .ground [ESC, 0x5D]).asks = false ∧ (feed v .ground [ESC, 0x5D]).notice = none := by
+  simp [feed, Scan.step, Scan.hears, ESC, BEL]
+
+/-- **A notification is heard as its string ends**: an OSC with a plain payload, within its cap
+and ended by BEL or by ST, asks exactly when the payload posts a notification, with that
+notification's text. ST needs one byte of the buffer more, for its ESC. -/
+theorem feed_osc_notice (v : Vt) (payload : Bytes) (h : Plain payload)
+    (fits : payload.length + 3 ≤ oscCap) (ending : Bytes)
+    (ends : ending = [BEL] ∨ ending = [ESC, STFinal]) :
+    (feed v .ground ([ESC, 0x5D] ++ payload ++ ending)).asks = (noticeOf payload).isSome ∧
+      (feed v .ground ([ESC, 0x5D] ++ payload ++ ending)).notice = noticeOf payload := by
+  obtain ⟨o1, o2, o3⟩ := feed_osc_open v
+  obtain ⟨a1, a2, -⟩ := feed_append_heard v .ground [ESC, 0x5D] (payload ++ ending)
+  obtain ⟨b1, b2, -⟩ :=
+    feed_append_heard (feed v .ground [ESC, 0x5D]).vt (feed v .ground [ESC, 0x5D]).scan payload
+      ending
+  rw [List.append_assoc, a1, a2, b1, b2, o1, o2, o3]
+  generalize (feed v .ground [ESC, 0x5D]).vt = w
+  obtain ⟨p1, p2, p3⟩ :=
+    feed_osc_plain w [0x5D, ESC] payload h
+      (by
+        simp only [List.length_cons, List.length_nil]; omega)
+  rw [p1, p2, p3]
+  generalize (feed w (.osc [0x5D, ESC] false) payload).vt = u
+  have hfit : payload.length + 2 < oscCap := by omega
+  rcases ends with rfl | rfl
+  · obtain ⟨e1, e2, -⟩ := feed_single u (.osc (payload.reverse ++ [0x5D, ESC]) false) BEL
+    rw [e1, e2, hears_osc_end, (heldPayload_plain payload h).1, heardOsc_eq]
+    simp
+  · have hne : ESC ≠ BEL := by decide
+    have hesc : (Scan.osc (payload.reverse ++ [0x5D, ESC]) false).hears ESC = {} := by
+      simp [Scan.hears, hfit, hne]
+    have hstep :
+      ((Scan.osc (payload.reverse ++ [0x5D, ESC]) false).step (u.step ESC) ESC).scan =
+        .osc (ESC :: (payload.reverse ++ [0x5D, ESC])) true := by
+      simp [Scan.step, hfit, hne]
+    have hst :
+      (Scan.osc (ESC :: (payload.reverse ++ [0x5D, ESC])) true).hears STFinal =
+        heardOsc payload := by
+      simp [Scan.hears, (heldPayload_plain payload h).2]
+    obtain ⟨c1, c2⟩ := hears_feed_cons u (.osc (payload.reverse ++ [0x5D, ESC]) false) ESC [STFinal]
+    rw [c1, c2, hstep, hesc]
+    obtain ⟨e1, e2, -⟩ :=
+      feed_single (u.step ESC) (.osc (ESC :: (payload.reverse ++ [0x5D, ESC])) true) STFinal
+    rw [e1, e2, hst, heardOsc_eq]
+    simp
+
+/-- A notification's text is no longer than the payload it comes from. -/
+theorem noticeOf_length (payload text : Bytes) (h : noticeOf payload = some text) :
+    text.length ≤ payload.length := by
+  unfold noticeOf at h
+  split at h
+  · split at h
+    · simp at h
+    · simp only [Option.some.injEq] at h
+      subst h
+      simp only [List.length_cons]
+      omega
+  · simp only [Option.some.injEq] at h
+    subst h
+    rename_i rest
+    have whole :=
+      congrArg List.length
+        (List.takeWhile_append_dropWhile (p := (· != (0x3B : UInt8))) (l := rest))
+    simp only [List.length_append] at whole
+    simp only [List.length_cons]
+    split
+    · simp only [List.length_drop]
+      omega
+    · split
+      · omega
+      · simp only [List.length_append, List.length_cons, List.length_nil, List.length_drop]
+        omega
+  · simp at h
+
+/-- The payload of an OSC buffer is shorter than the buffer by the `ESC ]` it opens with. -/
+theorem heldPayload_length (rev : Bytes) : (heldPayload rev).length ≤ rev.length - 2 := by
+  unfold heldPayload
+  simp only [List.length_drop, List.length_reverse]
+  have := (List.dropWhile_suffix (l := rev) (p := (· == ESC))).length_le
+  omega
+
+/-- **A notification's text fits the OSC buffer's cap**: from a scanner within its caps, what
+any byte posts is at most `oscCap` bytes. -/
+theorem hears_notice_le {s : Scan} (hs : s.Bounded) (b : UInt8) (text : Bytes)
+    (h : (s.hears b).notice = some text) : text.length ≤ oscCap := by
+  cases s with
+  | osc rev escSeen =>
+    simp only [Scan.Bounded] at hs
+    simp only [Scan.hears] at h
+    split at h
+    · rw [heardOsc_eq] at h
+      have := noticeOf_length _ _ h
+      have := heldPayload_length rev
+      omega
+    · split at h
+      · simp at h
+      · rw [heardOsc_eq] at h
+        have := noticeOf_length _ _ h
+        have := heldPayload_length (b :: rev)
+        simp only [List.length_cons] at this
+        omega
+  | _ => simp [Scan.hears] at h
+
+/-- …over any stream from a scanner within its caps. -/
+theorem feed_notice_le (v : Vt) (s : Scan) (bs : Bytes) (hs : s.Bounded) (text : Bytes)
+    (h : (feed v s bs).notice = some text) : text.length ≤ oscCap := by
+  induction bs generalizing v s with
+  | nil => simp [feed] at h
+  | cons b bs ih =>
+    rw [(hears_feed_cons v s b bs).2] at h
+    cases hrest : (feed (v.step b) (s.step (v.step b) b).scan bs).notice with
+    | some t =>
+      rw [hrest, Option.some_or] at h
+      cases h
+      exact ih (v.step b) _ hs.step hrest
+    | none =>
+      rw [hrest, Option.none_or] at h
+      exact hears_notice_le hs b text h
 
 end Terminal.Mediation

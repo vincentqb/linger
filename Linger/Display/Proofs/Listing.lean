@@ -51,7 +51,7 @@ theorem rowStatus_unanswered (info : List (String × String)) (h : answered info
 theorem rowStatus_resumable : rowStatus .stale = Status.resumable := rfl
 
 /-- **An ended session is a result**: a saved row whose end record says its program ended shows
-`✓` for status 0 and `!` for any other, until the first attach shows it or `kill` discards it. -/
+`✓` for status 0 and `✗` for any other, until the first attach shows it or `kill` discards it. -/
 theorem rowStatus_ended (status : Nat) :
     rowStatus (.ended status) = if status = 0 then Status.exitedOk else Status.exitedBad := by
   cases status <;> rfl
@@ -60,14 +60,15 @@ theorem rowStatus_ended (status : Nat) :
 theorem rowStatus_gone : rowStatus .broken = Status.unknown := rfl
 
 /-- **A summary that reads records shows what asking would**: a row read from the name's end
-record has the status of any answer from its daemon that reports the same `fresh` and `unseen`
-and no ending. -/
-theorem rowStatus_published (fresh unseen : Bool) (info : List (String × String))
+record has the status of any answer from its daemon that reports the same `fresh`, `unseen` and
+`asks` and no ending. -/
+theorem rowStatus_published (fresh unseen asks : Bool) (info : List (String × String))
     (hans : info.any (fun kv => (kv.1 == "pid" || kv.1 == "cmd") && kv.2 != "") = true)
     (hexit : info.lookup "exit" = none) (hfresh : (info.lookup "fresh" == some "true") = fresh)
-    (hunseen : (info.lookup "unseen" == some "true") = unseen) :
-    rowStatus (.published fresh unseen) = rowStatus (.live info) := by
-  simp [rowStatus, answered, flag, hans, hexit, hfresh, hunseen]
+    (hunseen : (info.lookup "unseen" == some "true") = unseen)
+    (hasks : (info.lookup "asks" == some "true") = asks) :
+    rowStatus (.published fresh unseen asks) = rowStatus (.live info) := by
+  simp [rowStatus, answered, flag, hans, hexit, hfresh, hunseen, hasks]
 
 /-- An empty reply is not an answer, so a busy daemon lists as `unknown`
 rather than as a healthy idle session. This is row identity applied to
@@ -89,7 +90,7 @@ theorem rowStatus_remote_reported (st : Status) :
     rowStatus (.remote true (Linger.Display.Status.name st)) = st := by
   simp [rowStatus, Linger.Display.Status.ofName_name]
 
-/-- A session a peer lists as saved shows how its program ended, `✓` or `!`, as the peer says;
+/-- A session a peer lists as saved shows how its program ended, `✓` or `✗`, as the peer says;
 any other status a peer reports for it, it shows as resumable, since only a running session
 can be working, idle or waiting. -/
 theorem rowStatus_remote_saved (st : Status) :

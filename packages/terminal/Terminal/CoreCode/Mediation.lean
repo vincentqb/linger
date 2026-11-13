@@ -300,6 +300,73 @@ private def Scan.step (s : Scan) (v : Vt) (b : UInt8) : ScanStep :=
 have already reached `Vt`, so callers must only broadcast them. -/
 def finish (s : Scan) : Bytes × Scan := (s.pending, .ground)
 
+/-! ## A program that asks for someone
+
+A program asks for its user as a terminal hears it: it rings the bell or posts a desktop
+notification. The bell is BEL as a control: in ground, after ESC or within a control sequence,
+where a terminal executes it, never the BEL that ends an OSC string, nor one within a DCS, SOS, PM
+or APC string. A notification is OSC 9, `ESC ] 9 ; text`, as iTerm2 and Ghostty post it, unless
+its payload is digits followed by `;`, a ConEmu sub-command such as `9;4;…` progress, or OSC 777,
+`ESC ] 777 ; notify ; title ; body`, ended by BEL or ST. The mediator hears either as it scans the
+byte that completes it (`Scan.hears`), beside the scanner, whose decisions it leaves as they were:
+a notification still reaches every client unchanged, so the outer terminal can show its own.
+
+A notification longer than `oscCap`, which the scanner releases unclassified, is heard as the
+scanner releases it, with the text the scanner held: every buffer input fills has a cap, and this
+one bounds the text kept, never whether a notification is heard. -/
+
+/-- What one byte of the program's output tells of it asking for someone. -/
+structure Heard where
+  /-- The byte rang the bell, or posted a notification. -/
+  asks : Bool := false
+  /-- The text of the notification the byte posted: the OSC 9 text, or the OSC 777 title and
+  body. -/
+  notice : Option Bytes := none
+  deriving Repr, DecidableEq
+
+/-- Whether a byte is an ASCII digit. -/
+private def digit (b : UInt8) : Bool := 0x30 ≤ b && b ≤ 0x39
+
+/-- Whether an OSC 9 text is a ConEmu sub-command instead: digits, then `;`, as `4;1;50`
+reports progress. -/
+def subcommand (text : Bytes) : Bool :=
+  !(text.takeWhile digit).isEmpty && (text.dropWhile digit).head? == some 0x3B
+
+/-- The text of the desktop notification an OSC payload posts, if it posts one: what follows
+`9;`, unless that is a ConEmu sub-command, or what follows `777;notify;`, its title and its body,
+joined by `: ` when it has both. -/
+def noticeOf : Bytes → Option Bytes
+  | 0x39 :: 0x3B :: text => if subcommand text then none else some text
+  | 0x37 :: 0x37 :: 0x37 :: 0x3B :: 0x6E :: 0x6F :: 0x74 :: 0x69 :: 0x66 :: 0x79 :: 0x3B :: rest =>
+    let title := rest.takeWhile (· != 0x3B)
+    let body := (rest.dropWhile (· != 0x3B)).drop 1
+    some
+      (if title.isEmpty then body
+      else if body.isEmpty then title else title ++ [0x3A, 0x20] ++ body)
+  | _ => none
+
+/-- The payload of an OSC the scanner holds, from its reversed buffer: the bytes after `ESC ]`,
+without an ESC that may begin its terminator. -/
+def heldPayload (rev : Bytes) : Bytes := (rev.dropWhile (· == ESC)).reverse.drop 2
+
+/-- What an OSC payload tells: a notification asks, with its text, and any other payload tells
+nothing. -/
+def heardOsc (payload : Bytes) : Heard :=
+  match noticeOf payload with
+  | some text => { asks := true, notice := some text }
+  | none => {}
+
+/-- What scanning `b` from `s` hears of the program asking for someone: a bell, a BEL outside
+every string, or the notification an OSC posts, as BEL or ST completes it, or, past `oscCap`, as
+the scanner releases it unclassified. -/
+def Scan.hears (s : Scan) (b : UInt8) : Heard :=
+  match s with
+  | .ground | .esc | .csi _ | .csiPass => { asks := b == BEL }
+  | .osc rev escSeen =>
+    if b == BEL || (escSeen && b == STFinal) then heardOsc (heldPayload rev)
+    else if rev.length < oscCap then {} else heardOsc (heldPayload (b :: rev))
+  | _ => {}
+
 /-- After feeding a chunk: the terminal, the scanner, client-visible bytes and child replies. -/
 structure Result where
   /-- The terminal after every byte of the chunk. -/
@@ -310,6 +377,10 @@ structure Result where
   visible : Bytes
   /-- Replies to owned requests, in order. -/
   replies : Bytes
+  /-- Whether the chunk rang the bell or posted a notification (`Scan.hears`). -/
+  asks : Bool := false
+  /-- The text of the chunk's last notification, if it posted one. -/
+  notice : Option Bytes := none
 
 -- No `deriving Repr`: it would need `Repr Vt`, which the seal withholds because it would
 -- publicly read every private field of `VtRec`. Nothing used the instance.
@@ -321,8 +392,10 @@ def feed (v : Vt) (scan : Scan) : Bytes → Result
   | b :: bs =>
       let v' := v.step b
       let out := scan.step v' b
+      let heard := scan.hears b
       let rest := feed v' out.scan bs
       { vt := rest.vt, scan := rest.scan, visible := out.visible ++ rest.visible,
-        replies := out.replies ++ rest.replies }
+        replies := out.replies ++ rest.replies, asks := heard.asks || rest.asks,
+        notice := rest.notice.or heard.notice }
 
 end Terminal.Mediation

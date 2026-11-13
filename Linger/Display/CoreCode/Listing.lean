@@ -63,7 +63,7 @@ def rowStatus : Row → Status
         -- comes from its end record (`ended`), so a reply can never make one look like a
         -- completed run
         exit := (info.lookup "exit").bind String.toNat?, fresh := flag info "fresh",
-        unseen := flag info "unseen" }
+        unseen := flag info "unseen", asks := flag info "asks" }
   | .stale => .resumable
   | .ended status => classify { daemonUp := false, exit := some status }
   | .broken => .unknown
@@ -72,7 +72,7 @@ def rowStatus : Row → Status
     -- running session can show
     let status := ofName peerStatus
     if live || status == .exitedOk || status == .exitedBad then status else .resumable
-  | .published fresh unseen => classify { fresh, unseen }
+  | .published fresh unseen asks => classify { fresh, unseen, asks }
 
 /-! ## Rendering the human-readable listing
 
@@ -105,12 +105,13 @@ structure RowPiece where
 /-! ## What a row shows
 
 A row shows the session's present after its status and name, each field from its one source
-(`sources`): the user's description, else the program's own title (`caption`); the program in the
-terminal's foreground, unless it is the session's login shell at its prompt (`program`); that
-program's directory; how long ago the session last printed; and its watchers. A field appears
-only when it adds something: the program when the caption does not already name it, the
-directory when the caption does not already hold it, and no text twice. The user's words outrank
-the program's, which outrank the operating system's. -/
+(`sources`): the user's description, else the program's own title (`caption`); while the session
+asks (`⚑`), the text of its program's last notification since the session was last looked at
+(`notice`); the program in the terminal's foreground, unless it is the session's login shell at
+its prompt (`program`); that program's directory; how long ago the session last printed; and its
+watchers. A field appears only when it adds something: the program when the caption does not
+already name it, the directory when the caption does not already hold it, and no text twice. The
+user's words outrank the program's, which outrank the operating system's. -/
 
 /-- A field of a record, `""` when the record lacks it. -/
 def look (info : List (String × String)) (key : String) : String := (info.lookup key).getD ""
@@ -119,6 +120,11 @@ def look (info : List (String × String)) (key : String) : String := (info.looku
 def caption (info : List (String × String)) : String :=
   if (look info "label.description").isEmpty then look info "title"
   else look info "label.description"
+
+/-- The text of the program's last notification since the session was last looked at, while the
+session asks; nothing for any other status. -/
+def notice (info : List (String × String)) : String :=
+  if Status.ofName (look info "status") == .asks then look info "notice" else ""
 
 /-- The foreground program's command line, from the operating system's report: nothing while
 that is the session's login shell itself, as at its prompt. A row whose daemon reports no
@@ -171,8 +177,9 @@ def stateText (info : List (String × String)) : String :=
     else ""
 
 /-- The fields after the name, in order, each shown once: how a session that is not running
-stands, the caption, the program, its directory unless the caption holds it, how long ago the
-session last printed unless it prints now, and `+N` watchers. -/
+stands, the caption, the text of a notification while the session asks, the program, its directory
+unless the caption holds it, how long ago the session last printed unless it prints now, and `+N`
+watchers. -/
 def details (info : List (String × String)) : List String :=
   let dir := look info "fgdir"
   let idle :=
@@ -182,7 +189,7 @@ def details (info : List (String × String)) : List String :=
     if (look info "clients").isEmpty || look info "clients" == "0" then ""
     else s!"+{look info "clients"}"
   let fields :=
-    [stateText info, caption info, program info,
+    [stateText info, caption info, notice info, program info,
       if decide (dir.toList <:+: (caption info).toList) then "" else dir, idle, watch]
   (fields.filter (!·.isEmpty)).eraseDups
 

@@ -10,7 +10,9 @@ public section
 so the two transitions that matter are: attaching marks a session seen, and output
 while detached marks it unread again. Both go through the counter pair in
 `Session.State` (`outSeq`/`lookSeq`), and this pins them against the rendered
-porcelain rather than against the internals.
+porcelain rather than against the internals. An ask is the same kind of property: a bell or a
+notification with nobody watching makes the session list `⚑`, first, until someone looks
+(`checkAsks`).
 
 The comparisons are against the `Status` constructors (through `Env.status`, which
 reads `ofName`) and against `Status.icon` itself, so renaming a state is a compile
@@ -166,6 +168,94 @@ private def summaryBecomes (e : Env) (expected : String) : IO Bool :=
     let (code, text, _) ← e.cli #["ls", "--summary"]
     return code == 0 && text == expected
 
+/-- The glyph a session whose program asks for you lists with. -/
+private def asksGlyph : String := String.singleton (Linger.Display.Status.icon Status.asks)
+
+/-- The porcelain name of that status. -/
+private def asksName : String := Linger.Display.Status.name Status.asks
+
+/-- The row of session `name` in a plain `linger ls`, or `""` when none lists it. -/
+private def rowOf (e : Env) (name : String) : IO String := do
+  let rows ← lines <$> e.out #["ls"]
+  return (rows.find? fun row => (row.splitOn " ").getD 1 "" == name).getD ""
+
+/-- Whether session `name`'s history comes to show `marker` within `patienceMs`: what its program
+printed before the marker has reached its daemon. Reading the history is an export, not a look,
+so it leaves an ask as it was. -/
+private def printed (e : Env) (name marker : String) : IO Bool :=
+  waitFor patienceMs (return has (← e.out #["capture", "--history", name]) marker)
+
+/-- A program asks for you when it rings the bell or posts a desktop notification, OSC 9 or
+OSC 777, and its session lists `⚑`, first, until someone looks: an attach, or output while a
+client is attached. A notification's text is in `info`, the porcelain and the row. Each marker a
+command prints is computed by the shell, so the echo of the typed command cannot show it. -/
+def checkAsks (e : Env) : IO Unit := do
+  let _ ← e.typeIn "a-out" #["echo", "out-$((1+1))"]
+  let _ ← e.typeIn "z-bell" #["printf", "'\\a'", "&&", "echo", "bell-$((1+1))"]
+  let rang ← printed e "z-bell" "bell-2"
+  expect (rang && (← e.field "z-bell" "status") == some asksName)
+      "a program that rings the bell asks for you"
+  let unread ← printed e "a-out" "out-2"
+  let rows := lines (← e.out #["ls"])
+  expect
+      (unread && rows.length == 2 && (rows.headD "").startsWith s!"{asksGlyph} z-bell" &&
+        [Status.wantsYou, .working].any fun st =>
+          (rows.getD 1 "").startsWith s!"{Linger.Display.Status.icon st} a-out")
+      s!"a session that asks lists first, before one with unseen output: {rows}"
+  let _ ← waitFor patienceMs (return (← e.status "a-out") == Status.wantsYou)
+  expect (← summaryBecomes e (Linger.Display.Status.summary [.asks, .wantsYou] ++ "\n"))
+      "summary counts the ask with its own glyph"
+  let _ ← e.typeIn "n9" #["true"]
+  let (drc, _, _) ← e.cli #["describe", "n9", "fix", "parser"]
+  let _ ← e.cli #["send", "n9", "printf '\\033]9;edit src/Foo.lean?\\007' && echo n9-$((1+1))\n"]
+  let posted ← printed e "n9" "n9-2"
+  expect
+      (posted && drc == 0 && (← e.info "n9" "notice") == some "edit src/Foo.lean?" &&
+        (← e.field "n9" "notice") == some "edit src/Foo.lean?")
+      "an OSC 9 notification's text is in info and the porcelain"
+  let row ← rowOf e "n9"
+  expect (row.startsWith s!"{asksGlyph} n9" && has row "fix parser  edit src/Foo.lean?")
+      s!"the row shows the notification's text right after the caption: {row}"
+  let _ ←
+    e.typeIn "n777"
+        #["printf", "'\\033]777;notify;Claude;needs you\\033\\\\'", "&&", "echo", "n777-$((1+1))"]
+  let posted ← printed e "n777" "n777-2"
+  expect
+      (posted && (← e.field "n777" "status") == some asksName &&
+        (← e.info "n777" "notice") == some "Claude: needs you")
+      "an OSC 777 notification asks, with its title and body"
+  let _ ← e.typeIn "prog" #["printf", "'\\033]9;4;1;50\\007'", "&&", "echo", "prog-$((1+1))"]
+  let reported ← printed e "prog" "prog-2"
+  let quiet := (← e.field "prog" "status") != some asksName && (← e.info "prog" "notice").isNone
+  let _ ← e.cli #["send", "prog", "printf '\\033]9;done\\033\\\\'\n"]
+  let notified ← waitFor patienceMs (return (← e.info "prog" "notice") == some "done")
+  expect (reported && quiet && notified && (← e.field "prog" "status") == some asksName)
+      "a ConEmu progress report (OSC 9;4) asks nothing, and a notification after it does"
+  let asked := (← e.field "n9" "status") == some asksName
+  let c ← e.spawn #["attach", "n9"] 80 24
+  let _ ← waitFor patienceMs (return (← e.info "n9" "clients") == some "1")
+  c.detach
+  let _ ← waitFor patienceMs (return (← e.info "n9" "clients") == some "0")
+  c.bye (sendDetach := false)
+  expect
+      (asked && (← e.field "n9" "status") != some asksName && (← e.info "n9" "notice").isNone &&
+        !has (← rowOf e "n9") "edit src/Foo.lean?")
+      "attaching clears the ask and its text"
+  let _ ← e.typeIn "seen-bell" #["true"]
+  let watcher ← e.spawn #["attach", "seen-bell"] 80 24
+  let _ ← waitFor patienceMs (return (← e.info "seen-bell" "clients") == some "1")
+  let _ ← e.cli #["send", "seen-bell", "printf '\\a' && echo seen-$((1+1))\n"]
+  let shown ← watcher.awaitNeedle "seen-2"
+  watcher.detach
+  let _ ← waitFor patienceMs (return (← e.info "seen-bell" "clients") == some "0")
+  watcher.bye (sendDetach := false)
+  let unasked := (← e.field "seen-bell" "status") != some asksName
+  let _ ← e.cli #["send", "seen-bell", "printf '\\a'\n"]
+  let away ← waitFor patienceMs (return (← e.field "seen-bell" "status") == some asksName)
+  expect (shown && unasked && away)
+      "a bell while a client is attached leaves no ask, and one after it leaves does"
+  e.killAll #["a-out", "z-bell", "n9", "n777", "prog", "seen-bell"]
+
 /-- The status suite: attaching marks a session seen and detached output marks it unread. -/
 def run : IO UInt32 :=
   Env.suite "status" fun e => do
@@ -243,6 +333,7 @@ def run : IO UInt32 :=
     expect (daemon.isSome && program.isSome && (← summaryBecomes e unanswered))
         "a summary counts a killed daemon as not answering, not from what it last wrote"
     e.killAll #["st"]
+    checkAsks e
     checkDeadline e
     checkBacklog e
 

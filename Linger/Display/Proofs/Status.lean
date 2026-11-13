@@ -3,7 +3,7 @@ module
 -- The proofs unfold the status definitions, whose bodies only `import all` exposes.
 import all Linger.Display.CoreCode.Status
 
-/-! # The seven states partition the observation space
+/-! # The eight states partition the observation space
 
 A legend is a claim, and it can be wrong in three ways: two rows that differ
 could show the same glyph (not exclusive), a row could match no glyph (not
@@ -23,7 +23,7 @@ namespace Linger.Display.Status
 
 /-- The cascade agrees exactly with the independent legend predicates. -/
 theorem classify_iff (o : Obs) (s : Status) : classify o = s ↔ Is s o := by
-  cases s <;> simp only [Is] <;> grind [classify]
+  cases s <;> simp only [Is] <;> grind (splits := 16) [classify]
 
 /-- **Cover.** Every observation is in some state — no row can fail to be
 described. -/
@@ -38,6 +38,13 @@ theorem disjoint (o : Obs) (s t : Status) (hs : Is s o) (ht : Is t o) : s = t :=
 the state the row is actually in. This is the claim that would break if a
 guard were mis-ordered. -/
 theorem classify_sound (o : Obs) : Is (classify o) o := (classify_iff o _).mp rfl
+
+/-- A running session whose daemon answered shows `⚑` exactly when it asks, whatever it prints:
+a program waiting for you outranks one printing. -/
+theorem classify_running_asks (fresh unseen asks : Bool) :
+    classify { fresh, unseen, asks } = .asks ↔ asks = true := by
+  rw [classify_iff]
+  simp [Is]
 
 /-- **Complete.** `classify` is the *only* function agreeing with the
 legend, so the cascade is not one choice among several. Cover + disjoint +
@@ -56,6 +63,7 @@ theorem reachable : ∀ s : Status, ∃ o : Obs, classify o = s := by
   · exact ⟨{ exit := some 1 }, rfl⟩
   · exact ⟨{ exit := some 0 }, rfl⟩
   · exact ⟨{ daemonUp := false }, rfl⟩
+  · exact ⟨{ asks := true }, rfl⟩
   · exact ⟨{ unseen := true }, rfl⟩
   · exact ⟨{ fresh := true }, rfl⟩
   · exact ⟨{}, rfl⟩
@@ -64,7 +72,7 @@ theorem reachable : ∀ s : Status, ∃ o : Obs, classify o = s := by
 rule "share a glyph only when the action is the same" made concrete, so a
 future merge has to delete a state rather than quietly overload a symbol.
 (An earlier draft reused `!` for both a bell and a failed exit; this is the
-theorem that rejects it.) -/
+theorem that rejects it. A bell now asks, as `⚑`, and a failed exit is `✗`.) -/
 theorem icon_injective (s t : Status) (h : icon s = icon t) : s = t := by
   cases s <;> cases t <;> simp_all [icon]
 
@@ -90,11 +98,12 @@ theorem style_palette (s : Status) :
 /-- Positive counts appear once in attention order, independent of input order. -/
 theorem attentionCounts_exact (statuses : List Status) :
     Linger.Display.Status.attentionCounts statuses =
-      (if statuses.count .wantsYou = 0 then [] else [(.wantsYou, statuses.count .wantsYou)]) ++
+      (if statuses.count .asks = 0 then [] else [(.asks, statuses.count .asks)]) ++
+        (if statuses.count .wantsYou = 0 then [] else [(.wantsYou, statuses.count .wantsYou)]) ++
         (if statuses.count .exitedBad = 0 then [] else [(.exitedBad, statuses.count .exitedBad)]) ++
         (if statuses.count .unknown = 0 then [] else [(.unknown, statuses.count .unknown)]) := by
   simp only [attentionCounts, attention, List.filterMap_cons, List.filterMap_nil]
-  split <;> split <;> split <;> simp_all
+  split <;> split <;> split <;> split <;> simp_all
 
 /-- Neither zero counts nor ordinary activity can occur in an attention group. -/
 theorem attentionCounts_mem (statuses : List Status) (s : Status) (n : Nat) :
@@ -111,28 +120,31 @@ theorem attentionCounts_mem (statuses : List Status) (s : Status) (n : Nat) :
   · rintro ⟨hm, rfl, hn⟩
     exact ⟨s, hm, by simp [hn]⟩
 
-/-- The public string is precisely the three positive-count groups with their
+/-- The public string is precisely the four positive-count groups with their
 canonical icons, separated by one space. -/
 theorem summary_exact (statuses : List Status) :
     Linger.Display.Status.summary statuses =
       String.intercalate " "
-        ((if statuses.count .wantsYou = 0 then []
+        ((if statuses.count .asks = 0 then []
+          else [(toString (statuses.count .asks)).push (icon .asks)]) ++
+          (if statuses.count .wantsYou = 0 then []
           else [(toString (statuses.count .wantsYou)).push (icon .wantsYou)]) ++
           (if statuses.count .exitedBad = 0 then []
           else [(toString (statuses.count .exitedBad)).push (icon .exitedBad)]) ++
           (if statuses.count .unknown = 0 then []
           else [(toString (statuses.count .unknown)).push (icon .unknown)])) := by
   rw [summary, attentionCounts_exact]
-  split <;> split <;> split <;> simp_all
+  split <;> split <;> split <;> split <;> simp_all
 
 /-- With no attention counts, the summary has no placeholder or separator. -/
-theorem summary_omits_zero (statuses : List Status) (hw : statuses.count .wantsYou = 0)
-    (hb : statuses.count .exitedBad = 0) (hu : statuses.count .unknown = 0) :
-    Linger.Display.Status.summary statuses = "" := by simp [summary_exact, hw, hb, hu]
+theorem summary_omits_zero (statuses : List Status) (ha : statuses.count .asks = 0)
+    (hw : statuses.count .wantsYou = 0) (hb : statuses.count .exitedBad = 0)
+    (hu : statuses.count .unknown = 0) : Linger.Display.Status.summary statuses = "" := by
+  simp [summary_exact, ha, hw, hb, hu]
 
 theorem summary_token_clean (statuses : List Status) (s : Status) (n : Nat)
     (h : (s, n) ∈ attentionCounts statuses) :
-    ∀ c ∈ ((toString n).push (icon s)).toList, c.isDigit = true ∨ c ∈ ['⣿', '!', '?'] := by
+    ∀ c ∈ ((toString n).push (icon s)).toList, c.isDigit = true ∨ c ∈ ['⚑', '⣿', '✗', '?'] := by
   intro c hc
   simp only [String.toList_push, List.mem_append, List.mem_singleton] at hc
   rcases hc with hc | rfl
@@ -142,16 +154,17 @@ theorem summary_token_clean (statuses : List Status) (s : Status) (n : Nat)
   · right
     have hs := ((attentionCounts_mem statuses s n).mp h).1
     simp only [attention, List.mem_cons, List.not_mem_nil, or_false] at hs
-    rcases hs with rfl | rfl | rfl <;> decide
+    rcases hs with rfl | rfl | rfl | rfl <;> decide
 
 /-- Summary text contains only decimal digits, spaces and attention glyphs.
 This is stronger than absence of newline or terminal escapes. -/
 theorem summary_alphabet (statuses : List Status) :
     ∀ c ∈ (Linger.Display.Status.summary statuses).toList,
-      c.isDigit = true ∨ c ∈ [' ', '⣿', '!', '?'] := by
+      c.isDigit = true ∨ c ∈ [' ', '⚑', '⣿', '✗', '?'] := by
   have joinClean (strings : List String)
-    (hs : ∀ text ∈ strings, ∀ c ∈ text.toList, c.isDigit = true ∨ c ∈ [' ', '⣿', '!', '?']) :
-    ∀ c ∈ (String.intercalate " " strings).toList, c.isDigit = true ∨ c ∈ [' ', '⣿', '!', '?'] := by
+    (hs : ∀ text ∈ strings, ∀ c ∈ text.toList, c.isDigit = true ∨ c ∈ [' ', '⚑', '⣿', '✗', '?']) :
+    ∀ c ∈ (String.intercalate " " strings).toList,
+      c.isDigit = true ∨ c ∈ [' ', '⚑', '⣿', '✗', '?'] := by
     induction strings with
     | nil => simp
     | cons text rest ih =>
@@ -184,7 +197,7 @@ theorem summary_printable (statuses : List Status) :
     change 48 ≤ c.toNat ∧ c.toNat ≤ 57 at this
     omega
   · simp only [List.mem_cons, List.not_mem_nil, or_false] at hi
-    rcases hi with rfl | rfl | rfl | rfl <;> decide
+    rcases hi with rfl | rfl | rfl | rfl | rfl <;> decide
 
 /-! ## The legend `linger help` prints -/
 

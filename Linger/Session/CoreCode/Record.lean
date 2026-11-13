@@ -19,15 +19,19 @@ running record needs the name held to read: whether its daemon still lives decid
 Format: the magic `LNGE`, version 1, then 0 for a running program, 1 and the ending as
 `Wire.outcomeBytes` writes it, or 2 and the number of the signal that stopped the daemon, for a
 session it saved; or version 2, 0 and one byte of what the daemon saw (1 for fresh output, 2 for
-unseen output), for a running program whose daemon says so. A reader from before saved sessions
-reads one as no record, so it answers that the ending is unknown, and lists it resumable. -/
+unseen output, 4 for a bell or a notification since the last look), for a running program whose
+daemon says so. A reader from before saved sessions reads one as no record, so it answers that
+the ending is unknown, and lists it resumable, and a reader from before asks reads a byte with 4
+as no record, so it asks the daemon. -/
 
 namespace Linger.Session
 
 namespace Record
 
-/-- The byte of what a daemon saw: 1 for fresh output, plus 2 for unseen output. -/
-def seenByte (seen : Seen) : UInt8 := (if seen.fresh then 1 else 0) + (if seen.unseen then 2 else 0)
+/-- The byte of what a daemon saw: 1 for fresh output, plus 2 for unseen output, plus 4 for an
+ask. -/
+def seenByte (seen : Seen) : UInt8 :=
+  (if seen.fresh then 1 else 0) + (if seen.unseen then 2 else 0) + (if seen.asks then 4 else 0)
 
 /-- The record's bytes; `decode` reads them back (`decode_encode`). -/
 def encode : Record → List UInt8
@@ -40,7 +44,8 @@ def encode : Record → List UInt8
 def decode : List UInt8 → Option Record
   | [0x4C, 0x4E, 0x47, 0x45, 1, 0] => some (.running none)
   | [0x4C, 0x4E, 0x47, 0x45, 2, 0, flags] =>
-    if flags < 4 then some (.running (some ⟨flags &&& 1 != 0, flags &&& 2 != 0⟩)) else none
+    if flags < 8 then some (.running (some ⟨flags &&& 1 != 0, flags &&& 2 != 0, flags &&& 4 != 0⟩))
+    else none
   | [0x4C, 0x4E, 0x47, 0x45, 1, 1, kind, code] => some (.ended (Wire.readOutcome [kind, code]))
   | [0x4C, 0x4E, 0x47, 0x45, 1, 2, signal] => some (.saved signal)
   | _ => none

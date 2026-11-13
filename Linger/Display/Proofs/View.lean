@@ -86,7 +86,7 @@ theorem sort_attention_first {α : Type} (status : α → Status) (rows : List �
       sort status rows = first ++ rest ∧
         (∀ x ∈ first, status x ∈ Status.attention) ∧ ∀ x ∈ rest, status x ∉ Status.attention := by
   refine
-    ⟨[Status.unknown, .exitedBad, .wantsYou].flatMap fun st =>
+    ⟨[Status.asks, .unknown, .exitedBad, .wantsYou].flatMap fun st =>
         rows.filter fun x => place (status x) == st,
       [Status.exitedOk, .working, .resumable].flatMap fun st =>
         rows.filter fun x => place (status x) == st,
@@ -99,7 +99,7 @@ theorem sort_attention_first {α : Type} (status : α → Status) (rows : List �
     apply (place_attention (status x)).mp
     rw [heq]
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hst
-    rcases hst with rfl | rfl | rfl <;> simp [Status.attention]
+    rcases hst with rfl | rfl | rfl | rfl <;> simp [Status.attention]
   · intro x hx
     simp only [List.mem_flatMap, List.mem_filter, beq_iff_eq] at hx
     obtain ⟨st, hst, _, heq⟩ := hx
@@ -405,9 +405,9 @@ theorem hidden_adds_up (targets : List String) :
   | some depth =>
     right; simp [groups_sum]
 
-/-- The statuses that ask for someone, by name: `⣿`, `!` and `?`. -/
+/-- The statuses that ask for someone, by name: `⚑`, `⣿`, `✗` and `?`. -/
 theorem mem_attention (st : Status) :
-    st ∈ Status.attention ↔ st = .wantsYou ∨ st = .exitedBad ∨ st = .unknown := by
+    st ∈ Status.attention ↔ st = .asks ∨ st = .wantsYou ∨ st = .exitedBad ∨ st = .unknown := by
   simp [Status.attention]
 
 end Linger.Display.View

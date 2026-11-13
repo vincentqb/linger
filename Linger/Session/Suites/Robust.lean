@@ -169,7 +169,8 @@ def admissionPressure (e : Env) : IO Unit := do
           let record ← (IO.FS.readBinFile s!"{pressure.dir}/pressure.end").toBaseIO
           let stale :=
             record.toOption.any fun bytes =>
-              Linger.Session.Record.decode bytes.toList matches some (.running (some ⟨false, true⟩))
+              Linger.Session.Record.decode bytes.toList matches
+                some (.running (some ⟨false, true, false⟩))
           return stale && (← System.FilePath.pathExists s!"{pressure.dir}/pressure.ckpt") &&
               !(← System.FilePath.pathExists s!"{pressure.dir}/pressure.ckpt.tmp")
     unless settled do

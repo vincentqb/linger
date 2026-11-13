@@ -4,18 +4,18 @@ public section
 
 /-! # What the status headline theorems mean
 
-A session's status says what linger saw of it, in one glyph: the seven statuses, the observation
+A session's status says what linger saw of it, in one glyph: the eight statuses, the observation
 a listing row is classified from, and the legend line each status stands for, written as
 predicates on that observation independently of the classifier that computes them. -/
 
 namespace Linger.Display.Status
 
-/-- Seven mutually exclusive states, in priority order: a row shows the
-first one that applies. -/
+/-- Eight mutually exclusive states. A row shows the first that applies, in the order `?`, the
+endings `✓` and `✗`, `~`, `⚑`, `⣷`, `⣿`, `⣀`: a program waiting for you outranks one printing. -/
 inductive Status where
   /-- `?` — no answer: the daemon did not answer, or the saved session could not be read. -/
   | unknown
-  /-- `!` — the program ended any other way: a nonzero exit, a signal, or an ending linger did
+  /-- `✗` — the program ended any other way: a nonzero exit, a signal, or an ending linger did
   not see. -/
   | exitedBad
   /-- `✓` — the program exited 0. It did its job. -/
@@ -23,7 +23,11 @@ inductive Status where
   /-- `~` — no daemon, but a checkpoint is on disk whose program was interrupted before it
   ended: attach resumes it. -/
   | resumable
-  /-- `⣿` — new output since the session was last looked at, a bell included, then it stopped. -/
+  /-- `⚑` — since the session was last looked at, its program rang the bell or posted a desktop
+  notification, and it is still running: it asks for you. -/
+  | asks
+  /-- `⣿` — new output since the session was last looked at, then it stopped, and no bell or
+  notification. -/
   | wantsYou
   /-- `⣷` — output right now. -/
   | working
@@ -43,9 +47,11 @@ structure Obs where
   exit : Option Nat := none
   /-- Output within the "working" window. -/
   fresh : Bool := false
-  /-- Output, or a bell, since the session was last looked at (attach, output while
-  attached, or capture). -/
+  /-- Output since the session was last looked at (attach, output while attached, or
+  capture). -/
   unseen : Bool := false
+  /-- A bell or a desktop notification since the session was last looked at. -/
+  asks : Bool := false
   deriving DecidableEq, Repr, Inhabited
 
 /-- The legend, as predicates on an observation: the observation each status's line in
@@ -56,11 +62,21 @@ def Is : Status → Obs → Prop
   | .exitedOk, o => o.known = true ∧ o.exit = some 0
   | .exitedBad, o => o.known = true ∧ ∃ n, o.exit = some n ∧ n ≠ 0
   | .resumable, o => o.known = true ∧ o.exit = none ∧ o.daemonUp = false
-  | .working, o => o.known = true ∧ o.exit = none ∧ o.daemonUp = true ∧ o.fresh = true
+  | .asks, o => o.known = true ∧ o.exit = none ∧ o.daemonUp = true ∧ o.asks = true
+  | .working, o =>
+    o.known = true ∧ o.exit = none ∧ o.daemonUp = true ∧ o.asks = false ∧ o.fresh = true
   | .wantsYou, o =>
-    o.known = true ∧ o.exit = none ∧ o.daemonUp = true ∧ o.fresh = false ∧ o.unseen = true
+    o.known = true ∧
+      o.exit = none ∧ o.daemonUp = true ∧ o.asks = false ∧ o.fresh = false ∧ o.unseen = true
   | .idle, o =>
-    o.known = true ∧ o.exit = none ∧ o.daemonUp = true ∧ o.fresh = false ∧ o.unseen = false
+    o.known = true ∧
+      o.exit = none ∧ o.daemonUp = true ∧ o.asks = false ∧ o.fresh = false ∧ o.unseen = false
+
+/-- A wrong classifier: today's rule before asks, which lumps a bell and a notification in with
+output, so a running session that asks shows `⣿` once its output stops. The headline that a bell
+or a notification since the last look makes a running session ask is shown to reject it. -/
+@[expose]
+def lumped (classify : Obs → Status) (o : Obs) : Status := classify { o with asks := false }
 
 end Linger.Display.Status
 
@@ -93,22 +109,23 @@ inductive Row where
   and the peer's own `status` name, read by `Status.ofName`. -/
   | remote (live : Bool) (peerStatus : String)
   /-- A socket whose daemon holds the name, read from the name's end record instead of asking:
-  whether the daemon last saw fresh output, and output since the session was last looked at
-  (`Session.Record.published`). -/
-  | published (fresh unseen : Bool)
+  whether the daemon last saw fresh output, output since the session was last looked at, and a
+  bell or a notification since then (`Session.Record.published`). -/
+  | published (fresh unseen asks : Bool)
   deriving Repr
 
 /-- The fields of a listing record a human row reads, each from its one source: the socket's
 name; the status and how a saved session ended, from the caller and the name's end record;
 `pid` and `cmd`, which tell a busy daemon or a peer's row; the description, which only the user
-sets, as the label `description`; the title, which the session's program gave its window; the
-login shell and the foreground program, its process and its directory, which the operating
-system reports; the seconds since the program last wrote; and the watchers. No other field, and
-no other label, changes what a human row shows. -/
+sets, as the label `description`; the title, which the session's program gave its window, and the
+text of its last notification since the session was last looked at; the login shell and the
+foreground program, its process and its directory, which the operating system reports; the
+seconds since the program last wrote; and the watchers. No other field, and no other label,
+changes what a human row shows. -/
 @[expose]
 def sources : List String :=
   ["name", "status", "state", "saved", "signal", "outcome", "exit", "pid", "cmd",
-    "label.description", "title", "login", "fg", "fgpid", "fgdir", "idle", "clients"]
+    "label.description", "title", "notice", "login", "fg", "fgpid", "fgdir", "idle", "clients"]
 
 /-- The name of the program a command line runs: its first word, after the word's last `/`. -/
 @[expose]
@@ -203,7 +220,8 @@ a row moves whenever its session starts or stops printing. The headline that a r
 row keeps its place is shown to reject it. -/
 @[expose]
 def View.byActivity {α : Type} (status : α → Status.Status) (rows : List α) : List α :=
-  [Status.Status.unknown, .exitedBad, .wantsYou, .exitedOk, .working, .idle, .resumable].flatMap
+  [Status.Status.asks, .unknown, .exitedBad, .wantsYou, .exitedOk, .working, .idle,
+        .resumable].flatMap
     fun st => rows.filter fun x => status x == st
 
 end Linger.Display

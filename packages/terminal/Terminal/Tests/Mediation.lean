@@ -182,4 +182,94 @@ example :
 /-- Non-vacuity: the raw payload really did contain the injected CR. -/
 example : evilXtget.contains 0x0D = true := by native_decide
 
+/-! ### A program that asks for someone
+
+What a chunk hears, split at every byte: a bell rings in ground, after ESC and inside a control
+sequence, and nowhere else; the BEL that ends an OSC rings nothing; a notification asks with its
+text, ended by BEL or ST; a ConEmu sub-command asks nothing; and a notification past the cap is
+heard as the scanner releases it, its text cut to what the scanner held. A notification still
+passes through unchanged. -/
+
+/-- Whether the chunk split at `i` asks, and the last notification it posts. -/
+def heardAtSplit (v : Vt) (seq : Bytes) (i : Nat) : Bool × Option Bytes :=
+  let a := feed v .ground (seq.take i)
+  let b := feed a.vt a.scan (seq.drop i)
+  (a.asks || b.asks, b.notice.or a.notice)
+
+/-- Whether every split of the chunk hears `expected`. -/
+def heardAllSplits (v : Vt) (seq : Bytes) (expected : Bool × Option Bytes) : Bool :=
+  (List.range (seq.length + 1)).all fun i => heardAtSplit v seq i == expected
+
+/-- `ESC ] payload` and its terminator, ST when `st`, else BEL. -/
+def osc (payload : String) (st : Bool) : Bytes :=
+  [ESC, 0x5D] ++ payload.toUTF8.toList ++ (if st then [ESC, STFinal] else [BEL])
+
+example : heardAllSplits profileVt [0x61, BEL, 0x62] (true, none) = true := by native_decide
+
+example : heardAllSplits profileVt [ESC, BEL] (true, none) = true := by native_decide
+
+example : heardAllSplits profileVt [ESC, 0x5B, 0x31, BEL, 0x6D] (true, none) = true := by
+  native_decide
+
+example : heardAllSplits profileVt (osc "2;title" false) (false, none) = true := by native_decide
+
+example :
+    heardAllSplits profileVt [ESC, 0x5F, 0x61, BEL, 0x62, ESC, STFinal] (false, none) = true := by
+  native_decide
+
+example : heardAllSplits profileVt [ESC, 0x50, 0x71, BEL, ESC, STFinal] (false, none) = true := by
+  native_decide
+
+example :
+    heardAllSplits profileVt (osc "9;edit src/Foo.lean?" false)
+        (true, some "edit src/Foo.lean?".toUTF8.toList) =
+      true := by
+  native_decide
+
+example :
+    heardAllSplits profileVt (osc "9;done" true) (true, some "done".toUTF8.toList) = true := by
+  native_decide
+
+example : heardAllSplits profileVt (osc "9;4;1;50" false) (false, none) = true := by native_decide
+
+example : heardAllSplits profileVt (osc "9;10;x" true) (false, none) = true := by native_decide
+
+example : heardAllSplits profileVt (osc "9;5" false) (true, some [0x35]) = true := by native_decide
+
+example :
+    heardAllSplits profileVt (osc "777;notify;Claude;needs you; now" true)
+        (true, some "Claude: needs you; now".toUTF8.toList) =
+      true := by
+  native_decide
+
+example :
+    heardAllSplits profileVt (osc "777;notify;;body" false) (true, some "body".toUTF8.toList) =
+      true := by
+  native_decide
+
+example : heardAllSplits profileVt (osc "777;other;x" false) (false, none) = true := by
+  native_decide
+
+/-- The last of two notifications in a chunk is the one it posts. -/
+example :
+    heardAllSplits profileVt (osc "9;first" false ++ [0x78] ++ osc "9;second" true)
+        (true, some "second".toUTF8.toList) =
+      true := by
+  native_decide
+
+/-- A notification passes through to clients unchanged. -/
+example : passthroughAllSplits profileVt (osc "9;edit src/Foo.lean?" false) = true := by
+  native_decide
+
+/-- A notification longer than the scanner holds: `ESC ] 9 ;` and 300 letters. -/
+def longNotice : Bytes := osc ("9;" ++ String.ofList (List.replicate 300 'a')) false
+
+/-- It still asks, with the letters the scanner held, `oscCap` bytes less `ESC ] 9 ;` plus the
+one byte it released them with, and passes through whole. -/
+example :
+    heardAllSplits profileVt longNotice (true, some (List.replicate (oscCap - 3) 0x61)) = true := by
+  native_decide
+
+example : passthroughWhole profileVt longNotice = true := by native_decide
+
 end Terminal.Mediation.Tests

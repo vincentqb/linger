@@ -53,12 +53,17 @@ each with a kill, and says what it does not claim yet:
    session, every wait is bounded and says what it missed, and optional work is skipped or
    coalesced, never queued.
 
-The status rule: a session's status is one glyph for one observation, `⣷` output right now, `⣿`
-new output, then it stopped, `⣀` nothing new since you looked, `✓` ended with status 0, `!` ended
-any other way, `~` saved with no daemon and `?` no answer, and titles and `ls --summary` count
-`⣿`, `!` and `?`. Its section follows the ten parts, with the titles, listings and selector
-views that show statuses: a view lists `⣿`, `!` and `?` first, and a running session's row keeps
-its place whether it is printing or quiet.
+The status rule: a session's status is one glyph for one observation, `⚑` a bell or a desktop
+notification since you looked, from a program still running, `⣷` output right now, `⣿` new output,
+then it stopped, `⣀` nothing new since you looked, `✓` ended with status 0, `✗` ended any other
+way, `~` saved with no daemon and `?` no answer; a program waiting for you outranks one printing,
+and titles and `ls --summary` count `⚑`, `⣿`, `✗` and `?`. Its section follows the ten parts, with
+the titles, listings and selector views that show statuses: a view lists `⚑`, then `?`, `✗` and
+`⣿`, first, and a running session's row keeps its place whether it is printing or quiet. A session
+asks exactly while its program has rung the bell or posted a notification since the session was
+last looked at: output with nobody attached asks as the terminal package's mediator hears it, a
+look, an attach, a capture or output while a client is attached, clears the ask, and nothing else
+changes it (`step_asks`).
 
 Each theorem below is stated over definitions in the components' `CoreSpec` modules and the world
 claims in their `WorldSpec` modules, over the terminal package's parts, which its own challenge
@@ -201,6 +206,8 @@ def Linger.Session.State.roster : State → List Client := sorry
 def Linger.Session.State.labelList : State → List (String × String) := sorry
 
 def Linger.Session.State.scanner : State → Mediation.Scan := sorry
+
+def Linger.Session.State.seen : State → Seen := sorry
 
 def Linger.Session.State.nextTick : State → Option Nat := sorry
 
@@ -546,8 +553,9 @@ program's title, and the foreground program, which the operating system reports,
 that caption does not name it (`caption_precedence`); its glyph and name are never cut, the rest
 fits a width (`rowText_fits`), and each character is printable (`rowText_clean`). Not claimed:
 that the daemon reports the title, foreground and idle time it read, which the overview suite
-checks, and what the operating system reports of the foreground, which `Pty.Foreground` assumes
-and its check tests. -/
+checks, what the operating system reports of the foreground, which `Pty.Foreground` assumes
+and its check tests, and that a row shows the text of a notification right after its caption
+while its session asks, and only then, which the listing tests and the status suite check. -/
 
 theorem one_owner (grant : Claim.State → Nat → Nat → Bool) (exclusive : Claim.Exclusive grant)
     {s : Claim.State} (reached : Claim.Reachable grant Claim.enters s) {a b resource : Nat}
@@ -2510,7 +2518,12 @@ theorem capture_waits_unlocked_rejects_inside :
 
 /-! ## The status rule
 
-And the titles, listings and selector views that show statuses. -/
+And the titles, listings and selector views that show statuses, and what makes a session ask.
+Not claimed: which bytes ask, which `Terminal.Mediation` decides: a BEL a terminal executes as a
+control, and an OSC 9 or OSC 777 notification, which the status suite checks; that `info`, the
+porcelain and a row report the text of the last notification since the last look, which the status
+suite checks too; and that the daemon publishes what it sees to its name's end record, which the
+quiet and status suites check. -/
 
 theorem classify_iff (o : Status.Obs) (s : Status.Status) :
     Status.classify o = s ↔ Status.Is s o := by sorry
@@ -2521,21 +2534,76 @@ theorem classify_iff_rejects_idle :
         (fun (_ : Status.Obs) => Status.Status.idle) o = s ↔ Status.Is s o := by
   sorry
 
+theorem step_asks (s : State) (ev : Event) :
+    (∀ chunk,
+        ev = .ptyOut chunk →
+          (Status.classify
+                { fresh := (Session.step s ev).1.seen.fresh,
+                  unseen := (Session.step s ev).1.seen.unseen,
+                  asks := (Session.step s ev).1.seen.asks } =
+              .asks ↔
+            seenBy s.roster = false ∧
+              ((Mediation.feed s.terminal s.scanner chunk).asks = true ∨ s.seen.asks = true))) ∧
+      (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
+        ev = .bytes id chunk →
+          s.client? id = some c →
+          c.attached = false →
+          c.decoder.feed chunk = (dec, [m]) →
+          dec.errored = false → m.Looks → (Session.step s ev).1.seen.asks = false) ∧
+      ((Session.step s ev).1.seen.asks = true → s.seen.asks = true ∨ ∃ chunk, ev = .ptyOut chunk) ∧
+      (s.seen.asks = true →
+        (Session.step s ev).1.seen.asks = false →
+        (∃ chunk, ev = .ptyOut chunk) ∨
+          ∃ id chunk c,
+            ev = .bytes id chunk ∧
+              s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks) := by
+  sorry
+
+@[kills step_asks]
+theorem step_asks_rejects_lumped :
+    ¬∀ (s : State) (ev : Event),
+        (∀ chunk,
+            ev = .ptyOut chunk →
+              (Status.lumped Status.classify
+                    { fresh := (Session.step s ev).1.seen.fresh,
+                      unseen := (Session.step s ev).1.seen.unseen,
+                      asks := (Session.step s ev).1.seen.asks } =
+                  .asks ↔
+                seenBy s.roster = false ∧
+                  ((Mediation.feed s.terminal s.scanner chunk).asks = true ∨ s.seen.asks = true))) ∧
+          (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
+            ev = .bytes id chunk →
+              s.client? id = some c →
+              c.attached = false →
+              c.decoder.feed chunk = (dec, [m]) →
+              dec.errored = false → m.Looks → (Session.step s ev).1.seen.asks = false) ∧
+          ((Session.step s ev).1.seen.asks = true →
+            s.seen.asks = true ∨ ∃ chunk, ev = .ptyOut chunk) ∧
+          (s.seen.asks = true →
+            (Session.step s ev).1.seen.asks = false →
+            (∃ chunk, ev = .ptyOut chunk) ∨
+              ∃ id chunk c,
+                ev = .bytes id chunk ∧
+                  s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks) := by
+  sorry
+
 theorem icon_glyphs :
-    Status.icon .working = '⣷' ∧
+    Status.icon .asks = '⚑' ∧
+      Status.icon .working = '⣷' ∧
       Status.icon .wantsYou = '⣿' ∧
       Status.icon .idle = '⣀' ∧
       Status.icon .exitedOk = '✓' ∧
-      Status.icon .exitedBad = '!' ∧ Status.icon .resumable = '~' ∧ Status.icon .unknown = '?' := by
+      Status.icon .exitedBad = '✗' ∧ Status.icon .resumable = '~' ∧ Status.icon .unknown = '?' := by
   sorry
 
 @[kills icon_glyphs]
 theorem icon_glyphs_rejects_unknown :
-    ¬((fun (_ : Status.Status) => '?') .working = '⣷' ∧
+    ¬((fun (_ : Status.Status) => '?') .asks = '⚑' ∧
+        (fun (_ : Status.Status) => '?') .working = '⣷' ∧
         (fun (_ : Status.Status) => '?') .wantsYou = '⣿' ∧
         (fun (_ : Status.Status) => '?') .idle = '⣀' ∧
         (fun (_ : Status.Status) => '?') .exitedOk = '✓' ∧
-        (fun (_ : Status.Status) => '?') .exitedBad = '!' ∧
+        (fun (_ : Status.Status) => '?') .exitedBad = '✗' ∧
         (fun (_ : Status.Status) => '?') .resumable = '~' ∧
         (fun (_ : Status.Status) => '?') .unknown = '?') := by
   sorry
@@ -2543,7 +2611,9 @@ theorem icon_glyphs_rejects_unknown :
 theorem summary_exact (statuses : List Status.Status) :
     Status.summary statuses =
       String.intercalate " "
-        ((if statuses.count .wantsYou = 0 then []
+        ((if statuses.count .asks = 0 then []
+          else [(toString (statuses.count .asks)).push (Status.icon .asks)]) ++
+          (if statuses.count .wantsYou = 0 then []
           else [(toString (statuses.count .wantsYou)).push (Status.icon .wantsYou)]) ++
           (if statuses.count .exitedBad = 0 then []
           else [(toString (statuses.count .exitedBad)).push (Status.icon .exitedBad)]) ++
@@ -2556,7 +2626,9 @@ theorem summary_exact_rejects_count :
     ¬∀ (statuses : List Status.Status),
         (fun (all : List Status.Status) => toString all.length) statuses =
           String.intercalate " "
-            ((if statuses.count .wantsYou = 0 then []
+            ((if statuses.count .asks = 0 then []
+              else [(toString (statuses.count .asks)).push (Status.icon .asks)]) ++
+              (if statuses.count .wantsYou = 0 then []
               else [(toString (statuses.count .wantsYou)).push (Status.icon .wantsYou)]) ++
               (if statuses.count .exitedBad = 0 then []
               else [(toString (statuses.count .exitedBad)).push (Status.icon .exitedBad)]) ++
@@ -2602,8 +2674,11 @@ theorem sort_attention_first {α : Type} (status : α → Status.Status) (rows :
     (View.sort status rows).Perm rows ∧
       ∃ first rest,
         View.sort status rows = first ++ rest ∧
-          (∀ x ∈ first, status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) ∧
-          ∀ x ∈ rest, ¬(status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) := by
+          (∀ x ∈ first,
+            status x = .asks ∨ status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) ∧
+          ∀ x ∈ rest,
+            ¬(status x = .asks ∨
+                status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) := by
   sorry
 
 @[kills sort_attention_first]
@@ -2612,9 +2687,12 @@ theorem sort_attention_first_rejects_arrival :
         (View.arrival status rows).Perm rows ∧
           ∃ first rest,
             View.arrival status rows = first ++ rest ∧
-              (∀ x ∈ first, status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) ∧
+              (∀ x ∈ first,
+                status x = .asks ∨
+                  status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) ∧
               ∀ x ∈ rest,
-                ¬(status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) := by
+                ¬(status x = .asks ∨
+                    status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) := by
   sorry
 
 theorem sort_keeps_place {α : Type} (status status' : α → Status.Status) (rows : List α)
