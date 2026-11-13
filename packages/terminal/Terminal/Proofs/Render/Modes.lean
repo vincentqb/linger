@@ -13,7 +13,7 @@ import all Init.Data.String.Legacy
 The lead-in that grounds any receiver, the hand-back's canonical modes
 (`leave_canonical`), `MMap` (modes-from-ground with per-chunk transforms), and the
 value claims that `restore` installs the session's modes and pen in any receiver
-(`restore_modes_any` and `restore_pen_any`, behind `replay_modes` and `replay_pen` in
+(`restore_modes_any` and `restore_pen_any`, behind `replay_restores` in
 `packages/terminal/TerminalChallenge.lean`). -/
 
 namespace Terminal.Render

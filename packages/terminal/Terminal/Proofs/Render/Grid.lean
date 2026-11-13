@@ -2111,7 +2111,7 @@ theorem feed_restore_zeroed (v w : Vt) (hok : U8Ok w) :
 they hold of every state a terminal can reach by being fed bytes, which is every client there
 is (`good_of_liveReachable`, `renderable_of_liveReachable`, `u8Ok_of_liveReachable`). What is
 left in the statement is matching dimensions, on **both** screens, main and alt. The receiver's
-`u8need` is not a hypothesis (section above). `replay_grid` rests on it. -/
+`u8need` is not a hypothesis (section above). -/
 theorem restore_grid_reachable (v w : Vt) (hw : LiveReachableVt w) (hv : LiveReachableVt v)
     (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) : (w.feed (restore v)).grid = v.grid := by
   rw [feed_restore_zeroed v w (u8Ok_of_liveReachable hw)]

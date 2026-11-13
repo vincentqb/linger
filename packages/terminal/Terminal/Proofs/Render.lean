@@ -11,10 +11,11 @@ import all Terminal.Proofs.Render.Scrollback
 
 `Render.restore` is the byte stream a re-attaching client's terminal is fed, in steps of any
 positive budget (`Replay.drain_start`), and this ladder proves what it does to that terminal:
-the replay headlines of `packages/terminal/TerminalChallenge.lean`, such as `replay_grid`, rest
-on it. The proof is one file per rung, imported in dependency order. Most proofs that use the
-ladder import this one; `Theorems/Solution.lean`, `packages/terminal/Terminal/Solution.lean` and
-the toolkit's `Replay`, `Title` and `Vt/History` proofs import the rungs they need directly.
+the replay headlines of `packages/terminal/TerminalChallenge.lean`, such as `replay_restores`
+and `replay_history`, rest on it. The proof is one file per rung, imported in dependency order.
+Most proofs that use the ladder import this one; `Theorems/Solution.lean`,
+`packages/terminal/Terminal/Solution.lean` and the toolkit's `Replay`, `Title` and `Vt/History`
+proofs import the rungs they need directly.
 
 The rungs, in dependency order:
 

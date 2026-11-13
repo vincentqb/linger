@@ -10,14 +10,17 @@ import all Terminal.Proofs.Render.Grid
 import all Terminal.Proofs.Render.Tabs
 import all Terminal.Proofs.Replay
 
-/-! # A repaint keeps showing what its terminal shows
+/-! # A repaint restores its terminal
 
 `step` reads every field of a terminal but four (`Terminal.Proofs.Vt.Unread`): the cells, the
 cursor with its deferred wrap, the pen, the modes but the mouse mode, the scroll region, the tab
 ruler, the stashed main screen with its cursor, the DECSC slot, the charsets and the shift state,
-the parser state and the UTF-8 decoder. `restore_readable` says that a live receiver of the
-repaint of a live terminal of its size, taken between control sequences and characters, holds
-each of them as the terminal does, and `keeps_showing` follows by `readable_feed`.
+the parser state and the UTF-8 decoder. `restore_readable_quiesce` says that a live receiver of
+the repaint of a live terminal of its size holds each of them as the terminal does once its
+partial parser state is forgotten, which between control sequences and characters is the
+terminal itself (`restore_readable`). `restores` reads that through the emulator's accessors, as
+`Terminal.Vt.Restores` states it, and later output keeps the two reading the same by
+`readable_feed`.
 
 The paint's lemmas give the grid, the pen, the modes and the ruler (`restore_grid_any`,
 `restore_pen_any`, `restore_modes_any`, `restore_tabs_any`). This module adds the rest: the stash
@@ -872,14 +875,14 @@ theorem readable_eq {r v : Vt} (hc : r.cols = v.cols) (hr : r.rows = v.rows) (hg
   unfold readable
   rw [hc, hr, hg, hcur, hp, hm, ht, hb, htabs, halt, hs, h0, h1, hso, hps, hun, hua]
 
-/-- **The repaint reproduces everything later output reads.** A live receiver of a live
-terminal's size that has parsed the terminal's repaint, taken between control sequences and
-characters, reads the same as the terminal: the grid and the stashed main screen, the cursor
-with its deferred wrap, the DECSC slot, the pen, the modes but the mouse mode, the scroll region,
-the tab ruler, the charsets and shift state, and a quiet decoder. -/
-theorem restore_readable (v w : Vt) (hv : LiveReachableVt v) (hw : LiveReachableVt w)
-    (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) (hb : v.atBoundary = true) :
-    readable (w.feed (restore v)) = readable v := by
+/-- **The repaint reproduces everything later output reads but a partial sequence.** A live
+receiver of a live terminal's size that has parsed the terminal's repaint reads the same as the
+terminal with its partial parser state forgotten: the grid and the stashed main screen, the
+cursor with its deferred wrap, the DECSC slot, the pen, the modes but the mouse mode, the scroll
+region, the tab ruler, the charsets and shift state, and a quiet decoder. -/
+theorem restore_readable_quiesce (v w : Vt) (hv : LiveReachableVt v) (hw : LiveReachableVt w)
+    (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) :
+    readable (w.feed (restore v)) = readable v.quiesce := by
   rw [feed_restore_zeroed v w (u8Ok_of_liveReachable hw)]
   have hgood :
     Good
@@ -905,10 +908,6 @@ theorem restore_readable (v w : Vt) (hv : LiveReachableVt v) (hw : LiveReachable
   have hgv := good_of_liveReachable hv
   have hvren := renderable_of_liveReachable hv
   have hvtabs := tabsOk_of_liveReachable hv
-  have hvu8 := u8Ok_of_liveReachable hv
-  have hvb : v.pstate = .ground ∧ v.u8need = 0 := by
-    unfold Vt.atBoundary at hb
-    simpa using hb
   -- the paint
   obtain ⟨ups, un, ugrid, uins, uwrap, -⟩ := screens_paint v w0 hgood hren hc0 hr0 hua hun hvren
   obtain ⟨uc, ur, ut, ub, u0, u1, uo⟩ := restore_paint_canonical v w0 hgood hren hc0 hr0 hua hun
@@ -959,28 +958,66 @@ theorem restore_readable (v w : Vt) (hv : LiveReachableVt v) (hw : LiveReachable
   · rw [hrest]; exact d0
   · rw [hrest]; exact d1
   · rw [hrest]; exact dso
-  · exact qp.trans hvb.1.symm
-  · exact qn.trans hvb.2.symm
-  · exact (u8Ok_feed (restore v) (fun _ => hua) qn).trans (hvu8 hvb.2).symm
+  · exact qp
+  · exact qn
+  · exact u8Ok_feed (restore v) (fun _ => hua) qn
 
-/-- **A repaint keeps showing what its terminal shows.** A live receiver of a live terminal's size
-that parsed the terminal's repaint, taken between control sequences and characters and streamed
-at any positive budget, shows every row the terminal shows once the same output reaches both:
-the receiver reads the same as the terminal (`restore_readable`), and later output cannot tell
-apart two terminals it reads the same of (`readable_feed`). -/
-theorem keeps_showing (budget : Nat) (positive : 0 < budget) (v w : Vt) (later : List UInt8)
-    (hv : LiveReachableVt v) (hw : LiveReachableVt w) (hcols : w.colCount = v.colCount)
-    (hrows : w.rowCount = v.rowCount) (hb : v.atBoundary = true) :
+/-- A terminal between control sequences and characters, whose decoder keeps no bits once it
+expects no byte, has no partial parser state to forget. -/
+theorem quiesce_of_atBoundary {v : Vt} (hu : U8Ok v) (hb : v.atBoundary = true) :
+    v.quiesce = v := by
+  have hvb : v.pstate = .ground ∧ v.u8need = 0 := by
+    unfold Vt.atBoundary at hb
+    simpa using hb
+  have ha := hu hvb.2
+  cases v
+  simp_all [Vt.quiesce]
+
+/-- **The repaint reproduces everything later output reads.** Taken between control sequences
+and characters, the terminal has no partial parser state, and its live receiver reads the same
+as the terminal itself. -/
+theorem restore_readable (v w : Vt) (hv : LiveReachableVt v) (hw : LiveReachableVt w)
+    (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) (hb : v.atBoundary = true) :
+    readable (w.feed (restore v)) = readable v := by
+  rw [restore_readable_quiesce v w hv hw hcols hrows,
+    quiesce_of_atBoundary (u8Ok_of_liveReachable hv) hb]
+
+/-- Two terminals later output reads the same of show the same screen. -/
+theorem shows_readable {u v : Vt} (h : readable u = readable v) :
+    Shows Vt.colCount Vt.rowCount Vt.getRow Vt.cursorPos stick v u :=
+  ⟨(congrArg Vt.colCount h :), (congrArg Vt.rowCount h :), fun y _ =>
+    (congrArg (Vt.getRow · y) h :), (congrArg Vt.cursorPos h :), (congrArg stick h :)⟩
+
+/-- **A repaint restores its terminal.** Any receiver of the repaint of any terminal, streamed at
+any positive budget, holds the terminal's pen and every mode but the mouse mode
+(`restore_pen_any`, `restore_modes_unmoused`), the mouse mode too when a program could have set
+it (`restore_modes_any`), and sits between control sequences and characters
+(`restore_quiesced_any`); one as tall as the terminal holds its sticky fields when DECSTBM could
+have set its region (`restore_sticky_any`). A live receiver of a live terminal's size shows the
+terminal's screen, since it reads as the terminal does once the terminal's partial parser state
+is forgotten (`restore_readable_quiesce`). When the terminal sits between control sequences and
+characters too, the receiver reads the same as the terminal (`restore_readable`), and later
+output cannot tell apart two terminals it reads the same of (`readable_feed`). -/
+theorem restores (budget : Nat) (positive : 0 < budget) (v w : Vt) :
     ∃ bytes,
       Replay.Emits Replay.next budget (Replay.start v) bytes ∧
-        ∀ y < (v.feed later).rowCount,
-          ((w.feed bytes).feed later).getRow y = (v.feed later).getRow y := by
-  refine ⟨restore v, ?_, fun y _ => ?_⟩
+        Restores LiveReachableVt Vt.feed Vt.colCount Vt.rowCount Vt.getRow Vt.cursorPos Vt.getPen
+          Vt.getModes stick Vt.atBoundary v w (w.feed bytes) := by
+  refine
+    ⟨restore v, ?_, restore_pen_any v w, ?_, fun mouse =>
+      congrArg Modes.mouse (restore_modes_any v w mouse), ?_, fun height region inside fits =>
+      restore_sticky_any v w height region inside fits, fun hv hw hcols hrows =>
+      ⟨(shows_readable (restore_readable_quiesce v w hv hw hcols hrows) :), fun hb later => ?_⟩⟩
   · rw [← Replay.start_faithful v]
     exact Replay.emits_remaining budget positive (Replay.start v)
+  · -- stated through `modes` itself, so no check unfolds the receiver's feed
+    unfold Vt.getModes
+    exact restore_modes_unmoused v w
+  · obtain ⟨hp, hn⟩ := restore_quiesced_any v w
+    simp [Vt.atBoundary, hp, hn]
   · have h := readable_feed (restore_readable v w hv hw hcols hrows hb) later
     exact
-      (readable_getRow _ y).symm.trans
-        ((congrArg (fun r : Vt => r.getRow y) h).trans (readable_getRow _ y))
+      ⟨shows_readable h, (congrArg Vt.getPen h :), (congrArg Vt.getModes h :),
+        (congrArg Vt.atBoundary h :)⟩
 
 end Terminal.Render

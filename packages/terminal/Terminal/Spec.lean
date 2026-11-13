@@ -6,7 +6,7 @@ public section
 
 The values a terminal shows (colours, pens, cells, rows, modes and the screen settings a
 repaint keeps), the bytes it is fed, the rows a history keeps and the output that may ask to
-erase it, and two predicates over the emulator's operations, which they take as parameters.
+erase it, and predicates over the emulator's operations, which they take as parameters.
 Bodies are exposed: each definition here is its own specification.
 
 `Live` is the least set of states containing a fresh emulator and closed under what a live
@@ -16,6 +16,13 @@ about repainting and checkpoints assume it of the terminals involved. Every stat
 can hold satisfies it: a fresh screen and the decoder are the only doors, and the session
 transformers the only ways forward (`packages/terminal/Terminal/Vt.lean` lists them). It does not say a
 scrollback row is the screen's width: a resize leaves the scrollback at its old width.
+
+`Shows` and `Restores` say what a repaint leaves its receiver holding, through the emulator's
+accessors and its feed, so no definition here names how the emulator stores a state. `Shows`
+compares the screens two terminals show. `Restores` says what any receiver holds, what one as
+tall as the terminal holds, and what a live receiver of a live terminal's size holds: the screen,
+and, between control sequences, that no later output tells the two apart, which reaches what
+the emulator reads and no accessor shows, such as a tab stop or the cursor DECSC saved.
 
 `Replay.Emits` is the output of streaming a repaint plan one bounded step at a time. -/
 
@@ -178,6 +185,52 @@ inductive Live {S : Type} (init : Nat → Nat → S) (feed : S → List UInt8 �
   that does not describe such a state. The premise is the door's own acceptance, never a
   bound on the state's fields. -/
   | ofDecoded {v : S} (h : decodable v) : Live init feed resize quiesce decodable v
+
+/-- `u` shows the screen `v` shows, as the emulator's accessors read it: the screen's size, each
+of its rows, the cursor and the `Sticky` fields. -/
+@[expose]
+def Shows {S : Type} (colCount rowCount : S → Nat) (getRow : S → Nat → Row)
+    (cursorPos : S → Nat × Nat) (stick : S → Sticky) (v u : S) : Prop :=
+  colCount u = colCount v ∧
+    rowCount u = rowCount v ∧
+    (∀ y < rowCount v, getRow u y = getRow v y) ∧ cursorPos u = cursorPos v ∧ stick u = stick v
+
+/-- `u`, what a receiver `w` holds once it has parsed a repaint of the terminal `v`, restores `v`
+as far as `w` can show it. Whatever `w` is, `u` has `v`'s pen and every mode of `v`'s but the
+mouse mode, has the mouse mode too when that is off or one a program enables (1000, 1002 or 1003),
+and sits between control sequences and characters. When `w` is as tall as `v` and `v`'s scroll
+region is one DECSTBM sets, two rows or more on a screen under 65535 rows, `u` has `v`'s `Sticky`
+fields. When `v` and `w` are `live` and of one size, `u` shows the screen `v` shows (`Shows`),
+and, when `v` sits between control sequences and characters too, no output fed to both tells the
+two apart by the screens they show, their pens, their modes but the mouse mode or whether they
+sit between them. A terminal inside a sequence or a character holds a partial one its receiver
+does not. The history and the window title are not compared, nor the mouse mode once output
+follows. -/
+@[expose]
+def Restores {S : Type} (live : S → Prop) (feed : S → List UInt8 → S) (colCount rowCount : S → Nat)
+    (getRow : S → Nat → Row) (cursorPos : S → Nat × Nat) (getPen : S → Pen) (getModes : S → Modes)
+    (stick : S → Sticky) (atBoundary : S → Bool) (v w u : S) : Prop :=
+  getPen u = getPen v ∧
+    ({ getModes u with mouse := 0 } : Modes) = { getModes v with mouse := 0 } ∧
+    ((getModes v).mouse = 0 ∨
+        (getModes v).mouse = 1000 ∨ (getModes v).mouse = 1002 ∨ (getModes v).mouse = 1003 →
+      (getModes u).mouse = (getModes v).mouse) ∧
+    atBoundary u = true ∧
+    ((stick w).rows = (stick v).rows →
+      (stick v).top < (stick v).bot →
+      (stick v).bot < (stick v).rows → (stick v).rows < 65535 → stick u = stick v) ∧
+    (live v →
+      live w →
+      colCount w = colCount v →
+      rowCount w = rowCount v →
+      Shows colCount rowCount getRow cursorPos stick v u ∧
+        (atBoundary v = true →
+          ∀ later : List UInt8,
+            Shows colCount rowCount getRow cursorPos stick (feed v later) (feed u later) ∧
+              getPen (feed u later) = getPen (feed v later) ∧
+              ({ getModes (feed u later) with mouse := 0 } : Modes) =
+                { getModes (feed v later) with mouse := 0 } ∧
+              atBoundary (feed u later) = atBoundary (feed v later)))
 
 end Terminal.Vt
 

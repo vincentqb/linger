@@ -10,8 +10,7 @@ import all Terminal.Proofs.Render.Modes
 
 `SMap` and `Vt.stick`: the scroll region, both charset designations, the shift
 state and which screen is current — the restored fields whose proof cannot step
-over the repaint, which `restore` installs (`restore_sticky_any`, behind `replay_sticky`
-in `packages/terminal/TerminalChallenge.lean`) and the hand-back resets
+over the repaint, which `restore` installs (`restore_sticky_any`) and the hand-back resets
 (`leave_canonical_all`) — plus the receiver-quantified cursor claim. -/
 
 namespace Terminal.Render

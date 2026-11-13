@@ -25,8 +25,8 @@ The two halves:
   parser state does not have to be assumed.
 
 `Challenge.lean` part 7 states resume as a headline over the byte-array codec
-(`resume_restores`), and the terminal package's replay headlines (`replay_grid` and its
-siblings) state what a client's terminal then receives.
+(`resume_restores`), and the terminal package's replay headlines (`replay_restores` and
+`replay_history`) state what a client's terminal then receives.
 
 `resume_grid`, `resume_tabs`, and `resume_sb` prove value fidelity.
 `resume_cursor_any` covers cursor position with origin mode off. Title and saved

@@ -6,12 +6,29 @@ public import Terminal.Spec
 
 What the VT toolkit must do for the program that keeps a terminal: a live terminal keeps its
 shape and its history, feeding inert bytes changes nothing, a control sequence's count is capped,
-a repaint streams in bounded chunks, gives its receiver the terminal's rows, cursor, history,
-pen, modes and scroll region and keeps showing what the terminal shows as later output reaches
-both, screen text has no control characters, and the handback sequence leaves a terminal
-canonical. The theorems are stated over the toolkit's
-parts, declared below as holes: `sorry` here, which the package's code supplies, and
-`Terminal.Solution` proves the same statements of them. -/
+a repaint streams in bounded chunks and restores its terminal on the receiver, screen text has no
+control characters, and the handback sequence leaves a terminal canonical. The theorems are
+stated over the toolkit's parts, declared below as holes: `sorry` here, which the package's code
+supplies, and `Terminal.Solution` proves the same statements of them.
+
+A repaint, streamed at any positive budget, restores its terminal on the receiver as far as the
+receiver can show it (`replay_restores`, as `Vt.Restores` says). Any receiver, such as a watcher
+of another size, gets the terminal's pen and every mode, the mouse mode when it is one a program
+sets, and is left between control sequences and characters; one as tall as the terminal also
+gets the scroll region, the character sets, the shift state and which screen is current, when
+DECSTBM could have set that region. A live receiver of a live terminal's size shows each row and
+the cursor too, and, when the terminal sits between control sequences and characters as well,
+no later output tells the two apart, so the receiver also holds what the emulator reads and no
+accessor shows, such as the deferred wrap, the tab ruler, the cursor DECSC saved and the main
+screen the alternate one stashes; `replay_keeps_showing` says so of the rows alone. When
+`Render.sbRows` picks any history rows, the newest that fit the repaint's budget for history, the
+receiver's history is those rows (`replay_history`). Not claimed of a repaint: more than that of
+a receiver of another size, or of a terminal or receiver no session holds; older history; the
+window title, which it scrubs of C0 controls and DEL and a receiver may cut short; the mouse mode
+once later output arrives, or at all when it is other than off, 1000, 1002 and 1003, which only a
+decoded checkpoint holds; the bell, which stays the receiver's; and what later output shows of a
+terminal repainted inside a control sequence or a character, whose partial one the receiver does
+not hold. -/
 
 public section
 
@@ -70,30 +87,25 @@ def Terminal.Replay.next :
 
 namespace Terminal
 
-theorem replay_grid (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
-    (hv : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v)
-    (hw : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable w)
-    (hcols : w.colCount = v.colCount) (hrows : w.rowCount = v.rowCount) :
+theorem replay_restores (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt) :
     ∃ bytes,
       Replay.Emits Replay.next budget (Replay.start v) bytes ∧
-        (w.feed bytes).colCount = v.colCount ∧
-        (w.feed bytes).rowCount = v.rowCount ∧
-        ∀ y < v.rowCount, (w.feed bytes).getRow y = v.getRow y := by
+        Vt.Restores (Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable)
+          Vt.Vt.feed Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.cursorPos Vt.Vt.getPen
+          Vt.Vt.getModes Vt.stick Vt.Vt.atBoundary v w (w.feed bytes) := by
   sorry
 
-theorem replay_grid_rejects_silence :
+theorem replay_restores_rejects_resaved :
     ¬∀ (budget : Nat),
         0 < budget →
           ∀ (v w : Vt.Vt),
-            Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v →
-              Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable w →
-              w.colCount = v.colCount →
-              w.rowCount = v.rowCount →
-              ∃ bytes,
-                Replay.Emits (fun _ _ => none) budget (Replay.start v) bytes ∧
-                  (w.feed bytes).colCount = v.colCount ∧
-                  (w.feed bytes).rowCount = v.rowCount ∧
-                  ∀ y < v.rowCount, (w.feed bytes).getRow y = v.getRow y := by
+            ∃ bytes,
+              Replay.Emits Replay.next budget
+                  ((fun (v : Vt.Vt) => Replay.start (v.feed [0x1B, 0x37])) v) bytes ∧
+                Vt.Restores
+                  (Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable)
+                  Vt.Vt.feed Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.cursorPos Vt.Vt.getPen
+                  Vt.Vt.getModes Vt.stick Vt.Vt.atBoundary v w (w.feed bytes) := by
   sorry
 
 theorem replay_keeps_showing (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
@@ -181,30 +193,6 @@ theorem history_grows_rejects_lost :
                       (List.range (v.rowCount - (v.resize cols rows).rowCount)).map v.getRow) := by
   sorry
 
-theorem replay_cursor (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
-    (hv : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v)
-    (hw : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable w)
-    (hcols : w.colCount = v.colCount) (hrows : w.rowCount = v.rowCount)
-    (ho : v.getModes.origin = false) :
-    ∃ bytes,
-      Replay.Emits Replay.next budget (Replay.start v) bytes ∧
-        (w.feed bytes).cursorPos = v.cursorPos := by
-  sorry
-
-theorem replay_cursor_rejects_silence :
-    ¬∀ (budget : Nat),
-        0 < budget →
-          ∀ (v w : Vt.Vt),
-            Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v →
-              Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable w →
-              w.colCount = v.colCount →
-              w.rowCount = v.rowCount →
-              v.getModes.origin = false →
-              ∃ bytes,
-                Replay.Emits (fun _ _ => none) budget (Replay.start v) bytes ∧
-                  (w.feed bytes).cursorPos = v.cursorPos := by
-  sorry
-
 theorem live_shape (v : Vt.Vt)
     (hv : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v) :
     1 ≤ v.colCount ∧
@@ -226,62 +214,6 @@ theorem live_shape_rejects_empty :
               ((fun (_ : Vt.Vt) (_ : Nat) => (#[] : Vt.Row)) v y).size = v.colCount) ∧
             v.cursorPos.1 < v.colCount ∧
             v.cursorPos.2 < v.rowCount ∧ v.scrollback.length ≤ Vt.sbCap := by
-  sorry
-
-theorem replay_pen (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt) :
-    ∃ bytes,
-      Replay.Emits Replay.next budget (Replay.start v) bytes ∧
-        (w.feed bytes).getPen = v.getPen := by
-  sorry
-
-theorem replay_pen_rejects_silence :
-    ¬∀ (budget : Nat),
-        0 < budget →
-          ∀ (v w : Vt.Vt),
-            ∃ bytes,
-              Replay.Emits (fun _ _ => none) budget (Replay.start v) bytes ∧
-                (w.feed bytes).getPen = v.getPen := by
-  sorry
-
-theorem replay_modes (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
-    (mouse :
-      v.getModes.mouse = 0 ∨
-        v.getModes.mouse = 1000 ∨ v.getModes.mouse = 1002 ∨ v.getModes.mouse = 1003) :
-    ∃ bytes,
-      Replay.Emits Replay.next budget (Replay.start v) bytes ∧
-        (w.feed bytes).getModes = v.getModes := by
-  sorry
-
-theorem replay_modes_rejects_silence :
-    ¬∀ (budget : Nat),
-        0 < budget →
-          ∀ (v w : Vt.Vt),
-            (v.getModes.mouse = 0 ∨
-                v.getModes.mouse = 1000 ∨ v.getModes.mouse = 1002 ∨ v.getModes.mouse = 1003) →
-              ∃ bytes,
-                Replay.Emits (fun _ _ => none) budget (Replay.start v) bytes ∧
-                  (w.feed bytes).getModes = v.getModes := by
-  sorry
-
-theorem replay_sticky (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
-    (height : (Vt.stick w).rows = (Vt.stick v).rows) (region : (Vt.stick v).top < (Vt.stick v).bot)
-    (inside : (Vt.stick v).bot < (Vt.stick v).rows) (fits : (Vt.stick v).rows < 65535) :
-    ∃ bytes,
-      Replay.Emits Replay.next budget (Replay.start v) bytes ∧
-        Vt.stick (w.feed bytes) = Vt.stick v := by
-  sorry
-
-theorem replay_sticky_rejects_silence :
-    ¬∀ (budget : Nat),
-        0 < budget →
-          ∀ (v w : Vt.Vt),
-            (Vt.stick w).rows = (Vt.stick v).rows →
-              (Vt.stick v).top < (Vt.stick v).bot →
-              (Vt.stick v).bot < (Vt.stick v).rows →
-              (Vt.stick v).rows < 65535 →
-              ∃ bytes,
-                Replay.Emits (fun _ _ => none) budget (Replay.start v) bytes ∧
-                  Vt.stick (w.feed bytes) = Vt.stick v := by
   sorry
 
 theorem feed_inert (v : Vt.Vt) (bytes : List UInt8) (between : v.atBoundary = true)

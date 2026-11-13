@@ -1106,7 +1106,7 @@ Why this beats the two alternatives:
 
 What frames do **not** buy, and this is the honest limit: a frame says
 what an operation leaves alone, never what the written fields *become*.
-Grid fidelity (the replayed cells equal the saved cells, `replay_grid`) needs
+Grid fidelity (the replayed cells equal the saved cells, `replay_restores`) needs
 the positive specification, which is real content, not bookkeeping. Frames
 retire the sprawl; they do not prove the fidelity.
 

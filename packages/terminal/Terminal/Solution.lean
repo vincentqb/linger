@@ -26,50 +26,44 @@ public section
 
 namespace Terminal
 
-theorem replay_grid (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
-    (hv : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v)
-    (hw : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable w)
-    (hcols : w.colCount = v.colCount) (hrows : w.rowCount = v.rowCount) :
+theorem replay_restores (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt) :
     ∃ bytes,
       Replay.Emits Replay.next budget (Replay.start v) bytes ∧
-        (w.feed bytes).colCount = v.colCount ∧
-        (w.feed bytes).rowCount = v.rowCount ∧
-        ∀ y < v.rowCount, (w.feed bytes).getRow y = v.getRow y := by
-  refine ⟨Render.restore v, ?_, ?_⟩
-  · rw [← Replay.start_faithful v]
-    exact Replay.emits_remaining budget positive (Replay.start v)
-  have dims := Vt.dims_feed (Render.restore v) (Vt.good_of_liveReachable hw)
-  simp only [Vt.dims, Prod.mk.injEq] at dims
-  have grid := Render.restore_grid_reachable v w hw hv hcols hrows
-  have size := (Vt.renderable_of_liveReachable hv).main.1
-  refine ⟨dims.1.trans hcols, dims.2.trans hrows, fun y below => ?_⟩
-  have inside : y < v.grid.size := size ▸ below
-  unfold Vt.Vt.getRow
-  rw [grid]
-  simp only [Array.getD, inside, dite_true]
+        Vt.Restores (Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable)
+          Vt.Vt.feed Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.cursorPos Vt.Vt.getPen
+          Vt.Vt.getModes Vt.stick Vt.Vt.atBoundary v w (w.feed bytes) :=
+  Render.restores budget positive v w
 
-theorem replay_grid_rejects_silence :
+theorem replay_restores_rejects_resaved :
     ¬∀ (budget : Nat),
         0 < budget →
           ∀ (v w : Vt.Vt),
-            Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v →
-              Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable w →
-              w.colCount = v.colCount →
-              w.rowCount = v.rowCount →
-              ∃ bytes,
-                Replay.Emits (fun _ _ => none) budget (Replay.start v) bytes ∧
-                  (w.feed bytes).colCount = v.colCount ∧
-                  (w.feed bytes).rowCount = v.rowCount ∧
-                  ∀ y < v.rowCount, (w.feed bytes).getRow y = v.getRow y := by
+            ∃ bytes,
+              Replay.Emits Replay.next budget
+                  ((fun (v : Vt.Vt) => Replay.start (v.feed [0x1B, 0x37])) v) bytes ∧
+                Vt.Restores
+                  (Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable)
+                  Vt.Vt.feed Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.cursorPos Vt.Vt.getPen
+                  Vt.Vt.getModes Vt.stick Vt.Vt.atBoundary v w (w.feed bytes) := by
   intro h
-  obtain ⟨bytes, emits, -, -, rows⟩ :=
-    h 1 Nat.one_pos ((Vt.Vt.init 2 1).feed [0x41]) (Vt.Vt.init 2 1) (.feed (.init 2 1) [0x41])
-      (.init 2 1) (by decide +kernel) (by decide +kernel)
-  cases emits with
-  | step next => cases next
-  | done =>
-    have row := rows 0 (by decide +kernel)
-    exact absurd (congrArg (fun r : Vt.Row => (r.getD 0 {}).base) row) (by decide +kernel)
+  -- DECSC at the start of a row, then `A`: a repaint that saves the cursor with DECSC itself, as
+  -- the repaint of the terminal after another DECSC does, shows the same row and cursor, and DECRC
+  -- then puts `B` over the `A` on the terminal but beside it on the receiver
+  obtain ⟨bytes, emits, -, -, -, -, -, live⟩ :=
+    h 1 Nat.one_pos ((Vt.Vt.init 2 1).feed [0x1B, 0x37, 0x41]) (Vt.Vt.init 2 1)
+  have streamed :
+    Replay.Emits Replay.next 1
+      (Replay.start (((Vt.Vt.init 2 1).feed [0x1B, 0x37, 0x41]).feed [0x1B, 0x37]))
+      (Render.restore (((Vt.Vt.init 2 1).feed [0x1B, 0x37, 0x41]).feed [0x1B, 0x37])) := by
+    rw [← Replay.start_faithful]
+    exact Replay.emits_remaining 1 Nat.one_pos _
+  have same := Replay.Emits.unique emits streamed
+  subst same
+  have row :=
+    ((live (.feed (.init 2 1) _) (.init 2 1) (by decide +kernel) (by decide +kernel)).2
+          (by decide +kernel) [0x1B, 0x38, 0x42]).1.2.2.1
+      0 (by decide +kernel)
+  exact absurd (congrArg (fun r : Vt.Row => (r.getD 0 {}).base) row) (by decide +kernel)
 
 theorem replay_keeps_showing (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
     (hv : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v)
@@ -81,12 +75,9 @@ theorem replay_keeps_showing (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt
         (∀ y < v.rowCount, (w.feed bytes).getRow y = v.getRow y) ∧
         ∀ y < (v.feed later).rowCount,
           ((w.feed bytes).feed later).getRow y = (v.feed later).getRow y := by
-  obtain ⟨bytes, emits, -, -, rows⟩ := replay_grid budget positive v w hv hw hcols hrows
-  obtain ⟨other, streamed, kept⟩ :=
-    Render.keeps_showing budget positive v w later hv hw hcols hrows boundary
-  have same := Replay.Emits.unique emits streamed
-  subst same
-  exact ⟨bytes, emits, rows, kept⟩
+  obtain ⟨bytes, emits, -, -, -, -, -, live⟩ := replay_restores budget positive v w
+  obtain ⟨⟨-, -, rows, -⟩, keeps⟩ := live hv hw hcols hrows
+  exact ⟨bytes, emits, rows, (keeps boundary later).1.2.2.1⟩
 
 theorem replay_keeps_showing_rejects_unregioned :
     ¬∀ (budget : Nat),
@@ -204,42 +195,6 @@ theorem history_grows_rejects_lost :
   simp only [Vt.newest, List.length_drop, List.length_append, none, one, cap] at lengths
   omega
 
-theorem replay_cursor (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
-    (hv : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v)
-    (hw : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable w)
-    (hcols : w.colCount = v.colCount) (hrows : w.rowCount = v.rowCount)
-    (ho : v.getModes.origin = false) :
-    ∃ bytes,
-      Replay.Emits Replay.next budget (Replay.start v) bytes ∧
-        (w.feed bytes).cursorPos = v.cursorPos := by
-  refine ⟨Render.restore v, ?_, ?_⟩
-  · rw [← Replay.start_faithful v]
-    exact Replay.emits_remaining budget positive (Replay.start v)
-  obtain ⟨x, y⟩ :=
-    Render.restore_cursor_any v w (Vt.good_of_liveReachable (hv)) (Vt.good_of_liveReachable (hw))
-      hcols hrows ho
-  simp only [Vt.cursorPos_eq, x, y]
-
-theorem replay_cursor_rejects_silence :
-    ¬∀ (budget : Nat),
-        0 < budget →
-          ∀ (v w : Vt.Vt),
-            Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v →
-              Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable w →
-              w.colCount = v.colCount →
-              w.rowCount = v.rowCount →
-              v.getModes.origin = false →
-              ∃ bytes,
-                Replay.Emits (fun _ _ => none) budget (Replay.start v) bytes ∧
-                  (w.feed bytes).cursorPos = v.cursorPos := by
-  intro h
-  obtain ⟨bytes, emits, cursor⟩ :=
-    h 1 Nat.one_pos (Vt.Vt.init 2 1) ((Vt.Vt.init 2 1).feed [0x41]) (.init 2 1)
-      (.feed (.init 2 1) [0x41]) (by decide +kernel) (by decide +kernel) (by decide +kernel)
-  cases emits with
-  | step next => cases next
-  | done => exact absurd (congrArg Prod.fst cursor) (by decide +kernel)
-
 theorem live_shape (v : Vt.Vt)
     (hv : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v) :
     1 ≤ v.colCount ∧
@@ -277,85 +232,6 @@ theorem live_shape_rejects_empty :
   intro h
   have empty := (h (Vt.Vt.init 1 1) (.init 1 1)).2.2.2.2.1 0 (by decide +kernel)
   exact absurd empty (by decide +kernel)
-
-theorem replay_pen (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt) :
-    ∃ bytes,
-      Replay.Emits Replay.next budget (Replay.start v) bytes ∧
-        (w.feed bytes).getPen = v.getPen := by
-  refine ⟨Render.restore v, ?_, Render.restore_pen_any v w⟩
-  rw [← Replay.start_faithful v]
-  exact Replay.emits_remaining budget positive (Replay.start v)
-
-theorem replay_pen_rejects_silence :
-    ¬∀ (budget : Nat),
-        0 < budget →
-          ∀ (v w : Vt.Vt),
-            ∃ bytes,
-              Replay.Emits (fun _ _ => none) budget (Replay.start v) bytes ∧
-                (w.feed bytes).getPen = v.getPen := by
-  intro h
-  obtain ⟨bytes, emits, pen⟩ :=
-    h 1 Nat.one_pos ((Vt.Vt.init 1 1).feed [0x1B, 0x5B, 0x31, 0x6D]) (Vt.Vt.init 1 1)
-  cases emits with
-  | step next => cases next
-  | done => exact absurd (congrArg Vt.Pen.bold pen) (by decide +kernel)
-
-theorem replay_modes (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
-    (mouse :
-      v.getModes.mouse = 0 ∨
-        v.getModes.mouse = 1000 ∨ v.getModes.mouse = 1002 ∨ v.getModes.mouse = 1003) :
-    ∃ bytes,
-      Replay.Emits Replay.next budget (Replay.start v) bytes ∧
-        (w.feed bytes).getModes = v.getModes := by
-  refine ⟨Render.restore v, ?_, Render.restore_modes_any v w mouse⟩
-  rw [← Replay.start_faithful v]
-  exact Replay.emits_remaining budget positive (Replay.start v)
-
-theorem replay_modes_rejects_silence :
-    ¬∀ (budget : Nat),
-        0 < budget →
-          ∀ (v w : Vt.Vt),
-            (v.getModes.mouse = 0 ∨
-                v.getModes.mouse = 1000 ∨ v.getModes.mouse = 1002 ∨ v.getModes.mouse = 1003) →
-              ∃ bytes,
-                Replay.Emits (fun _ _ => none) budget (Replay.start v) bytes ∧
-                  (w.feed bytes).getModes = v.getModes := by
-  intro h
-  obtain ⟨bytes, emits, modes⟩ :=
-    h 1 Nat.one_pos ((Vt.Vt.init 1 1).feed [0x1B, 0x5B, 0x3F, 0x32, 0x30, 0x30, 0x34, 0x68])
-      (Vt.Vt.init 1 1) (.inl (by decide +kernel))
-  cases emits with
-  | step next => cases next
-  | done => exact absurd (congrArg Vt.Modes.bracketedPaste modes) (by decide +kernel)
-
-theorem replay_sticky (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
-    (height : (Vt.stick w).rows = (Vt.stick v).rows) (region : (Vt.stick v).top < (Vt.stick v).bot)
-    (inside : (Vt.stick v).bot < (Vt.stick v).rows) (fits : (Vt.stick v).rows < 65535) :
-    ∃ bytes,
-      Replay.Emits Replay.next budget (Replay.start v) bytes ∧
-        Vt.stick (w.feed bytes) = Vt.stick v := by
-  refine ⟨Render.restore v, ?_, Render.restore_sticky_any v w height region inside fits⟩
-  rw [← Replay.start_faithful v]
-  exact Replay.emits_remaining budget positive (Replay.start v)
-
-theorem replay_sticky_rejects_silence :
-    ¬∀ (budget : Nat),
-        0 < budget →
-          ∀ (v w : Vt.Vt),
-            (Vt.stick w).rows = (Vt.stick v).rows →
-              (Vt.stick v).top < (Vt.stick v).bot →
-              (Vt.stick v).bot < (Vt.stick v).rows →
-              (Vt.stick v).rows < 65535 →
-              ∃ bytes,
-                Replay.Emits (fun _ _ => none) budget (Replay.start v) bytes ∧
-                  Vt.stick (w.feed bytes) = Vt.stick v := by
-  intro h
-  obtain ⟨bytes, emits, sticky⟩ :=
-    h 1 Nat.one_pos ((Vt.Vt.init 1 3).feed [0x1B, 0x5B, 0x32, 0x3B, 0x33, 0x72]) (Vt.Vt.init 1 3)
-      (by decide +kernel) (by decide +kernel) (by decide +kernel) (by decide +kernel)
-  cases emits with
-  | step next => cases next
-  | done => exact absurd (congrArg Vt.Sticky.top sticky) (by decide +kernel)
 
 theorem feed_inert (v : Vt.Vt) (bytes : List UInt8) (between : v.atBoundary = true)
     (inert : ∀ b ∈ bytes, b = 0x7F ∨ b < 0x07 ∨ 0x0F < b ∧ b < 0x20 ∧ b ≠ 0x1B) :
