@@ -10,9 +10,9 @@ import Linger.Target.Remote
 import Terminal.Render
 import Linger.Display.Listing
 import Linger.Display.View
-import Linger.App.Answer
+import Linger.Os.Answer
 import Linger.App.Capture
-public import Linger.App.Spec
+public import Linger.Os.Spec
 import Linger.App.Recovery
 import Linger.App.Commands
 import Linger.App.Wait
@@ -41,6 +41,7 @@ open Linger.Session.Shell
 open Linger.Session.Shell.Inventory
 open Os.Shell
 open Linger.Session.Wire (Msg)
+open Linger.Os (Answer)
 
 /-- One line per command, from the command table, printed by help and bare invocation, or to
 stderr when `overview` cannot parse the arguments as listing options. -/
@@ -645,12 +646,12 @@ private def cmdSummary : IO Answer := do
     IO.println summary
   return .done
 
-/-- The answer that tells how a session ended, as its daemon reported it (`Answer.ofEnding`): its
+/-- The answer that tells how a session ended, as its daemon reported it (`Ending.answer`): its
 program's, or `interrupted` for a session a signal to its daemon saved; an older daemon's status
 is the program's. -/
 private def endingAnswer : Client.Ending → Answer
-  | .outcome outcome => Answer.ofEnding (.program outcome)
-  | .saved signal => Answer.ofEnding (.saved signal)
+  | .outcome outcome => (Linger.Session.Ending.program outcome).answer
+  | .saved signal => (Linger.Session.Ending.saved signal).answer
   | .status status => .program status
 
 /-- Attach over `fd` once its daemon has said, in an `info` answer on `fd` within

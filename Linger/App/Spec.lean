@@ -1,5 +1,6 @@
 module
 
+public import Linger.Os.Spec
 public import Linger.Session.Spec
 
 public section
@@ -7,10 +8,11 @@ public section
 /-! # What command-line headlines are stated in
 
 The executor a command line reaches, where a command line of plain words goes, one row of the
-command table, the answers a command's exit status gives, what a command does with a name's
-saved session, what `wait` hears on each look at a name and does next, and the steps of
-`capture` of a saved session, which of them hold the name's locks and which wait on a party
-outside linger. -/
+command table, what a command does with a name's saved session, what `wait` hears on each look
+at a name and does next, and the steps of `capture` of a saved session, which of them hold the
+name's locks and which wait on a party outside linger. What a command answers is the operating
+system's vocabulary, `Linger.Os.Answer`, which the selector and the tmux interchange answer in
+too. -/
 
 namespace Linger.App.Entry
 
@@ -61,53 +63,6 @@ end Linger.App.Commands
 
 namespace Linger.App
 
-/-- What a command answers, as its exit status gives it: an answer of linger's own, or the
-status of the program the command waited for. The statuses are a shell's, and a program may
-exit with one linger also uses, as with `timeout` and `env`, so a status alone cannot tell the
-two apart; `info` and the porcelain output say exactly. -/
-inductive Answer where
-  /-- It did what was asked. -/
-  | done
-  /-- It did not, refused or failed, and linger says why. -/
-  | notDone
-  /-- Its command line is not one linger takes. -/
-  | usage
-  /-- Its time limit passed first. -/
-  | timedOut
-  /-- linger failed, or could not find out what was asked. -/
-  | failed
-  /-- The program it was to run cannot be run. -/
-  | cannotRun
-  /-- The program, or the session, it names does not exist. -/
-  | notFound
-  /-- A signal interrupted it. -/
-  | interrupted
-  /-- The program it waited for ended with this status, as a shell reports it: the program's
-  code, or 128 plus the number of the signal that killed it. -/
-  | program (status : UInt32)
-  deriving Repr, DecidableEq
-
-/-- Whether an answer is linger's own, and not a program's status. -/
-@[expose]
-def Answer.Own : Answer → Prop
-  | .program _ => False
-  | _ => True
-
-/-- The answer that tells how a program ended: its status, as a shell reports it, or, when linger
-did not see the end, that linger could not find out. -/
-@[expose]
-def Answer.ofOutcome : Linger.Session.Outcome → Answer
-  | .unknown => .failed
-  | outcome => .program outcome.status
-
-/-- The answer that tells how a session ended: its program's, as `ofOutcome` gives it, or, for a
-session a signal to its daemon saved, that a signal interrupted it, and never a status of its
-program, which did not end by itself and runs again on `resume`. -/
-@[expose]
-def Answer.ofEnding : Linger.Session.Ending → Answer
-  | .program outcome => ofOutcome outcome
-  | .saved _ => .interrupted
-
 /-- What a command does with a name no live session holds, from what the name's checkpoint
 file holds, given what a checkpoint holds: start a new session, resume the saved one, or start
 nothing, leave the file as it is and answer why. -/
@@ -117,7 +72,7 @@ inductive Recovery (C : Type) where
   /-- Resume the session this checkpoint saved. -/
   | resume (c : C)
   /-- Start nothing, leave the file as it is, and answer this. -/
-  | refuse (answer : Answer)
+  | refuse (answer : Os.Answer)
   deriving Repr, DecidableEq
 
 end Linger.App
@@ -148,7 +103,7 @@ inductive Heard where
 held with no daemon answering, while it still finds it so. -/
 inductive Next where
   /-- The wait is over, with this answer. -/
-  | answer (answer : Answer)
+  | answer (answer : Os.Answer)
   /-- Look again; `heldSince` is when the name was first found held, or `none` when it was not
   on this look. -/
   | again (heldSince : Option Nat)

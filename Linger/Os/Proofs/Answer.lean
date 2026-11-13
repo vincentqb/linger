@@ -1,15 +1,15 @@
 module
 
-public import Linger.App.Spec
-import all Linger.App.Spec
-import all Linger.App.Answer
+public import Linger.Os.Spec
+import all Linger.Os.Spec
+import all Linger.Os.Answer
 
 /-! # The exit statuses
 
 Each of linger's answers has its documented code, a program's status passes through, help lists
 each of linger's answers once, and an exit status read back gives an answer with that status. -/
 
-namespace Linger.App.Answer
+namespace Linger.Os.Answer
 
 /-- **Each answer has its documented code**: a shell's conventions for linger's own, and the
 status itself for a program's. -/
@@ -48,4 +48,4 @@ theorem ofCode_code (a : Answer) (own : a.Own) : ofCode a.code = a := by
 /-- Help prints a line for each listed answer. -/
 theorem legend_length : legend.length = listed.length := by simp [legend]
 
-end Linger.App.Answer
+end Linger.Os.Answer

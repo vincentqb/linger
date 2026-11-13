@@ -1,6 +1,6 @@
 module
 
-public import Linger.App.Spec
+public import Linger.Session.Spec
 import all Linger.App.Spec
 import all Linger.App.Wait
 import all Linger.Session
@@ -16,25 +16,25 @@ namespace Linger.App.Wait
 
 /-- **An ending is the answer**: how the session ended, from its daemon or the end record. -/
 theorem wait_ending (deadline heldSince : Option Nat) (now : Nat) (e : Linger.Session.Ending) :
-    decide deadline heldSince now (.ended e) = .answer (Answer.ofEnding e) ∧
-      decide deadline heldSince now (.recorded (some e)) = .answer (Answer.ofEnding e) := ⟨rfl, rfl⟩
+    decide deadline heldSince now (.ended e) = .answer e.answer ∧
+      decide deadline heldSince now (.recorded (some e)) = .answer e.answer := ⟨rfl, rfl⟩
 
 /-- A session a signal to its daemon saved answers `interrupted`, never a status of its program. -/
-theorem ofEnding_saved (signal : UInt8) : Answer.ofEnding (.saved signal) = .interrupted := rfl
+theorem saved_interrupted (signal : UInt8) :
+    (Linger.Session.Ending.saved signal).answer = .interrupted := rfl
 
 /-- How long `wait`'s patience for a held name is. -/
 theorem heldNameMs_eq : heldNameMs = 8000 := rfl
 
 /-- The answer that tells how a program ended is `failed` only for an unknown ending. -/
-theorem ofOutcome_failed (o : Linger.Session.Outcome) :
-    Answer.ofOutcome o = .failed ↔ o = .unknown := by cases o <;> simp [Answer.ofOutcome]
+theorem outcome_failed (o : Linger.Session.Outcome) : o.answer = .failed ↔ o = .unknown := by
+  cases o <;> simp [Linger.Session.Outcome.answer]
 
 /-- …and so is the answer that tells how a session ended, a saved one never. -/
-theorem ofEnding_failed (e : Linger.Session.Ending) :
-    Answer.ofEnding e = .failed ↔ e = .program .unknown := by
+theorem ending_failed (e : Linger.Session.Ending) : e.answer = .failed ↔ e = .program .unknown := by
   cases e with
-  | program o => simp [Answer.ofEnding, ofOutcome_failed]
-  | saved signal => simp [Answer.ofEnding]
+  | program o => simp [Linger.Session.Ending.answer, outcome_failed]
+  | saved signal => simp [Linger.Session.Ending.answer]
 
 /-- **`wait` could not find out only when that is so**: the ending is unknown, or the name has
 stayed held, with no daemon answering, for `heldNameMs` since the look that first found it so.
@@ -50,7 +50,7 @@ theorem wait_held (deadline heldSince : Option Nat) (now : Nat) (heard : Heard) 
         decide deadline heldSince now heard = .again (some (heldSince.getD now))) := by
   refine ⟨?_, ?_⟩
   · cases heard with
-    | ended e => simp [decide, ofEnding_failed]
+    | ended e => simp [decide, ending_failed]
     | status s => simp [decide]
     | silent =>
       simp only [decide]; split <;> simp
@@ -58,7 +58,7 @@ theorem wait_held (deadline heldSince : Option Nat) (now : Nat) (heard : Heard) 
     | recorded r =>
       cases r with
       | none => simp [decide]
-      | some e => simp [decide, ofEnding_failed]
+      | some e => simp [decide, ending_failed]
     | held =>
       simp only [decide]
       cases heldSince with

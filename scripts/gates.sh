@@ -428,11 +428,14 @@ import_closure packages/input/Input/Proofs.lean 'public import Input;import all 
 import_closure packages/os/Os/Spec.lean 'import SoftwareChallenge.Commands;'
 import_closure packages/os/Os/Wait.lean ''
 import_closure Linger/App/Entry.lean 'public import Linger.App.Spec;import Linger.Target.Spec;import Linger.Target.Remote;'
-import_closure Linger/App/Spec.lean 'public import Linger.Session.Spec;'
+import_closure Linger/App/Spec.lean 'public import Linger.Os.Spec;public import Linger.Session.Spec;'
 import_closure Linger/Target/Name.lean 'import Linger.Target.Spec;'
 import_closure Linger/Target/Remote.lean 'import Linger.Target.Name;import Linger.Target.Spec;'
 import_closure Linger/Display/Title.lean 'import Linger.Target.Name;'
 import_closure Linger/Os/Env.lean ''
+# The answers every command gives sit in the bottom layer and depend on nothing above it.
+import_closure Linger/Os/Spec.lean ''
+import_closure Linger/Os/Answer.lean 'public import Linger.Os.Spec;'
 import_closure packages/os/Os/Boundary.lean ''
 # packages/os/Os/Shell.lean is the one module that may import the private bindings.
 [ "$(module_imports '*.lean' | awk -F: "$IMPORT_AWK"'
@@ -446,11 +449,11 @@ shell_all="$(module_imports '*.lean' | awk -F: "$IMPORT_AWK"'
   printf '%s\n' "$shell_all" >&2
   fail "import all Os.Shell grants the private Boundary bindings: import it plainly"; }
 import_closure packages/os/Os/Shell/Command.lean 'import Os.Shell;'
-import_closure Linger/Import/Shell.lean 'import Linger.Import.Resurrect;import Linger.Session.Checkpoint;import Os.Shell;import Linger.Display.Listing;import Linger.Session.Shell.Paths;import Linger.Session.Shell.Resume;import Linger.Session.Shell.Inventory;import Os.Shell.Command;import Linger.Target.Remote;import Linger.Selector.Shell;import Linger.Selector.Picker;import Std.Async.System;'
+import_closure Linger/Import/Shell.lean 'public import Linger.Os.Spec;import Linger.Os.Answer;import Linger.Import.Resurrect;import Linger.Session.Checkpoint;import Os.Shell;import Linger.Display.Listing;import Linger.Session.Shell.Paths;import Linger.Session.Shell.Resume;import Linger.Session.Shell.Inventory;import Os.Shell.Command;import Linger.Target.Remote;import Linger.Selector.Shell;import Linger.Selector.Picker;import Std.Async.System;'
 import_closure Linger/Selector/Shell.lean \
-  'public import Linger.Selector.Spec;import Linger.Selector.Picker;import Os.Shell;import Linger.Target.Remote;import Terminal.Title;import Os.Shell.Command;import Linger.Display.View;import Std.Data.HashMap.Basic;import Linger.Display.Status;import Linger.Selector.Key;import Input;'
+  'public import Linger.Selector.Spec;public import Linger.Os.Spec;import Linger.Os.Answer;import Linger.Selector.Picker;import Os.Shell;import Linger.Target.Remote;import Terminal.Title;import Os.Shell.Command;import Linger.Display.View;import Std.Data.HashMap.Basic;import Linger.Display.Status;import Linger.Selector.Key;import Input;'
 import_closure Main.lean \
-  'import Linger.App.Answer;import Linger.App.Shell;import Linger.App.Entry;import Linger.Selector.Shell;import Linger.Import.Shell;'
+  'import Linger.Os.Answer;import Linger.App.Shell;import Linger.App.Entry;import Linger.Selector.Shell;import Linger.Import.Shell;'
 # `lean_lib Linger` builds the umbrella's closure, so this list is what `./lake build`
 # checks of the session library.
 import_closure Linger.lean "$(printf 'public import %s;' Linger.Session.Buf \
@@ -468,7 +471,7 @@ module_imports Linger/Session.lean ':(glob)Linger/Session/*.lean' 'Linger/Sessio
     packages/terminal/Terminal/Replay.lean Linger.lean \
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
-    if (mod !~ /^(Linger[.]Session|Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](Shell|Commands|Answer|Wait|Recovery|Capture|Spec)|Std[.]Async[.](System|Signal))$/ \
+    if (mod !~ /^(Linger[.]Session|Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](Shell|Commands|Wait|Recovery|Capture|Spec)|Std[.]Async[.](System|Signal))$/ \
         && mod != "SoftwareChallenge.Commands") {
       print "  " $0; bad = 1
     }
@@ -573,18 +576,81 @@ spec_imports_bad="$(module_imports 'Linger/*/Spec*.lean' | awk -F: "$IMPORT_AWK"
 # Pure route proofs do not observe terminal IO or inspect Main's call sites, so these ties
 # keep Main's dispatch on the proved route; Linger.App.Suites.Manager,
 # Linger.Import.Suites.Recipes and Linger.Import.Suites.Interop exercise it in subprocesses.
+# Every route gives an answer, which `main` binds as one `Linger.Os.Answer`, so each executor
+# returns one, and the process exits only with that answer's code (`code_documented`).
 # Fold layout whitespace for Main's small dispatch. Reuse the backtick-aware
 # matcher below, so quoted prose cannot stand in for these call sites.
 entry_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Main.lean)"
 for tie in \
-  'def main [(]args : List String[)] : IO UInt32 := do try match Linger[.]App[.]Entry[.]route args with' \
+  'def main [(]args : List String[)] : IO UInt32 := do let answer : Linger[.]Os[.]Answer ← try match Linger[.]App[.]Entry[.]route args with' \
   '[|] [.]selector readOnly => Linger[.]Selector[.]Shell[.]run [(]← IO[.]appPath[)][.]toString readOnly' \
   '[|] [.]tmux rest => Linger[.]Import[.]Shell[.]run [(]← IO[.]appPath[)][.]toString rest' \
-  '[|] [.]session argv => return [(]← Linger[.]App[.]Shell[.]main argv[)][.]code' \
-  '[|] [.]malformed => IO[.]eprintln "linger: malformed encoded command line" return Linger[.]App[.]Answer[.]usage[.]code'; do
+  '[|] [.]session argv => Linger[.]App[.]Shell[.]main argv' \
+  '[|] [.]malformed => IO[.]eprintln "linger: malformed encoded command line" pure [.]usage' \
+  'catch e => IO[.]eprintln s!"linger: [{]e[}]" pure [.]notDone return answer[.]code'; do
   printf '%s\n' "$entry_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "entry point bypassed its proved route or fixed IO boundary: $tie"
 done
+[ "$(code_count '(^|[^[:alnum:]_.])return([^[:alnum:]_]|$)' Main.lean)" -eq 1 ] \
+  || fail "Main.lean returns other than through its one exit, the code of its route's answer"
+
+# Every exit is an answer: `main` exits with the code of the answer its route gives (above), and
+# the executors it routes to answer in `Linger.Os.Answer`, the selector and the tmux interchange
+# as the session commands do. So in the command shells a function that yields a process status,
+# one declared to return an answer, or a `UInt32` or `UInt8` as `main` and `IO.Process.exit` take,
+# returns no literal number; `IO.Process.exit` takes only an answer's code; and a daemon reports
+# why a program did not start with an answer's code, which its command exits with. Other numbers
+# in the shells, as durations, sizes and descriptors, are no status and pass.
+# shellcheck disable=SC2016  # $0 below is awk's record; single quotes are the point
+STATUS_AWK='
+# The type after the last top-level colon of a declaration header, up to its top-level ":=",
+# which sets `assigned`; brackets and braces nest as parentheses do.
+function result(header,    n, i, c, depth, colon) {
+  n = length(header); depth = 0; colon = 0; assigned = 0
+  for (i = 1; i <= n; i++) {
+    c = substr(header, i, 1)
+    if (c == "(" || c == "[" || c == "{") depth++
+    else if (c == ")" || c == "]" || c == "}") depth--
+    else if (depth == 0 && c == ":") {
+      if (substr(header, i + 1, 1) == "=") { assigned = 1; return substr(header, colon + 1, i - colon - 1) }
+      colon = i } }
+  return colon ? substr(header, colon + 1) : "" }
+function settle(type) {
+  gsub(/[[:space:]]+/, " ", type); sub(/^ /, "", type); sub(/ $/, "", type)
+  yields = type ~ /^(IO|BaseIO) (Answer|Os[.]Answer|Linger[.]Os[.]Answer|UInt32|UInt8)$/; open = 0 }
+FNR == 1 { open = 0; yields = 0; header = "" }
+# A command in column 0 ends the declaration before it, and a definition begins one, whose header
+# runs to its top-level ":=" or its first match alternative. Other lines in column 0, as those
+# of a doc comment or a string literal, continue what they are in.
+/^([/]-|@[[]|#|((private|protected|public|noncomputable|partial|unsafe|meta)[[:space:]]+)*(def|abbrev|instance|theorem|lemma|opaque|axiom|example|structure|inductive|class|section)([[:space:]]|$)|(namespace|end|mutual)([[:space:]]|$)|(open|variable)[[:space:]])/ {
+  open = 0; yields = 0; header = ""
+  if ($0 ~ /^(@[[][^]]*[]][[:space:]]*)*((private|protected|public|noncomputable|partial|unsafe)[[:space:]]+)*(def|abbrev|instance)([[:space:]]|$)/)
+    open = 1 }
+open && header != "" && /^[[:space:]]*[|]/ { settle(result(header)) }
+open { header = header " " $0; type = result(header); if (assigned) settle(type) }
+yields { print FILENAME ":" FNR }'
+shell_paths="$(git ls-files -- Main.lean 'Linger/*/Shell.lean' 'Linger/*/Shell/*')"
+[ -n "$shell_paths" ] || fail "no command shells found"
+# shellcheck disable=SC2086  # one tracked path per word
+status_lines="$(awk "$STATUS_AWK" $shell_paths /dev/null)"
+# The reader must find what `main` and the two executors below the command line yield.
+for entry in 'Main.lean:^def main ' 'Linger/Selector/Shell.lean:^def run ' 'Linger/Import/Shell.lean:^def run '; do
+  entry_line="$(grep -n "${entry#*:}" "${entry%%:*}" | cut -d: -f1)"
+  printf '%s\n' "$status_lines" | grep -qx "${entry%%:*}:${entry_line:-none}" \
+    || fail "the reader of the shell headers no longer finds the process status that ${entry%%:*} yields"
+done
+status_bad="$(
+  { printf '%s\n' "$status_lines" '#literals'
+    code_grep '(^|[^[:alnum:]_.])(return|pure)[[:space:]]+[(]*-?[0-9]' Main.lean 'Linger/*/Shell.lean' 'Linger/*/Shell/*' || true; } \
+  | awk -F: '!literals { if ($0 == "#literals") literals = 1; else yields[$0] = 1; next }
+      ($1 ":" $2) in yields { print "  " $0 }'
+  code_grep '(^|[^[:alnum:]_.])IO[.]Process[.]exit([^[:alnum:]_]|$)' Main.lean 'Linger/*/Shell.lean' 'Linger/*/Shell/*' \
+  | awk '{ rest = substr($0, index($0, "IO.Process.exit") + 15)
+      if (rest !~ /[.]code([^[:alnum:]_]|$)/ || rest ~ /^[[:space:](]*-?[0-9]/) print "  " $0 }'
+  code_grep '[.]failed[[:space:]]+[(]*-?[0-9]' Main.lean 'Linger/*/Shell.lean' 'Linger/*/Shell/*' | sed 's/^/  /')"
+[ -z "$status_bad" ] || {
+  printf '%s\n' "$status_bad" >&2
+  fail "a literal exit status in a command shell: answer with a Linger.Os.Answer and exit with its code"; }
 
 # The proof covers the returned parser/plan values. These call-site gates make
 # bypassing them a reviewable change; IO tests check preflight/failure ordering
@@ -601,7 +667,7 @@ import_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Import/Shell.lean)"
 # An import only writes: it names no command that would start a session's program.
 ! code_grep '"(resume|start)"' Linger/Import/Shell.lean \
   || fail "the importer starts a program; an import writes checkpoints only"
-printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])[|] "import" => importSave executable paths[.]head[?]; return 0([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])[|] "import" => importSave executable paths[.]head[?]; return [.]done([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "importer no longer forwards the entry point executable"
 code_grep '^[[:space:]]+let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]] [}]$' Linger/Import/Shell.lean >/dev/null \
   || fail "importer no longer lists with the supplied executable"
@@ -609,7 +675,7 @@ code_grep '^[[:space:]]+let listing ← IO[.]Process[.]output [{] cmd := executa
 # no-HOME `/tmp` fallback. Only those fields reach the checked serializer.
 printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])private def writeSave [(]path : String[)] [(]capture : IO [(]List [(]String × String[)][)] := snapshot[)] : IO Unit := do let fields ← capture let content ← IO[.]ofExcept [(]renderSave fields[)] publish path content([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "exporter bypasses the current native snapshot, checked serializer or exclusive publication"
-printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])[|] _ => writeSave [(]paths[.]headD ""[)]; return 0([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])[|] _ => writeSave [(]paths[.]headD ""[)]; return [.]done([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "export command bypasses its native snapshot"
 # Both views consume the same ordered catalog. Display strings are scrubbed;
 # action fields have string-literal framing so display cleanup cannot retarget them.
@@ -624,7 +690,7 @@ for tie in \
   '[|] [.]attach target displayed => unless displayed[.]candidates[.]contains target do throw [(]IO[.]userError "selected pane was absent from the displayed save"[)] let row := displayed[.]row target' \
   'let some dir := [(]row[.]lookup "directory"[)][.]bind fun value => [(]Lean[.]Syntax[.]decodeStrLit value[)][.]filter [(]·[.]quote == value[)] [|] throw [(]IO[.]userError "selected pane has no directory"[)]' \
   'let some pane := selectedPane target dir line details [|] throw [(]IO[.]userError "invalid selected pane"[)]' \
-  'createPanes executable origin [[]pane[]] archive let child ← IO[.]Process[.]spawn [{] cmd := executable, args := Linger[.]Selector[.]Shell[.]attachArgs pane[.]name, cwd := some [(]System[.]FilePath[.]mk pane[.]dir[)] [}] discard child[.]wait if ← stops[.]heard then return 130' \
+  'createPanes executable origin [[]pane[]] archive let child ← IO[.]Process[.]spawn [{] cmd := executable, args := Linger[.]Selector[.]Shell[.]attachArgs pane[.]name, cwd := some [(]System[.]FilePath[.]mk pane[.]dir[)] [}] discard child[.]wait if ← stops[.]heard then return [.]interrupted' \
   'let panes := panes[.]map [(]preparePane content panes[)]' \
   'let archive ← if [(]plan existing panes[)][.]isEmpty then pure none else archive for pane in plan existing panes do let contents ← capturedPane archive pane discard <[|] seedPane pane contents' \
   'preflight origin panes let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]] [}]'; do
@@ -709,8 +775,8 @@ for tie in \
   'let fullArgs := if savedTmux then #[[]"tmux", "ls", "--porcelain"[]] [+][+] save[.]toArray else #[[]"ls", "-r", "--porcelain"[]]' \
   'match ← choose executable [(]readOnly := readOnly[)] [(]stopped := stops[.]heard[)] with' \
   'let ready ← poll fds events 50 if ← stopped then return [.]interrupted' \
-  'IO UInt32 := do let stops ← watch handbackSignals try while true do' \
-  'discard child[.]wait if ← stops[.]heard then return 130 return 0 finally stops[.]stop' \
+  'IO Linger[.]Os[.]Answer := do let stops ← watch handbackSignals try while true do' \
+  'discard child[.]wait if ← stops[.]heard then return [.]interrupted return [.]done finally stops[.]stop' \
   'def attachArgs [(]target : String[)] [(]readOnly : Bool := false[)] : Array String := [(]"attach" :: [(]if readOnly then [[]"--read-only"[]] else [[][]][)] [+][+] Linger[.]Target[.]Remote[.]targetOperands target[)][.]toArray'; do
   printf '%s\n' "$picker_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "manager lost its selection, refresh, process ownership or attach contract: $tie"

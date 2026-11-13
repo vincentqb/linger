@@ -1,6 +1,6 @@
 module
 
-import Linger.App.Answer
+import Linger.Os.Answer
 import Linger.Selector.Shell
 import Linger.Import.Shell
 import Linger.Display.Listing
@@ -283,9 +283,9 @@ def probe (args : List String) : IO UInt32 := do
     | "launch" :: manager :: mode :: rest =>
       launch root manager mode rest
     | ["picker", executable] =>
-      Linger.Selector.Shell.run executable
+      return (← Linger.Selector.Shell.run executable).code
     | ["tmux-picker", executable, save] =>
-      Linger.Import.Shell.run executable ["select", save]
+      return (← Linger.Import.Shell.run executable ["select", save]).code
     | ["session-program"] =>
       sessionProgram root
     | _ =>
@@ -688,7 +688,7 @@ private def usageChecks (e : Env) : IO Unit := do
                   String.intercalate " "
                     (Linger.Display.Status.attention.map
                       (String.singleton ∘ Linger.Display.Status.icon)))) &&
-          Linger.App.Answer.legend.all (fun line => footer.contains ("  " ++ line)) &&
+          Linger.Os.Answer.legend.all (fun line => footer.contains ("  " ++ line)) &&
           has out "--summary" &&
           has out "--read-only" &&
           has out "--history" &&

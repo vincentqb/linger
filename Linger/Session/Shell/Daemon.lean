@@ -8,6 +8,7 @@ public import Linger.Session
 public import Linger.Session.Record
 public import Linger.Session.Start
 import Linger.Os.Env
+import Linger.Os.Answer
 import Linger.Session.Shell.Paths
 
 public section
@@ -942,7 +943,9 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
             req.tell .running
             return
           | .missing =>
-            req.tell (.failed 127 s!"no session '{name}'".toUTF8.toList)
+            req.tell
+                (.failed Linger.Os.Answer.notFound.code.toUInt8
+                  s!"no session '{name}'".toUTF8.toList)
             return
           | .resume =>
             pure ()

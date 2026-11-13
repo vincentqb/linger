@@ -1,5 +1,6 @@
 module
 
+public import Linger.Os.Spec
 public import Terminal.Spec
 import SoftwareChallenge.Commands
 
@@ -8,14 +9,14 @@ public section
 /-! # What session headlines are stated in
 
 The values a session exchanges with its clients and its runtime (messages, client records,
-events and effects, and the end record a name keeps), the caps its state keeps and how long its
-changes may go unsaved, the time its events tell it, the contract on the effect interpreter, and
-predicates over the session's operations, which they take as parameters: which messages fit a
-frame and what a decoder reads from a chunked stream, the bounds a state keeps, the events a
-session handles when every effect succeeds, the reachable states of the daemon's byte queues,
-and a model of how daemons and offline readers claim a session's resources; and the wrong
-transition and drivers the kills put in place of the program's. Bodies are exposed: each
-definition here is its own specification. -/
+events and effects, and the end record a name keeps), what a command answers for each way a
+session ends, the caps its state keeps and how long its changes may go unsaved, the time its
+events tell it, the contract on the effect interpreter, and predicates over the session's
+operations, which they take as parameters: which messages fit a frame and what a decoder reads
+from a chunked stream, the bounds a state keeps, the events a session handles when every effect
+succeeds, the reachable states of the daemon's byte queues, and a model of how daemons and
+offline readers claim a session's resources; and the wrong transition and drivers the kills put
+in place of the program's. Bodies are exposed: each definition here is its own specification. -/
 
 namespace Linger.Session
 
@@ -37,6 +38,13 @@ def Outcome.status : Outcome → UInt32
   | .exited code => code.toUInt32
   | .signaled signal => 128 + signal.toUInt32
   | .unknown => 125
+
+/-- The answer that tells how a program ended: its status, as a shell reports it, or, when linger
+did not see the end, that linger could not find out. -/
+@[expose]
+def Outcome.answer : Outcome → Os.Answer
+  | .unknown => .failed
+  | outcome => .program outcome.status
 
 /-- What a daemon last saw of its program's output: whether output is fresh (`⣷`), and whether
 some arrived since the session was last looked at (`⣿`), as `info` reports `fresh` and
@@ -88,6 +96,14 @@ inductive Ending where
 def Ending.record : Ending → Record
   | .program outcome => .ended outcome
   | .saved signal => .saved signal
+
+/-- The answer that tells how a session ended: its program's, as `Outcome.answer` gives it, or,
+for a session a signal to its daemon saved, that a signal interrupted it, and never a status of
+its program, which did not end by itself and runs again on `resume`. -/
+@[expose]
+def Ending.answer : Ending → Os.Answer
+  | .program outcome => outcome.answer
+  | .saved _ => .interrupted
 
 end Linger.Session
 

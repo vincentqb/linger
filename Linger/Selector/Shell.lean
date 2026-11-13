@@ -1,6 +1,8 @@
 module
 
 public import Linger.Selector.Spec
+public import Linger.Os.Spec
+import Linger.Os.Answer
 import Linger.Selector.Picker
 import Os.Shell
 import Linger.Target.Remote
@@ -184,29 +186,30 @@ def attachArgs (target : String) (readOnly : Bool := false) : Array String :=
       Linger.Target.Remote.targetOperands target).toArray
 
 /-- Execute either selected row through attach, after terminal restoration. Every attach
-exit returns to a fresh listing; cancellation ends the manager. The caller
-supplies one frozen absolute executable for all listing and attach children. A signal of
-`handbackSignals` ends the manager with 130, `interrupted`, as a cancellation does: a visit hands
-the terminal back first, and an attach, which owns the terminal while it runs and hears the
-signals its terminal sends, first ends. -/
-def run (executable : String) (readOnly : Bool := false) : IO UInt32 := do
+exit returns to a fresh listing; cancellation ends the manager, answering `interrupted`. The
+caller supplies one frozen absolute executable for all listing and attach children. A listing
+that fails ends the manager with the answer its exit status gives (`Answer.ofCode`). A signal of
+`handbackSignals` ends the manager with `interrupted`, as a cancellation does: a visit hands the
+terminal back first, and an attach, which owns the terminal while it runs and hears the signals
+its terminal sends, first ends. -/
+def run (executable : String) (readOnly : Bool := false) : IO Linger.Os.Answer := do
   let stops ← watch handbackSignals
   try
     while true do
       match ← choose executable (readOnly := readOnly) (stopped := stops.heard) with
       | .cancel | .interrupted =>
-        return 130
+        return .interrupted
       | .failed status stderr =>
         IO.eprintln s!"linger: could not list sessions (exit {status})"
         if !stderr.isEmpty then
           IO.eprint stderr
-        return status
+        return Linger.Os.Answer.ofCode status
       | .attach target _ =>
         let child ← IO.Process.spawn { cmd := executable, args := attachArgs target readOnly }
         discard child.wait
         if ← stops.heard then
-          return 130
-    return 0
+          return .interrupted
+    return .done
   finally
     stops.stop
 

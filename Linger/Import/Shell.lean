@@ -1,5 +1,7 @@
 module
 
+public import Linger.Os.Spec
+import Linger.Os.Answer
 import Linger.Import.Resurrect
 import Linger.Session.Checkpoint
 import Os.Shell
@@ -346,10 +348,11 @@ private def listSave (file : Option String) (porcelain : Bool) : IO Unit :=
           (ByteArray.mk (Linger.Display.Listing.terminalListing withColor rows).toArray)
 
 /-- Act on the selected snapshot's exact directory, never on a reread of `last`.
-Resolve default discovery once per visit; the picker follows that path on refresh. A signal of
-`Os.Shell.handbackSignals` ends the selection with 130, as a cancellation does, once the visit, or
-the attach that owns the terminal meanwhile, has handed the terminal back. -/
-private def selectSave (executable : String) (file : Option String) : IO UInt32 :=
+Resolve default discovery once per visit; the picker follows that path on refresh. A cancellation
+ends the selection with `interrupted`, and so does a signal of `Os.Shell.handbackSignals`, once
+the visit, or the attach that owns the terminal meanwhile, has handed the terminal back; a
+listing that fails ends it with the answer its exit status gives (`Answer.ofCode`). -/
+private def selectSave (executable : String) (file : Option String) : IO Linger.Os.Answer :=
   inContext fun origin home => do
     let path ← savePath origin home file
     let stops ← Os.Shell.watch Os.Shell.handbackSignals
@@ -360,11 +363,11 @@ private def selectSave (executable : String) (file : Option String) : IO UInt32 
             Linger.Selector.Shell.choose executable (some path.toString) (stopped :=
                 stops.heard) with
         | .cancel | .interrupted =>
-          return 130
+          return .interrupted
         | .failed status stderr =>
           if !stderr.isEmpty then
             IO.eprint stderr
-          return status
+          return Linger.Os.Answer.ofCode status
         | .attach target displayed =>
           unless displayed.candidates.contains target do
             throw (IO.userError "selected pane was absent from the displayed save")
@@ -405,8 +408,8 @@ private def selectSave (executable : String) (file : Option String) : IO UInt32 
                   cwd := some (System.FilePath.mk pane.dir) }
           discard child.wait
           if ← stops.heard then
-            return 130
-      return 0
+            return .interrupted
+      return .done
     finally
       stops.stop
 
@@ -448,37 +451,39 @@ select [SAVE]            Choose a saved pane; start a fresh shell if needed
 import [SAVE]            Save each pane as a session; attach runs a fresh shell on it
 export SAVE              Save session names and directories to a new file"
 
-/-- The caller supplies its absolute executable path for every listing and run. -/
-def run (executable : String) (args : List String) : IO UInt32 := do
+/-- The caller supplies its absolute executable path for every listing and run. Help answers
+`done`, a command line it does not take `usage`, a command that fails `notDone`, saying why, and
+`select` how its selection ended. -/
+def run (executable : String) (args : List String) : IO Linger.Os.Answer := do
   if args.isEmpty || args == ["help"] || args == ["--help"] || args == ["-h"] then
     IO.println usage
-    return 0
+    return .done
   let command := args.headD ""
   unless ["ls", "select", "import", "export"].contains command do
     IO.eprintln usage
-    return 2
+    return .usage
   let porcelain := command == "ls" && args[1]? == some "--porcelain"
   let paths := if porcelain then args.drop 2 else args.tail
   if
       paths.length > 1 || (command == "export" && paths.isEmpty) ||
         paths.any (fun path => path.isEmpty || path.startsWith "-") then
     IO.eprintln s!"usage: linger tmux {command} {if command == "export" then "SAVE" else "[SAVE]"}"
-    return 2
+    return .usage
   try
     match command with
     | "ls" =>
       listSave paths.head? porcelain;
-      return 0
+      return .done
     | "select" =>
       selectSave executable paths.head?
     | "import" =>
       importSave executable paths.head?;
-      return 0
+      return .done
     | _ =>
       writeSave (paths.headD "");
-      return 0
+      return .done
   catch e =>
     IO.eprintln s!"linger tmux {command}: {diagnostic (toString e)}"
-    return 1
+    return .notDone
 
 end Linger.Import.Shell

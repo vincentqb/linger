@@ -2,6 +2,7 @@ module
 
 public import Verify.Harness
 import Linger.Import.Shell
+import Linger.Os.Answer
 import Linger.Session.Checkpoint
 import Linger.Target.Name
 
@@ -50,7 +51,7 @@ starting sessions. `Verify.Main.main` dispatches the arguments after the flag he
 def importProbe (args : List String) : IO UInt32 := do
   match args with
   | executable :: rest =>
-    Linger.Import.Shell.run executable ("import" :: rest)
+    return (← Linger.Import.Shell.run executable ("import" :: rest)).code
   | [] =>
     IO.eprintln "usage: suites --import-probe ABSOLUTE_EXECUTABLE [SAVE]"
     return 98

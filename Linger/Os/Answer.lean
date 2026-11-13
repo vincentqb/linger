@@ -1,16 +1,17 @@
 module
 
-public import Linger.App.Spec
+public import Linger.Os.Spec
 
 public section
 
-/-! # Linger.App.Answer — the exit statuses of linger's commands
+/-! # Linger.Os.Answer — the exit statuses of linger's commands
 
-**One vocabulary.** Every command answers with an `Answer` and exits with its code (`code`):
-each of linger's own answers has one code, the one `linger help` lists for it (`legend`), and a
-program's status passes through. Help lists each of linger's answers once (`listed`). -/
+**One vocabulary.** Every command answers with an `Answer` and exits with its code (`code`), the
+session commands, the selector and the tmux interchange alike: each of linger's own answers has
+one code, the one `linger help` lists for it (`legend`), and a program's status passes through.
+Help lists each of linger's answers once (`listed`). -/
 
-namespace Linger.App.Answer
+namespace Linger.Os.Answer
 
 /-- The exit status that gives an answer: a shell's conventions, as `timeout(1)` and `env`
 follow them, for linger's own answers, and the program's status for a program's. -/
@@ -49,8 +50,8 @@ def legend : List String :=
     shown.pushn ' ' (5 - shown.length) ++ answer.meaning
 
 /-- The answer an exit status gives when that status is all linger has, as for a daemon's report
-of a program that could not start: the listed answer with that code, and otherwise a program's
-status. Its code is the status (`code_ofCode`). -/
+of a program that could not start or a listing that failed: the listed answer with that code,
+and otherwise a program's status. Its code is the status (`code_ofCode`). -/
 def ofCode (status : UInt32) : Answer := (listed.find? (·.code == status)).getD (.program status)
 
-end Linger.App.Answer
+end Linger.Os.Answer

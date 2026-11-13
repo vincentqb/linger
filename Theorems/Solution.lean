@@ -1,6 +1,5 @@
 module
 
-public import Linger.App.Answer
 public import Linger.App.Capture
 public import Linger.App.Commands
 public import Linger.App.Entry
@@ -12,6 +11,7 @@ public import Linger.Display.View
 public import Linger.Import.Resurrect
 public import Linger.Selector.Picker
 public import Linger.Display.Title
+public import Linger.Os.Answer
 public import Linger.Os.Env
 public import Linger.Session
 public import Linger.Session.Buf
@@ -27,7 +27,6 @@ public import Terminal.Render
 public import Terminal.Replay
 public import Terminal.Spec
 public import Terminal.Title
-import all Linger.App.Proofs.Answer
 import all Linger.App.Proofs.Capture
 import all Linger.App.Proofs.Commands
 import all Linger.App.Proofs.Entry
@@ -41,6 +40,7 @@ import all Linger.Import.Proofs.Resurrect
 import Linger.Selector.Proofs.Frame
 import all Linger.Selector.Proofs.Picker
 import all Linger.Display.Proofs.Title
+import all Linger.Os.Proofs.Answer
 import all Linger.Os.Proofs.Env
 import all Os.Proofs.Wait
 import Linger.Target.Proofs.Name
@@ -1324,21 +1324,21 @@ theorem record_answer_rejects_running :
   simp [Record.answer_running] at ended
 
 theorem wait_ending (deadline heldSince : Option Nat) (now : Nat) (e : Ending) :
-    App.Wait.decide deadline heldSince now (.ended e) = .answer (App.Answer.ofEnding e) ∧
-      App.Wait.decide deadline heldSince now (.recorded (some e)) =
-        .answer (App.Answer.ofEnding e) := App.Wait.wait_ending deadline heldSince now e
+    App.Wait.decide deadline heldSince now (.ended e) = .answer e.answer ∧
+      App.Wait.decide deadline heldSince now (.recorded (some e)) = .answer e.answer :=
+  App.Wait.wait_ending deadline heldSince now e
 
 theorem wait_ending_rejects_failed :
     ¬∀ (deadline heldSince : Option Nat) (now : Nat) (e : Ending),
         (fun (_ _ : Option Nat) (_ : Nat) (_ : App.Wait.Heard) => App.Wait.Next.answer .failed)
               deadline heldSince now (.ended e) =
-            .answer (App.Answer.ofEnding e) ∧
+            .answer e.answer ∧
           (fun (_ _ : Option Nat) (_ : Nat) (_ : App.Wait.Heard) => App.Wait.Next.answer .failed)
               deadline heldSince now (.recorded (some e)) =
-            .answer (App.Answer.ofEnding e) := by
+            .answer e.answer := by
   intro h
   have told := (h none none 0 (.program (.exited 0))).1
-  simp [App.Answer.ofEnding, App.Answer.ofOutcome] at told
+  simp [Ending.answer, Outcome.answer] at told
 
 theorem wait_held (deadline heldSince : Option Nat) (now : Nat) (heard : App.Wait.Heard) :
     (App.Wait.decide deadline heldSince now heard = .answer .failed ↔
@@ -1377,35 +1377,35 @@ theorem held_covers_ending_rejects_drain :
     ¬Session.drainTimeoutMs + (Session.ending.map (·.2)).sum ≤ Session.drainTimeoutMs := by decide
 
 theorem code_documented (status : UInt32) :
-    App.Answer.code .done = 0 ∧
-      App.Answer.code .notDone = 1 ∧
-      App.Answer.code .usage = 2 ∧
-      App.Answer.code .timedOut = 124 ∧
-      App.Answer.code .failed = 125 ∧
-      App.Answer.code .cannotRun = 126 ∧
-      App.Answer.code .notFound = 127 ∧
-      App.Answer.code .interrupted = 130 ∧ App.Answer.code (.program status) = status :=
-  App.Answer.code_documented status
+    Os.Answer.code .done = 0 ∧
+      Os.Answer.code .notDone = 1 ∧
+      Os.Answer.code .usage = 2 ∧
+      Os.Answer.code .timedOut = 124 ∧
+      Os.Answer.code .failed = 125 ∧
+      Os.Answer.code .cannotRun = 126 ∧
+      Os.Answer.code .notFound = 127 ∧
+      Os.Answer.code .interrupted = 130 ∧ Os.Answer.code (.program status) = status :=
+  Os.Answer.code_documented status
 
 theorem code_documented_rejects_zero :
     ¬∀ (status : UInt32),
-        (fun (_ : App.Answer) => (0 : UInt32)) .done = 0 ∧
-          (fun (_ : App.Answer) => (0 : UInt32)) .notDone = 1 ∧
-          (fun (_ : App.Answer) => (0 : UInt32)) .usage = 2 ∧
-          (fun (_ : App.Answer) => (0 : UInt32)) .timedOut = 124 ∧
-          (fun (_ : App.Answer) => (0 : UInt32)) .failed = 125 ∧
-          (fun (_ : App.Answer) => (0 : UInt32)) .cannotRun = 126 ∧
-          (fun (_ : App.Answer) => (0 : UInt32)) .notFound = 127 ∧
-          (fun (_ : App.Answer) => (0 : UInt32)) .interrupted = 130 ∧
-          (fun (_ : App.Answer) => (0 : UInt32)) (.program status) = status := by
+        (fun (_ : Os.Answer) => (0 : UInt32)) .done = 0 ∧
+          (fun (_ : Os.Answer) => (0 : UInt32)) .notDone = 1 ∧
+          (fun (_ : Os.Answer) => (0 : UInt32)) .usage = 2 ∧
+          (fun (_ : Os.Answer) => (0 : UInt32)) .timedOut = 124 ∧
+          (fun (_ : Os.Answer) => (0 : UInt32)) .failed = 125 ∧
+          (fun (_ : Os.Answer) => (0 : UInt32)) .cannotRun = 126 ∧
+          (fun (_ : Os.Answer) => (0 : UInt32)) .notFound = 127 ∧
+          (fun (_ : Os.Answer) => (0 : UInt32)) .interrupted = 130 ∧
+          (fun (_ : Os.Answer) => (0 : UInt32)) (.program status) = status := by
   intro h
   exact absurd (h 0).2.1 (by decide)
 
-theorem listed_once : App.Answer.listed.Nodup ∧ ∀ a, a ∈ App.Answer.listed ↔ a.Own :=
-  App.Answer.listed_once
+theorem listed_once : Os.Answer.listed.Nodup ∧ ∀ a, a ∈ Os.Answer.listed ↔ a.Own :=
+  Os.Answer.listed_once
 
 theorem listed_once_rejects_empty :
-    ¬(([] : List App.Answer).Nodup ∧ ∀ a, a ∈ ([] : List App.Answer) ↔ a.Own) := by
+    ¬(([] : List Os.Answer).Nodup ∧ ∀ a, a ∈ ([] : List Os.Answer) ↔ a.Own) := by
   intro h
   exact absurd ((h.2 .done).mpr trivial) List.not_mem_nil
 

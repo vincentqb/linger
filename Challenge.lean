@@ -3,6 +3,7 @@ module
 public import Linger.App.Spec
 public import Linger.Display.Spec
 public import Linger.Import.Spec
+public import Linger.Os.Spec
 public import Linger.Selector.Spec
 public import Linger.Session.Spec
 public import Linger.Target.Spec
@@ -94,9 +95,9 @@ def Linger.App.Commands.retired : List (String × String) := sorry
 
 def Linger.App.Commands.usageLine : App.Commands.Command → String := sorry
 
-def Linger.App.Answer.code : App.Answer → UInt32 := sorry
+def Linger.Os.Answer.code : Os.Answer → UInt32 := sorry
 
-def Linger.App.Answer.listed : List App.Answer := sorry
+def Linger.Os.Answer.listed : List Os.Answer := sorry
 
 def Linger.App.Wait.heldNameMs : Nat := sorry
 
@@ -1120,7 +1121,9 @@ ending has (`endingFields_injective`).
 for a saved session, never a status of its program, and that it could not find out only when
 that is so: the program's ending is unknown, or the name stays held, with no daemon answering,
 from the look that first found it so for longer than a daemon's ending lasts.
-Every command answers with one of the answers `Answer` names, and exits with its code.
+Every command answers with one of the answers `Os.Answer` names, the operating system's
+vocabulary, the selector and the tmux interchange as the session commands do, and exits with its
+code (`code_documented`); help lists each of linger's own once (`listed_once`).
 An attach goes only to a daemon whose `info` answer reports this version's protocol level, as
 every daemon of this version does (`infoFields_protocol`), so a daemon an older linger started,
 of any earlier level, is refused with a reason, never sent an attach it would refuse as unknown
@@ -1129,9 +1132,10 @@ Not claimed: that the answer comes within the client's wait and that the refusal
 session and the level, which the attach suite checks against a level-2 daemon, one that reports
 no level and one that never answers; that a daemon hears a stop signal, which the operating
 system delivers through the daemon's signal pipe and the resume suite checks, and when it cannot
-make the pipe takes its default action; and that an attached client or the selector, given SIGTERM,
+make the pipe takes its default action; that an attached client or the selector, given SIGTERM,
 SIGHUP or SIGINT, hands its terminal back and answers `interrupted`, which the attach and manager
-suites check.
+suites check; and that the process exits with the code of its command's answer, which the type
+of every executor's result, `main`'s one exit and a gate on the shells keep.
 
 The daemon's driver runs the session's trace. When every effect succeeds, a stop replying how the
 program ended, the driver hands the session each event and then what that event's effects feed
@@ -1355,18 +1359,18 @@ theorem record_answer_rejects_running :
   sorry
 
 theorem wait_ending (deadline heldSince : Option Nat) (now : Nat) (e : Ending) :
-    Wait.decide deadline heldSince now (.ended e) = .answer (Answer.ofEnding e) ∧
-      Wait.decide deadline heldSince now (.recorded (some e)) = .answer (Answer.ofEnding e) := by
+    Wait.decide deadline heldSince now (.ended e) = .answer e.answer ∧
+      Wait.decide deadline heldSince now (.recorded (some e)) = .answer e.answer := by
   sorry
 
 theorem wait_ending_rejects_failed :
     ¬∀ (deadline heldSince : Option Nat) (now : Nat) (e : Ending),
         (fun (_ _ : Option Nat) (_ : Nat) (_ : Wait.Heard) => Wait.Next.answer .failed) deadline
               heldSince now (.ended e) =
-            .answer (Answer.ofEnding e) ∧
+            .answer e.answer ∧
           (fun (_ _ : Option Nat) (_ : Nat) (_ : Wait.Heard) => Wait.Next.answer .failed) deadline
               heldSince now (.recorded (some e)) =
-            .answer (Answer.ofEnding e) := by
+            .answer e.answer := by
   sorry
 
 theorem wait_held (deadline heldSince : Option Nat) (now : Nat) (heard : Wait.Heard) :
@@ -1403,33 +1407,33 @@ theorem held_covers_ending_rejects_drain :
     ¬Session.drainTimeoutMs + (Session.ending.map (·.2)).sum ≤ Session.drainTimeoutMs := by sorry
 
 theorem code_documented (status : UInt32) :
-    Answer.code .done = 0 ∧
-      Answer.code .notDone = 1 ∧
-      Answer.code .usage = 2 ∧
-      Answer.code .timedOut = 124 ∧
-      Answer.code .failed = 125 ∧
-      Answer.code .cannotRun = 126 ∧
-      Answer.code .notFound = 127 ∧
-      Answer.code .interrupted = 130 ∧ Answer.code (.program status) = status := by
+    Os.Answer.code .done = 0 ∧
+      Os.Answer.code .notDone = 1 ∧
+      Os.Answer.code .usage = 2 ∧
+      Os.Answer.code .timedOut = 124 ∧
+      Os.Answer.code .failed = 125 ∧
+      Os.Answer.code .cannotRun = 126 ∧
+      Os.Answer.code .notFound = 127 ∧
+      Os.Answer.code .interrupted = 130 ∧ Os.Answer.code (.program status) = status := by
   sorry
 
 theorem code_documented_rejects_zero :
     ¬∀ (status : UInt32),
-        (fun (_ : Answer) => (0 : UInt32)) .done = 0 ∧
-          (fun (_ : Answer) => (0 : UInt32)) .notDone = 1 ∧
-          (fun (_ : Answer) => (0 : UInt32)) .usage = 2 ∧
-          (fun (_ : Answer) => (0 : UInt32)) .timedOut = 124 ∧
-          (fun (_ : Answer) => (0 : UInt32)) .failed = 125 ∧
-          (fun (_ : Answer) => (0 : UInt32)) .cannotRun = 126 ∧
-          (fun (_ : Answer) => (0 : UInt32)) .notFound = 127 ∧
-          (fun (_ : Answer) => (0 : UInt32)) .interrupted = 130 ∧
-          (fun (_ : Answer) => (0 : UInt32)) (.program status) = status := by
+        (fun (_ : Os.Answer) => (0 : UInt32)) .done = 0 ∧
+          (fun (_ : Os.Answer) => (0 : UInt32)) .notDone = 1 ∧
+          (fun (_ : Os.Answer) => (0 : UInt32)) .usage = 2 ∧
+          (fun (_ : Os.Answer) => (0 : UInt32)) .timedOut = 124 ∧
+          (fun (_ : Os.Answer) => (0 : UInt32)) .failed = 125 ∧
+          (fun (_ : Os.Answer) => (0 : UInt32)) .cannotRun = 126 ∧
+          (fun (_ : Os.Answer) => (0 : UInt32)) .notFound = 127 ∧
+          (fun (_ : Os.Answer) => (0 : UInt32)) .interrupted = 130 ∧
+          (fun (_ : Os.Answer) => (0 : UInt32)) (.program status) = status := by
   sorry
 
-theorem listed_once : Answer.listed.Nodup ∧ ∀ a, a ∈ Answer.listed ↔ a.Own := by sorry
+theorem listed_once : Os.Answer.listed.Nodup ∧ ∀ a, a ∈ Os.Answer.listed ↔ a.Own := by sorry
 
 theorem listed_once_rejects_empty :
-    ¬(([] : List Answer).Nodup ∧ ∀ a, a ∈ ([] : List Answer) ↔ a.Own) := by sorry
+    ¬(([] : List Os.Answer).Nodup ∧ ∀ a, a ∈ ([] : List Os.Answer) ↔ a.Own) := by sorry
 
 theorem outcomeFields_injective (o₁ o₂ : Outcome)
     (h : Session.outcomeFields o₁ = Session.outcomeFields o₂) : o₁ = o₂ := by sorry

@@ -15,7 +15,7 @@ public meta def main : List String → IO Unit :=
           (`Linger.App, .core), (`Linger.Display, .core), (`Linger.Import, .core),
           (`Linger.Os, .core), (`Linger.Selector, .core), (`Linger.Session, .core),
           (`Linger.Target, .core), (`Linger.App.Spec, .spec), (`Linger.Display.Spec, .spec),
-          (`Linger.Import.Spec, .spec), (`Linger.Selector.Spec, .spec),
+          (`Linger.Import.Spec, .spec), (`Linger.Os.Spec, .spec), (`Linger.Selector.Spec, .spec),
           (`Linger.Session.Spec, .spec), (`Linger.Target.Spec, .spec), (`Linger.App.Shell, .shell),
           (`Linger.Import.Shell, .shell), (`Linger.Selector.Shell, .shell),
           (`Linger.Session.Shell, .shell), (`Linger.App.Proofs, .tooling),
