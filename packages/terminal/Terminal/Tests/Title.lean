@@ -1,7 +1,7 @@
 module
 
-import Terminal.Title
-meta import Terminal.Title
+import Terminal.CoreCode.Title
+meta import Terminal.CoreCode.Title
 
 namespace Terminal.Title.Tests
 

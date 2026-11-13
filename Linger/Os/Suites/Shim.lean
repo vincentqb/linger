@@ -1,6 +1,6 @@
 module
 
-import Os.Shell
+import Os.WorldCode
 import Os.Suites.Wait
 
 /-! # lingertest — IO smoke tests for the Posix shim

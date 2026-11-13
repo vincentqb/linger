@@ -1,14 +1,13 @@
 module
 
 public import Verify.Harness
-import Linger.App.Wait
-import Linger.Session.Shell.Client
-import Linger.Session.Shell.Daemon
-import Linger.Session.Checkpoint
-import Linger.Session.Wire
-import Linger.Target.Name
-public import Linger.Session.Spec
-import SoftwareChallenge.Commands
+import Linger.App.CoreCode.Wait
+import Linger.Session.WorldCode.Client
+import Linger.Session.WorldCode.Daemon
+import Linger.Session.CoreCode.Checkpoint
+import Linger.Session.CoreCode.Wire
+import Linger.Target.CoreCode.Name
+public import Linger.Session.CoreSpec
 
 public section
 
@@ -376,7 +375,6 @@ def olderDaemonChecks (e : Env) : IO Unit := do
 /-- The attach suite: attach, detach, reattach, mirroring, waiting, hand-back and
 scrollback, the refusal of a daemon an older linger started, and that nothing of an ended
 session's terminal session outlives it. -/
-@[exercises Linger.Session.Signal.Ends]
 def run : IO UInt32 :=
   Env.suite "attach" fun e => do
     sigkillChecks

@@ -1,7 +1,7 @@
 module
 
-import Fuzzy
-meta import Fuzzy
+import Fuzzy.CoreCode
+meta import Fuzzy.CoreCode
 
 open Fuzzy
 

@@ -4,7 +4,7 @@ open Lake DSL
 
 /-- The VT toolkit: the emulator, renderer, streaming replay, child-facing mediation and safe
 title emission, with their proofs. It imports no other linger package and has its own challenge
-(`TerminalChallenge.lean`) and audit. It shares the packages of the checkout that requires it,
+(`Challenge.lean`) and audit. It shares the packages of the checkout that requires it,
 so building it alone fetches nothing. -/
 package terminal where
   leanOptions :=
@@ -14,7 +14,7 @@ package terminal where
   packagesDir := "../../.lake/packages"
 
 require software_challenge from git
-  "https://github.com/vincentqb/lean-software-challenge"@"a2970a16ec31dfd7b51df60b5751292cc73218fb"
+  "https://github.com/vincentqb/lean-software-challenge"@"203f0aff941844ccade71343c76a707bd19747a4"
 
 /-- Options for every library but the challenge: with the package's `warningAsError`, a public
 declaration without a docstring fails the build. -/
@@ -27,8 +27,9 @@ and its unit tests, checked at elaboration time: every module under `Terminal`. 
   leanOptions := implementationOptions
 
 /-- The toolkit's headline theorems and their kills, stated with `sorry` for `lake comparator`,
-which checks that `Terminal.Solution` proves the same statements. -/
-lean_lib TerminalChallenge where leanOptions := #[⟨`warn.sorry, false⟩]
+which checks that `Terminal.Solution` proves the same statements. The build writes
+`comparator.json` from them. -/
+lean_lib Challenge where leanOptions := #[⟨`warn.sorry, false⟩]
 
 /-- The Lean Software Challenge audit of every module the default targets build. -/
 @[default_target] target audit pkg : Unit := do

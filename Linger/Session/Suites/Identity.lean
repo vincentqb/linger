@@ -1,8 +1,8 @@
 module
 
 public import Verify.Harness
-import Linger.Session.Checkpoint
-import Linger.Target.Name
+import Linger.Session.CoreCode.Checkpoint
+import Linger.Target.CoreCode.Name
 
 public section
 

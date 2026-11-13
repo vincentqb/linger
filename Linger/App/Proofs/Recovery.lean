@@ -1,6 +1,6 @@
 module
 
-import all Linger.App.Recovery
+import all Linger.App.CoreCode.Recovery
 
 /-! # What a command does with a saved session
 

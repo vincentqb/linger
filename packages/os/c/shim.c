@@ -2,14 +2,14 @@
  *
  * Contract (AGENTS.md): syscall + errno only. No buffering, no retry
  * policy beyond EINTR, no session logic. Every function is a thin
- * wrapper bound in packages/os/Os/Boundary.lean; its behavior is stated on
- * the Lean wrapper of the same name in packages/os/Os/Shell.lean. All Lean
+ * wrapper bound in packages/os/Os/WorldSpec.lean; its behavior is stated on
+ * the Lean wrapper of the same name in packages/os/Os/WorldCode.lean. All Lean
  * object parameters are borrowed (@& on the Lean side), so nothing here
  * inc/decs references except allocations we hand back.
  *
  * The pinned Lean compiler erases IO's world parameter and represents
  * Int32 arguments as uint32_t bits. Keep these signatures aligned with
- * the declarations generated from packages/os/Os/Boundary.lean.
+ * the declarations generated from packages/os/Os/WorldSpec.lean.
  */
 /* accept4 needs _GNU_SOURCE on glibc */
 #define _GNU_SOURCE
@@ -1056,7 +1056,7 @@ LEAN_EXPORT lean_obj_res linger_signal_session(uint32_t sid, uint32_t sig) {
 /* misc                                                                  */
 
 /* getpid, chmod, both clocks, hostname, stdin tty detection, and the
- * full-write loop are Lean/core; see packages/os/Os/Shell.lean. */
+ * full-write loop are Lean/core; see packages/os/Os/WorldCode.lean. */
 
 /* linger_getuid : IO UInt32 */
 LEAN_EXPORT lean_obj_res linger_getuid(void) {

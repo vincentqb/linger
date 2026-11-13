@@ -1,7 +1,7 @@
 module
 
 -- The proofs unfold the status definitions, whose bodies only `import all` exposes.
-import all Linger.Display.Status
+import all Linger.Display.CoreCode.Status
 
 /-! # The seven states partition the observation space
 
@@ -11,7 +11,7 @@ covering), or a glyph could be unreachable (a lie in the legend). This file
 rules out all three. `classify_iff`, the first headline of the status rule in `Challenge.lean`,
 states the partition.
 
-The legend predicates `Is`, in `Linger/Display/Spec.lean`, are the states as *described in the
+The legend predicates `Is`, in `Linger/Display/CoreSpec.lean`, are the states as *described in the
 legend*, written independently of `classify`'s cascade — that independence is the point. If
 they were the cascade's guards with the earlier branches negated, cover and
 disjointness would be tautologies and the theorems would say nothing. As

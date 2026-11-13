@@ -1,10 +1,10 @@
 module
 
-public import Fuzzy
+public import Fuzzy.CoreCode
 import all Fuzzy.Proofs
 
 /-! The fuzzy matcher's headline theorems, proved of the matcher: `lake comparator` checks that
-these are exactly the statements of `FuzzyChallenge.lean`. -/
+these are exactly the statements of `Challenge.lean`. -/
 
 public section
 
@@ -16,8 +16,8 @@ theorem align_exact (query target : String) :
       ∀ a,
         Fuzzy.align query target = some a →
           a.marks.length = target.length ∧
-            ((target.toList.zip a.marks).filterMap fun (c, marked) =>
-                if marked then some c.toLower else none) =
+            ((target.toList.zip a.marks).filterMap fun p =>
+                if p.2 then some p.1.toLower else none) =
               query.toList.map Char.toLower :=
   ⟨Fuzzy.align_isSome_iff_sublist query target, fun a found =>
     ⟨Fuzzy.align_marks_length query target a found, Fuzzy.align_spells query target a found⟩⟩
@@ -29,8 +29,8 @@ theorem align_exact_rejects_none :
           ∀ a,
             (fun (_ _ : String) => (none : Option Fuzzy.Alignment)) query target = some a →
               a.marks.length = target.length ∧
-                ((target.toList.zip a.marks).filterMap fun (c, marked) =>
-                    if marked then some c.toLower else none) =
+                ((target.toList.zip a.marks).filterMap fun p =>
+                    if p.2 then some p.1.toLower else none) =
                   query.toList.map Char.toLower := by
   intro h
   exact absurd ((h "" "").1.mpr (by simp)) (by simp)

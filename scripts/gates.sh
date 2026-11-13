@@ -66,34 +66,16 @@ code_grep() {                                # code_grep <ere> <pathspec>...
 }
 code_count() { code_grep "$@" | awk 'END { print NR + 0 }'; }   # -> a number
 
-# Which modules are pure code and which are proofs, read from the tree. Pure code, by the rule
-# `pureModule` in `Theorems/Coverage.lean` applies to module names, is a component's top module
-# (`Linger/Session.lean`), each component's top-level modules other than its boundary and shell,
-# and the modules under its `Spec/`; proofs are each component's `Proofs/` plus the legacy
-# `Theorems/`. Deliberate word splitting below: no tracked path in this tree has a space.
-# A package's modules follow the same rule under its root (`packages/terminal/Terminal/`), with its
-# top module (`Fuzzy.lean`) pure and its `Solution.lean` a proof.
-package_paths() {                            # package_paths pure|proof
-  git ls-files -- 'packages/*.lean' | awk -F/ -v kind="$1" '
-    { root = toupper(substr($2, 1, 1)) substr($2, 2); rel = substr($0, length($1 "/" $2 "/") + 1)
-      n = split(rel, part, "/"); leaf = part[2]; sub(/[.]lean$/, "", leaf)
-      inside = part[1] == root
-      pure = rel == root ".lean" \
-        || (inside && n == 2 && leaf !~ /^(Boundary|Shell|Suites|Proofs|Tests|Solution)$/) \
-        || (inside && n >= 3 && part[2] == "Spec")
-      proof = inside && ((n == 2 && (leaf == "Proofs" || leaf == "Solution")) || (n >= 3 && part[2] == "Proofs"))
-      if ((kind == "pure" && pure) || (kind == "proof" && proof)) print }'
-}
-pure_paths="$(git ls-files -- 'Linger/*.lean' | awk -F/ '
-  NF == 2 || NF == 3 && $3 != "Boundary.lean" && $3 != "Shell.lean" || NF == 4 && $3 == "Spec"')
-$(package_paths pure)"
-proof_paths="$(git ls-files -- 'Theorems/*.lean' 'Linger/*/Proofs/*.lean')
-$(package_paths proof)"
-[ -n "$pure_paths" ] && [ -n "$proof_paths" ] || fail "no pure or proof modules found"
+# The proofs, read from the tree: linger's `Theorems/` and each component's `Proofs/`, and each
+# package's `Proofs` and `Solution`. Deliberate word splitting below: no tracked path in this tree
+# has a space. Pure code's own rules, no IO, no `partial`, no `sorry` and only the standard axioms,
+# are the challenge library's, which each build's audit applies by role.
+proof_paths="$(git ls-files -- 'Theorems/*.lean' 'Linger/*/Proofs/*.lean' \
+  'packages/*/*/Proofs.lean' 'packages/*/*/Proofs/*.lean' 'packages/*/*/Solution.lean')"
+[ -n "$proof_paths" ] || fail "no proof modules found"
 
-# shellcheck disable=SC2086
-! code_grep 'sorry' $pure_paths $proof_paths || fail "sorry found"
-# Termination is proved everywhere, never asserted with the keyword.
+# Termination is proved everywhere, never asserted with the keyword: the library allows
+# `partial` in WorldCode and tooling, and this tree nowhere.
 ! code_grep '(^|[^[:alnum:]_])partial def([^[:alnum:]_]|$)' '*.lean' \
   || fail "partial def: use structural or well-founded recursion, or a do-block loop"
 # Options come only from lakefile.lean, whose declarations are pinned below, and from
@@ -105,10 +87,6 @@ $(package_paths proof)"
 # Fuel makes a recursion total by cutting it off, so the claims hold of a truncation.
 ! code_grep '[(]fuel[[:space:]]*:' '*.lean' \
   || fail "a fuel parameter: recurse on the data or a decreasing measure"
-# Any `IO`, `BaseIO` or `EIO` token, in a type or a call, is an effect in pure code.
-# shellcheck disable=SC2086
-! code_grep '(^|[^[:alnum:]_.])(E|Base)?IO([^[:alnum:]_]|$)' $pure_paths \
-  || fail "IO in pure core"
 # A predicate preserved by each step is preserved by the fold: one `invariant_foldl`.
 # shellcheck disable=SC2086
 ! code_grep '[(][a-z][A-Za-z0-9]*_foldl f hf as [(]f v a[)][)][.]trans [(]hf v a[)]' $proof_paths \
@@ -123,25 +101,25 @@ done
 # stage's count `n` itself lets one CSI 65535 S fill the history ring with blank rows.
 csi_loop='(List[.]range|Array[.]range|Nat[.]fold|Nat[.]repeat[[:space:]]+[[:alnum:]_.]+)[[:space:]]+'
 csi_count='([(][^)]*[^[:alnum:]_.]|[(])?(a1|n)([^[:alnum:]_]|$)|[(][^)]*[.]arg([^[:alnum:]_]|$)'
-! code_grep "$csi_loop($csi_count)" packages/terminal/Terminal/Vt.lean \
+! code_grep "$csi_loop($csi_count)" packages/terminal/Terminal/CoreCode/Vt.lean \
   || fail "a loop counts a CSI parameter directly: route it through Vt.repeatAtMost, which clamps it by the screen"
 # ECH's span is the one other loop a count sizes. Its clamp to the screen's width shows in
 # no result, since cells past the row are skipped either way, so this pins it at the call;
 # without it one CSI 65535 X runs 65535 iterations.
 code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(]v[.]cursor[.]x [+] n[)] v[.]cols[)]$' \
-  packages/terminal/Terminal/Vt.lean >/dev/null || fail "ECH lost its clamp: its span must end at min (v.cursor.x + n) v.cols"
+  packages/terminal/Terminal/CoreCode/Vt.lean >/dev/null || fail "ECH lost its clamp: its span must end at min (v.cursor.x + n) v.cols"
 # the OS surface stays where AGENTS.md says it is: the attribute in any form, including
 # `@[never_extract, extern "f"]` and `attribute [extern "f"] g`
-[ "$(code_grep '(^|[^[:alnum:]_])extern([^[:alnum:]_]|$)' '*.lean' | awk -F: '!seen[$1]++ { print $1 }' | tr -d ' ')" = "packages/os/Os/Boundary.lean" ] \
-  || fail "extern declarations outside packages/os/Os/Boundary.lean"
+[ "$(code_grep '(^|[^[:alnum:]_])extern([^[:alnum:]_]|$)' '*.lean' | awk -F: '!seen[$1]++ { print $1 }' | tr -d ' ')" = "packages/os/Os/WorldSpec.lean" ] \
+  || fail "extern declarations outside packages/os/Os/WorldSpec.lean"
 # The boundary declares foreign functions and nothing else: no Lean body, no wrapper.
 ! code_grep '^[[:space:]]*(private[[:space:]]+)?(def|abbrev|theorem|instance|structure|inductive)[[:space:]]' \
-    packages/os/Os/Boundary.lean \
-  || fail "packages/os/Os/Boundary.lean holds a Lean definition: wrappers and checks belong in packages/os/Os/Shell.lean"
-# Each binding is private, and packages/os/Os/Shell.lean wraps it (its one importer is pinned
+    packages/os/Os/WorldSpec.lean \
+  || fail "packages/os/Os/WorldSpec.lean holds a Lean definition: wrappers and checks belong in packages/os/Os/WorldCode.lean"
+# Each binding is private, and packages/os/Os/WorldCode.lean wraps it (its one importer is pinned
 # with the import closures below), so a caller reaches the shim only through a wrapper.
-! code_grep '^[[:space:]]*(public[[:space:]]+)?opaque[[:space:]]' packages/os/Os/Boundary.lean \
-  || fail "packages/os/Os/Boundary.lean declares a public binding: keep it private and wrap it in packages/os/Os/Shell.lean"
+! code_grep '^[[:space:]]*(public[[:space:]]+)?opaque[[:space:]]' packages/os/Os/WorldSpec.lean \
+  || fail "packages/os/Os/WorldSpec.lean declares a public binding: keep it private and wrap it in packages/os/Os/WorldCode.lean"
 # `unsafe` and `@[implemented_by]` — the Lean-side twin of the `@[extern` gate just
 # above, and the only route that makes the theorems false OF THE SHIPPED BINARY rather
 # than of some value inside it. Measured here, in
@@ -173,7 +151,7 @@ code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(
 # `attribute [implemented_by f] g` both set it.
 #
 # DECLINED: adding `opaque`. Measured: most `opaque` hits over tracked `.lean` are
-# actual `@[extern` declarations in `packages/os/Os/Boundary.lean`, so the gate could
+# actual `@[extern` declarations in `packages/os/Os/WorldSpec.lean`, so the gate could
 # only ever read "opaque outside the boundary". What that would catch is not a forge:
 # with no `@[extern]` and no `@[implemented_by]` the compiler emits no value at all, so
 # `opaque x : Vt` is a liveness hazard, not an implementation that disagrees with the
@@ -184,9 +162,9 @@ code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(
 [ "$(git ls-files '*.c' '*.h')" = packages/os/c/shim.c ] || fail "more than one C file"
 # The shim returns -errno and errno numbers differ by platform: 918c671's
 # `r == -111` meant ECONNREFUSED only on Linux.
-! code_grep '(==|!=)[[:space:]]*[(]?-([2-9]|[1-9][0-9]+)([^0-9]|$)' 'Linger/*/Shell.lean' 'Linger/*/Shell/*' \
-    'packages/os/Os/Shell.lean' 'packages/os/Os/Shell/*' \
-    'Main.lean' 'Verify/*' 'Linger/*/Suites/*' \
+! code_grep '(==|!=)[[:space:]]*[(]?-([2-9]|[1-9][0-9]+)([^0-9]|$)' 'Linger/*/WorldCode.lean' 'Linger/*/WorldCode/*' \
+    'packages/os/Os/WorldCode.lean' 'packages/os/Os/WorldCode/*' \
+    'Verify/*' 'Linger/*/Suites/*' \
   || fail "a negative literal comparison looks like an errno number: compare the sign, or classify the errno in packages/os/c/shim.c"
 # Lean/libuv may have worker threads when the application forks. The child
 # paths and the four helpers they run, which report a failure, reset what the
@@ -212,22 +190,35 @@ awk '
     }
     exit failed
   }' packages/os/c/shim.c >&2 || fail "fork child call boundary changed"
-# The only external Lean dependency is the Lean Software Challenge audit, pinned to a commit;
-# the others are this checkout's own packages, each required by path from packages/<name>.
+# The only external Lean dependency is the Lean Software Challenge library, pinned to a commit;
+# the others are this checkout's own packages, each required by path from packages/<name>, and
+# `first`, which linger requires first and whose build directory is linger's own: a workspace
+# looks for a module in its dependencies' builds, the first required last, before its own, and
+# each package names its challenge `Challenge`, as linger does, so once a package was built on its
+# own, its `Challenge` would otherwise stand in for linger's in linger's audit and comparator.
 checkout_packages="$(git ls-files 'packages/*/lakefile.lean' | awk -F/ '{ print $2 }' | sort -u)"
 [ -n "$checkout_packages" ] || fail "no package under packages/"
 [ "$(code_grep '^[[:space:]]*require ' 'lakefile.lean' | sed 's/^[^:]*:[0-9]*:[[:space:]]*//' | sort)" \
-    = "$( { printf 'require software_challenge from git\n'
+    = "$( { printf 'require first from "first"\nrequire software_challenge from git\n'
             for p in $checkout_packages; do printf 'require %s from "packages/%s"\n' "$p" "$p"; done; } \
           | sort)" ] \
-  || fail "lakefile.lean may require only the audit, from git, and each package under packages/, by path"
+  || fail "lakefile.lean may require only first, the challenge library, from git, and each package under packages/, by path"
+[ "$(code_grep '^[[:space:]]*require ' 'lakefile.lean' | sed -n '1s/^[^:]*:[0-9]*:[[:space:]]*//p')" \
+    = 'require first from "first"' ] \
+  || fail "lakefile.lean must require first before anything else, so that linger's build comes first on its search path"
+[ "$(code_grep '^package ' first/lakefile.lean | sed 's/^[^:]*:[0-9]*://')" \
+    = 'package first where buildDir := "../.lake/build"' ] \
+  && [ -z "$(code_grep '^(@[[][^]]*[]][[:space:]]*)?(require|lean_lib|lean_exe|target|extern_lib|script)[[:space:]]' first/lakefile.lean)" ] \
+  || fail "first/lakefile.lean must declare only a package whose build directory is linger's"
 lake_packages="$(tr -d ' \n' < lake-manifest.json | grep -o '"packages":\[[^]]*\]')"
 [ "$(printf '%s' "$lake_packages" | grep -o '"name":"[^"]*"' | sort | tr '\n' ' ')" \
-    = "$( { printf '"name":"software_challenge"\n'
+    = "$( { printf '"name":"first"\n"name":"software_challenge"\n'
             for p in $checkout_packages; do printf '"name":"%s"\n' "$p"; done; } | sort | tr '\n' ' ')" ] \
   && printf '%s' "$lake_packages" | grep -q '"url":"https://github.com/vincentqb/lean-software-challenge"' \
   && printf '%s' "$lake_packages" | grep -qE '"inputRev":"[0-9a-f]{40}"' \
-  || fail "lake-manifest may list only software_challenge, pinned to a commit, and this checkout's packages"
+  && printf '%s' "$lake_packages" \
+    | grep -qF '"type":"path","scope":"","name":"first","manifestFile":"lake-manifest.json","inherited":false,"dir":"first"' \
+  || fail "lake-manifest may list only first, by path, software_challenge, pinned to a commit, and this checkout's packages"
 for p in $checkout_packages; do
   printf '%s' "$lake_packages" \
     | grep -qF "\"type\":\"path\",\"scope\":\"\",\"name\":\"$p\",\"manifestFile\":\"lake-manifest.json\",\"inherited\":false,\"dir\":\"packages/$p\"" \
@@ -255,24 +246,11 @@ for default_target in $default_targets; do
     || fail "scripts/verify.sh does not build the default target $default_target"
 done
 
-# The terminal toolkit's import closure. The toolkit is
-# packages/terminal/Terminal/{Spec,Vt,Render,Mediation,Title,Replay}.lean, and the claim worth having is
-# that its closure contains NOTHING else -- no `Os`, no `Linger` module, no checkpoint, no session.
-# The package's own build is the positive half: it elaborates the closure, and its lakefile
-# requires only the audit. It cannot be the whole claim, because `lean_lib Terminal` builds
-# every module under `Terminal`: the build cannot tell an import of a proof or a test from
-# an import of one of the six. So this grep is the half that bites: the same species of
-# oracle as SHIM_CAP below, evadeable by deliberately editing the list, not by reverting
-# a fix.
-#
-# EXACT SETS, not a denylist of names to fear: a closure gate that only knows the
-# imports someone thought of is not a closure gate. And exact means it also fires
-# when an import GOES, which is right -- the list below is the recorded header, so
-# taking a friend import out is a reviewable edit here rather than a
-# silent one. Vt imports only the Terminal spec, which imports nothing; Render imports Vt;
-# Mediation, Title and Replay import Render. The `import all Terminal.Vt` lines grant
-# access within the sealed toolkit; Title reads only the public surface. Because the spec is a
-# leaf, these six headers define the whole closure.
+# Import gates read the module header: `module_imports` gives its import lines, and
+# `import_closure <file> <imports>` pins a module's exact imports, so that taking one out, as adding
+# one, is a reviewable edit here. The challenge library's audit already holds every module to its
+# role's imports (`CoreCode` imports only `CoreSpec` and `CoreCode`, and so on), and a package
+# imports nothing of linger's, so these pin what roles do not: which pure modules a policy reads.
 import_re='^[[:space:]]*((public|private|meta)[[:space:]]+)*import[[:space:]]+'
 module_imports() {
   # Imports precede the module body. Stop at `public section` so a later
@@ -302,16 +280,6 @@ import_closure() {
     printf '  want: %s\n   got: %s\n' "${2:-(no imports)}" "${tk_got:-(no imports)}" >&2; \
     fail "$1 left its declared import closure — review the library boundary"; }
 }
-import_closure packages/terminal/Terminal/Spec.lean ''
-import_closure packages/terminal/Terminal/Vt.lean 'public import Terminal.Spec;'
-import_closure packages/terminal/Terminal/Render.lean \
-  'public import Terminal.Vt;import all Terminal.Vt;'
-import_closure packages/terminal/Terminal/Mediation.lean \
-  'public import Terminal.Vt;import Terminal.Render;import all Terminal.Vt;'
-import_closure packages/terminal/Terminal/Title.lean 'public import Terminal.Vt;import Terminal.Render;'
-import_closure packages/terminal/Terminal/Replay.lean \
-  'public import Terminal.Vt;import Terminal.Render;import all Terminal.Vt;'
-
 # Named targets must build the promised roots, not just happen to succeed.
 # Read declaration lines through code_grep, then compare their verbatim Name
 # literals: multiple backticks on a roots line are Lean syntax, not prose.
@@ -342,8 +310,19 @@ library_roots() {
 # globs below build those two with these options.
 [ "$(library_decl Linger)" = "lean_lib Linger where leanOptions := implementationOptions " ] \
   || fail "the Linger library lost implementationOptions: $(library_decl Linger)"
-[ "$(library_decl Suites)" = "lean_lib Suites where globs := #[.submodules \`Linger.Session.Suites, .submodules \`Linger.Target.Suites] leanOptions := implementationOptions " ] \
-  || fail "the Suites library lost its globs or implementationOptions: $(library_decl Suites)"
+# The checks of linger's world claims are a default target, so the audit counts them: the Checks
+# library builds exactly each component's `WorldCode/Checks.lean`, which no program module imports.
+checks_want="$(git ls-files -- 'Linger/*/WorldCode/Checks.lean' | sed 's/[.]lean$//; s#/#.#g' \
+  | awk '{ printf "%s.one `%s", (NR > 1 ? ", " : ""), $0 }')"
+[ -n "$checks_want" ] || fail "no module holds linger's checks"
+[ "$(library_decl Checks)" = "lean_lib Checks where globs := #[$checks_want] leanOptions := implementationOptions " ] \
+  || fail "the Checks library must build exactly each WorldCode/Checks.lean: $(library_decl Checks)"
+checks_imported="$(module_imports '*/CoreSpec*.lean' '*/CoreCode*.lean' '*/WorldSpec*.lean' \
+    '*/WorldCode*.lean' Linger.lean | awk -F: "$IMPORT_AWK"'
+  import_mod($3) ~ /[.]WorldCode[.]Checks$/ { print "  " $1 ": " $3 }')"
+[ -z "$checks_imported" ] || {
+  printf '%s\n' "$checks_imported" >&2
+  fail "a module of the program imports a module of checks, whose code would then ship in linger"; }
 [ "$(git grep -c 'def implementationOptions : Array LeanOption := #\[⟨`linter.missingDocs, true⟩\]$' -- lakefile.lean)" = lakefile.lean:1 ] \
   || fail "implementationOptions no longer enables linter.missingDocs"
 # Each package under packages/ builds with linger's options and its own audit, and shares the
@@ -358,7 +337,7 @@ for p in $checkout_packages; do
       '@[default_target] target audit pkg : Unit := do'; do
     grep -qF "$opt" "$pkg/lakefile.lean" || fail "$pkg/lakefile.lean lost $opt"
   done
-  for file in Audit.lean comparator.json lake-manifest.json lean-toolchain .lean-fmt.toml; do
+  for file in Challenge.lean owned.lock lake-manifest.json lean-toolchain .lean-fmt.toml; do
     [ -n "$(git ls-files -- "$pkg/$file")" ] || fail "$pkg has no tracked $file"
   done
   cmp -s lean-toolchain "$pkg/lean-toolchain" || fail "$pkg/lean-toolchain differs from linger's"
@@ -370,7 +349,7 @@ done
   || fail "the package options changed: $(lake_decl package linger)"
 [ "$(library_decl Verify)" = "lean_lib Verify where " ] \
   || fail "the Verify library gained fields: $(library_decl Verify)"
-for exe in "linger \`Main" "lingertest \`Linger.Os.Suites.Shim" "suites \`Verify.Main"; do
+for exe in "linger \`Linger.App.WorldCode.Main" "lingertest \`Linger.Os.Suites.Shim" "suites \`Verify.Main"; do
   [ "$(lake_decl lean_exe "${exe% *}")" = "lean_exe ${exe% *} where root := ${exe#* } " ] \
     || fail "the ${exe% *} executable must declare only its root: $(lake_decl lean_exe "${exe% *}")"
 done
@@ -402,7 +381,7 @@ module_imports packages/terminal/Terminal/Proofs/Vt.lean 'packages/terminal/Term
   packages/terminal/Terminal/Proofs/Replay.lean packages/terminal/Terminal/Proofs/Render.lean 'packages/terminal/Terminal/Proofs/Render/*' \
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
-    if (mod !~ /^(Terminal[.](Vt|Render|Mediation|Title|Replay|Spec)|Terminal[.]Proofs[.]((Vt|Render)([.][[:alnum:]_]+)*|Mediation|Title|Replay)|Init[.]Data[.]String[.]Legacy)$/) {
+    if (mod !~ /^(Terminal[.](CoreCode[.](Vt|Render|Mediation|Title|Replay)|CoreSpec)|Terminal[.]Proofs[.]((Vt|Render)([.][[:alnum:]_]+)*|Mediation|Title|Replay)|Init[.]Data[.]String[.]Legacy)$/) {
       print "  " $0; bad = 1
     }
   }
@@ -412,66 +391,69 @@ module_imports packages/terminal/Terminal/Proofs/Vt.lean 'packages/terminal/Term
 # composes their executors with the session backend. The session library never
 # imports them, even through an intermediate module: every library import stays in
 # the closure that the check after `Linger.lean`'s list below declares.
-import_closure Linger/Import/Spec.lean ''
-import_closure Linger/Import/Resurrect.lean 'public import Linger.Import.Spec;import Linger.Target.Name;import Linger.Display.Status;public import Terminal.Vt;public import Linger.Session.Spec;'
-import_closure Linger/Selector/Key.lean 'public import Linger.Selector.Spec;public import Input.Spec;'
-import_closure Linger/Selector/Spec.lean ''
-import_closure packages/fuzzy/Fuzzy.lean 'public import Fuzzy.Spec;'
-import_closure packages/fuzzy/Fuzzy/Spec.lean ''
-import_closure Linger/Selector/Picker.lean 'import Input;public import Linger.Selector.Spec;import Fuzzy;import Linger.Target.Name;import Linger.Display.Listing;public import Linger.Display.Spec;import Linger.Display.Status;import Linger.Target.Remote;import Terminal.Vt;import Terminal.Render;import Linger.Display.View;'
-import_closure Linger/Display/View.lean 'public import Linger.Display.Spec;import Linger.Display.Status;'
-import_closure Linger/Display/Spec.lean ''
-import_closure Linger/Display/Status.lean 'public import Linger.Display.Spec;'
-import_closure packages/input/Input.lean 'public import Input.Spec;'
-import_closure packages/input/Input/Spec.lean ''
-import_closure packages/input/Input/Proofs.lean 'public import Input;import all Input;'
-import_closure packages/os/Os/Spec.lean 'import SoftwareChallenge.Commands;'
-import_closure packages/os/Os/Wait.lean ''
-import_closure Linger/App/Entry.lean 'public import Linger.App.Spec;import Linger.Target.Spec;import Linger.Target.Remote;'
-import_closure Linger/App/Spec.lean 'public import Linger.Os.Spec;public import Linger.Session.Spec;'
-import_closure Linger/Target/Name.lean 'import Linger.Target.Spec;'
-import_closure Linger/Target/Remote.lean 'import Linger.Target.Name;import Linger.Target.Spec;'
-import_closure Linger/Display/Title.lean 'import Linger.Target.Name;'
-import_closure Linger/Os/Env.lean ''
+import_closure Linger/Import/CoreSpec.lean ''
+import_closure Linger/Import/CoreCode/Resurrect.lean 'public import Linger.Import.CoreSpec;import Linger.Target.CoreCode.Name;import Linger.Display.CoreCode.Status;public import Terminal.CoreCode.Vt;public import Linger.Session.CoreSpec;'
+import_closure Linger/Selector/CoreCode/Key.lean 'public import Linger.Selector.CoreSpec;public import Input.CoreSpec;'
+import_closure Linger/Selector/CoreSpec.lean ''
+import_closure packages/fuzzy/Fuzzy/CoreCode.lean 'public import Fuzzy.CoreSpec;'
+import_closure packages/fuzzy/Fuzzy/CoreSpec.lean ''
+import_closure Linger/Selector/CoreCode/Picker.lean 'import Input.CoreCode;public import Linger.Selector.CoreSpec;import Fuzzy.CoreCode;import Linger.Target.CoreCode.Name;import Linger.Display.CoreCode.Listing;public import Linger.Display.CoreSpec;import Linger.Display.CoreCode.Status;import Linger.Target.CoreCode.Remote;import Terminal.CoreCode.Vt;import Terminal.CoreCode.Render;import Linger.Display.CoreCode.View;'
+import_closure Linger/Display/CoreCode/View.lean 'public import Linger.Display.CoreSpec;import Linger.Display.CoreCode.Status;'
+import_closure Linger/Display/CoreSpec.lean ''
+import_closure Linger/Display/CoreCode/Status.lean 'public import Linger.Display.CoreSpec;'
+import_closure packages/input/Input/CoreCode.lean 'public import Input.CoreSpec;'
+import_closure packages/input/Input/CoreSpec.lean ''
+import_closure packages/input/Input/Proofs.lean 'public import Input.CoreCode;import all Input.CoreCode;'
+import_closure packages/os/Os/CoreSpec.lean ''
+import_closure packages/os/Os/CoreCode/Wait.lean ''
+import_closure Linger/App/CoreCode/Entry.lean 'public import Linger.App.CoreSpec;import Linger.Target.CoreSpec;import Linger.Target.CoreCode.Remote;'
+import_closure Linger/App/CoreSpec.lean 'public import Linger.Os.CoreSpec;public import Linger.Session.CoreSpec;'
+import_closure Linger/Target/CoreCode/Name.lean 'import Linger.Target.CoreSpec;'
+import_closure Linger/Target/CoreCode/Remote.lean 'import Linger.Target.CoreCode.Name;import Linger.Target.CoreSpec;'
+import_closure Linger/Display/CoreCode/Title.lean 'import Linger.Target.CoreCode.Name;'
+import_closure Linger/Os/CoreCode/Env.lean ''
 # The answers every command gives sit in the bottom layer and depend on nothing above it.
-import_closure Linger/Os/Spec.lean ''
-import_closure Linger/Os/Answer.lean 'public import Linger.Os.Spec;'
-import_closure packages/os/Os/Boundary.lean ''
-# packages/os/Os/Shell.lean is the one module that may import the private bindings.
+import_closure Linger/Os/CoreSpec.lean ''
+import_closure Linger/Os/CoreCode/Answer.lean 'public import Linger.Os.CoreSpec;'
+import_closure packages/os/Os/WorldSpec.lean 'import SoftwareChallenge.Commands;'
+# packages/os/Os/WorldCode.lean is the one module that sees the private bindings: the one module
+# that imports all of Os.WorldSpec. Others import it plainly, for the world claim it states.
 [ "$(module_imports '*.lean' | awk -F: "$IMPORT_AWK"'
-    import_mod($3) == "Os.Boundary" && !seen[$1]++ { print $1 }')" = "packages/os/Os/Shell.lean" ] \
-  || fail "a module other than packages/os/Os/Shell.lean imports Os.Boundary"
-# `import all` transits (see the Vt friend set below), so `import all Os.Shell` would
+    $3 ~ /import[[:space:]]+all[[:space:]]/ && import_mod($3) == "Os.WorldSpec" && !seen[$1]++ { print $1 }')" \
+    = "packages/os/Os/WorldCode.lean" ] \
+  || fail "a module other than packages/os/Os/WorldCode.lean imports all of Os.WorldSpec, whose bindings are private"
+# `import all` transits (see the Vt friend set below), so `import all Os.WorldCode` would
 # grant the private bindings it wraps: every other module imports it plainly.
 shell_all="$(module_imports '*.lean' | awk -F: "$IMPORT_AWK"'
-  $3 ~ /import[[:space:]]+all[[:space:]]/ && import_mod($3) == "Os.Shell" { print "  " $0 }')"
+  $3 ~ /import[[:space:]]+all[[:space:]]/ && import_mod($3) == "Os.WorldCode" { print "  " $0 }')"
 [ -z "$shell_all" ] || {
   printf '%s\n' "$shell_all" >&2
-  fail "import all Os.Shell grants the private Boundary bindings: import it plainly"; }
-import_closure packages/os/Os/Shell/Command.lean 'import Os.Shell;'
-import_closure Linger/Import/Shell.lean 'public import Linger.Os.Spec;import Linger.Os.Answer;import Linger.Import.Resurrect;import Linger.Session.Checkpoint;import Os.Shell;import Linger.Display.Listing;import Linger.Session.Shell.Paths;import Linger.Session.Shell.Resume;import Linger.Session.Shell.Inventory;import Os.Shell.Command;import Linger.Target.Remote;import Linger.Selector.Shell;import Linger.Selector.Picker;import Std.Async.System;'
-import_closure Linger/Selector/Shell.lean \
-  'public import Linger.Selector.Spec;public import Linger.Os.Spec;import Linger.Os.Answer;import Linger.Selector.Picker;import Os.Shell;import Linger.Target.Remote;import Terminal.Title;import Os.Shell.Command;import Linger.Display.View;import Std.Data.HashMap.Basic;import Linger.Display.Status;import Linger.Selector.Key;import Input;'
-import_closure Main.lean \
-  'import Linger.Os.Answer;import Linger.App.Shell;import Linger.App.Entry;import Linger.Selector.Shell;import Linger.Import.Shell;'
+  fail "import all Os.WorldCode grants the private bindings of Os.WorldSpec: import it plainly"; }
+import_closure packages/os/Os/WorldCode/Command.lean 'import Os.WorldCode;'
+import_closure Linger/Import/WorldCode.lean 'public import Linger.Os.CoreSpec;import Linger.Os.CoreCode.Answer;import Linger.Import.CoreCode.Resurrect;import Linger.Session.CoreCode.Checkpoint;import Os.WorldCode;import Linger.Display.CoreCode.Listing;import Linger.Session.WorldCode.Paths;import Linger.Session.WorldCode.Resume;import Linger.Session.WorldCode.Inventory;import Os.WorldCode.Command;import Linger.Target.CoreCode.Remote;import Linger.Selector.WorldCode;import Linger.Selector.CoreCode.Picker;import Std.Async.System;'
+import_closure Linger/Selector/WorldCode.lean \
+  'public import Linger.Selector.CoreSpec;public import Linger.Os.CoreSpec;import Linger.Os.CoreCode.Answer;import Linger.Selector.CoreCode.Picker;import Os.WorldCode;import Linger.Target.CoreCode.Remote;import Terminal.CoreCode.Title;import Os.WorldCode.Command;import Linger.Display.CoreCode.View;import Std.Data.HashMap.Basic;import Linger.Display.CoreCode.Status;import Linger.Selector.CoreCode.Key;import Input.CoreCode;'
+import_closure Linger/App/WorldCode/Main.lean \
+  'import Linger.Os.CoreCode.Answer;import Linger.App.WorldCode;import Linger.App.CoreCode.Entry;import Linger.Selector.WorldCode;import Linger.Import.WorldCode;'
 # `lean_lib Linger` builds the umbrella's closure, so this list is what `./lake build`
 # checks of the session library.
-import_closure Linger.lean "$(printf 'public import %s;' Linger.Session.Buf \
-  Linger.Session.Wire Terminal.Vt Linger.Target.Name Linger.Session Linger.Session.Driver \
-  Linger.Session.Checkpoint Linger.Target.Remote Linger.Display.Listing Linger.Display.Status \
-  Linger.Display.Title Linger.Display.View Linger.Os.Env Linger.Session.Shell.Paths \
-  Linger.Session.Shell.Daemon Linger.Session.Shell.Client \
-  Linger.Session.Shell.Inventory Linger.App.Commands Linger.App.Shell \
-  Linger.Session.Shell.Resume)"
-module_imports Linger/Session.lean ':(glob)Linger/Session/*.lean' 'Linger/Session/Shell/*' \
-    packages/os/Os/Shell/Command.lean Linger/App/Shell.lean packages/os/Os/Boundary.lean packages/os/Os/Shell.lean \
-    Linger/Os/Env.lean Linger/Target/Name.lean Linger/Target/Remote.lean Linger/Display/Status.lean \
-    Linger/Display/Title.lean Linger/Display/Listing.lean packages/terminal/Terminal/Vt.lean \
-    packages/terminal/Terminal/Render.lean packages/terminal/Terminal/Mediation.lean packages/terminal/Terminal/Title.lean \
-    packages/terminal/Terminal/Replay.lean Linger.lean \
+import_closure Linger.lean "$(printf 'public import %s;' Linger.Session.CoreCode.Buf \
+  Linger.Session.CoreCode.Wire Terminal.CoreCode.Vt Linger.Target.CoreCode.Name \
+  Linger.Session.CoreCode Linger.Session.CoreCode.Driver Linger.Session.CoreCode.Checkpoint \
+  Linger.Target.CoreCode.Remote Linger.Display.CoreCode.Listing Linger.Display.CoreCode.Status \
+  Linger.Display.CoreCode.Title Linger.Display.CoreCode.View Linger.Os.CoreCode.Env \
+  Linger.Session.WorldCode.Paths Linger.Session.WorldCode.Daemon Linger.Session.WorldCode.Client \
+  Linger.Session.WorldCode.Inventory Linger.App.CoreCode.Commands Linger.App.WorldCode \
+  Linger.Session.WorldCode.Resume)"
+module_imports ':(glob)Linger/Session/*.lean' 'Linger/Session/CoreCode/*' 'Linger/Session/WorldCode/*' \
+    packages/os/Os/WorldCode/Command.lean Linger/App/WorldCode.lean packages/os/Os/WorldSpec.lean packages/os/Os/WorldCode.lean \
+    Linger/Os/CoreCode/Env.lean Linger/Target/CoreCode/Name.lean Linger/Target/CoreCode/Remote.lean Linger/Display/CoreCode/Status.lean \
+    Linger/Display/CoreCode/Title.lean Linger/Display/CoreCode/Listing.lean packages/terminal/Terminal/CoreCode/Vt.lean \
+    packages/terminal/Terminal/CoreCode/Render.lean packages/terminal/Terminal/CoreCode/Mediation.lean packages/terminal/Terminal/CoreCode/Title.lean \
+    packages/terminal/Terminal/CoreCode/Replay.lean Linger.lean \
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
-    if (mod !~ /^(Linger[.]Session|Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](Shell|Commands|Wait|Recovery|Capture|Spec)|Std[.]Async[.](System|Signal))$/ \
+    if (mod !~ /^(Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](WorldCode|CoreSpec|CoreCode[.](Commands|Wait|Recovery|Capture))|Std[.]Async[.](System|Signal))$/ \
         && mod != "SoftwareChallenge.Commands") {
       print "  " $0; bad = 1
     }
@@ -497,77 +479,25 @@ layer_bad="$(module_imports 'Linger/*' ':!Linger/*/Suites/*' \
   printf '%s\n' "$layer_bad" >&2
   fail "a component imports a peer or a higher layer (layers: $component_layers)"; }
 
-# Headline theorems. Challenge.lean declares the program parts the headlines name as holes
-# (`def <full name> : <type> := sorry`) and states the headlines with `sorry`;
-# Theorems/Solution.lean proves the same statements of the program's parts; comparator.json names
-# both; and `./lake comparator` (scripts/verify.sh) checks that each part has its declared type,
-# that each proof matches its statement, and that no other axiom is used. These gates keep the
-# lists equal, so neither a headline nor a hole can leave that check by being dropped from one
-# of them, and keep the statements' meaning out of the program: the challenge and the Spec
-# modules import only Spec modules, and the challenge the terminal package, whose parts linger's
-# headlines name and which linger's audit trusts.
-headline_names() {                           # headline_names <file>: theorem names, in order
-  code_grep '^theorem [A-Za-z_][A-Za-z0-9_]*' "$1" | sed 's/^[^:]*:[0-9]*://; s/^theorem //; s/[[:space:]].*//'
-}
-headlines="$(headline_names Challenge.lean)"
-headline_count="$(printf '%s\n' "$headlines" | awk 'END { print NR }')"
-[ -n "$headlines" ] || fail "Challenge.lean states no headline theorem"
-[ "$(headline_names Theorems/Solution.lean)" = "$headlines" ] \
-  || fail "Theorems/Solution.lean must prove exactly the theorems Challenge.lean states, in its order"
-hole_names="$(awk '/^def [A-Z][A-Za-z0-9_]*[.]/ { print $2 }' Challenge.lean)"
-hole_count="$(printf '%s' "$hole_names" | awk 'END { print NR }')"
-config_want="$(printf '%s\n' "$headlines" "--" "$hole_names" | awk '
-  $0 == "--" { holes = 1; next }
-  !holes { names[++n] = $0; next }
-  $0 != "" { defs[++m] = $0 }
-  END {
-    print "{"
-    print "  \"challenge_module\": \"Challenge\","
-    print "  \"solution_module\": \"Theorems.Solution\","
-    print "  \"theorem_names\": ["
-    for (i = 1; i <= n; i++) printf "    \"Linger.%s\"%s\n", names[i], (i < n ? "," : "")
-    print "  ],"
-    if (m == 0) print "  \"definition_names\": [],"
-    else {
-      print "  \"definition_names\": ["
-      for (i = 1; i <= m; i++) printf "    \"%s\"%s\n", defs[i], (i < m ? "," : "")
-      print "  ],"
-    }
-    print "  \"permitted_axioms\": [\"propext\", \"Quot.sound\", \"Classical.choice\"]"
-    print "}" }')"
-[ "$(cat comparator.json)" = "$config_want" ] \
-  || fail "comparator.json must list exactly the theorems and holes Challenge.lean declares, in its order, with the three standard axioms"
-# Each headline's proof is `by sorry` and each hole's body `sorry`, however the formatter breaks
-# the line, and the challenge declares nothing else. Statements may contain `:=` (structure
-# instances), so the check counts each `sorry`, each `:= by sorry` and each `:= sorry`.
-challenge_code="$(code_grep '.' Challenge.lean | sed 's/^[^:]*:[0-9]*://' | tr '\n' ' ' | tr -s ' \t' '  ')"
-[ "$(code_count 'sorry' Challenge.lean)" -eq "$((headline_count + hole_count))" ] \
-  && [ "$(printf '%s\n' "$challenge_code" | awk '{ print gsub(/:= by sorry([^[:alnum:]_]|$)/, "") }')" -eq "$headline_count" ] \
-  && [ "$(printf '%s\n' "$challenge_code" | awk '{ print gsub(/:= sorry([^[:alnum:]_]|$)/, "") }')" -eq "$hole_count" ] \
-  || fail "every Challenge.lean theorem must be proved by exactly 'by sorry', and every hole be exactly 'sorry'"
-! code_grep '^(@[[][^]]*[]][[:space:]]*)?((private|public|protected|noncomputable)[[:space:]]+)*(abbrev|instance|axiom|opaque|structure|inductive|class|example|lemma)([^[:alnum:]_]|$)' \
-    Challenge.lean \
-  || fail "Challenge.lean declares something other than a hole or a headline theorem"
-hole_lines="$(awk '/^def Linger[.]/ { print FNR }' Challenge.lean)"
-! code_grep '(^|[[:space:]])def[[:space:]]' Challenge.lean | awk -F: -v holes="$hole_lines" '
-    BEGIN { n = split(holes, h, "\n"); for (i = 1; i <= n; i++) hole[h[i]] = 1 }
-    !($2 in hole) { print; bad = 1 }
-    END { exit !bad }' \
-  || fail "a Challenge.lean definition must be a hole: a top-level 'def' and the full name"
-challenge_imports_bad="$(module_imports Challenge.lean | awk -F: "$IMPORT_AWK"'
-  { if ($3 !~ /^public[[:space:]]+import[[:space:]]+/ || $3 ~ /import[[:space:]]+all[[:space:]]/ \
-        || import_mod($3) !~ /^(Linger[.][A-Z][A-Za-z]*[.]Spec([.][A-Z][A-Za-z]*)?|Terminal([.][A-Z][A-Za-z]*)+)$/) print "  " $0 }')"
-[ -z "$challenge_imports_bad" ] || {
-  printf '%s\n' "$challenge_imports_bad" >&2
-  fail "Challenge.lean imports only Spec modules and the terminal package, which linger trusts, publicly"; }
-# One pathspec for a component's Spec.lean and any module under its Spec/: git's * crosses /.
-spec_imports_bad="$(module_imports 'Linger/*/Spec*.lean' | awk -F: "$IMPORT_AWK"'
-  { if ($3 ~ /import[[:space:]]+all[[:space:]]/ || (import_mod($3) !~ /^(Linger[.][A-Z][A-Za-z]*[.]Spec([.][A-Z][A-Za-z]*)?|Terminal[.]Spec)$/ \
-        && import_mod($3) != "SoftwareChallenge.Commands"))
+# Headline theorems. The challenge library reads Challenge.lean: the build writes comparator.json
+# from it, the audit holds it to holes and theorems and each headline to a kill marked
+# `@[kills headline]`, and `./lake comparator` checks that Theorems.Solution proves the same
+# statements. What the audit does not see is outside linger, which it trusts: so a statement's
+# meaning rests on no package's code either, as a spec module imports, from anywhere, only spec
+# modules, a CoreSpec or WorldSpec one, and the library's syntax, and none of them all of one.
+spec_imports_bad="$(module_imports 'Linger/*/CoreSpec*.lean' 'Linger/*/WorldSpec*.lean' \
+| awk -F: "$IMPORT_AWK"'
+  function role(mod,    n, i, part) {
+    n = split(mod, part, ".")
+    for (i = 1; i <= n; i++) if (part[i] ~ /^(CoreSpec|CoreCode|WorldSpec|WorldCode)$/) return part[i]
+    return "" }
+  { mod = import_mod($3); r = role(mod)
+    if ($3 ~ /import[[:space:]]+all[[:space:]]/ \
+        || (r != "CoreSpec" && r != "WorldSpec" && mod != "SoftwareChallenge.Commands"))
       print "  " $0 }')"
 [ -z "$spec_imports_bad" ] || {
   printf '%s\n' "$spec_imports_bad" >&2
-  fail "Spec modules import only Spec modules and SoftwareChallenge.Commands"; }
+  fail "a spec module imports code: it may import only CoreSpec and WorldSpec modules, and SoftwareChallenge.Commands"; }
 [ "$(library_decl Challenge)" = "lean_lib Challenge where leanOptions := #[⟨\`warn.sorry, false⟩] " ] \
   || fail "the Challenge library may silence only its sorry warnings: $(library_decl Challenge)"
 ! grep -qE '^@[[]default_target[]][[:space:]]+lean_lib Challenge' lakefile.lean \
@@ -580,7 +510,7 @@ spec_imports_bad="$(module_imports 'Linger/*/Spec*.lean' | awk -F: "$IMPORT_AWK"
 # returns one, and the process exits only with that answer's code (`code_documented`).
 # Fold layout whitespace for Main's small dispatch. Reuse the backtick-aware
 # matcher below, so quoted prose cannot stand in for these call sites.
-entry_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Main.lean)"
+entry_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/WorldCode/Main.lean)"
 for tie in \
   'def main [(]args : List String[)] : IO UInt32 := do let answer : Linger[.]Os[.]Answer ← try match Linger[.]App[.]Entry[.]route args with' \
   '[|] [.]selector readOnly => Linger[.]Selector[.]Shell[.]run [(]← IO[.]appPath[)][.]toString readOnly' \
@@ -591,8 +521,8 @@ for tie in \
   printf '%s\n' "$entry_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "entry point bypassed its proved route or fixed IO boundary: $tie"
 done
-[ "$(code_count '(^|[^[:alnum:]_.])return([^[:alnum:]_]|$)' Main.lean)" -eq 1 ] \
-  || fail "Main.lean returns other than through its one exit, the code of its route's answer"
+[ "$(code_count '(^|[^[:alnum:]_.])return([^[:alnum:]_]|$)' Linger/App/WorldCode/Main.lean)" -eq 1 ] \
+  || fail "Linger/App/WorldCode/Main.lean returns other than through its one exit, the code of its route's answer"
 
 # Every exit is an answer: `main` exits with the code of the answer its route gives (above), and
 # the executors it routes to answer in `Linger.Os.Answer`, the selector and the tmux interchange
@@ -629,25 +559,25 @@ FNR == 1 { open = 0; yields = 0; header = "" }
 open && header != "" && /^[[:space:]]*[|]/ { settle(result(header)) }
 open { header = header " " $0; type = result(header); if (assigned) settle(type) }
 yields { print FILENAME ":" FNR }'
-shell_paths="$(git ls-files -- Main.lean 'Linger/*/Shell.lean' 'Linger/*/Shell/*')"
+shell_paths="$(git ls-files -- 'Linger/*/WorldCode.lean' 'Linger/*/WorldCode/*')"
 [ -n "$shell_paths" ] || fail "no command shells found"
 # shellcheck disable=SC2086  # one tracked path per word
 status_lines="$(awk "$STATUS_AWK" $shell_paths /dev/null)"
 # The reader must find what `main` and the two executors below the command line yield.
-for entry in 'Main.lean:^def main ' 'Linger/Selector/Shell.lean:^def run ' 'Linger/Import/Shell.lean:^def run '; do
+for entry in 'Linger/App/WorldCode/Main.lean:^def main ' 'Linger/Selector/WorldCode.lean:^def run ' 'Linger/Import/WorldCode.lean:^def run '; do
   entry_line="$(grep -n "${entry#*:}" "${entry%%:*}" | cut -d: -f1)"
   printf '%s\n' "$status_lines" | grep -qx "${entry%%:*}:${entry_line:-none}" \
     || fail "the reader of the shell headers no longer finds the process status that ${entry%%:*} yields"
 done
 status_bad="$(
   { printf '%s\n' "$status_lines" '#literals'
-    code_grep '(^|[^[:alnum:]_.])(return|pure)[[:space:]]+[(]*-?[0-9]' Main.lean 'Linger/*/Shell.lean' 'Linger/*/Shell/*' || true; } \
+    code_grep '(^|[^[:alnum:]_.])(return|pure)[[:space:]]+[(]*-?[0-9]' 'Linger/*/WorldCode.lean' 'Linger/*/WorldCode/*' || true; } \
   | awk -F: '!literals { if ($0 == "#literals") literals = 1; else yields[$0] = 1; next }
       ($1 ":" $2) in yields { print "  " $0 }'
-  code_grep '(^|[^[:alnum:]_.])IO[.]Process[.]exit([^[:alnum:]_]|$)' Main.lean 'Linger/*/Shell.lean' 'Linger/*/Shell/*' \
+  code_grep '(^|[^[:alnum:]_.])IO[.]Process[.]exit([^[:alnum:]_]|$)' 'Linger/*/WorldCode.lean' 'Linger/*/WorldCode/*' \
   | awk '{ rest = substr($0, index($0, "IO.Process.exit") + 15)
       if (rest !~ /[.]code([^[:alnum:]_]|$)/ || rest ~ /^[[:space:](]*-?[0-9]/) print "  " $0 }'
-  code_grep '[.]failed[[:space:]]+[(]*-?[0-9]' Main.lean 'Linger/*/Shell.lean' 'Linger/*/Shell/*' | sed 's/^/  /')"
+  code_grep '[.]failed[[:space:]]+[(]*-?[0-9]' 'Linger/*/WorldCode.lean' 'Linger/*/WorldCode/*' | sed 's/^/  /')"
 [ -z "$status_bad" ] || {
   printf '%s\n' "$status_bad" >&2
   fail "a literal exit status in a command shell: answer with a Linger.Os.Answer and exit with its code"; }
@@ -655,21 +585,21 @@ status_bad="$(
 # The proof covers the returned parser/plan values. These call-site gates make
 # bypassing them a reviewable change; IO tests check preflight/failure ordering
 # and actual argv. As with the runtime ties below, this is not an IO theorem.
-code_grep '^[[:space:]]+IO[.]eprintln s!"linger tmux [{]command[}]: [{]diagnostic [(]toString e[)][}]"$' Linger/Import/Shell.lean >/dev/null \
+code_grep '^[[:space:]]+IO[.]eprintln s!"linger tmux [{]command[}]: [{]diagnostic [(]toString e[)][}]"$' Linger/Import/WorldCode.lean >/dev/null \
   || fail "tmux commands no longer display the proved control-free diagnostic"
-code_grep '^[[:space:]]+let content ← IO[.]FS[.]readFile path$' Linger/Import/Shell.lean >/dev/null \
+code_grep '^[[:space:]]+let content ← IO[.]FS[.]readFile path$' Linger/Import/WorldCode.lean >/dev/null \
   || fail "tmux catalog no longer reads the complete resolved save before parsing"
-code_grep '^[[:space:]]+let panes ← IO[.]ofExcept [(]parseSave home content[)]$' Linger/Import/Shell.lean >/dev/null \
+code_grep '^[[:space:]]+let panes ← IO[.]ofExcept [(]parseSave home content[)]$' Linger/Import/WorldCode.lean >/dev/null \
   || fail "tmux catalog no longer consumes the proved whole-save parser"
-code_grep '^[[:space:]]+for pane in plan existing panes do$' Linger/Import/Shell.lean >/dev/null \
+code_grep '^[[:space:]]+for pane in plan existing panes do$' Linger/Import/WorldCode.lean >/dev/null \
   || fail "importer no longer iterates the proved import plan"
-import_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Import/Shell.lean)"
+import_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Import/WorldCode.lean)"
 # An import only writes: it names no command that would start a session's program.
-! code_grep '"(resume|start)"' Linger/Import/Shell.lean \
+! code_grep '"(resume|start)"' Linger/Import/WorldCode.lean \
   || fail "the importer starts a program; an import writes checkpoints only"
 printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])[|] "import" => importSave executable paths[.]head[?]; return [.]done([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "importer no longer forwards the entry point executable"
-code_grep '^[[:space:]]+let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]] [}]$' Linger/Import/Shell.lean >/dev/null \
+code_grep '^[[:space:]]+let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]] [}]$' Linger/Import/WorldCode.lean >/dev/null \
   || fail "importer no longer lists with the supplied executable"
 # Native listing observes the caller's checkpoint namespace, including its
 # no-HOME `/tmp` fallback. Only those fields reach the checked serializer.
@@ -754,10 +684,10 @@ for tie in \
   'writeAll stdoutFd [(]ByteArray[.]mk [(]Terminal[.]Title[.]ansi ""[)][.]toArray[)]' \
   'discard child[.]wait' \
   'let child ← IO[.]Process[.]spawn [{] cmd := executable, args := attachArgs target readOnly [}]'; do
-  code_grep "^[[:space:]]+$tie$" Linger/Selector/Shell.lean >/dev/null \
+  code_grep "^[[:space:]]+$tie$" Linger/Selector/WorldCode.lean >/dev/null \
     || fail "manager bypassed a proved value or fixed IO boundary: $tie"
 done
-picker_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Selector/Shell.lean)"
+picker_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Selector/WorldCode.lean)"
 # Pin traversal through shared row pieces, frame insertion and complete metadata
 # replacement. Computing rows or refreshed state without consuming them is
 # insufficient. The loop seams fix the frame, poll/decode/step, then refresh ordering.
@@ -781,14 +711,14 @@ for tie in \
   printf '%s\n' "$picker_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "manager lost its selection, refresh, process ownership or attach contract: $tie"
 done
-code_grep '^def remoteRefreshMs : Nat := [1-9][0-9]*$' Linger/Selector/Shell.lean >/dev/null \
+code_grep '^def remoteRefreshMs : Nat := [1-9][0-9]*$' Linger/Selector/WorldCode.lean >/dev/null \
   || fail "remote rows must refresh on a positive, fixed cadence"
 # Terminal loops and remote discovery own helpers through this one executor. Reap only
 # after both pipes close; clear ownership before a reader error can throw.
 # Cancellation can first request cooperative cleanup. It always force-retires
 # the isolated group before reaping its reserved leader PID, then joins both
 # readers even when termination or reaping throws.
-command_code="$(awk '{ $1 = $1; printf "%s ", $0 }' packages/os/Os/Shell/Command.lean)"
+command_code="$(awk '{ $1 = $1; printf "%s ", $0 }' packages/os/Os/WorldCode/Command.lean)"
 for tie in \
   'IO[.]Process[.]spawn [{] cmd := executable, args, stdin := [.]null, stdout := [.]piped, stderr := [.]piped, setsid := true [}] let stdout ← IO[.]asTask child[.]stdout[.]readToEnd Task[.]Priority[.]dedicated let stderr ← IO[.]asTask child[.]stderr[.]readToEnd Task[.]Priority[.]dedicated return [{] child, stdout, stderr [}]' \
   'IO[.]Process[.]spawn [{] cmd := executable, args, stdin := [.]null, stdout := [.]piped, stderr := [.]piped, setsid := true [}] let stdout ← IO[.]asTask [(]readLimited child[.]stdout limit[)] Task[.]Priority[.]dedicated let stderr ← IO[.]asTask [(]readLimited child[.]stderr [(]64 [*] 1024[)][)] Task[.]Priority[.]dedicated return [{] child, stdout, stderr [}]' \
@@ -805,7 +735,7 @@ done
 # consumers: validated host order, one shared row, palette-only badge styling,
 # and plain redirected or NO_COLOR output. Prompt sampling shares one reply deadline; a busy
 # nonblocking connect remains unknown and cannot authorize stale-socket removal.
-cli_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/Shell.lean)"
+cli_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/WorldCode.lean)"
 for tie in \
   'match Linger[.]Target[.]Remote[.]checkHosts hosts with [|] [.]ok l => return l [|] [.]error e => throw [(]IO[.]userError e[)]' \
   'for [(]host, output[)] in remotes[.]zip remote[.]toList do for row in Linger[.]Target[.]Remote[.]parse output do' \
@@ -825,14 +755,14 @@ done
 tie='let heard ← [(]Inventory[.]readInfo fd [(]some [(][(]← monotonicMs[)] [+] Client[.]replySilenceMs[.]toNatClampNeg[)][)][)][.]toBaseIO let level := [(]heard[.]toOption[.]bind [(]·[.]lookup "protocol"[)][)][.]bind String[.]toNat[?] if Linger[.]Session[.]Wire[.]admits level then return [.]ok [(]← Client[.]attach name fd summaryText readOnly[)] close fd'
 printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
   || fail "an attach bypasses its daemon's protocol level (Wire.admits): $tie"
-[ "$(code_count 'Client[.]attach([^[:alnum:]_]|$)' Linger/App/Shell.lean)" -eq 1 ] \
+[ "$(code_count 'Client[.]attach([^[:alnum:]_]|$)' Linger/App/WorldCode.lean)" -eq 1 ] \
   || fail "Client.attach is called outside attachSpoken, which first asks the daemon's protocol level"
 # `linger help` lists the exit statuses from the vocabulary every command answers in
 # (`code_documented`, `listed_once`), one line per answer of linger's own.
 printf '%s\n' "$cli_code" | CG_RE='(^|[[:space:]])Answer[.]legend[.]map [(]" +" [+][+] ·[)][)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "linger help no longer lists the exit statuses from Answer.legend"
 # The session inventory the listing, the prompt summary, `get` and the importer share.
-inventory_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Inventory.lean)"
+inventory_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/WorldCode/Inventory.lean)"
 for tie in \
   'if let some deadline := stopAt then if [(]← monotonicMs[)] ≥ deadline then return some [(][.]error [(]IO[.]userError "overview deadline reached"[)][)] match ← connect stopAt[.]isSome with [|] none => if stopAt[.]isSome && retainUnavailable then return some [(][.]error [(]IO[.]userError "overview connection unavailable"[)][)] return none [|] some fd => try let info ← [(]readInfo fd stopAt[)][.]toBaseIO return some info finally close fd' \
   'Client[.]sendMsg fd [.]info let deadline := stopAt[.]getD [(][(]← monotonicMs[)] [+] 2000[)]' \
@@ -853,7 +783,7 @@ done
 printf '%s\n' "$cli_code" | CG_RE='(^|[[:space:]])match Linger[.]Os[.]Env[.]remotesFile [(]← IO[.]getEnv "HOME"[)] with [|] none => pure [[][]] [|] some path => if ← System[.]FilePath[.]pathExists path then pure [(][(]← IO[.]FS[.]readFile path[)][.]splitOn([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "remote configuration bypasses Env.remotesFile, which reads no file for an unset or empty HOME"
 for var in SHELL LINGER_NO_DETACH_KEY; do
-  [ "$(code_count "getEnv \"$var\"" 'Linger/*' 'packages/*' Main.lean)" -eq 1 ] \
+  [ "$(code_count "getEnv \"$var\"" 'Linger/*' 'packages/*')" -eq 1 ] \
     || fail "$var is read more than once or not at all; read it once, into its Env policy"
 done
 # Discovery keeps bounded ownership until completion. Remote signal handlers
@@ -876,7 +806,7 @@ for tie in \
   printf '%s\n' "$inventory_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "discovery lost its bounded task or process ownership: $tie"
 done
-code_grep '^[[:space:]]+let r ← unixConnect path nonblocking$' Linger/Session/Shell/Client.lean >/dev/null \
+code_grep '^[[:space:]]+let r ← unixConnect path nonblocking$' Linger/Session/WorldCode/Client.lean >/dev/null \
   || fail "status connect lost its nonblocking boundary"
 
 # Title writes use the bounded, control-free encoder and the existing VT
@@ -885,7 +815,7 @@ code_grep '^[[:space:]]+let r ← unixConnect path nonblocking$' Linger/Session/
 # Attention is sampled in the client's process, one task at a time, and an
 # outstanding sample is joined after the socket closes. Linger.Display.Suites.Title checks that an
 # idle client reaps no children and that detach joins a held sample.
-client_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Client.lean)"
+client_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/WorldCode/Client.lean)"
 for tie in \
   'let mut observer := Terminal[.]Vt[.]Vt[.]init 1 1' \
   'while !leaving do if let some task[[:space:]]*← pending[.]get then if ← IO[.]hasFinished task then pending[.]set none let fresh := match ← IO[.]wait task with [|] [.]ok text => text [|] [.]error _ => String[.]singleton [(]Linger[.]Display[.]Status[.]icon [.]unknown[)] titleDirty := titleDirty [|][|] fresh != summary summary := fresh nextSummary := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextSummary then pending[.]set [(]some [(]← IO[.]asTask sample Task[.]Priority[.]dedicated[)][)] let revs ← poll #[[]stdinFd, fd[]] #[[]POLLIN, POLLIN[]] 200' \
@@ -907,25 +837,25 @@ for tie in \
   printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "an attached client ends on a signal other than as a detach does: $tie"
 done
-! code_grep 'IO[.]Process|Command[.]|spawnDetached|spawnPty|appPath' Linger/Session/Shell/Client.lean \
+! code_grep 'IO[.]Process|Command[.]|spawnDetached|spawnPty|appPath' Linger/Session/WorldCode/Client.lean \
   || fail "the attach client starts processes; it samples title attention in its own process"
-[ "$(code_count 'observer := observer[.]observe' Linger/Session/Shell/Client.lean)" -eq 1 ] \
+[ "$(code_count 'observer := observer[.]observe' Linger/Session/WorldCode/Client.lean)" -eq 1 ] \
   || fail "title observer must consume application output exactly once"
-[ "$(code_count '(^|[[:space:]])observer([[:space:]]+:[^=]*)?[[:space:]]*(:=|←)' Linger/Session/Shell/Client.lean)" -eq 2 ] \
+[ "$(code_count '(^|[[:space:]])observer([[:space:]]+:[^=]*)?[[:space:]]*(:=|←)' Linger/Session/WorldCode/Client.lean)" -eq 2 ] \
   || fail "title observer may only initialize once and consume application output"
 awk '
   /receivedOutput := true/ { output = 1; next }
   output && /^[[:space:]]*--/ { next }
   output { if ($0 !~ /^[[:space:]]*titleDirty := true$/) bad = 1; output = 0; checked++ }
   END { exit (checked != 1 || bad) }
-' Linger/Session/Shell/Client.lean \
+' Linger/Session/WorldCode/Client.lean \
   || fail "repeated application titles no longer trigger reassertion"
 
 # The `Vt` friend set — who may forge a `Vt`. `import all M` grants M's OWN all-access
 # set, including whatever M has all-access to, so **`import all` TRANSITS** and
 # `git grep -l 'import all Terminal.Vt'` is NOT an enumeration of the friend set.
 # Measured in the real position, not a scratch file: one added
-# `import all Terminal.Render` in `Linger/Session/Shell/Client.lean` plus a five-field
+# `import all Terminal.Render` in `Linger/Session/WorldCode/Client.lean` plus a five-field
 # `{ cols := 0, rows := 0, grid := #[], … }` gives `./lake build linger` exit 0 AND
 # `sh scripts/gates.sh` exit 0. Two hops is the same: `import all Linger.Display.Proofs.Listing` from
 # a file holding neither `import all Terminal.Vt` nor `import all Terminal.Render`
@@ -948,10 +878,10 @@ awk '
 # one beside `Vt`, and few of those join the closure. So a per-file list over
 # `Theorems/**` would be edited reflexively, while the core list changes rarely, which
 # is what makes it a checkpoint. The proof and fixture directories are friends BY
-# DECLARATION (see `packages/terminal/Terminal/Vt.lean`, "## Every door"), and a component's `Tests/` deliberately forges invalid
+# DECLARATION (see `packages/terminal/Terminal/CoreCode/Vt.lean`, "## Every door"), and a component's `Tests/` deliberately forges invalid
 # states in its negative fixtures, so listing its files one by one would gate a
 # non-property. Everything else is outside and fail-closed — `Verify/**`, each component's
-# `Suites/`, `Main.lean`, every shell and the other component modules. Replay joins only
+# `Suites/`, `Linger/App/WorldCode/Main.lean`, every shell and the other component modules. Replay joins only
 # to read shared immutable rows.
 # The suites are outside deliberately: a pty suite asserts on bytes the real binary
 # emitted, so a forged `Vt` there would be an assertion about a state the binary cannot
@@ -971,11 +901,11 @@ awk '
 # survives is narrower and still worth writing down: do not begin a docstring line with
 # a BARE, unbackticked `import all`.
 VT_ALL_RE='^[[:space:]]*(meta[[:space:]]+)*import[[:space:]]+all[[:space:]]+'
-VT_FRIEND_EXACT='packages/terminal/Terminal/Vt.lean packages/terminal/Terminal/Render.lean packages/terminal/Terminal/Mediation.lean Linger/Session/Checkpoint.lean packages/terminal/Terminal/Replay.lean'
+VT_FRIEND_EXACT='packages/terminal/Terminal/CoreCode/Vt.lean packages/terminal/Terminal/CoreCode/Render.lean packages/terminal/Terminal/CoreCode/Mediation.lean Linger/Session/CoreCode/Checkpoint.lean packages/terminal/Terminal/CoreCode/Replay.lean'
 VT_FRIEND_DIRS='Theorems/'
 VT_FRIEND_RE='^(Linger/[^/]+|packages/terminal/Terminal)/(Proofs|Tests)/|^packages/terminal/Terminal/Solution[.]lean$'
 code_grep "$VT_ALL_RE" '*.lean' \
-| awk -F: -v seed='packages/terminal/Terminal/Vt.lean' -v exact="$VT_FRIEND_EXACT" -v dirs="$VT_FRIEND_DIRS" \
+| awk -F: -v seed='packages/terminal/Terminal/CoreCode/Vt.lean' -v exact="$VT_FRIEND_EXACT" -v dirs="$VT_FRIEND_DIRS" \
     -v friend_re="$VT_FRIEND_RE" \
     "$IMPORT_AWK"'
   BEGIN { ne = split(exact, E, " "); nd = split(dirs, D, " ") }
@@ -1022,7 +952,7 @@ shim_n="$(code_count 'LEAN_EXPORT' 'packages/os/c/shim.c')"
 [ "$shim_n" -le "$SHIM_CAP" ] \
   || fail "shim grew to $shim_n wrappers (cap $SHIM_CAP); justify the new syscall and bump the cap"
 
-# The runtime keeps no byte queue of its own. `Linger/Session/Buf.lean` owns the two
+# The runtime keeps no byte queue of its own. `Linger/Session/CoreCode/Buf.lean` owns the two
 # kinds of long-lived queue -- their caps, their drop and cut policies, and the
 # removal of written prefixes (`Linger/Session/Proofs/Buf.lean`) -- and the runtime shells
 # (the session's, the CLI and command jobs) are `IO`,
@@ -1035,48 +965,48 @@ shim_n="$(code_count 'LEAN_EXPORT' 'packages/os/c/shim.c')"
 # the CLI's info-reply accumulator, and two .extract compactions). `code_grep` prints
 # the hits, so each regex is spelled once: two copies of a pattern is two things to
 # keep in step.
-! code_grep '^[[:space:]]+[a-zA-Z_]+ : ByteArray' 'Linger/App/Shell.lean' 'packages/os/Os/Shell/Command.lean' 'Linger/Session/Shell/*' \
+! code_grep '^[[:space:]]+[a-zA-Z_]+ : ByteArray' 'Linger/App/WorldCode.lean' 'packages/os/Os/WorldCode/Command.lean' 'Linger/Session/WorldCode/*' \
   || fail "a ByteArray field in a runtime shell (use Linger.Session.Buf, which is proved)"
-! code_grep 'mut [a-zA-Z_]+ : ByteArray' 'Linger/App/Shell.lean' 'packages/os/Os/Shell/Command.lean' 'Linger/Session/Shell/*' \
+! code_grep 'mut [a-zA-Z_]+ : ByteArray' 'Linger/App/WorldCode.lean' 'packages/os/Os/WorldCode/Command.lean' 'Linger/Session/WorldCode/*' \
   || fail "an accumulating ByteArray local in a runtime shell (use Linger.Session.Buf: it is capped)"
-! code_grep '[.]extract([^[:alnum:]_]|$)' 'Linger/App/Shell.lean' 'packages/os/Os/Shell/Command.lean' 'Linger/Session/Shell/*' \
+! code_grep '[.]extract([^[:alnum:]_]|$)' 'Linger/App/WorldCode.lean' 'packages/os/Os/WorldCode/Command.lean' 'Linger/Session/WorldCode/*' \
   || fail "buffer arithmetic in a runtime shell (Buf.bufAdvance owns it, and is proved)"
 
 # The cursor proofs describe pure values. These ties keep the runtime on the
 # captured snapshot, bounded advances and shared byte allowance. The delivery
 # suite separately observes framing, prior/replay/live ordering and exit tails.
-code_grep '^[[:space:]]+effs [+][+] focusEffects typist before s [+][+] [[][.]replay c[.]id [(]Replay[.]start s[.]vt[)][]] [+][+]$' 'Linger/Session.lean' > /dev/null \
+code_grep '^[[:space:]]+effs [+][+] focusEffects typist before s [+][+] [[][.]replay c[.]id [(]Replay[.]start s[.]vt[)][]] [+][+]$' 'Linger/Session/CoreCode.lean' > /dev/null \
   || fail "attach no longer captures its resulting snapshot"
-code_grep '^[[:space:]]+replay : Option Replay[.]Plan := none$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+replay : Option Replay[.]Plan := none$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "each connection must retain one optional replay cursor"
-code_grep '^[[:space:]]+after : Buf := [.]empty$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+after : Buf := [.]empty$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "following output bypasses the proved byte buffer"
-code_grep '^[[:space:]]+[|] [.]replay id plan => do$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+[|] [.]replay id plan => do$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "the runtime no longer receives the captured replay plan"
-code_grep '^[[:space:]]+match ← flushConn [{] c with replay := some plan [}] with$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+match ← flushConn [{] c with replay := some plan [}] with$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "the runtime no longer executes the captured replay plan"
-! code_grep 'Replay[.]start|Render[.]restore' 'Linger/Session/Shell/Daemon.lean' \
+! code_grep 'Replay[.]start|Render[.]restore' 'Linger/Session/WorldCode/Daemon.lean' \
   || fail "the daemon must consume the captured cursor without constructing another repaint"
-code_grep '^[[:space:]]+match Replay[.]next Linger[.]Session[.]outputChunk plan with$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+match Replay[.]next Linger[.]Session[.]outputChunk plan with$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "replay advancement no longer uses the proved output chunk"
-code_grep '^def replayFrameCap : Nat := Linger[.]Session[.]outputChunk [+] [(]Wire[.]encode [(][.]output [[][]][)][)][.]length$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^def replayFrameCap : Nat := Linger[.]Session[.]outputChunk [+] [(]Wire[.]encode [(][.]output [[][]][)][)][.]length$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "replay reservation no longer includes the wire encoder's frame overhead"
-code_grep '^[[:space:]]+let cap := followingCap outbufCap replayFrameCap [(]owedLen c[.]out[)]$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+let cap := followingCap outbufCap replayFrameCap [(]owedLen c[.]out[)]$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "following output no longer shares the front buffer allowance"
-code_grep '^[[:space:]]+bufEnqueue [(]outbufCap - owedLen c[.]after[)] [.]empty$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+bufEnqueue [(]outbufCap - owedLen c[.]after[)] [.]empty$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "replay frames no longer account for following output debt"
 
 # A logically closed peer still owns its transport until it drains or expires.
 # It therefore counts towards admission, and ordinary polls must retire it
 # before taking the fd snapshot. Deadlines use Nat and the same grace constant
 # as shutdown. A repeated close cannot buy another grace period.
-code_grep '^[[:space:]]+closeBy : Option Nat := none$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+closeBy : Option Nat := none$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "transport close deadlines no longer use Nat"
-[ "$(code_count '^[[:space:]]+let deadline := [(]← monotonicMs[)] [+] drainTimeoutMs$' 'Linger/Session/Shell/Daemon.lean')" -eq 2 ] \
+[ "$(code_count '^[[:space:]]+let deadline := [(]← monotonicMs[)] [+] drainTimeoutMs$' 'Linger/Session/WorldCode/Daemon.lean')" -eq 2 ] \
   || fail "ordinary close and shutdown must share the Nat drain deadline"
-code_grep '^[[:space:]]+if c[.]closeBy[.]any [(]now ≥ ·[)] then$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+if c[.]closeBy[.]any [(]now ≥ ·[)] then$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "retired transport expiry no longer checks its fixed deadline"
-code_grep '^[[:space:]]+return [(]rt[.]setConn [{] c with closeBy := some deadline [}], true[)]$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+return [(]rt[.]setConn [{] c with closeBy := some deadline [}], true[)]$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "logical close no longer reports removal while retaining accepted bytes"
 awk '
   /^  [|] [.]close id =>/ { inclose = 1 }
@@ -1088,31 +1018,31 @@ awk '
   inpoll && /let polled := rt[.]conns/ { frozen++; if (!expired) bad = 1 }
   /^def drainConns / { inpoll = 0 }
   END { exit (checked != 1 || frozen != 1 || bad) }
-' Linger/Session/Shell/Daemon.lean \
+' Linger/Session/WorldCode/Daemon.lean \
   || fail "repeated-close guard or expire-before-poll-snapshot ordering changed"
-code_grep '^[[:space:]]+deadlines := deadline :: deadlines$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+deadlines := deadline :: deadlines$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "ordinary polling ignores close deadlines"
 # A daemon sleeps until its earliest deadline, or for an event however long that takes when it
 # holds none (`poll_wakes`, over the world claim `Poll.Sleeps`, which the quiet suite exercises):
 # the round's one poll waits `Session.pollTimeout` of the deadlines it gathered.
-printf '%s\n' "$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Daemon.lean)" \
+printf '%s\n' "$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/WorldCode/Daemon.lean)" \
   | CG_RE='(^|[[:space:]])let timeout := Linger[.]Session[.]pollTimeout now deadlines let accepting := .* let revs ← poll fds evts timeout([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "a daemon's poll waits other than Session.pollTimeout of its deadlines"
-code_grep '^[[:space:]]+let accepting := rt[.]conns[.]length < maxClients && rt[.]acceptAfter[.]all [(]now ≥ ·[)]$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+let accepting := rt[.]conns[.]length < maxClients && rt[.]acceptAfter[.]all [(]now ≥ ·[)]$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "listener admission must count every transport and honor its retry deadline"
-code_grep '^[[:space:]]+#[[][(]if accepting then POLLIN else 0[)],' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+#[[][(]if accepting then POLLIN else 0[)],' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "listener polling no longer uses the admission guard"
-code_grep '^[[:space:]]+for _ in List[.]range [(]maxClients - rt[.]conns[.]length[)] do$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+for _ in List[.]range [(]maxClients - rt[.]conns[.]length[)] do$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "accept budget no longer includes retired transports"
-[ "$(code_count '^[[:space:]]+let polled := rt[.]conns$' 'Linger/Session/Shell/Daemon.lean')" -eq 2 ] \
+[ "$(code_count '^[[:space:]]+let polled := rt[.]conns$' 'Linger/Session/WorldCode/Daemon.lean')" -eq 2 ] \
   || fail "ordinary and shutdown polling must each freeze their fd set"
-[ "$(code_count '^[[:space:]]+for c in polled do$' 'Linger/Session/Shell/Daemon.lean')" -eq 2 ] \
+[ "$(code_count '^[[:space:]]+for c in polled do$' 'Linger/Session/WorldCode/Daemon.lean')" -eq 2 ] \
   || fail "ordinary fd construction and readiness must use the same frozen connections"
-code_grep '^[[:space:]]+let fds := [(]polled[.]map [(]·[.]fd[)][)][.]toArray$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+let fds := [(]polled[.]map [(]·[.]fd[)][)][.]toArray$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "shutdown fd list diverged from its frozen connections"
-code_grep '^[[:space:]]+for [(]c, i[)] in polled[.]zipIdx do$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+for [(]c, i[)] in polled[.]zipIdx do$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "shutdown readiness no longer indexes the frozen connection list"
-code_grep '^[[:space:]]+rt ← drainConns rt$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+rt ← drainConns rt$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "serve no longer drains accepted bytes after exit"
 
 # A client read failure is local to that peer. The close frame cannot prove an
@@ -1120,7 +1050,7 @@ code_grep '^[[:space:]]+rt ← drainConns rt$' 'Linger/Session/Shell/Daemon.lean
 # Every retirement goes through Rt.closeConn, so its body is tied too: it closes
 # the fd, then forgets that transport alone.
 # Linger.Session.Suites.Robust closes an unread reply and requires the original shell to run again.
-daemon_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Daemon.lean)"
+daemon_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/WorldCode/Daemon.lean)"
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let received ← try read c[.]fd 65536 catch _ => pure none match received with [|] some bs => if bs[.]size > 0 then events := events [+][+] [[][.]bytes c[.]fd[.]toNat bs[.]toList[]] [|] none => rt ← rt[.]closeConn c[.]fd events := events [+][+] [[][.]closed c[.]fd[.]toNat[]]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "client read errors must close only that peer through the proved transition"
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def Rt[.]closeConn [(]rt : Rt[)] [(]fd : UInt32[)] : IO Rt := do close fd return [{] rt with conns := rt[.]conns[.]filter [(]·[.]fd != fd[)] [}]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
@@ -1161,7 +1091,7 @@ done
 # the driver hands back to the session as `.stopped`.
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])[|] [.]stopProgram => do let outcome ← stopProgram rt return [(][{] rt with ending := some outcome [}], outcome[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "the daemon stops a program other than by Session.ending, or keeps how it ended from the session"
-code_grep '^[[:space:]]+[|] [.]stopProgram, outcome => [[][.]stopped outcome[]]$' 'Linger/Session/Driver.lean' > /dev/null \
+code_grep '^[[:space:]]+[|] [.]stopProgram, outcome => [[][.]stopped outcome[]]$' 'Linger/Session/CoreCode/Driver.lean' > /dev/null \
   || fail "the driver no longer hands a stopped program's end back to the session"
 # A stop signal to the daemon reaches the session as its event (`step_signal_saves`): the signal
 # pipe carries it, and the first stop signal a round heard is the session's event, before the
@@ -1182,21 +1112,23 @@ done
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def Offloop[.]ask [(]w : Offloop[)] [(]write : IO Unit[)] : IO Offloop := do match Linger[.]Session[.]Offloop[.]ask w write with [|] [(]w, none[)] => return w [|] [(]w, some write[)] => return [{] w with running := some [(]← IO[.]asTask write Task[.]Priority[.]dedicated[)] [}]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "an off-loop write starts other than as Session.Offloop.ask decides, on a thread of its own"
 # Every wait sleeps through `Os.Shell.nap`, as `Os.Wait.next` decides (`wait_ends`, over the world
-# claim `Wait.Lasts`, which the shim suite exercises): at least 1 ms and at most its step, never
-# past its deadline, and `false` once that has passed, when the wait reports what it missed. The
-# one wait with no deadline that sleeps, `start` or `resume` waiting on a daemon that took the
-# request's ticket, sleeps through `Os.Shell.pause`. No timer task stands in for a deadline.
-sleeps="$(code_grep '(^|[^A-Za-z0-9_.])IO[.]sleep([^A-Za-z0-9_]|$)' 'Linger/*.lean' 'packages/*.lean' Main.lean \
+# claim `Wait.Lasts`, which its check tests): at least 1 ms and at most its step, never past its
+# deadline, and `false` once that has passed, when the wait reports what it missed. The one wait
+# with no deadline that sleeps, `start` or `resume` waiting on a daemon that took the request's
+# ticket, sleeps through `Os.Shell.pause`. No timer task stands in for a deadline. The program
+# is every module but proofs, tests, suites and checks, which run apart from it.
+sleeps="$(code_grep '(^|[^A-Za-z0-9_.])IO[.]sleep([^A-Za-z0-9_]|$)' 'Linger/*.lean' 'packages/*.lean' \
   | grep -v -e '^Linger/[^/]*/Proofs/' -e '^Linger/[^/]*/Tests/' -e '^Linger/[^/]*/Suites/' \
       -e '^packages/[^/]*/[^/]*/Proofs/' -e '^packages/[^/]*/[^/]*/Tests/' -e '^packages/[^/]*/[^/]*/Suites/' \
+      -e '/WorldCode/Checks[.]lean:' \
   | cut -d: -f1 | sort | uniq -c | awk '{ printf "%s:%s ", $2, $1 }')"
-[ "$sleeps" = "packages/os/Os/Shell.lean:2 " ] \
+[ "$sleeps" = "packages/os/Os/WorldCode.lean:2 " ] \
   || fail "a wait sleeps outside Os.Shell.nap and Os.Shell.pause: $sleeps"
 code_grep '^[[:space:]]+match Os[.]Wait[.]next deadline step [(]← monotonicMs[)] with$' \
-  packages/os/Os/Shell.lean >/dev/null \
+  packages/os/Os/WorldCode.lean >/dev/null \
   || fail "Os.Shell.nap sleeps other than as Os.Wait.next decides"
 [ "$(code_count '(^|[^A-Za-z0-9_.])pause [0-9]' 'Linger/*.lean')" -eq 1 ] \
-  && code_grep '^[[:space:]]+pause 10$' Linger/App/Shell.lean >/dev/null \
+  && code_grep '^[[:space:]]+pause 10$' Linger/App/WorldCode.lean >/dev/null \
   || fail "a wait with no deadline sleeps other than where start and resume wait on their daemon"
 # A resume runs in its saved directory, else in a nonempty HOME, else nowhere
 # (resumeDir_absent): the daemon reads HOME for it into Env.resumeDir, and the resume suite
@@ -1206,11 +1138,11 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])match Linger[.]Os[.]Env[.]r
 
 # Descriptor exhaustion must suspend admission without stopping existing work.
 # The live fixture exhausts real descriptors; gates pin the retry and fd cleanup.
-code_grep '^def acceptRetryMs : Nat := [1-9][0-9]*$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^def acceptRetryMs : Nat := [1-9][0-9]*$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "admission retry must wait a positive duration"
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])if let some retryAt := rt[.]acceptAfter then if now < retryAt then deadlines := retryAt :: deadlines([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "admission retry no longer bounds the next poll deadline"
-code_grep '^[[:space:]]+rt := [{] rt with acceptAfter := some [(][(]← monotonicMs[)] [+] acceptRetryMs[)] [}]$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+rt := [{] rt with acceptAfter := some [(][(]← monotonicMs[)] [+] acceptRetryMs[)] [}]$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "admission failures must renew their retry deadline"
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])try setNonblock fd catch err => close fd throw err([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "failed client setup must release its accepted descriptor"
@@ -1221,14 +1153,14 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])rt := [{] rt with conns := 
 # injects both the operation failure and a failing stderr write.
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def report [(]message : String[)] : IO Unit := do try IO[.]eprintln message catch _ => pure [(][)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "daemon diagnostics must contain write failures"
-[ "$(code_count 'IO[.]eprintln|IO[.]eprint|IO[.]getStderr' 'Linger/Session/Shell/Daemon.lean')" -eq 1 ] \
+[ "$(code_count 'IO[.]eprintln|IO[.]eprint|IO[.]getStderr' 'Linger/Session/WorldCode/Daemon.lean')" -eq 1 ] \
   || fail "daemon diagnostics must go through the non-throwing reporter"
 
 # The shared driver proves feedback order, termination and invariant preservation.
 # Its IO adapter must forward the actual state and retain the returned state/exit.
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def pump [(]rt : Rt[)] [(]evs : List Event[)] : BaseIO Rt := do let result ← Driver[.]run executeEffect [{] st := rt[.]st, world := rt, exiting := rt[.]exiting [}] evs return [{] result[.]world with st := result[.]st, exiting := result[.]exiting [}]' awk "$CODE_AWK" >/dev/null \
   || fail "daemon pump must use the proved driver with its actual state and exit flag"
-code_grep '^private def perform [(]st : State[)] [(]rt : Rt[)] : [(]eff : Effect Plan[)] → IO [(]Rt × Driver[.]Reply eff[)]$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^private def perform [(]st : State[)] [(]rt : Rt[)] : [(]eff : Effect Plan[)] → IO [(]Rt × Driver[.]Reply eff[)]$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "effect interpreter must implement the driver's dependent reply type"
 # The executor the driver runs answers every effect and raises nothing (`run_total_safe`, over
 # the world claim `Driver.Responds`, which the delivery suite exercises): `BaseIO` has no error to
@@ -1247,9 +1179,9 @@ done
 
 # An info answer can span several frames. The pure producer proves the bound;
 # keep the IO accumulator on that same policy rather than a copied number.
-code_grep '^abbrev infoReplyCap : Nat := Linger[.]Session[.]infoReplyCap$' 'Linger/Session/Shell/Inventory.lean' > /dev/null \
+code_grep '^abbrev infoReplyCap : Nat := Linger[.]Session[.]infoReplyCap$' 'Linger/Session/WorldCode/Inventory.lean' > /dev/null \
   || fail "the inventory's info policy diverged from the proved producer"
-code_grep '^[[:space:]]+Linger[.]Session[.]Buf[.]bufOffer infoReplyCap acc [(]ByteArray[.]mk payload[.]toArray[)]$' 'Linger/Session/Shell/Inventory.lean' > /dev/null \
+code_grep '^[[:space:]]+Linger[.]Session[.]Buf[.]bufOffer infoReplyCap acc [(]ByteArray[.]mk payload[.]toArray[)]$' 'Linger/Session/WorldCode/Inventory.lean' > /dev/null \
   || fail "the info accumulator no longer uses the shared byte policy"
 
 # All session verbs consume the same exact target parser. Fuzzy matching stays
@@ -1261,18 +1193,18 @@ code_grep '^[[:space:]]+Linger[.]Session[.]Buf[.]bufOffer infoReplyCap acc [(]By
 # A literal attach argv passes a name starting with - as an option. "attach" may begin
 # a list, array or cons only in the command parser's pattern and in Picker.attachArgs,
 # tied above.
-attach_words="$(code_grep '"attach"[[:space:]]*(,|[]]|::)' 'Linger/*/Shell.lean' 'Linger/*/Shell/*' \
+attach_words="$(code_grep '"attach"[[:space:]]*(,|[]]|::)' 'Linger/*/WorldCode.lean' 'Linger/*/WorldCode/*' \
   | sed 's/^\([^:]*\):[0-9]*:[[:space:]]*/\1: /')"
 [ "$attach_words" = "$(printf '%s\n' \
-    'Linger/App/Shell.lean: | "attach" :: rest | "a" :: rest =>' \
-    'Linger/Selector/Shell.lean: ("attach" :: (if readOnly then ["--read-only"] else []) ++')" ] \
+    'Linger/App/WorldCode.lean: | "attach" :: rest | "a" :: rest =>' \
+    'Linger/Selector/WorldCode.lean: ("attach" :: (if readOnly then ["--read-only"] else []) ++')" ] \
   || fail "a literal attach argv: build it with Picker.attachArgs, whose operands come from Remote.targetOperands: $attach_words"
-! code_grep '(^|[^A-Za-z0-9_.])Fuzzy[.]|Name[.]sanitize' Linger/App/Shell.lean Linger/Session/Shell/Client.lean \
+! code_grep '(^|[^A-Za-z0-9_.])Fuzzy[.]|Name[.]sanitize' Linger/App/WorldCode.lean Linger/Session/WorldCode/Client.lean \
   || fail "noninteractive command lookup must not fuzzy-match or rewrite a name"
 code_grep '^[[:space:]]+Linger[.]Target[.]Remote[.]targetValid target = true ∧ target ∉ candidates := by$' Linger/Selector/Proofs/Picker.lean >/dev/null \
   || fail "selector creation and command arguments no longer share the target grammar"
 for verb in attach start resume send detach kill info capture resize get set unset clear; do
-  code_grep "^[[:space:]]+withTarget \"$verb\" " Linger/App/Shell.lean >/dev/null \
+  code_grep "^[[:space:]]+withTarget \"$verb\" " Linger/App/WorldCode.lean >/dev/null \
     || fail "session command bypassed the common exact target boundary: $verb"
 done
 for tie in \
@@ -1291,7 +1223,7 @@ for tie in \
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "command transport lost exact targets, argv, stdin or terminal ownership: $tie"
 done
-[ "$(code_count '^[[:space:]]+writeAll stdoutFd [(]ByteArray[.]mk Terminal[.]Render[.]leaveAnsi[.]toArray[)]$' Linger/App/Shell.lean)" -eq 1 ] \
+[ "$(code_count '^[[:space:]]+writeAll stdoutFd [(]ByteArray[.]mk Terminal[.]Render[.]leaveAnsi[.]toArray[)]$' Linger/App/WorldCode.lean)" -eq 1 ] \
   || fail "remote SSH termination no longer establishes canonical handback"
 
 # Lifetime ownership covers two resources: the socket namespace and the saved
@@ -1300,7 +1232,7 @@ done
 # an owner as `Claim.enters`, which every two-lock acquisition asks before it acts; these IO ties
 # and Linger.Session.Suites.Identity check acquisition before use and release after cleanup. A
 # connected daemon's failure must never fall back to older saved data.
-paths_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Paths.lean)"
+paths_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/WorldCode/Paths.lean)"
 for tie in \
   'match Linger[.]Target[.]Name[.]check name with [|] some name => return name [|] none => throw' \
   'if listed then return s!"[{]dir[}]/[{]name[}][{]suffix[}]" let name ← checkName name ensureDir dir let path := s!"[{]dir[}]/[{]name[}][{]suffix[}]" checkSpelling path return path' \  'def namedPath [(]dir name suffix : String[)] : IO String := pathIn dir name suffix false' \
@@ -1327,7 +1259,7 @@ for tie in \
   printf '%s\n' "$paths_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "session listing must check every directory entry with Name.check: $tie"
 done
-! code_grep 'removeFile|rename' Linger/Session/Shell/Paths.lean \
+! code_grep 'removeFile|rename' Linger/Session/WorldCode/Paths.lean \
   || fail "lock path construction and acquisition must never unlink or replace a lock inode"
 printf '%s\n' "$client_code" | CG_RE='(^|[[:space:]])try Paths[.]checkSpelling path return some fd catch err => close fd throw err([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "successful connects must reject case-folded aliases and close on failure"
@@ -1352,9 +1284,9 @@ for tie in \
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "a command started from a checkpoint other than as Recovery.decide says: $tie"
 done
-[ "$(code_count '[(]recoverFor name[)]' Linger/App/Shell.lean)" -eq 3 ] \
+[ "$(code_count '[(]recoverFor name[)]' Linger/App/WorldCode.lean)" -eq 3 ] \
   || fail "every daemon a command begins, for attach, start and resume, recovers through recoverFor"
-! code_grep '(^|[^[:alnum:]_])loadBytes([^[:alnum:]_]|$)' Linger/App/Shell.lean Linger/Session/Shell/Resume.lean \
+! code_grep '(^|[^[:alnum:]_])loadBytes([^[:alnum:]_]|$)' Linger/App/WorldCode.lean Linger/Session/WorldCode/Resume.lean \
   || fail "a command decodes a checkpoint itself: ask Recovery.decide, which never takes bytes that do not decode for no checkpoint"
 # A request's answer is true (`start_answer_true`). The command makes the request's ticket before
 # it begins the daemon. The daemon takes it once, before its first report and at the commit point
@@ -1367,7 +1299,7 @@ for tie in \
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "a daemon reached its commit point without taking its request's ticket: $tie"
 done
-[ "$(code_count 'req[.]take|Start[.]proceeds|unixListen' Linger/Session/Shell/Daemon.lean)" -eq 2 ] \
+[ "$(code_count 'req[.]take|Start[.]proceeds|unixListen' Linger/Session/WorldCode/Daemon.lean)" -eq 2 ] \
   || fail "a daemon takes its request's ticket and listens only at its one commit point"
 for tie in \
   'private def takeTicket [(]report : String[)] : IO Bool := do try IO[.]FS[.]removeFile [(]ticketPath report[)] return true catch _ => return false' \
@@ -1381,7 +1313,7 @@ for tie in \
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "start or resume answered without its request's ticket: $tie"
 done
-[ "$(code_count 'takeTicket report' Linger/App/Shell.lean)" -eq 4 ] \
+[ "$(code_count 'takeTicket report' Linger/App/WorldCode.lean)" -eq 4 ] \
   || fail "only the daemon's take-once, a failed begin and the command's wait take a request's ticket"
 # An offline reader holds both locks briefly, while it loads and renders, so the daemon's
 # startup claim retries a held lock for a bounded, positive time, and stops at once when a live
@@ -1391,13 +1323,13 @@ done
 # failed attempt as an unchanged step. Linger.Session.Suites.Robust holds both of a name's locks
 # while resume starts the session, as an offline reader does, and checks that a claim finding
 # both free logs no wait.
-code_grep '^private def claimWaitMs : Nat := [1-9][0-9]*$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^private def claimWaitMs : Nat := [1-9][0-9]*$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "the startup claim must wait a positive, fixed time"
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])if [(]← monotonicMs[)] ≥ deadline then return false let live ← unixConnect sockPath if live ≥ 0 then close live[.]toUInt64[.]toUInt32 return false([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "the startup claim must stop at its deadline and when a live daemon answers"
-retrying="$(code_grep '(^|[^[:alnum:]_])with(Session)?LockRetrying([^[:alnum:]_]|$)' 'Linger/*' Main.lean \
-  | awk -F: '$1 != "Linger/Session/Shell/Paths.lean" { print $1 }')"
-[ "$retrying" = 'Linger/Session/Shell/Daemon.lean' ] \
+retrying="$(code_grep '(^|[^[:alnum:]_])with(Session)?LockRetrying([^[:alnum:]_]|$)' 'Linger/*' \
+  | awk -F: '$1 != "Linger/Session/WorldCode/Paths.lean" { print $1 }')"
+[ "$retrying" = 'Linger/Session/WorldCode/Daemon.lean' ] \
   || fail "only the daemon's startup claim may retry a held lock: ${retrying:-no retrying claim}"
 for tie in \
   'finally close listenFd try IO[.]FS[.]removeFile sockPath catch _ => pure [(][)][[:space:]]+end Linger[.]Session[.]Shell[.]Daemon' \
@@ -1412,17 +1344,17 @@ done
 # `Record.Kept` (`record_answer`) and `Disk.Durable` (`crash_resumes`) take the file system to
 # honor. The agent suite reads records after their sessions end, the resume suite reads both
 # after a daemon killed while it saves, and the interop suite reads an imported checkpoint.
-record_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Record.lean)"
+record_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/WorldCode/Record.lean)"
 for tie in \
   'def save [(]name : String[)] [(]record : Linger[.]Session[.]Record[)] : IO Unit := do Os[.]Shell[.]replaceFile [(]← Paths[.]recordPath name[)] [(]ByteArray[.]mk [(]Linger[.]Session[.]Record[.]encode record[)][.]toArray[)]' \
   '[|] some bytes => Os[.]Shell[.]replaceFile path [(]ByteArray[.]mk bytes[.]toArray[)]'; do
   printf '%s\n' "$record_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "an end record is written other than whole and durably, through Os.Shell.replaceFile: $tie"
 done
-os_shell_code="$(awk '{ $1 = $1; printf "%s ", $0 }' packages/os/Os/Shell.lean)"
+os_shell_code="$(awk '{ $1 = $1; printf "%s ", $0 }' packages/os/Os/WorldCode.lean)"
 printf '%s\n' "$os_shell_code" | CG_RE='(^|[[:space:]])def replaceFile [(]path : String[)] [(]bytes : ByteArray[)] : IO Unit := do let tmp := path [+][+] "[.]tmp" IO[.]FS[.]withFile tmp [.]write fun handle => do IO[.]Prim[.]setAccessRights tmp 0o600 handle[.]write bytes let _ ← fsyncPath tmp IO[.]FS[.]rename tmp path let dir := [(][(]System[.]FilePath[.]mk path[)][.]parent[.]map [(]·[.]toString[)][)][.]getD "" let _ ← fsyncPath [(]if dir[.]isEmpty then "[.]" else dir[)] [(]directory := true[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "Os.Shell.replaceFile no longer makes its temporary file private and flushes it before its rename and the directory after it"
-[ "$(code_count 'IO[.]FS[.]rename' 'Linger/Session/Shell/*')" -eq 0 ] \
+[ "$(code_count 'IO[.]FS[.]rename' 'Linger/Session/WorldCode/*')" -eq 0 ] \
   || fail "a session file is renamed into place outside Os.Shell.replaceFile, which flushes it"
 # `capture` of a saved session takes the steps of `Capture.plan` (`capture_waits_unlocked`), each
 # from an `acquire` to the next `release` inside one `withSessionLock`, as `Capture.work` reads
@@ -1456,23 +1388,23 @@ printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])if row[.]lookup "state" == 
 # `onMsg_resizePty_agrees` connects every emitted pty size to the resulting
 # emulator's effective dimensions. IO is outside the theorem: keep the effect
 # interpreter forwarding those exact dimensions, in order.
-code_grep '^[[:space:]]+[|] [.]resizePty cols rows =>' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+[|] [.]resizePty cols rows =>' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "review the pty effect interpreter against onMsg_resizePty_agrees"
-code_grep '^[[:space:]]+winsizeSet rt[.]ptyFd cols rows$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+winsizeSet rt[.]ptyFd cols rows$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "the pty interpreter no longer forwards the proved dimensions in order"
 
 # The elapsed-time theorems use Nat. Keep the actual monotonic source and the
 # daemon tick on that representation; narrowing here is invisible to the proofs.
-code_grep '^def monotonicMs : IO Nat := IO[.]monoMsNow$' 'packages/os/Os/Shell.lean' > /dev/null \
+code_grep '^def monotonicMs : IO Nat := IO[.]monoMsNow$' 'packages/os/Os/WorldCode.lean' > /dev/null \
   || fail "the monotonic clock no longer forwards Lean's Nat clock directly"
-code_grep '^[[:space:]]+let now ← monotonicMs$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+let now ← monotonicMs$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "the daemon tick no longer reads the monotonic clock"
-code_grep "^[[:space:]]+rt ← pump rt' [(]events [+][+] [[][.]tick now[]][)]$" 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep "^[[:space:]]+rt ← pump rt' [(]events [+][+] [[][.]tick now[]][)]$" 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "the daemon no longer forwards the monotonic value to the proved tick"
 
 # The daemon boots from Session.bootVt, the term the resume theorems quantify over:
 # `resume_restores` (Challenge.lean, part 7) states the resume over `bootVt` itself.
-code_grep '^[[:space:]]+let vt0 := Linger[.]Session[.]bootVt [(]restore[.]map [(]·[.]1[)][)]$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+let vt0 := Linger[.]Session[.]bootVt [(]restore[.]map [(]·[.]1[)][)]$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "Daemon.serve no longer boots from Session.bootVt, which resume_restores covers"
 
 # Read-only attachment's client-side guards. Read-only
@@ -1484,23 +1416,23 @@ code_grep '^[[:space:]]+let vt0 := Linger[.]Session[.]bootVt [(]restore[.]map [(
 # honest oracle, the same species as SHIM_CAP above; faking it as a pty assertion
 # would be decoration. `Linger/Session/Suites/Watch.lean` covers guard A (the mode
 # the attach carries), which IS observable.
-code_grep 'if size != lastSize && !readOnly' 'Linger/Session/Shell/Client.lean' > /dev/null \
+code_grep 'if size != lastSize && !readOnly' 'Linger/Session/WorldCode/Client.lean' > /dev/null \
   || fail "Client.attach lost its read-only resize guard (a watcher would fight the user's size)"
-code_grep 'if !out.isEmpty && !readOnly' 'Linger/Session/Shell/Client.lean' > /dev/null \
+code_grep 'if !out.isEmpty && !readOnly' 'Linger/Session/WorldCode/Client.lean' > /dev/null \
   || fail "Client.attach lost its read-only input guard (a watcher would forward keystrokes)"
-code_grep '^[[:space:]]+let mode : Linger[.]Session[.]Mode := if readOnly then [.]readOnly else [.]writable$' 'Linger/Session/Shell/Client.lean' > /dev/null \
-  && code_grep '^[[:space:]]+sendMsg fd [(][.]attach mode cols rows[)]$' 'Linger/Session/Shell/Client.lean' > /dev/null \
+code_grep '^[[:space:]]+let mode : Linger[.]Session[.]Mode := if readOnly then [.]readOnly else [.]writable$' 'Linger/Session/WorldCode/Client.lean' > /dev/null \
+  && code_grep '^[[:space:]]+sendMsg fd [(][.]attach mode cols rows[)]$' 'Linger/Session/WorldCode/Client.lean' > /dev/null \
   || fail "Client.attach no longer sends the mode its caller asked for (the wire's only read-only bit)"
 # The detach key follows Env.detachEnabled: always in a read-only view, whose saved
 # form passes that value, true, directly (detachEnabled_readOnly), and for writable
 # attach only while LINGER_NO_DETACH_KEY is unset. Linger.Session.Suites.Watch and Linger.Session.Suites.Attach observe both.
 printf '%s\n' "$client_code" | CG_RE='(^|[[:space:]])let detachEnabled := Linger[.]Os[.]Env[.]detachEnabled readOnly [(]← IO[.]getEnv "LINGER_NO_DETACH_KEY"[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "attach bypasses Env.detachEnabled, which keeps the detach key in read-only views"
-code_grep '^[[:space:]]+let [(]out, detach[)] := splitDetach bs detachEnabled$' Linger/Session/Shell/Client.lean >/dev/null \
+code_grep '^[[:space:]]+let [(]out, detach[)] := splitDetach bs detachEnabled$' Linger/Session/WorldCode/Client.lean >/dev/null \
   || fail "attach no longer splits input with its detach policy"
 
 # The checkpoint decoder must not grow its forge back.
-# `Linger/Session/Checkpoint.lean` keeps a PERMANENT `import all Terminal.Vt`: `wVt` reads
+# `Linger/Session/CoreCode/Checkpoint.lean` keeps a PERMANENT `import all Terminal.Vt`: `wVt` reads
 # 17 sealed fields, and dropping the import would force `Vt.ofDecoded` to be public — a
 # second public door admitting any `Good` state, for every module forever, which is a
 # wider hole than the one it replaces. The trade is that this one file retains the raw
@@ -1518,11 +1450,11 @@ code_grep '^[[:space:]]+let [(]out, detach[)] := splitDetach bs detachEnabled$' 
 # bite on an UNPAIRED backtick, which `code_grep` deliberately treats as code.
 # Break-verified both ways: a real forge at the decoder's old position, and the call
 # deleted with the docstrings left in place.
-code_grep '(^|[^`[:alnum:]_.])Vt[.]ofDecoded ' 'Linger/Session/Checkpoint.lean' > /dev/null \
-  || fail "Linger/Session/Checkpoint.lean no longer decodes through Vt.ofDecoded (a corrupt checkpoint could carry a zero column count)"
+code_grep '(^|[^`[:alnum:]_.])Vt[.]ofDecoded ' 'Linger/Session/CoreCode/Checkpoint.lean' > /dev/null \
+  || fail "Linger/Session/CoreCode/Checkpoint.lean no longer decodes through Vt.ofDecoded (a corrupt checkpoint could carry a zero column count)"
 FORGE='(^|[^`[:alnum:]_])(cols|rows|grid|bot|tabs|pstate|u8need|u8acc) *:='
-! code_grep "$FORGE" 'Linger/Session/Checkpoint.lean' \
-  || fail "a Vt field is assigned in Linger/Session/Checkpoint.lean — the decoder forge is back; go through Vt.ofDecoded, which validates"
+! code_grep "$FORGE" 'Linger/Session/CoreCode/Checkpoint.lean' \
+  || fail "a Vt field is assigned in Linger/Session/CoreCode/Checkpoint.lean — the decoder forge is back; go through Vt.ofDecoded, which validates"
 
 # Extensional reader theorems cannot distinguish reject-before-expansion from
 # expand-then-reject. The latter passed every semantic check, and
@@ -1565,7 +1497,7 @@ awk '
         bad = 1
       }
     exit bad
-  }' Linger/Session/Checkpoint.lean >&2 || fail "checkpoint allocation guard changed"
+  }' Linger/Session/CoreCode/Checkpoint.lean >&2 || fail "checkpoint allocation guard changed"
 # The six bounds the byte-array readers forward.
 for bound in \
   'rRLEB rCellB b i maxLength' \
@@ -1574,14 +1506,14 @@ for bound in \
   'let [(]tabs, i[)] ← rListB rBoolB b i [(]some cols[)]' \
   'let [(]sb, i[)] ← rRingB b i [(]some sbCap[)]' \
   'let [(]altGrid, i[)] ← rAltB b i [(]some cols[)] [(]some rows[)] legacy'; do
-  code_grep "^[[:space:]]+$bound\$" 'Linger/Session/Checkpoint.lean' > /dev/null \
+  code_grep "^[[:space:]]+$bound\$" 'Linger/Session/CoreCode/Checkpoint.lean' > /dev/null \
     || fail "a byte-array checkpoint reader stopped forwarding its bound: $bound"
 done
 # The checkpoint hooks are `IO`, so no theorem sees them use the proved codec: write the
 # session's terminal and labels, read through the observers the headline theorems name,
 # through `saveBytes` (`saveBytes_eq`), replacing the file whole and durably, and hand the file's
 # bytes to `Recovery.decide`, which decodes them with `loadBytes` (`recovery_exact`).
-resume_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Resume.lean)"
+resume_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/WorldCode/Resume.lean)"
 for tie in \
   'let ck : Ckpt Terminal[.]Vt[.]Vt := [{] vt := st[.]terminal, cwd, labels := st[.]labelList [}] let bytes := saveBytes ck Os[.]Shell[.]replaceFile path bytes' \
   'if ![(]← System[.]FilePath[.]pathExists path[)] then return none try return some [(]← IO[.]FS[.]readBinFile path[)]'; do
@@ -1623,7 +1555,7 @@ done
 # `socket_root` in scripts/verify.sh: macOS caps a socket path at 104 bytes, and its TMPDIR
 # alone takes about 49. So the test orchestration spells a temporary root only in those
 # three definitions and in the expansion. Linger/Session/Suites/Paths.lean and Linger/Display/Suites/Overview.lean are exempt:
-# they assert the product's documented defaults (Linger/Session/Shell/Paths.lean). The match
+# they assert the product's documented defaults (Linger/Session/WorldCode/Paths.lean). The match
 # also covers `/private/tmp`, `/var/tmp` and `/private/var/tmp`, and only where a path
 # starts, not a component such as `$dir/tmp`. Each hit is read again with every expansion
 # blanked out, because an ERE cannot exclude one context.
@@ -1710,32 +1642,19 @@ git ls-files 'tests/*' 'Tools/*' 'Manager/*' 'Tests/*' 'Linger/Core/*' 'Linger/R
     'Linger/Tools/*' 'Linger/Manager/*' | grep -q . \
   && fail "legacy directory: use scripts/, or a component under Linger/" || true
 
-# The gates and the audit classify modules separately: the gates by path (`pure_paths`
-# above, and `pureModule` in `Theorems/Coverage.lean`), the audit by the longest prefix in
-# Audit.lean's role table. They must agree: a module is pure under the path rule exactly
-# when the audit holds it to the core or spec rules. So a new component fails here until
-# Audit.lean lists it, and so does a module nested below a component's top level outside
-# its `Proofs/`, `Tests/`, `Suites/` and a shell the table lists, which the path rule skips.
-audit_roles="$(grep -o '(`[A-Za-z0-9_.]*, [.][a-z]*)' Audit.lean | tr -d '(`),')"
-[ -n "$audit_roles" ] || fail "no role table found in Audit.lean"
-role_bad="$(git ls-files -- Linger.lean 'Linger/*.lean' \
-| AR_ROLES="$audit_roles" AR_PURE="$pure_paths" awk '
-  BEGIN { n = split(ENVIRON["AR_ROLES"], R, "\n")
-          for (i = 1; i <= n; i++) { split(R[i], kv, " "); role[kv[1]] = kv[2] }
-          n = split(ENVIRON["AR_PURE"], P, "\n"); for (i = 1; i <= n; i++) pure[P[i]] = 1 }
-  { mod = $0; sub(/[.]lean$/, "", mod); gsub(/[/]/, ".", mod)
-    best = ""
-    for (prefix in role)
-      if ((mod == prefix || index(mod, prefix ".") == 1) && length(prefix) > length(best))
-        best = prefix
-    got = (best == "" ? "unclassified" : role[best] " (from " best ")")
-    held = (best != "" && (role[best] == ".core" || role[best] == ".spec"))
-    if (($0 in pure) != held)
-      printf "  %s: %s under the path rule, but Audit.lean makes it %s\n", $0,
-        (($0 in pure) ? "pure" : "not pure"), got }')"
-[ -z "$role_bad" ] || {
-  printf '%s\n' "$role_bad" >&2
-  fail "the path rule and Audit.lean disagree on which modules are pure: list the component in Audit.lean, or move the module"; }
+# A module's role is the first component of its name that is `CoreSpec`, `CoreCode`,
+# `WorldSpec` or `WorldCode`, and the audit holds each role to its rules; any other module is
+# tooling, held to none of them, which no program module can import. So each module of a
+# component or a package has its role right below the component or the package's root, or is a
+# proof, a test, a suite or a package's solution, and no module of the program is tooling by a
+# misplaced name.
+layout_bad="$( { git ls-files -- 'Linger/*.lean' | awk -F/ '{ print $3 "\t" $0 }'
+    git ls-files -- 'packages/*/*/*.lean' | awk -F/ '{ print $4 "\t" $0 }'; } \
+  | awk -F'\t' '$1 !~ /^(CoreSpec|CoreCode|WorldSpec|WorldCode|Proofs|Tests|Suites)([.]lean)?$/ \
+      && $1 != "Solution.lean" { print "  " $2 }')"
+[ -z "$layout_bad" ] || {
+  printf '%s\n' "$layout_bad" >&2
+  fail "a module has no role below its component: name it <component>/<role>/..., or move it under Proofs/, Tests/ or Suites/"; }
 
 # Every declaration name cited in backticks must resolve to a declaration, in every tracked
 # `.lean` file, comments included. This is gated rather than reviewed because reviewing it
@@ -1906,56 +1825,58 @@ ed_n="$(code_count '(^|[^[:alnum:]_.])drain(Str)?[[:space:]]+[^[:space:]]+[[:spa
 # for belongs only on this list, and every wait on it is bounded and says what it missed, so a
 # loaded host slows linger down without hanging it. A new sleep, nap or poll joins the list with
 # its bound, or waits on an event instead. Every bounded wait naps as `Os.Wait.next` decides
-# (`wait_ends`); the one sleep with no deadline is `pause`, named below.
-#   App/Shell: a started daemon's report, every 10 ms for at most startWaitMs (30 s), then, once
+# (`wait_ends`); the one sleep with no deadline is `pause`, named below. The checks of the world
+# claims are no part of the program: they run apart from it, and its modules never import them.
+#   App/WorldCode: a started daemon's report, every 10 ms for at most startWaitMs (30 s), then, once
 #     the daemon took the request's ticket, every 10 ms while it lives (`pause`); a spawned
 #     daemon's socket, every 30 ms for socketWaitFloorMs (3 s), then while that daemon lives,
 #     up to socketWaitCapMs (30 s); remote listings, every 5 ms for at most
 #     remoteQueryTimeoutMs (3 s); `send -` wakes only for input, replies and closes; `wait`
 #     looks at a held name every 20 ms for at most heldNameMs (8 s) from the look that first
 #     found it so, as `Wait.decide` says, and `kill` for its release as long.
-#   Import/Shell: tmux's configuration and a pane archive, every 10 ms for at most 1 s and 5 s.
-#   packages/os, Os/Shell: `nap` and `pause`, the only sleeps; a full write's wait for its
+#   Import/WorldCode: tmux's configuration and a pane archive, every 10 ms for at most 1 s and 5 s.
+#   packages/os, Os/WorldCode: `nap` and `pause`, the only sleeps; a full write's wait for its
 #     descriptor to take more (`writeAll`), with no deadline, on its reader, as a blocking
-#     write's; Os/Shell/Command: a stopped command's output, every 5 ms for its grace period.
-#   Selector/Shell: the picker, every 50 ms while it is open, for keys, the escape deadline and
+#     write's; Os/WorldCode/Command: a stopped command's output, every 5 ms for its grace period.
+#   Selector/WorldCode: the picker, every 50 ms while it is open, for keys, the escape deadline and
 #     a listing each second.
-#   Session/Shell/Client: a one-shot reply, until replySilenceMs (10 s) of silence; a saved view
+#   Session/WorldCode/Client: a one-shot reply, until replySilenceMs (10 s) of silence; a saved view
 #     and an attach, every 200 ms for a resize, and an attach's title sample once a second.
-#   Session/Shell/Daemon: a write waiting on the disk says so after a second, looking every
+#   Session/WorldCode/Daemon: a write waiting on the disk says so after a second, looking every
 #     10 ms; the loop, until an event or a deadline; the final drain, at most drainTimeoutMs
 #     (3 s); stopping a program, in 10 ms steps for at most 2 s, and the rest of its session, in
 #     50 ms steps for at most 2 s; a held startup claim, every 10 ms for at most claimWaitMs (1 s).
-#   Session/Shell/Inventory: an info reply, until the request's deadline: replySilenceMs (10 s)
+#   Session/WorldCode/Inventory: an info reply, until the request's deadline: replySilenceMs (10 s)
 #     for the one an attach asks for its daemon's protocol level.
 timers="$(code_grep '(IO[.]sleep [^[:space:]]|← poll [^[:space:]]|(^|[[:space:].])nap [^[:space:]]|(^|[[:space:]])pause [0-9])' 'Linger/*.lean' \
-    ':!Linger/*/Suites/*' ':!Linger/*/Proofs/*' ':!Linger/*/Tests/*' \
+    ':!Linger/*/Suites/*' ':!Linger/*/Proofs/*' ':!Linger/*/Tests/*' ':!Linger/*/WorldCode/Checks.lean' \
     'packages/*.lean' ':!packages/*/Suites/*' ':!packages/*/Proofs/*' ':!packages/*/Tests/*' \
+    ':!packages/*/WorldCode/Checks.lean' \
   | sed -E 's/^([^:]+):[0-9]+:[[:space:]]*/\1: /')"
-expected_timers='Linger/App/Shell.lean: unless ← nap deadline 10 do
-Linger/App/Shell.lean: pause 10
-Linger/App/Shell.lean: unless ← nap (start + socketWaitCapMs) 30 do
-Linger/App/Shell.lean: unless ← nap deadline 5 do
-Linger/App/Shell.lean: let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] (-1)
-Linger/App/Shell.lean: discard <| nap (first + Wait.heldNameMs) 20
-Linger/App/Shell.lean: unless ← nap deadline 20 do
-Linger/Import/Shell.lean: unless ← Os.Shell.nap deadline 10 do
-Linger/Import/Shell.lean: unless ← Os.Shell.nap deadline 10 do
-Linger/Selector/Shell.lean: let ready ← poll fds events 50
-Linger/Session/Shell/Client.lean: let revs ← poll #[fd] #[POLLIN] silenceMs
-Linger/Session/Shell/Client.lean: let ready ← poll fds events 200
-Linger/Session/Shell/Client.lean: let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] 200
-Linger/Session/Shell/Daemon.lean: unless ← nap tellAt 10 do
-Linger/Session/Shell/Daemon.lean: unless ← nap deadline step do
-Linger/Session/Shell/Daemon.lean: let revs ← poll fds evts timeout
-Linger/Session/Shell/Daemon.lean: let revs ← poll fds (Array.replicate fds.size POLLOUT) (Int32.ofNat (min 100 (deadline - now)))
-Linger/Session/Shell/Daemon.lean: nap deadline 10
-Linger/Session/Shell/Inventory.lean: let revs ← poll #[fd] #[POLLIN] (Int32.ofNat (min 100 remaining))
-packages/os/Os/Shell.lean: let _ ← poll #[fd] #[POLLOUT] (-1)
-packages/os/Os/Shell.lean: def nap (deadline step : Nat) : IO Bool := do
-packages/os/Os/Shell.lean: IO.sleep ms.toUInt32
-packages/os/Os/Shell.lean: def pause (ms : Nat) : IO Unit := IO.sleep ms.toUInt32
-packages/os/Os/Shell/Command.lean: unless ← Os.Shell.nap deadline 5 do'
+expected_timers='Linger/App/WorldCode.lean: unless ← nap deadline 10 do
+Linger/App/WorldCode.lean: pause 10
+Linger/App/WorldCode.lean: unless ← nap (start + socketWaitCapMs) 30 do
+Linger/App/WorldCode.lean: unless ← nap deadline 5 do
+Linger/App/WorldCode.lean: let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] (-1)
+Linger/App/WorldCode.lean: discard <| nap (first + Wait.heldNameMs) 20
+Linger/App/WorldCode.lean: unless ← nap deadline 20 do
+Linger/Import/WorldCode.lean: unless ← Os.Shell.nap deadline 10 do
+Linger/Import/WorldCode.lean: unless ← Os.Shell.nap deadline 10 do
+Linger/Selector/WorldCode.lean: let ready ← poll fds events 50
+Linger/Session/WorldCode/Client.lean: let revs ← poll #[fd] #[POLLIN] silenceMs
+Linger/Session/WorldCode/Client.lean: let ready ← poll fds events 200
+Linger/Session/WorldCode/Client.lean: let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] 200
+Linger/Session/WorldCode/Daemon.lean: unless ← nap tellAt 10 do
+Linger/Session/WorldCode/Daemon.lean: unless ← nap deadline step do
+Linger/Session/WorldCode/Daemon.lean: let revs ← poll fds evts timeout
+Linger/Session/WorldCode/Daemon.lean: let revs ← poll fds (Array.replicate fds.size POLLOUT) (Int32.ofNat (min 100 (deadline - now)))
+Linger/Session/WorldCode/Daemon.lean: nap deadline 10
+Linger/Session/WorldCode/Inventory.lean: let revs ← poll #[fd] #[POLLIN] (Int32.ofNat (min 100 remaining))
+packages/os/Os/WorldCode.lean: let _ ← poll #[fd] #[POLLOUT] (-1)
+packages/os/Os/WorldCode.lean: def nap (deadline step : Nat) : IO Bool := do
+packages/os/Os/WorldCode.lean: IO.sleep ms.toUInt32
+packages/os/Os/WorldCode.lean: def pause (ms : Nat) : IO Unit := IO.sleep ms.toUInt32
+packages/os/Os/WorldCode/Command.lean: unless ← Os.Shell.nap deadline 5 do'
 [ "$timers" = "$expected_timers" ] \
   || fail "the program's timers changed; name each here with its bound, or wait on an event instead:
 $timers"
@@ -1964,37 +1885,37 @@ $timers"
 # bytes are printers `writes_clean` (Challenge part 8) proves clean; the session's own are its
 # output and the repaint of its screen. A new write joins this list, and the headline when its
 # bytes are linger's own.
-#   App/Shell: the handback after a remote command (`leaveAnsi`); `ls` (`terminalListing`);
+#   App/WorldCode: the handback after a remote command (`leaveAnsi`); `ls` (`terminalListing`);
 #     `capture` of a saved session (`screenText` or `history`, as `cmdRead`'s caller passes,
 #     rendered at the plan's `render` step and written at its `write` step, tied above).
-#   Import/Shell: `tmux ls` (`terminalListing`).
-#   Selector/Shell: taking the terminal (`enterAnsi`) and naming it, the window size, the frame
+#   Import/WorldCode: `tmux ls` (`terminalListing`).
+#   Selector/WorldCode: taking the terminal (`enterAnsi`) and naming it, the window size, the frame
 #     (`frame`), giving the terminal back (`exitAnsi`) and clearing its title.
-#   Session/Shell/Client: a one-shot reply, which is the daemon's `infoText`, `screenText` or
+#   Session/WorldCode/Client: a one-shot reply, which is the daemon's `infoText`, `screenText` or
 #     `history` in frames; a saved view's repaint (the session's), title (`Title.update`) and
 #     handback; an attach's output (the session's), title and handback.
-term_writes="$(code_grep 'stdoutFd' 'Main.lean' 'Linger/*.lean' \
+term_writes="$(code_grep 'stdoutFd' 'Linger/*.lean' \
     ':!Linger/*/Suites/*' ':!Linger/*/Proofs/*' ':!Linger/*/Tests/*' \
     'packages/*.lean' ':!packages/*/Suites/*' ':!packages/*/Proofs/*' ':!packages/*/Tests/*' \
   | sed -E 's/^([^:]+):[0-9]+:[[:space:]]*/\1: /')"
-expected_term_writes='Linger/App/Shell.lean: writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
-Linger/App/Shell.lean: writeAll stdoutFd
-Linger/App/Shell.lean: writeAll stdoutFd (ByteArray.mk bytes.toArray)
-Linger/Import/Shell.lean: Os.Shell.writeAll Os.Shell.stdoutFd
-Linger/Selector/Shell.lean: writeAll stdoutFd (ByteArray.mk Linger.Selector.Picker.enterAnsi.toArray)
-Linger/Selector/Shell.lean: writeAll stdoutFd (ByteArray.mk (Terminal.Title.ansi "linger").toArray)
-Linger/Selector/Shell.lean: let current ← winsizeGet stdoutFd
-Linger/Selector/Shell.lean: writeAll stdoutFd (ByteArray.mk frame.toArray)
-Linger/Selector/Shell.lean: writeAll stdoutFd (ByteArray.mk Linger.Selector.Picker.exitAnsi.toArray)
-Linger/Selector/Shell.lean: writeAll stdoutFd (ByteArray.mk (Terminal.Title.ansi "").toArray)
-Linger/Session/Shell/Client.lean: writeAll stdoutFd (ByteArray.mk payload.toArray)
-Linger/Session/Shell/Client.lean: writeAll stdoutFd (ByteArray.mk bytes.toArray)
-Linger/Session/Shell/Client.lean: writeAll stdoutFd (ByteArray.mk (Terminal.Title.update view title).toArray)
-Linger/Session/Shell/Client.lean: writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
-Linger/Session/Shell/Client.lean: writeAll stdoutFd (ByteArray.mk payload.toArray)
-Linger/Session/Shell/Client.lean: writeAll stdoutFd (ByteArray.mk bytes.toArray)
-Linger/Session/Shell/Client.lean: writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
-packages/os/Os/Shell.lean: def stdoutFd : UInt32 := 1'
+expected_term_writes='Linger/App/WorldCode.lean: writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
+Linger/App/WorldCode.lean: writeAll stdoutFd
+Linger/App/WorldCode.lean: writeAll stdoutFd (ByteArray.mk bytes.toArray)
+Linger/Import/WorldCode.lean: Os.Shell.writeAll Os.Shell.stdoutFd
+Linger/Selector/WorldCode.lean: writeAll stdoutFd (ByteArray.mk Linger.Selector.Picker.enterAnsi.toArray)
+Linger/Selector/WorldCode.lean: writeAll stdoutFd (ByteArray.mk (Terminal.Title.ansi "linger").toArray)
+Linger/Selector/WorldCode.lean: let current ← winsizeGet stdoutFd
+Linger/Selector/WorldCode.lean: writeAll stdoutFd (ByteArray.mk frame.toArray)
+Linger/Selector/WorldCode.lean: writeAll stdoutFd (ByteArray.mk Linger.Selector.Picker.exitAnsi.toArray)
+Linger/Selector/WorldCode.lean: writeAll stdoutFd (ByteArray.mk (Terminal.Title.ansi "").toArray)
+Linger/Session/WorldCode/Client.lean: writeAll stdoutFd (ByteArray.mk payload.toArray)
+Linger/Session/WorldCode/Client.lean: writeAll stdoutFd (ByteArray.mk bytes.toArray)
+Linger/Session/WorldCode/Client.lean: writeAll stdoutFd (ByteArray.mk (Terminal.Title.update view title).toArray)
+Linger/Session/WorldCode/Client.lean: writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
+Linger/Session/WorldCode/Client.lean: writeAll stdoutFd (ByteArray.mk payload.toArray)
+Linger/Session/WorldCode/Client.lean: writeAll stdoutFd (ByteArray.mk bytes.toArray)
+Linger/Session/WorldCode/Client.lean: writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
+packages/os/Os/WorldCode.lean: def stdoutFd : UInt32 := 1'
 [ "$term_writes" = "$expected_term_writes" ] \
   || fail "the program's terminal writes changed; name each here with whose bytes it writes:
 $term_writes"
@@ -2004,27 +1925,27 @@ printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$
 # No other way to write bytes to standard output: no literal descriptor, and no stream write in
 # the program, whose files `Os.Shell.replaceFile` writes. A stream write is a call on a value,
 # `handle.write`; a match arm `| .write` names a step or a decision.
-! code_grep '(writeAll|write) (Os[.]Shell[.])?[0-9]' 'Main.lean' 'Linger/*.lean' \
+! code_grep '(writeAll|write) (Os[.]Shell[.])?[0-9]' 'Linger/*.lean' \
     ':!Linger/*/Suites/*' ':!Linger/*/Proofs/*' ':!Linger/*/Tests/*' \
   || fail "a write names a descriptor by number; use stdoutFd and list the write above"
-! code_grep '[[:alnum:]_)][.]write[[:space:](]' 'Main.lean' 'Linger/*.lean' \
+! code_grep '[[:alnum:]_)][.]write[[:space:](]' 'Linger/*.lean' \
     ':!Linger/*/Suites/*' ':!Linger/*/Proofs/*' ':!Linger/*/Tests/*' \
   || fail "a stream write could reach standard output: write files through Os.Shell.replaceFile"
 # One command table: help prints it and every usage error quotes its command's row, so no usage
 # text is written anywhere else.
-! code_grep '"usage: linger' Linger/App/Shell.lean \
+! code_grep '"usage: linger' Linger/App/WorldCode.lean \
   || fail "a usage error bypasses the command table (Commands.usageLine)"
-printf '%s\n' "$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/Shell.lean)" \
+printf '%s\n' "$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/WorldCode.lean)" \
   | CG_RE='(^|[[:space:]])private def usage : String := Linger[.]App[.]Commands[.]helpText([[:space:]]|$)' \
     awk "$CODE_AWK" >/dev/null \
   || fail "help no longer prints the command table"
 # Every one-shot request is given up after replySilenceMs of silence; only `wait` passes its own
 # budget, its deadline's, or none when it has none, since it waits for a program to end.
-printf '%s\n' "$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Client.lean)" \
+printf '%s\n' "$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/WorldCode/Client.lean)" \
   | CG_RE='(^|[[:space:]])def oneShot [(]name : String[)] [(]m : Msg[)] [(]untilDone : Bool := true[)] [(]silenceMs : Int32 := replySilenceMs[)] : IO [(]Option Drained[)] := do([[:space:]]|$)' \
     awk "$CODE_AWK" >/dev/null \
   || fail "a one-shot request must default to the reply silence budget"
-[ "$(code_count 'silenceMs := ' 'Linger/App/*.lean' 'Linger/Session/Shell/*.lean')" -eq 1 ] \
+[ "$(code_count 'silenceMs := ' 'Linger/App/*.lean' 'Linger/Session/WorldCode/*.lean')" -eq 1 ] \
   || fail "only wait may choose a one-shot request's silence budget"
 
 printf 'gates OK — purity, the OS and unsafe surfaces, the Vt friend set, the runtime ties, declaration citations, and the ratchets\n'

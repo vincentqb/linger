@@ -1,7 +1,7 @@
 module
 
-import all Linger.Session.Wire
-meta import Linger.Session.Wire
+import all Linger.Session.CoreCode.Wire
+meta import Linger.Session.CoreCode.Wire
 
 /-! # Wire unit tests — concrete bytes the theorems quantify over
 

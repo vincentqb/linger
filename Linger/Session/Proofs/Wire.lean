@@ -1,7 +1,7 @@
 module
 
-public import Linger.Session.Spec
-import all Linger.Session.Wire
+public import Linger.Session.CoreSpec
+import all Linger.Session.CoreCode.Wire
 
 /-! # The wire protocol theorems
 

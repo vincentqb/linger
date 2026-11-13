@@ -1,7 +1,7 @@
 module
 
-import all Terminal.Render
-import all Terminal.Vt
+import all Terminal.CoreCode.Render
+import all Terminal.CoreCode.Vt
 import all Terminal.Proofs.Render.History
 
 /-! Margin replay accepts a stale UTF-8 accumulator when no continuation is

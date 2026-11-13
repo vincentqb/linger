@@ -1,8 +1,8 @@
 module
 
-import all Linger.Import.Resurrect
-import all Linger.Target.Name
-import all Terminal.Vt
+import all Linger.Import.CoreCode.Resurrect
+import all Linger.Target.CoreCode.Name
+import all Terminal.CoreCode.Vt
 import Linger.Target.Proofs.Name
 import all Terminal.Proofs.Vt
 import all Linger.Session.Proofs.Checkpoint

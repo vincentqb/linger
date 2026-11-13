@@ -1,31 +1,31 @@
 module
 
-public import Linger.Session.Buf
-public import Linger.Session.Wire
-public import Terminal.Vt
-public import Linger.Target.Name
-public import Linger.Session
-public import Linger.Session.Driver
-public import Linger.Session.Checkpoint
-public import Linger.Target.Remote
-public import Linger.Display.Listing
-public import Linger.Display.Status
-public import Linger.Display.Title
-public import Linger.Display.View
-public import Linger.Os.Env
-public import Linger.Session.Shell.Paths
-public import Linger.Session.Shell.Daemon
-public import Linger.Session.Shell.Client
-public import Linger.Session.Shell.Inventory
-public import Linger.App.Commands
-public import Linger.App.Shell
-public import Linger.Session.Shell.Resume
+public import Linger.Session.CoreCode.Buf
+public import Linger.Session.CoreCode.Wire
+public import Terminal.CoreCode.Vt
+public import Linger.Target.CoreCode.Name
+public import Linger.Session.CoreCode
+public import Linger.Session.CoreCode.Driver
+public import Linger.Session.CoreCode.Checkpoint
+public import Linger.Target.CoreCode.Remote
+public import Linger.Display.CoreCode.Listing
+public import Linger.Display.CoreCode.Status
+public import Linger.Display.CoreCode.Title
+public import Linger.Display.CoreCode.View
+public import Linger.Os.CoreCode.Env
+public import Linger.Session.WorldCode.Paths
+public import Linger.Session.WorldCode.Daemon
+public import Linger.Session.WorldCode.Client
+public import Linger.Session.WorldCode.Inventory
+public import Linger.App.CoreCode.Commands
+public import Linger.App.WorldCode
+public import Linger.Session.WorldCode.Resume
 
 /-! # Linger — the session library
 
 This umbrella's closure is the library `./lake build` checks: the session machine and its
 shell, the components it builds on — the VT toolkit (`packages/terminal`), targets, displays
-and the OS boundary — and the command line's shell (`Linger/App/Shell.lean`). The entry
+and the OS boundary — and the command line's shell (`Linger/App/WorldCode.lean`). The entry
 route, the selector and the import component stay outside it: they may import this
 library, which never imports them. `Main` routes argv through `Entry.route` to an
 executor or to `App.Shell.main`. -/

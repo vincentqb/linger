@@ -1,7 +1,7 @@
 module
 
-import Linger.Session
-import Linger.Session.Buf
+import Linger.Session.CoreCode
+import Linger.Session.CoreCode.Buf
 
 /-! Ordinary imports boot and step a session and read its public views, without the
 record rewriters that could plant a client the daemon never admitted. Keep this
@@ -44,7 +44,7 @@ example (s : State) : State := s.dropClient 0
 #guard_msgs (error, substring := true) in
 #check Buf.BufRec.mk
 
-/-- Unknown constant `_private.Linger.Session.Buf.0.Linger.Session.Buf.BufRec.bytes` -/
+/-- Unknown constant `_private.Linger.Session.CoreCode.Buf.0.Linger.Session.Buf.BufRec.bytes` -/
 #guard_msgs (error, substring := true) in
 #check Buf.Buf.empty.bytes
 

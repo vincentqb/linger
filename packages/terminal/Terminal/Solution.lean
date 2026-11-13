@@ -1,9 +1,9 @@
 module
 
-public import Terminal.Render
-public import Terminal.Replay
-public import Terminal.Spec
-import all Terminal.Vt
+public import Terminal.CoreCode.Render
+public import Terminal.CoreCode.Replay
+public import Terminal.CoreSpec
+import all Terminal.CoreCode.Vt
 import all Terminal.Proofs.Vt
 import all Terminal.Proofs.Vt.State
 import all Terminal.Proofs.Vt.History
@@ -20,7 +20,7 @@ import all Terminal.Proofs.Render.Shows
 import all Terminal.Proofs.Replay
 
 /-! The VT toolkit's headline theorems, proved of the toolkit: `lake comparator` checks that
-these are exactly the statements of `TerminalChallenge.lean`. -/
+these are exactly the statements of `Challenge.lean`. -/
 
 public section
 
@@ -295,9 +295,7 @@ theorem next_bounded {budget : Nat} {p q : Replay.Plan} {bytes : Render.Bytes}
 
 theorem next_bounded_rejects_overrun :
     ¬∀ {budget : Nat} {p q : Replay.Plan} {bytes : Render.Bytes},
-        (fun (_ : Nat) (p : Replay.Plan) => some (([0] : Render.Bytes), p)) budget p =
-            some (bytes, q) →
-          bytes.length ≤ budget := by
+        Replay.overrun budget p = some (bytes, q) → bytes.length ≤ budget := by
   intro h
   exact
     absurd (@h 0 (Replay.start (Vt.Vt.init 1 1)) (Replay.start (Vt.Vt.init 1 1)) [0] rfl)
@@ -316,7 +314,7 @@ theorem screenText_text (v : Vt.Vt) :
 theorem screenText_text_rejects_escape :
     ¬∀ (v : Vt.Vt),
         ∃ cs : List Char,
-          (fun (_ : Vt.Vt) => ([0x1B] : Render.Bytes)) v = cs.flatMap String.utf8EncodeChar ∧
+          Render.escape v = cs.flatMap String.utf8EncodeChar ∧
             ∀ c ∈ cs,
               c = '\n' ∨
                 (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := by
@@ -346,7 +344,7 @@ theorem history_text (v : Vt.Vt) :
 theorem history_text_rejects_escape :
     ¬∀ (v : Vt.Vt),
         ∃ cs : List Char,
-          (fun (_ : Vt.Vt) => ([0x1B] : Render.Bytes)) v = cs.flatMap String.utf8EncodeChar ∧
+          Render.escape v = cs.flatMap String.utf8EncodeChar ∧
             ∀ c ∈ cs,
               c = '\n' ∨
                 (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := by

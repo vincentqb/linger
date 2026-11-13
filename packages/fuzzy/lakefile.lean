@@ -4,7 +4,7 @@ open Lake DSL
 
 /-- The fuzzy matcher interactive selection ranks names with: a query's characters, case folded,
 in order in a target, aligned at the best score. It imports no other linger package and has its
-own challenge (`FuzzyChallenge.lean`) and audit. It shares the packages of the checkout that
+own challenge (`Challenge.lean`) and audit. It shares the packages of the checkout that
 requires it, so building it alone fetches nothing. -/
 package fuzzy where
   leanOptions :=
@@ -14,7 +14,7 @@ package fuzzy where
   packagesDir := "../../.lake/packages"
 
 require software_challenge from git
-  "https://github.com/vincentqb/lean-software-challenge"@"a2970a16ec31dfd7b51df60b5751292cc73218fb"
+  "https://github.com/vincentqb/lean-software-challenge"@"203f0aff941844ccade71343c76a707bd19747a4"
 
 /-- Options for every library but the challenge: with the package's `warningAsError`, a public
 declaration without a docstring fails the build. -/
@@ -23,12 +23,13 @@ def implementationOptions : Array LeanOption := #[⟨`linter.missingDocs, true�
 /-- The matcher, its specification, its proofs, the solution its challenge is checked against
 and its unit tests, checked at elaboration time: every module under `Fuzzy`. -/
 @[default_target] lean_lib Fuzzy where
-  globs := #[.andSubmodules `Fuzzy]
+  globs := #[.submodules `Fuzzy]
   leanOptions := implementationOptions
 
 /-- The matcher's headline theorems and their kills, stated with `sorry` for `lake comparator`,
-which checks that `Fuzzy.Solution` proves the same statements. -/
-lean_lib FuzzyChallenge where leanOptions := #[⟨`warn.sorry, false⟩]
+which checks that `Fuzzy.Solution` proves the same statements. The build writes
+`comparator.json` from them. -/
+lean_lib Challenge where leanOptions := #[⟨`warn.sorry, false⟩]
 
 /-- The Lean Software Challenge audit of every module the default targets build. -/
 @[default_target] target audit pkg : Unit := do

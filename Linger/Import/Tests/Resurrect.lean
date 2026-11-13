@@ -1,12 +1,12 @@
 module
 
-import all Linger.Import.Resurrect
-import Linger.Display.Status
-import Terminal.Render
-import all Terminal.Vt
-meta import Linger.Import.Resurrect
-meta import Linger.Session.Checkpoint
-meta import Terminal.Render
+import all Linger.Import.CoreCode.Resurrect
+import Linger.Display.CoreCode.Status
+import Terminal.CoreCode.Render
+import all Terminal.CoreCode.Vt
+meta import Linger.Import.CoreCode.Resurrect
+meta import Linger.Session.CoreCode.Checkpoint
+meta import Terminal.CoreCode.Render
 
 /-! Concrete checks of the pure API. General kernel-checked contracts live in
 `Linger.Import.Proofs.Resurrect`; these fixtures exercise the actual string operations. -/

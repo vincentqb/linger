@@ -1,9 +1,9 @@
 module
 
 -- These fixtures read the fields they assert about and run compiled under `native_decide`.
-import all Terminal.Vt
-import Terminal.Render
-meta import Terminal.Render
+import all Terminal.CoreCode.Vt
+import Terminal.CoreCode.Render
+meta import Terminal.CoreCode.Render
 
 /-! # Vt behavior tests
 

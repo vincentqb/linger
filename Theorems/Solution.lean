@@ -1,32 +1,34 @@
 module
 
-public import Linger.App.Capture
-public import Linger.App.Commands
-public import Linger.App.Entry
-public import Linger.App.Recovery
-public import Linger.App.Wait
-public import Linger.Display.Listing
-public import Linger.Display.Status
-public import Linger.Display.View
-public import Linger.Import.Resurrect
-public import Linger.Selector.Picker
-public import Linger.Display.Title
-public import Linger.Os.Answer
-public import Linger.Os.Env
-public import Linger.Session
-public import Linger.Session.Buf
-public import Linger.Session.Checkpoint
-public import Linger.Session.Claim
-public import Linger.Session.Driver
-public import Linger.Session.Spec
-public import Linger.Target.Name
-public import Linger.Target.Remote
-public import Linger.Target.Spec
-public import Terminal.Mediation
-public import Terminal.Render
-public import Terminal.Replay
-public import Terminal.Spec
-public import Terminal.Title
+public import Linger.App.CoreCode.Capture
+public import Linger.App.CoreCode.Commands
+public import Linger.App.CoreCode.Entry
+public import Linger.App.CoreCode.Recovery
+public import Linger.App.CoreCode.Wait
+public import Linger.Display.CoreCode.Listing
+public import Linger.Display.CoreCode.Status
+public import Linger.Display.CoreCode.View
+public import Linger.Import.CoreCode.Resurrect
+public import Linger.Selector.CoreCode.Picker
+public import Linger.Display.CoreCode.Title
+public import Linger.Os.CoreCode.Answer
+public import Linger.Os.CoreCode.Env
+public import Linger.Session.CoreCode
+public import Linger.Session.CoreCode.Buf
+public import Linger.Session.CoreCode.Checkpoint
+public import Linger.Session.CoreCode.Claim
+public import Linger.Session.CoreCode.Driver
+public import Linger.Session.CoreSpec
+public import Linger.Session.WorldSpec
+public import Linger.Target.CoreCode.Name
+public import Linger.Target.CoreCode.Remote
+public import Linger.Target.CoreSpec
+public import Linger.Target.WorldSpec
+public import Terminal.CoreCode.Mediation
+public import Terminal.CoreCode.Render
+public import Terminal.CoreCode.Replay
+public import Terminal.CoreSpec
+public import Terminal.CoreCode.Title
 import all Linger.App.Proofs.Capture
 import all Linger.App.Proofs.Commands
 import all Linger.App.Proofs.Entry
@@ -53,10 +55,10 @@ import all Linger.Session.Proofs.Record
 import all Linger.Session.Proofs.Session
 import all Linger.Session.Proofs.Start
 import all Linger.Session.Proofs.Wire
-public import Linger.Session.Record
-public import Linger.Session.Wire
-public import Linger.Session.Start
-import all Terminal.Vt
+public import Linger.Session.CoreCode.Record
+public import Linger.Session.CoreCode.Wire
+public import Linger.Session.CoreCode.Start
+import all Terminal.CoreCode.Vt
 import all Terminal.Proofs.Vt
 import all Terminal.Proofs.Vt.History
 import all Terminal.Proofs.Vt.Renderable
@@ -697,18 +699,16 @@ theorem picker_create_new_rejects_empty :
 theorem route_exact (args : List String) :
     App.Entry.route args =
       if args.head? = some Remote.marker then
-        match Remote.decode args.tail with
-        | some argv => App.Entry.Route.of argv
-        | none => .malformed
-      else App.Entry.Route.of args := App.Entry.route_eq args
+        (Remote.decode args.tail).elim .malformed App.Entry.Route.of
+      else App.Entry.Route.of args := by
+  rw [App.Entry.route_eq args]
+  cases Remote.decode args.tail <;> rfl
 
 theorem route_exact_rejects_selector :
     ¬∀ (args : List String),
         (fun (args : List String) => App.Entry.Route.session args) args =
           if args.head? = some Remote.marker then
-            match Remote.decode args.tail with
-            | some argv => App.Entry.Route.of argv
-            | none => .malformed
+            (Remote.decode args.tail).elim .malformed App.Entry.Route.of
           else App.Entry.Route.of args := by
   intro h
   exact absurd (h ["attach"]) (by simp [App.Entry.Route.of, Remote.marker])
@@ -1790,14 +1790,19 @@ theorem resume_restores (c : Checkpoint.Ckpt Vt.Vt)
       Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
         (Checkpoint.Decoded Checkpoint.loadBytes) c.vt)
     (metaKv : List (String × String)) :
-    let saved := Checkpoint.loadBytes (Checkpoint.saveBytes c)
-    let booted := State.boot (bootVt (saved.map (·.vt))) ((saved.map (·.labels)).getD []) metaKv
-    booted.terminal = c.vt.quiesce ∧ booted.labelList = c.labels.take maxLabels := by
-  intro saved booted
-  have loaded : saved = some { c with vt := c.vt.quiesce } :=
+    (State.boot (bootVt ((Checkpoint.loadBytes (Checkpoint.saveBytes c)).map (·.vt)))
+            (((Checkpoint.loadBytes (Checkpoint.saveBytes c)).map (·.labels)).getD [])
+            metaKv).terminal =
+        c.vt.quiesce ∧
+      (State.boot (bootVt ((Checkpoint.loadBytes (Checkpoint.saveBytes c)).map (·.vt)))
+            (((Checkpoint.loadBytes (Checkpoint.saveBytes c)).map (·.labels)).getD [])
+            metaKv).labelList =
+        c.labels.take maxLabels := by
+  have loaded :
+    Checkpoint.loadBytes (Checkpoint.saveBytes c) = some { c with vt := c.vt.quiesce } :=
     Checkpoint.loadBytes_saveBytes_live c (Checkpoint.live_of_decoded h)
   obtain ⟨_, restored, terminal, -, labels, -⟩ := Session.boot_observed c.vt.quiesce c.labels metaKv
-  simp only [booted, loaded, Option.map_some, Option.getD_some, restored]
+  simp only [loaded, Option.map_some, Option.getD_some, restored]
   exact ⟨terminal, labels⟩
 
 theorem resume_restores_rejects_fresh :
@@ -1805,11 +1810,18 @@ theorem resume_restores_rejects_fresh :
         Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
             (Checkpoint.Decoded Checkpoint.loadBytes) c.vt →
           ∀ (metaKv : List (String × String)),
-            let saved := Checkpoint.loadBytes (Checkpoint.saveBytes c)
-            let booted :=
-              State.boot ((fun (_ : Option Vt.Vt) => Vt.Vt.init 1 1) (saved.map (·.vt)))
-                ((saved.map (·.labels)).getD []) metaKv
-            booted.terminal = c.vt.quiesce ∧ booted.labelList = c.labels.take maxLabels := by
+            (State.boot
+                    ((fun (_ : Option Vt.Vt) => Vt.Vt.init 1 1)
+                      ((Checkpoint.loadBytes (Checkpoint.saveBytes c)).map (·.vt)))
+                    (((Checkpoint.loadBytes (Checkpoint.saveBytes c)).map (·.labels)).getD [])
+                    metaKv).terminal =
+                c.vt.quiesce ∧
+              (State.boot
+                    ((fun (_ : Option Vt.Vt) => Vt.Vt.init 1 1)
+                      ((Checkpoint.loadBytes (Checkpoint.saveBytes c)).map (·.vt)))
+                    (((Checkpoint.loadBytes (Checkpoint.saveBytes c)).map (·.labels)).getD [])
+                    metaKv).labelList =
+                c.labels.take maxLabels := by
   intro h
   have fresh := (h ⟨Vt.Vt.init 2 1, "", []⟩ (.init 2 1) []).1
   obtain ⟨-, -, terminal, -, -, -⟩ :=
@@ -1914,29 +1926,62 @@ theorem crash_resumes_rejects_fresh :
 
 theorem unsaved_due (vt : Vt.Vt) (labels metaKv : List (String × String)) (pre post : List Event)
     (ev : Event) :
-    let s := (Session.trace Session.step (State.boot vt labels metaKv) pre).1
-    let after := Session.trace Session.step s (ev :: post)
-    (Session.step s ev).1.terminal ≠ s.terminal ∨ (Session.step s ev).1.labelList ≠ s.labelList →
-      Effect.checkpoint ∉ after.2 →
+    (Session.step (Session.trace Session.step (State.boot vt labels metaKv) pre).1 ev).1.terminal ≠
+          (Session.trace Session.step (State.boot vt labels metaKv) pre).1.terminal ∨
+        (Session.step (Session.trace Session.step (State.boot vt labels metaKv) pre).1
+              ev).1.labelList ≠
+          (Session.trace Session.step (State.boot vt labels metaKv) pre).1.labelList →
+      Effect.checkpoint ∉
+        (Session.trace Session.step (Session.trace Session.step (State.boot vt labels metaKv) pre).1
+            (ev :: post)).2 →
       ∃ due,
         due ≤ Session.clock pre + ckptIntervalMs ∧
-          (∃ wake, after.1.nextTick = some wake ∧ wake ≤ due) ∧
-          ∀ now, due ≤ now → Effect.checkpoint ∈ (Session.step after.1 (.tick now)).2 := by
-  intro s after changed unsaved
+          (∃ wake,
+            (Session.trace Session.step
+                    (Session.trace Session.step (State.boot vt labels metaKv) pre).1
+                    (ev :: post)).1.nextTick =
+                some wake ∧
+              wake ≤ due) ∧
+          ∀ now,
+            due ≤ now →
+              Effect.checkpoint ∈
+                (Session.step
+                    (Session.trace Session.step
+                        (Session.trace Session.step (State.boot vt labels metaKv) pre).1
+                        (ev :: post)).1
+                    (.tick now)).2 := by
+  intro changed unsaved
   exact
-    Session.unsaved_due s ev post (Session.boot_lastCkptMs_le vt labels metaKv pre) changed unsaved
+    Session.unsaved_due _ ev post (Session.boot_lastCkptMs_le vt labels metaKv pre) changed unsaved
 
 theorem unsaved_due_rejects_never :
     ¬∀ (vt : Vt.Vt) (labels metaKv : List (String × String)) (pre post : List Event) (ev : Event),
-        let s := (Session.trace Session.step (State.boot vt labels metaKv) pre).1
-        let after := Session.trace Session.step s (ev :: post)
-        (Session.step s ev).1.terminal ≠ s.terminal ∨
-            (Session.step s ev).1.labelList ≠ s.labelList →
-          Effect.checkpoint ∉ after.2 →
+        (Session.step (Session.trace Session.step (State.boot vt labels metaKv) pre).1
+                  ev).1.terminal ≠
+              (Session.trace Session.step (State.boot vt labels metaKv) pre).1.terminal ∨
+            (Session.step (Session.trace Session.step (State.boot vt labels metaKv) pre).1
+                  ev).1.labelList ≠
+              (Session.trace Session.step (State.boot vt labels metaKv) pre).1.labelList →
+          Effect.checkpoint ∉
+            (Session.trace Session.step
+                (Session.trace Session.step (State.boot vt labels metaKv) pre).1 (ev :: post)).2 →
           ∃ due,
             due ≤ Session.clock pre + ckptIntervalMs ∧
-              (∃ wake, (fun (_ : State) => (none : Option Nat)) after.1 = some wake ∧ wake ≤ due) ∧
-              ∀ now, due ≤ now → Effect.checkpoint ∈ (Session.step after.1 (.tick now)).2 := by
+              (∃ wake,
+                (fun (_ : State) => (none : Option Nat))
+                      (Session.trace Session.step
+                          (Session.trace Session.step (State.boot vt labels metaKv) pre).1
+                          (ev :: post)).1 =
+                    some wake ∧
+                  wake ≤ due) ∧
+              ∀ now,
+                due ≤ now →
+                  Effect.checkpoint ∈
+                    (Session.step
+                        (Session.trace Session.step
+                            (Session.trace Session.step (State.boot vt labels metaKv) pre).1
+                            (ev :: post)).1
+                        (.tick now)).2 := by
   intro h
   have printed :
     (Session.step (State.boot (Vt.Vt.init 2 1) [] []) (.ptyOut [0x41])).1.terminal =
@@ -2157,13 +2202,12 @@ theorem offloop_coalesces {R W : Type} (start : W → R) (ws : List W) :
 
 theorem offloop_coalesces_rejects_eager :
     ¬∀ {R W : Type} (start : W → R) (ws : List W),
-        (ws.foldl (Offloop.run (fun (o : Offloop R W) (w : W) => (o, some w)) start) {}).running =
-            ws.head?.map start ∧
-          (ws.foldl (Offloop.run (fun (o : Offloop R W) (w : W) => (o, some w)) start) {}).waiting =
+        (ws.foldl (Offloop.run Offloop.eager start) {}).running = ws.head?.map start ∧
+          (ws.foldl (Offloop.run Offloop.eager start) {}).waiting =
             if ws.length ≤ 1 then none else ws.getLast? := by
   intro h
   have first := (@h Nat Nat id [0, 1]).1
-  simp [Offloop.run] at first
+  simp [Offloop.run, Offloop.eager] at first
 
 theorem capture_waits_unlocked :
     (App.Capture.work App.Capture.plan false).map Prod.fst = [.load, .render, .write] ∧
@@ -2283,17 +2327,18 @@ theorem sort_attention_first {α : Type} (status : α → Status.Status) (rows :
 
 theorem sort_attention_first_rejects_arrival :
     ¬∀ {α : Type} (status : α → Status.Status) (rows : List α),
-        ((fun (_ : α → Status.Status) (rows : List α) => rows) status rows).Perm rows ∧
+        (View.arrival status rows).Perm rows ∧
           ∃ first rest,
-            (fun (_ : α → Status.Status) (rows : List α) => rows) status rows = first ++ rest ∧
+            View.arrival status rows = first ++ rest ∧
               (∀ x ∈ first, status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) ∧
               ∀ x ∈ rest,
                 ¬(status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) := by
   intro h
   obtain ⟨-, first, rest, split, front, back⟩ := h id [Status.Status.idle, .wantsYou]
   match first, split with
-  | [], split =>
-    have whole : rest = [.idle, .wantsYou] := by simpa using split.symm
+  | [],
+    split =>
+    have whole : rest = [.idle, .wantsYou] := by simpa [View.arrival] using split.symm
     exact back .wantsYou (by simp [whole]) (by simp)
   | a :: _, split =>
     have head : a = .idle := (List.cons.inj split).1.symm

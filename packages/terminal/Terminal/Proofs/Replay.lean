@@ -1,12 +1,12 @@
 module
 
-public import Terminal.Replay
-public import Terminal.Render
+public import Terminal.CoreCode.Replay
+public import Terminal.CoreCode.Render
 public import Terminal.Proofs.Vt -- shake: keep (re-exports `observe_append` to plain importers)
-import Terminal.Spec
-import all Terminal.Replay
-import all Terminal.Vt
-import all Terminal.Render
+import Terminal.CoreSpec
+import all Terminal.CoreCode.Replay
+import all Terminal.CoreCode.Vt
+import all Terminal.CoreCode.Render
 import all Terminal.Proofs.Render.Grid
 import all Terminal.Proofs.Render.Scrollback
 

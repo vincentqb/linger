@@ -1,6 +1,6 @@
 module
 
-import all Linger.Session.Start
+import all Linger.Session.CoreCode.Start
 
 /-! # What `start` does with a name
 

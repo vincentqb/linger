@@ -1,6 +1,6 @@
 module
 
-import all Linger.Os.Env
+import all Linger.Os.CoreCode.Env
 
 /-! Environment policies, decided for every value of the variable, including unset
 and empty. The runtime reads each variable once into these functions; source

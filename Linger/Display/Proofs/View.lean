@@ -1,7 +1,7 @@
 module
 
-import all Linger.Display.View
-import all Linger.Display.Status
+import all Linger.Display.CoreCode.View
+import all Linger.Display.CoreCode.Status
 
 /-! # Views of many sessions — nothing that needs you is hidden, and every count adds up
 

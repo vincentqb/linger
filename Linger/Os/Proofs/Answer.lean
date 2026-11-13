@@ -1,8 +1,8 @@
 module
 
-public import Linger.Os.Spec
-import all Linger.Os.Spec
-import all Linger.Os.Answer
+public import Linger.Os.CoreSpec
+import all Linger.Os.CoreSpec
+import all Linger.Os.CoreCode.Answer
 
 /-! # The exit statuses
 

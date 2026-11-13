@@ -1,6 +1,6 @@
 module
 
-import all Terminal.Vt
+import all Terminal.CoreCode.Vt
 -- The claim names private `Vt` fields and composes module-private rungs, hence `import all`.
 import all Linger.Session.Proofs.Checkpoint
 import all Terminal.Proofs.Render

@@ -1,7 +1,7 @@
 module
 
-import Os.Spec
-import all Os.Write
+import Os.CoreSpec
+import all Os.CoreCode.Write
 
 /-! Each outcome of a write attempt has its one reaction: a full write stops early exactly when
 the reader is gone, waits exactly when an attempt wrote nothing with bytes left, is done exactly

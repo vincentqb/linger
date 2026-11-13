@@ -1,8 +1,8 @@
 module
 
-public import Linger.Selector.Picker
-public import Linger.Display.Spec
-import all Linger.Selector.Picker
+public import Linger.Selector.CoreCode.Picker
+public import Linger.Display.CoreSpec
+import all Linger.Selector.CoreCode.Picker
 import Linger.Display.Proofs.Clean
 import Input.Proofs
 

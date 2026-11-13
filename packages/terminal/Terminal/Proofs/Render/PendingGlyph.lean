@@ -1,6 +1,6 @@
 module
 
-import all Terminal.Vt
+import all Terminal.CoreCode.Vt
 import all Terminal.Proofs.Vt
 
 /-! Reprinting a canonical margin glyph restores its complete state while arming

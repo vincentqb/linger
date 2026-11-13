@@ -1,13 +1,12 @@
 module
 
 public import Verify.Harness
-import Linger.Session.Shell.Inventory
-import Linger.Session.Shell.Client
-import Linger.Session.Checkpoint
-import Linger.Session.Record
-import Terminal.Mediation
-public import Linger.Session.Spec
-import SoftwareChallenge.Commands
+import Linger.Session.WorldCode.Inventory
+import Linger.Session.WorldCode.Client
+import Linger.Session.CoreCode.Checkpoint
+import Linger.Session.CoreCode.Record
+import Terminal.CoreCode.Mediation
+public import Linger.Session.CoreSpec
 
 public section
 
@@ -547,8 +546,6 @@ private def cookedChecks (e : Env) (name : String) : IO Unit := do
 every byte `send -` sends it, one for one, `start` runs its program with its words, in the
 caller's directory and with the caller's environment, and with none of the caller's ignored
 signals or open descriptors, and an ended session's end record holds how its program ended. -/
-@[exercises Linger.Session.Pty.Delivers, exercises Linger.Session.Spawn.Runs,
-  exercises Linger.Session.Spawn.Clean, exercises Linger.Session.Record.Kept]
 def run : IO UInt32 :=
   Env.suite "agent" fun e => do
     startChecks e

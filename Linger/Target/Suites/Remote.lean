@@ -1,13 +1,13 @@
 module
 
 public import Verify.Harness
-public import Linger.App.Spec
-import Linger.App.Shell
-import Linger.App.Entry
-import Os.Shell.Command
-import Linger.Target.Remote
-import Linger.Target.Spec
-import Linger.Session.Shell.Client
+public import Linger.App.CoreSpec
+import Linger.App.WorldCode
+import Linger.App.CoreCode.Entry
+import Os.WorldCode.Command
+import Linger.Target.CoreCode.Remote
+import Linger.Target.CoreSpec
+import Linger.Session.WorldCode.Client
 
 public section
 

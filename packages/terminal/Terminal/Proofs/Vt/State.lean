@@ -1,6 +1,6 @@
 module
 
-import all Terminal.Vt
+import all Terminal.CoreCode.Vt
 
 -- No `public section`, and that is forced by the `Vt` seal. `import all` grants *access* to a
 -- private field, but a **public** declaration's type may still not mention one — so
@@ -34,8 +34,8 @@ namespace Terminal.Vt
 /-! ## The read-only window
 
 `Vt.colCount`/`rowCount`/`cursorPos`/`inAlt` are the public reading of four sealed
-fields (`packages/terminal/Terminal/Vt.lean`), for consumers outside the toolkit —
-`Linger/Session.lean` and the resume path in `Linger/Session/Shell/Daemon.lean` —
+fields (`packages/terminal/Terminal/CoreCode/Vt.lean`), for consumers outside the toolkit —
+`Linger/Session/CoreCode.lean` and the resume path in `Linger/Session/WorldCode/Daemon.lean` —
 and `getModes`/`getPen`/`scrollback` of three more, for the headline theorems. Each
 is a projection, so its claim is the equation that says so, and `@[simp]` is what
 earns these their keep: a proof that has a hypothesis about a field and a goal about
@@ -131,9 +131,9 @@ theorem good_init (cols rows : Nat) : Good (Vt.init cols rows) := by
 
 /-! ### The decoder's door
 
-`Vt.ofDecoded` (`packages/terminal/Terminal/Vt.lean`) is the only way a `Vt` comes into existence
+`Vt.ofDecoded` (`packages/terminal/Terminal/CoreCode/Vt.lean`) is the only way a `Vt` comes into existence
 other than `Vt.init`, and unlike `init` its inputs are *attacker-controlled*: they are
-whatever `Linger/Session/Checkpoint.lean`'s `rVt` read out of a file. Three claims — the
+whatever `Linger/Session/CoreCode/Checkpoint.lean`'s `rVt` read out of a file. Three claims — the
 spec of the check, the guarantee, and what stops the guarantee being achieved by
 refusing everything. -/
 

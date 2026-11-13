@@ -1,9 +1,9 @@
 module
 
-import all Linger.Selector.Picker
-import all Linger.Target.Name
-import all Linger.Display.Listing
-import all Linger.Target.Remote
+import all Linger.Selector.CoreCode.Picker
+import all Linger.Target.CoreCode.Name
+import all Linger.Display.CoreCode.Listing
+import all Linger.Target.CoreCode.Remote
 import all Init.Data.String.Legacy
 import Linger.Target.Proofs.Name
 import Fuzzy.Proofs

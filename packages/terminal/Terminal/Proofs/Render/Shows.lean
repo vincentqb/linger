@@ -1,7 +1,7 @@
 module
 
-import all Terminal.Render
-import all Terminal.Vt
+import all Terminal.CoreCode.Render
+import all Terminal.CoreCode.Vt
 import all Terminal.Proofs.Vt
 import all Terminal.Proofs.Vt.Unread
 import all Terminal.Proofs.Render.PendingGlyph

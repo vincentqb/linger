@@ -87,7 +87,7 @@ say "1. build (program + theorems + tests + audit)"
 # default target (scripts/gates.sh checks), so a fresh checkout runs the Lean Software Challenge audit
 # here, as a local `./lake build` does.
 ./lake --rehash --wfail build Linger \
-    Theorems Tests Suites linger lingertest suites audit > "$logs/build.log" 2>&1 \
+    Theorems Tests Checks linger lingertest suites audit > "$logs/build.log" 2>&1 \
   || { tail -30 "$logs/build.log"; fail "build (see $logs/build.log)"; }
 # --wfail ignores warnings from elaborating lakefile.lean; this grep sees them.
 if grep -qE '^(warning|error)' "$logs/build.log"; then
@@ -99,23 +99,19 @@ fi
 # `#guard` uses. Linger.Os.Suites.Shim and Verify.Main stay out to bound the cost.
 shake_modules="$(git ls-files 'Theorems/*.lean' 'Linger/*/Proofs/*.lean' | sed 's/[.]lean$//; s#/#.#g')"
 # shellcheck disable=SC2086  # one module name per word
-./lake shake --keep-implied Linger Main $shake_modules > "$logs/shake.log" 2>&1 \
+./lake shake --keep-implied Linger Linger.App.WorldCode.Main $shake_modules > "$logs/shake.log" 2>&1 \
   && [ ! -s "$logs/shake.log" ] \
   || { cat "$logs/shake.log"; fail "lake shake suggests import changes"; }
 # The generated C of the program's modules, linger's and each package's, named from the
 # tracked sources: a module that moved leaves its old C file in .lake, which must not answer
-# for it. A component's or package's Proofs, Tests, Suites and Solution are not program code,
-# nor is a package's challenge or audit.
+# for it. The program's modules are the umbrella and the modules of a role, but for the checks
+# of the world claims; proofs, tests, suites, solutions and challenges are not program code.
 program_c="$(
-  git ls-files 'Main.lean' 'Linger.lean' 'Linger/*.lean' \
-    | awk -F/ 'NF <= 3 || (NF == 4 && $3 == "Shell")' \
-    | sed 's#^#.lake/build/ir/#; s#[.]lean$#.c#'
-  git ls-files 'packages/*.lean' | awk -F/ '
-    { root = toupper(substr($2, 1, 1)) substr($2, 2); rel = substr($0, length($1 "/" $2 "/") + 1)
-      n = split(rel, part, "/")
-      if (rel == root ".lean" || (n == 2 && part[1] == root && part[2] !~ /^(Proofs|Tests|Solution)[.]lean$/) \
-          || (n == 3 && part[1] == root && part[2] == "Shell")) {
-        sub(/[.]lean$/, ".c", rel); print $1 "/" $2 "/.lake/build/ir/" rel } }')"
+  git ls-files 'Linger.lean' '*/CoreSpec*.lean' '*/CoreCode*.lean' '*/WorldSpec*.lean' \
+      '*/WorldCode*.lean' ':!*/WorldCode/Checks.lean' \
+    | awk -F/ '$1 == "packages" { rel = substr($0, length($1 "/" $2 "/") + 1)
+        sub(/[.]lean$/, ".c", rel); print $1 "/" $2 "/.lake/build/ir/" rel; next }
+      { sub(/[.]lean$/, ".c"); print ".lake/build/ir/" $0 }')"
 [ -n "$program_c" ] || fail "no generated C named for the program's modules"
 # The initializer of a module that uses the Lean package calls lean_initialize
 # instead of lean_initialize_runtime_module, which starts the whole Lean frontend in
@@ -137,12 +133,12 @@ abi_dir="$(mktemp -d "${TMPDIR:-/tmp}/linger-abi.XXXXXX")"
 trap 'rm -r "$abi_dir"' EXIT HUP TERM
 awk '/^lean_object\* linger_[[:alnum:]_]+\([^;]*\);$/ {
   sub(/\(\);$/, "(void);"); print; count++
-} END { if (!count) exit 1 }' packages/os/.lake/build/ir/Os/Boundary.c > "$abi_dir/prototypes" \
+} END { if (!count) exit 1 }' packages/os/.lake/build/ir/Os/WorldSpec.c > "$abi_dir/prototypes" \
   || fail "no generated shim prototypes"
 sed 's/^lean_object\* //; s/(.*//' "$abi_dir/prototypes" | sort > "$abi_dir/generated"
 sed -n 's/^LEAN_EXPORT lean_obj_res \(linger_[[:alnum:]_]*\)(.*/\1/p' packages/os/c/shim.c \
   | sort > "$abi_dir/exports"
-sed -n 's/^@\[extern "\(linger_[[:alnum:]_]*\)"\].*/\1/p' packages/os/Os/Boundary.lean \
+sed -n 's/^@\[extern "\(linger_[[:alnum:]_]*\)"\].*/\1/p' packages/os/Os/WorldSpec.lean \
   | sort > "$abi_dir/externs"
 cmp -s "$abi_dir/generated" "$abi_dir/exports" \
   || fail "generated ABI and C export inventories differ"
@@ -239,6 +235,38 @@ for pkg in packages/*/; do
   [ "$(tail -1 "$logs/$name-comparator.log")" = 'Your solution is okay!' ] \
     || fail "lake comparator did not accept $pkg's headline theorems (see $logs/$name-comparator.log)"
   printf '  %s: build, audit and headline theorems OK\n' "$pkg"
+done
+
+say "2f. world claims (every Check, linger's and each package's)"
+# The challenge library's `test_challenge` runs every Check of the package it tests between its
+# lint and a sandboxed comparator, which 2d and 2e run without the sandbox. This runs its checks
+# runner alone, as it writes it: a module that imports every module the package's audit read, the
+# files its report lists, and runs their checks against this host's operating system.
+repo="$PWD"
+for dir in . packages/*/; do
+  dir="${dir%/}"
+  name="$(basename "$dir")"
+  [ "$dir" != . ] || name=linger
+  report="$dir/.lake/build/softwareChallenge.txt"
+  [ -f "$report" ] || fail "$dir has no audit report, which its build writes"
+  modules="$(grep -E '^(Edit|Owned): ' "$report" | sed 's/^[A-Za-z]*: //' | tr ' ' '\n' \
+    | grep '[.]lean$' | grep -vx -e lakefile.lean -e Challenge.lean | sed 's/[.]lean$//; s#/#.#g')"
+  [ -n "$modules" ] || fail "$dir's audit report lists no module"
+  checks=0
+  for module in $modules; do
+    n="$(grep -c '^Check ' "$dir/$(printf '%s' "$module" | tr . /).lean")" || true
+    checks=$((checks + n))
+  done
+  runner="$logs/checks-$name.lean"
+  # shellcheck disable=SC2086  # one module name per word
+  {
+    printf 'import SoftwareChallenge\n'
+    printf 'import %s\n' $modules
+    printf 'run_cmd SoftwareChallenge.runChecks #[%s]\n' "$(printf '`%s, ' $modules | sed 's/, $//')"
+  } > "$runner"
+  (cd "$dir" && "$repo/lake" lean "$runner") > "$logs/checks-$name.log" 2>&1 \
+    || { tail -20 "$logs/checks-$name.log"; fail "a Check of $name failed (see $logs/checks-$name.log)"; }
+  printf '  %s: %s checks OK\n' "$name" "$checks"
 done
 
 say "3. posix shim smoke tests"

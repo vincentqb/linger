@@ -1,9 +1,9 @@
 module
 
-import all Terminal.Mediation
-public import Terminal.Spec
-import all Terminal.Vt
-import all Terminal.Render
+import all Terminal.CoreCode.Mediation
+public import Terminal.CoreSpec
+import all Terminal.CoreCode.Vt
+import all Terminal.CoreCode.Render
 import all Terminal.Proofs.Render
 
 -- Module-private by default: `Vt`'s fields are sealed (see `packages/terminal/Terminal/Proofs/Vt/State.lean`).

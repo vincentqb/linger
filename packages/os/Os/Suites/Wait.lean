@@ -1,8 +1,7 @@
 module
 
-public import Os.Shell
-public import Os.Spec
-import SoftwareChallenge.Commands
+public import Os.WorldCode
+public import Os.CoreSpec
 
 /-! # The shim smoke tests' wait checks
 
@@ -16,7 +15,6 @@ open Os.Shell
 its deadline and then gives up: with the deadline ahead each nap sleeps and none goes past it,
 and a nap asked for once the deadline has passed reports so without sleeping. Each result goes
 to `check`. -/
-@[exercises Os.Wait.Lasts]
 public def testWaits (check : String → Bool → IO Unit) : IO Unit := do
   let mut lasted := true
   for ms in [1, 7, 20] do

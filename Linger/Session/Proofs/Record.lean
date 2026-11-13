@@ -1,7 +1,7 @@
 module
 
-import all Linger.Session.Record
-import all Linger.Session.Wire
+import all Linger.Session.CoreCode.Record
+import all Linger.Session.CoreCode.Wire
 
 /-! # A name's end record
 

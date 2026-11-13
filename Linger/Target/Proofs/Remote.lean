@@ -1,8 +1,9 @@
 module
 
-public import Linger.Target.Remote
-public import Linger.Target.Spec
-import all Linger.Target.Remote
+public import Linger.Target.CoreCode.Remote
+public import Linger.Target.CoreSpec
+public import Linger.Target.WorldSpec
+import all Linger.Target.CoreCode.Remote
 import Linger.Target.Proofs.Name
 
 public section

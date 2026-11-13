@@ -1,9 +1,9 @@
 module
 
-import Input
-import Linger.Selector.Key
-meta import Input
-meta import Linger.Selector.Key
+import Input.CoreCode
+import Linger.Selector.CoreCode.Key
+meta import Input.CoreCode
+meta import Linger.Selector.CoreCode.Key
 
 /-! Byte-level fixtures of the selector's key bindings over the `input` package's decoder,
 including paste boundaries. The original selector expectations retain their concrete bindings;

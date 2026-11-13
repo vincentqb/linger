@@ -1,7 +1,7 @@
 module
 
-import all Linger.App.Spec
-import all Linger.App.Commands
+import all Linger.App.CoreSpec
+import all Linger.App.CoreCode.Commands
 
 /-! # The command table
 

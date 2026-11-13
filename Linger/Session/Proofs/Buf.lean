@@ -1,7 +1,7 @@
 module
 
-import all Linger.Session.Buf
-import Linger.Session.Spec
+import all Linger.Session.CoreCode.Buf
+import Linger.Session.CoreSpec
 
 /-! # The runtime half of the bounds — the daemon's byte queues, proved
 
@@ -142,7 +142,7 @@ theorem followingCap_iff {cap frame front debt : Nat} (hf : frame ≤ cap) (hp :
 /-! ## The bounds over the queue's whole life
 
 The per-step bounds above compose into lifetime invariants of the reachability
-predicates (`Linger/Session/Buf.lean`), and the composition is only meaningful
+predicates (`Linger/Session/CoreCode/Buf.lean`), and the composition is only meaningful
 because the representation is sealed: every `Buf` a plain importer can possess
 is `empty` moved forward by the API, so "reachable" is not a subset of the
 runtime's states — it IS them. Without the seal these theorems would be true of

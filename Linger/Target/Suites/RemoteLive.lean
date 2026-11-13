@@ -1,7 +1,7 @@
 module
 
 import Verify.Harness
-import Linger.Target.Remote
+import Linger.Target.CoreCode.Remote
 
 public section
 

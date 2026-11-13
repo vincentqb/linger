@@ -1,11 +1,11 @@
 module
 
-public import Linger.Display.Spec
-public import Linger.Display.Listing
-public import Terminal.Render
-public import Terminal.Title
-import all Linger.Display.Listing
-import all Terminal.Title
+public import Linger.Display.CoreSpec
+public import Linger.Display.CoreCode.Listing
+public import Terminal.CoreCode.Render
+public import Terminal.CoreCode.Title
+import all Linger.Display.CoreCode.Listing
+import all Terminal.CoreCode.Title
 -- The proof layer is module-private, so `utf8_eq_utf8EncodeChar` arrives through `import all`.
 import all Terminal.Proofs.Render
 import Terminal.Proofs.Title

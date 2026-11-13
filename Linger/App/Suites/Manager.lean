@@ -1,17 +1,17 @@
 module
 
-import Linger.Os.Answer
-import Linger.Selector.Shell
-import Linger.Import.Shell
-import Linger.Display.Listing
-import Linger.Display.View
-import Linger.Target.Name
-import Linger.Target.Remote
-import Linger.Target.Spec
-import Terminal.Title
-import Linger.Session.Shell.Paths
-import Linger.Import.Resurrect
-import Linger.Session.Checkpoint
+import Linger.Os.CoreCode.Answer
+import Linger.Selector.WorldCode
+import Linger.Import.WorldCode
+import Linger.Display.CoreCode.Listing
+import Linger.Display.CoreCode.View
+import Linger.Target.CoreCode.Name
+import Linger.Target.CoreCode.Remote
+import Linger.Target.CoreSpec
+import Terminal.CoreCode.Title
+import Linger.Session.WorldCode.Paths
+import Linger.Import.CoreCode.Resurrect
+import Linger.Session.CoreCode.Checkpoint
 import Linger.Import.Suites.Recipes
 import Std.Sync.Mutex
 

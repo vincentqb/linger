@@ -1,10 +1,11 @@
 module
 
-import Linger.Session.Spec
-import all Linger.Session.Claim
+import Linger.Session.CoreSpec
+import Linger.Session.WorldSpec
+import all Linger.Session.CoreCode.Claim
 
 /-! Ownership of socket and checkpoint resources across arbitrary interleavings, in the
-lock-protocol model of `Linger/Session/Spec.lean`, when the operating system grants only free
+lock-protocol model of `Linger/Session/CoreSpec.lean`, when the operating system grants only free
 locks (`Exclusive`) and each process enters as `enters` decides. -/
 
 namespace Linger.Session.Claim

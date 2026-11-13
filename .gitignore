@@ -3,3 +3,7 @@
 
 # lean-fmt's derived cache.
 .lean-fmt-cache/
+
+# Each build writes its challenge's comparator configuration.
+/comparator.json
+/packages/*/comparator.json

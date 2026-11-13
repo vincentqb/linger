@@ -1,8 +1,8 @@
 module
 
 import Linger.Import.Suites.Recipes
-import Linger.Session.Checkpoint
-import all Linger.Import.Shell
+import Linger.Session.CoreCode.Checkpoint
+import all Linger.Import.WorldCode
 
 public section
 

@@ -1,6 +1,6 @@
 module
 
-import all Terminal.Vt
+import all Terminal.CoreCode.Vt
 import all Terminal.Proofs.Vt.State
 
 /-! # What later output reads of a terminal

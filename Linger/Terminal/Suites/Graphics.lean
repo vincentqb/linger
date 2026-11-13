@@ -1,7 +1,7 @@
 module
 
 import Verify.Harness
-import Terminal.Mediation
+import Terminal.CoreCode.Mediation
 
 public section
 

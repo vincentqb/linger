@@ -1,10 +1,10 @@
 module
 
-import all Linger.Session
+import all Linger.Session.CoreCode
 -- These fixtures read the screen they assert about and run compiled under `native_decide`.
-import all Terminal.Vt
-import all Linger.Session.Wire
-meta import Linger.Session
+import all Terminal.CoreCode.Vt
+import all Linger.Session.CoreCode.Wire
+meta import Linger.Session.CoreCode
 
 /-! # Session state-machine scenario tests
 

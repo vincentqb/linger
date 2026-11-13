@@ -1,7 +1,8 @@
 module
 
-import Os.Spec
-import all Os.Wait
+import Os.CoreSpec
+import Os.WorldSpec
+import all Os.CoreCode.Wait
 
 /-! A wait's sleeps, decided for every deadline, step and time: it gives up exactly once its
 deadline has passed, sleeps between 1 ms and its step without passing the deadline, and so,

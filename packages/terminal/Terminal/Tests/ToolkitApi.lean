@@ -34,6 +34,6 @@ example (v : Vt) (a b : List UInt8) :
 #guard_msgs (error, substring := true) in
 #check Replay.Plan.mk
 
-/-- Unknown constant `_private.Terminal.Vt.0.Terminal.Vt.VtRec.pstate` -/
+/-- Unknown constant `_private.Terminal.CoreCode.Vt.0.Terminal.Vt.VtRec.pstate` -/
 #guard_msgs (error, substring := true) in
 #check (Vt.init 2 1).pstate

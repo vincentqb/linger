@@ -1,10 +1,10 @@
 module
 
 public import Verify.Harness
-import Linger.Import.Shell
-import Linger.Os.Answer
-import Linger.Session.Checkpoint
-import Linger.Target.Name
+import Linger.Import.WorldCode
+import Linger.Os.CoreCode.Answer
+import Linger.Session.CoreCode.Checkpoint
+import Linger.Target.CoreCode.Name
 
 public section
 

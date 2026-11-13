@@ -1,9 +1,8 @@
 module
 
 public import Verify.Harness
-import Linger.Session
-public import Linger.Session.Spec
-import SoftwareChallenge.Commands
+import Linger.Session.CoreCode
+public import Linger.Session.CoreSpec
 
 public section
 
@@ -120,7 +119,6 @@ private def pollChecks (e : Env) : IO Unit := do
 has stopped, sleep, a summary reads what their daemons published instead of waking them, and a
 `send -` waiting for input sleeps. Nothing asks either daemon anything between finding its pid and
 the last measurement, since a question is an event that wakes it. -/
-@[exercises Linger.Session.Poll.Sleeps]
 def run : IO UInt32 :=
   Env.suite "quiet" fun e => do
     pollChecks e

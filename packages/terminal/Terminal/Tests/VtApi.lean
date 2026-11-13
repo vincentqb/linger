@@ -1,6 +1,6 @@
 module
 
-import Terminal.Vt
+import Terminal.CoreCode.Vt
 
 /-! Ordinary imports expose the checked VT operations, without granting the
 raw mutators that can bypass their invariants. Keep this separate from the

@@ -1,9 +1,8 @@
 module
 
 import Verify.Harness
-public import Linger.Session.Shell.Daemon
+public import Linger.Session.WorldCode.Daemon
 import Linger.Session.Tests.Delivery
-import SoftwareChallenge.Commands
 
 public section
 
@@ -540,7 +539,6 @@ def unwritable (dir : String) : IO Unit :=
     IO.FS.removeFile path
 
 /-- The delivery suite, or only the check named `only`. -/
-@[exercises Linger.Session.Driver.Responds]
 def run (only : Option String := none) : IO UInt32 := do
   let checks : List (String × (String → IO Unit)) :=
     [("colours", fun dir => largeReplay dir false), ("marks", fun dir => largeReplay dir true),

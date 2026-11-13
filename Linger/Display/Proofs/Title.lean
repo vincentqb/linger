@@ -1,6 +1,6 @@
 module
 
-import all Linger.Display.Title
+import all Linger.Display.CoreCode.Title
 import Terminal.Proofs.Title
 
 namespace Linger.Display.Title

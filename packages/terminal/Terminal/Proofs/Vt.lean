@@ -1,8 +1,8 @@
 module
 
-public import Terminal.Vt
-import all Terminal.Spec
-import all Terminal.Vt
+public import Terminal.CoreCode.Vt
+import all Terminal.CoreSpec
+import all Terminal.CoreCode.Vt
 import all Terminal.Proofs.Vt.Parser
 import all Terminal.Proofs.Vt.Renderable
 
@@ -17,7 +17,7 @@ namespace Terminal.Vt
 
 /-! ### The states a running session can actually hold
 
-`LiveReachableVt` — `Live` (`packages/terminal/Terminal/Spec.lean`) over this emulator's
+`LiveReachableVt` — `Live` (`packages/terminal/Terminal/CoreSpec.lean`) over this emulator's
 operations — is the predicate a replay theorem may assume: the least set containing a fresh
 emulator and closed under the things a live session does to one — feed pty bytes, resize on
 attach, forget partial parser state (what a checkpoint save/load does), **and come off disk
@@ -443,7 +443,7 @@ The transforms are named (`stAlt`, `stStbm`, `stCharset`, `stSetMode`) so the
 `Render` ladder composes them the way `MMap` composes `Modes` transforms. -/
 
 /-! `Sticky`, the receiver fields `restore` establishes and then must not disturb, and its
-projection `stick` are in `packages/terminal/Terminal/Vt.lean`. The projections, as rewrite rules. `rfl`
+projection `stick` are in `packages/terminal/Terminal/CoreCode/Vt.lean`. The projections, as rewrite rules. `rfl`
 for a *variable* receiver, which is
 what keeps the field corollaries in `Render` from asking the elaborator to whnf a
 whole restore stream. -/
@@ -501,7 +501,7 @@ own words ("a frame says what an operation leaves alone, never what the written 
 *become*"), closed for the one operation the scrollback story rests on.
 
 The fold is tractable for exactly one reason: it reads `v.getRow`, never the accumulator
-it is building (`packages/terminal/Terminal/Vt.lean`, `Vt.scrollUpIn`), so the writes are independent and
+it is building (`packages/terminal/Terminal/CoreCode/Vt.lean`, `Vt.scrollUpIn`), so the writes are independent and
 one pointwise characterization covers all of them. `getD_foldl_setRange` is that
 characterization, stated over an arbitrary source function so nothing in it depends on the
 values being rows. Same shape as `foldl_setTab_mem`/`_not_mem` over the tab ruler. -/

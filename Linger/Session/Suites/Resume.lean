@@ -1,10 +1,9 @@
 module
 
 public import Verify.Harness
-import Linger.Session.Checkpoint
-import Linger.Session.Shell.Daemon
-public import Linger.Session.Spec
-import SoftwareChallenge.Commands
+import Linger.Session.CoreCode.Checkpoint
+import Linger.Session.WorldCode.Daemon
+public import Linger.Session.CoreSpec
 
 public section
 
@@ -459,7 +458,6 @@ private def signalChecks (e : Env) : IO Unit := do
   e.killAll #[name]
 
 /-- The resume suite: checkpoint, crash and restore, and where a resume runs. -/
-@[exercises Linger.Session.Spawn.Runs, exercises Linger.Session.Disk.Durable]
 def run : IO UInt32 :=
   Env.suite "resume" fun e => do
     signalChecks e

@@ -1,13 +1,14 @@
 module
 
-public import Os.Spec
-public import Os.Wait
-public import Os.Write
+public import Os.CoreSpec
+public import Os.WorldSpec
+public import Os.CoreCode.Wait
+public import Os.CoreCode.Write
 import all Os.Proofs.Wait
 import all Os.Proofs.Write
 
 /-! The OS boundary's headline theorems, proved of the package: `lake comparator` checks that
-these are exactly the statements of `OsChallenge.lean`. -/
+these are exactly the statements of `Challenge.lean`. -/
 
 public section
 
@@ -53,46 +54,22 @@ theorem write_full_waits (size off : Nat) (r : Os.Write.Result) :
 
 theorem write_full_waits_rejects_gone :
     ¬∀ (size off : Nat) (r : Os.Write.Result),
-        ((fun (size off : Nat) (r : Os.Write.Result) =>
-                  match r with
-                  | .wrote n =>
-                    if size ≤ off + n then Os.Write.Next.done
-                    else if n = 0 then .gone else .write (off + n)
-                  | .full | .gone => .gone)
-                size off r =
+        (Os.Write.fullGone size off r =
               .gone ↔
             r = .gone) ∧
-          ((fun (size off : Nat) (r : Os.Write.Result) =>
-                  match r with
-                  | .wrote n =>
-                    if size ≤ off + n then Os.Write.Next.done
-                    else if n = 0 then .gone else .write (off + n)
-                  | .full | .gone => .gone)
-                size off r =
+          (Os.Write.fullGone size off r =
               .await ↔
             r = .full ∨ r = .wrote 0 ∧ off < size) ∧
-          ((fun (size off : Nat) (r : Os.Write.Result) =>
-                  match r with
-                  | .wrote n =>
-                    if size ≤ off + n then Os.Write.Next.done
-                    else if n = 0 then .gone else .write (off + n)
-                  | .full | .gone => .gone)
-                size off r =
+          (Os.Write.fullGone size off r =
               .done ↔
             ∃ n, r = .wrote n ∧ size ≤ off + n) ∧
           ∀ to,
-            (fun (size off : Nat) (r : Os.Write.Result) =>
-                  match r with
-                  | .wrote n =>
-                    if size ≤ off + n then Os.Write.Next.done
-                    else if n = 0 then .gone else .write (off + n)
-                  | .full | .gone => .gone)
-                size off r =
+            Os.Write.fullGone size off r =
               .write to ↔
             ∃ n, r = .wrote n ∧ 0 < n ∧ to = off + n ∧ to < size := by
   intro h
   -- a full descriptor, which a decision that takes it for a gone reader stops the write for
   have stops := (h 1 0 .full).1
-  simp at stops
+  simp [Os.Write.fullGone] at stops
 
 end Os

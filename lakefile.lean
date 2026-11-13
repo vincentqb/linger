@@ -7,8 +7,15 @@ package linger where leanOptions :=
     ⟨`linter.extra.unreachableTactic, true⟩, ⟨`linter.redundantVisibility, true⟩,
     ⟨`linter.extra.unnecessarySeqFocus, true⟩]
 
+/-- Linger's own build, required first so that it comes first on the search path: a workspace
+looks for a module in its packages' builds, the first required last, and in its own build last of
+all. Every package under `packages/` names its challenge `Challenge`, as linger does, so once a
+package has been built on its own, its challenge would otherwise stand in for linger's. This
+package declares nothing, and its build directory is linger's. -/
+require first from "first"
+
 require software_challenge from git
-  "https://github.com/vincentqb/lean-software-challenge"@"a2970a16ec31dfd7b51df60b5751292cc73218fb"
+  "https://github.com/vincentqb/lean-software-challenge"@"203f0aff941844ccade71343c76a707bd19747a4"
 
 /-- The fuzzy matcher, a package of its own with its own challenge and audit. -/
 require fuzzy from "packages/fuzzy"
@@ -54,10 +61,10 @@ lean_lib Tests where
     .submodules `Linger.Target.Tests]
   leanOptions := implementationOptions
 
-/-- The session and target suites, built by default so the audit sees which claims they
-exercise. -/
-@[default_target] lean_lib Suites where
-  globs := #[.submodules `Linger.Session.Suites, .submodules `Linger.Target.Suites]
+/-- The checks of linger's world claims, which no program module imports: built by default, so
+the audit counts them, and run by the challenge library's checks runner. -/
+@[default_target] lean_lib Checks where
+  globs := #[.one `Linger.Session.WorldCode.Checks, .one `Linger.Target.WorldCode.Checks]
   leanOptions := implementationOptions
 
 /-- Executable suites: `./lake exe suites <suite>`. -/
@@ -65,12 +72,12 @@ lean_lib Verify where
 
 lean_exe suites where root := `Verify.Main
 
-/-- The headline theorems and their kills, stated with `sorry` for `./lake comparator`, which
-builds this library and checks that `Theorems.Solution` proves the same statements. `scripts/gates.sh` checks
-that each statement and hole is exactly `sorry`, so the build does not warn about them. -/
+/-- The headline theorems and their kills, stated with `sorry`. The build writes
+`comparator.json` from them, and `./lake comparator` builds this library and checks that
+`Theorems.Solution` proves the same statements. -/
 lean_lib Challenge where leanOptions := #[⟨`warn.sorry, false⟩]
 
-@[default_target] lean_exe linger where root := `Main
+@[default_target] lean_exe linger where root := `Linger.App.WorldCode.Main
 
 /-- The Lean Software Challenge audit of every module the default targets build. -/
 @[default_target] target audit pkg : Unit := do

@@ -1,7 +1,7 @@
 module
 
-import all Linger.Session.Checkpoint
-import all Terminal.Vt
+import all Linger.Session.CoreCode.Checkpoint
+import all Terminal.CoreCode.Vt
 -- `Terminal.Proofs.Vt` for `Good`, and for the three claims about the decoder's door
 -- (`ofDecoded_good`, `ofDecoded_of_good`, `ofDecoded_none_of_cols_zero`) — the codec's
 -- theorems are stated in terms of it, since `rVt` validates through `Vt.ofDecoded` rather

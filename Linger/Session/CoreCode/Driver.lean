@@ -1,0 +1,105 @@
+module
+
+public import Linger.Session.CoreCode
+
+public section
+
+namespace Linger.Session.Driver
+
+open Linger.Session (State Event Effect step)
+open Terminal.Replay (Plan)
+
+/-- The events an effect's reply feeds back to the session. -/
+def feedback : (eff : Effect Plan) → Reply eff → List Event
+  | .send id _, gone => if gone then [.closed id] else []
+  | .replay id _, gone => if gone then [.closed id] else []
+  | .close id, gone => if gone then [.closed id] else []
+  | .checkpoint, failed => if failed then [.checkpointFailed] else []
+  | .stopProgram, outcome => [.stopped outcome]
+  | .writePty _, _ | .resizePty .., _ | .dropCheckpoint, _ | .record _, _ | .exit, _ => []
+
+/-- Feedback strictly descends: external input, which may stop the program; the program's end
+once the daemon stopped it; disconnect; checkpoint failure. -/
+def eventDepth : Event → Nat
+  | .checkpointFailed => 0
+  | .closed _ => 1
+  | .stopped _ => 2
+  | _ => 3
+
+/-- A strict upper bound on the depth of the events an effect's reply feeds back. -/
+def effectDepth : Effect Plan → Nat
+  | .stopProgram => 3
+  | .send .. | .replay .. | .close .. => 2
+  | .checkpoint => 1
+  | _ => 0
+
+theorem feedback_depth (eff : Effect Plan) (reply : Reply eff) :
+    ∀ ev ∈ feedback eff reply, eventDepth ev < effectDepth eff := by
+  cases eff <;> simp [feedback, eventDepth, effectDepth]
+
+theorem step_depth (s : State) (ev : Event) :
+    ∀ eff ∈ (step s ev).2, effectDepth eff ≤ eventDepth ev := by
+  cases ev with
+  | closed id =>
+    intro eff h
+    rcases Session.closed_effects s id eff h with rfl | rfl <;> simp [effectDepth, eventDepth]
+  | checkpointFailed => simp [Session.checkpointFailed_effects]
+  | stopped outcome =>
+    intro eff h
+    have := Session.stopped_effects s outcome eff h
+    cases eff <;> simp_all [effectDepth, eventDepth]
+  | _ =>
+    intro eff _
+    cases eff <;> simp [effectDepth, eventDepth]
+
+/-- Execute a finite effect list in order, retaining the proof that each
+feedback event has lower depth than the event that produced this batch. -/
+private def effects {m : Type → Type} [Monad m] {World : Type}
+    (execute : State → World → (eff : Effect Plan) → m (World × Reply eff)) (st : State)
+    (world : World) (depth : Nat) (effs : List (Effect Plan))
+    (h : ∀ eff ∈ effs, effectDepth eff ≤ depth) :
+    m (World × List { ev : Event // eventDepth ev < depth }) := do
+  let (world, reversed) ←
+    effs.attach.foldlM
+        (fun (acc : World × List { ev : Event // eventDepth ev < depth }) eff => do
+          let (world, reply) ← execute st acc.1 eff.val
+          let more :=
+            (feedback eff.val reply).attach.map fun ev =>
+              (⟨ev.val,
+                  Nat.lt_of_lt_of_le (feedback_depth eff.val reply ev.val ev.property)
+                    (h eff.val eff.property)⟩ :
+                { ev : Event // eventDepth ev < depth })
+          return (world, more.reverse ++ acc.2))
+        (world, [])
+  return (world, reversed.reverse)
+
+/-- Settle one event and its feedback before consuming another external event.
+Recursion is justified by feedback depth, never by a retry count or fuel. -/
+private def handle {m : Type → Type} [Monad m] {World : Type}
+    (execute : State → World → (eff : Effect Plan) → m (World × Reply eff)) (r : Result State World)
+    (ev : Event) : m (Result State World) := do
+  if r.exiting then
+    return r
+  let stepped := step r.st ev
+  let (world, more) ←
+    effects execute stepped.1 r.world (eventDepth ev) stepped.2 (step_depth r.st ev)
+  let next : Result State World := { st := stepped.1, world, exiting := stepped.2.contains .exit }
+  if next.exiting then
+    return next
+  more.foldlM (fun r follow => handle execute r follow.val) next
+termination_by eventDepth ev
+decreasing_by exact follow.property
+
+/-- The daemon's finite-batch driver, parameterized by its effect interpreter.
+The interpreter owns world state; only `Session.step` owns session state. -/
+def run {m : Type → Type} [Monad m] {World : Type}
+    (execute : State → World → (eff : Effect Plan) → m (World × Reply eff))
+    (r : Result State World) : List Event → m (Result State World)
+  | [] => pure r
+  | ev :: rest => do
+    if r.exiting then
+      return r
+    let next ← handle execute r ev
+    run execute next rest
+
+end Linger.Session.Driver

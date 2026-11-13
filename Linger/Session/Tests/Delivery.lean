@@ -1,8 +1,8 @@
 module
 
-public import Terminal.Vt
-import Linger.Session.Checkpoint
-import all Terminal.Vt
+public import Terminal.CoreCode.Vt
+import Linger.Session.CoreCode.Checkpoint
+import all Terminal.CoreCode.Vt
 
 public section
 

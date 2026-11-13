@@ -1,8 +1,8 @@
 module
 
-public import Os.Shell
-public import Linger.Display.Status
-public import Terminal.Render
+public import Os.WorldCode
+public import Linger.Display.CoreCode.Status
+public import Terminal.CoreCode.Render
 
 public section
 

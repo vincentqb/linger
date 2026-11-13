@@ -1,6 +1,6 @@
 module
 
-public import Terminal.Spec
+public import Terminal.CoreSpec
 import all Terminal.Proofs.Vt.State
 
 namespace Terminal.Vt
@@ -1312,7 +1312,7 @@ theorem renderable_init (cols rows : Nat) : Renderable (Vt.init cols rows) :=
 and `Good` says nothing about the grid: with that check alone, one flipped byte of a real
 checkpoint reaches a `Good ∧ ¬Renderable` state **from disk** at which `resume_grid`'s
 conclusion is false, which makes an unchecked grid shape an observable defect rather than a
-missing hypothesis. `Vt.decodedRenderable` (`packages/terminal/Terminal/Vt.lean`) is the second half
+missing hypothesis. `Vt.decodedRenderable` (`packages/terminal/Terminal/CoreCode/Vt.lean`) is the second half
 of the door's check; these are its claims.
 
 They live here, apart from the door's other claims in `packages/terminal/Terminal/Proofs/Vt/State.lean`, for one

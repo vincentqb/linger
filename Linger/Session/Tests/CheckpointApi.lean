@@ -1,6 +1,6 @@
 module
 
-import Linger.Session.Checkpoint
+import Linger.Session.CoreCode.Checkpoint
 
 /-! Ordinary imports write and read checkpoints through `saveBytes` and `loadBytes` and see
 `Ckpt` and `magic`. The list codec and the readers stay private to the codec and its

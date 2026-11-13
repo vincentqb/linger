@@ -1,10 +1,10 @@
 module
 
-import all Linger.Session
-import all Terminal.Vt
-import all Terminal.Mediation
-import all Linger.Session.Wire
-import all Terminal.Render
+import all Linger.Session.CoreCode
+import all Terminal.CoreCode.Vt
+import all Terminal.CoreCode.Mediation
+import all Linger.Session.CoreCode.Wire
+import all Terminal.CoreCode.Render
 -- The `Vt` seal makes the proof layer module-private, so the rungs this file
 -- composes arrive through `import all`.
 import all Terminal.Proofs.Mediation
@@ -15,7 +15,7 @@ import all Linger.Session.Proofs.Wire
 -- "Resume at the daemon", below), and `Checkpoint.loadBytes_saveBytes_live` gives a resumed
 -- session's checkpoint round trip (`run_resume_load_save`).
 import all Linger.Session.Proofs.Checkpoint
-public import Linger.Session.Spec
+public import Linger.Session.CoreSpec
 
 /-! # The daemon state machine theorems
 
@@ -615,7 +615,7 @@ theorem onMsg_input_readonly (s : State) (c : Client) (bs : List UInt8) (h : c.m
 
 /-! ## The session bounds -/
 
-/-- The composite session bound. `Linger.Session.Bounds` (`Linger/Session/Spec.lean`) states
+/-- The composite session bound. `Linger.Session.Bounds` (`Linger/Session/CoreSpec.lean`) states
 it through the state's observations; `bounded_iff_bounds` relates the two. -/
 structure Bounded (s : State) : Prop where
   clientsLe : s.clients.length ≤ maxClients
@@ -1369,7 +1369,7 @@ theorem liveVt_boot (cols rows : Nat) (ls mk : List (String × String)) :
 
 /-! ## Resume at the daemon — the other door into `State.boot`
 
-`liveVt_boot` covers a *fresh* boot. `Linger/Session/Shell/Daemon.lean` has a second
+`liveVt_boot` covers a *fresh* boot. `Linger/Session/WorldCode/Daemon.lean` has a second
 source for the `vt0` it boots with:
 
 ```
@@ -2048,7 +2048,7 @@ below need no hypothesis about where a field came from.
 
 `infoText` builds `List UInt8` directly, which is what makes them provable at all: a
 `String` does not reduce in the kernel — the argument
-`packages/terminal/Terminal/Render.lean`'s header makes, and the reason `Render.history`'s
+`packages/terminal/Terminal/CoreCode/Render.lean`'s header makes, and the reason `Render.history`'s
 `rowText` is built on `List UInt8`, which earns it `history_framing`/`history_lines`.
 `Verify/Coverage.lean` classifies emitted streams. -/
 

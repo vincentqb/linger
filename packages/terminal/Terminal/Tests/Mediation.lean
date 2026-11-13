@@ -1,9 +1,9 @@
 module
 
 -- The mediator fixtures read cursor and mode state and run compiled under `native_decide`.
-import all Terminal.Vt
-import all Terminal.Mediation
-meta import Terminal.Mediation
+import all Terminal.CoreCode.Vt
+import all Terminal.CoreCode.Mediation
+meta import Terminal.CoreCode.Mediation
 
 /-! # Terminal mediator behavior tests
 

@@ -1,7 +1,7 @@
 module
 
 public import Verify.Harness
-import Linger.Display.Listing
+import Linger.Display.CoreCode.Listing
 
 public section
 

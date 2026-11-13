@@ -1,13 +1,12 @@
 module
 
 public import Verify.Harness
-import Linger.Session.Checkpoint
-import Linger.Display.Listing
-import Linger.Session.Shell.Daemon
-import Linger.Session.Shell.Inventory
-import Linger.Session.Shell.Client
-public import Linger.Session.Spec
-import SoftwareChallenge.Commands
+import Linger.Session.CoreCode.Checkpoint
+import Linger.Display.CoreCode.Listing
+import Linger.Session.WorldCode.Daemon
+import Linger.Session.WorldCode.Inventory
+import Linger.Session.WorldCode.Client
+public import Linger.Session.CoreSpec
 
 public section
 
@@ -538,7 +537,6 @@ def nonblockingReader (e : Env) : IO Unit := do
 /-- The robust suite: runtime boundaries under adverse timing. Concurrent starts of one name,
 and a resume while another process holds the name's locks, exercise the operating system's
 lock contract. -/
-@[exercises Linger.Session.Claim.Exclusive]
 def run : IO UInt32 :=
   Env.suite "robust" fun e => do
     -- ── 1. busy daemon still lists correctly ──────────────────────────────────

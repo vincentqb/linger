@@ -1,9 +1,9 @@
 module
 
 -- The round-trip fixtures compare fields on both sides and run compiled under `native_decide`.
-import all Terminal.Vt
-import all Terminal.Render
-meta import Terminal.Render
+import all Terminal.CoreCode.Vt
+import all Terminal.CoreCode.Render
+meta import Terminal.CoreCode.Render
 
 /-! # Replay round-trip tests — restore fidelity, executable form
 
@@ -735,7 +735,7 @@ example : (let r := (sbRows hostileRing).toList.head!
 /-! #### The byte budget — a correctness requirement, not prudence
 
 `outbufCap = 4194304` **disconnects** a client on undrained bytes
-(`Linger/Session/Shell/Daemon.lean`), and a full `sbCap = 10000` ring of per-cell
+(`Linger/Session/WorldCode/Daemon.lean`), and a full `sbCap = 10000` ring of per-cell
 truecolour rows is 32–46 MB at 80 columns. So the trim is what stands between a
 reattach and an attach-then-instant-drop.
 

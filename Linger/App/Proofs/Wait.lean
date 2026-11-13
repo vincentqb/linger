@@ -1,9 +1,9 @@
 module
 
-public import Linger.Session.Spec
-import all Linger.App.Spec
-import all Linger.App.Wait
-import all Linger.Session
+public import Linger.Session.CoreSpec
+import all Linger.App.CoreSpec
+import all Linger.App.CoreCode.Wait
+import all Linger.Session.CoreCode
 
 /-! # What `wait` answers
 

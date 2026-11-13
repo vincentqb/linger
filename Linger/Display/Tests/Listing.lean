@@ -1,8 +1,8 @@
 module
 
-import Linger.Display.Listing
-import all Linger.Display.Status
-meta import Linger.Display.Listing
+import Linger.Display.CoreCode.Listing
+import all Linger.Display.CoreCode.Status
+meta import Linger.Display.CoreCode.Listing
 
 /-! # Listing tests — the human row is safe and forgery-proof
 

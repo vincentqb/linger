@@ -1,6 +1,6 @@
 module
 
-import Fuzzy
+import Fuzzy.CoreCode
 
 /-! Check the reusable fuzzy API through an ordinary import. Evaluation tests
 live in `Fuzzy.Tests`, whose meta import must not hide missing public exports. -/

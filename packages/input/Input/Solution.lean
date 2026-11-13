@@ -1,10 +1,10 @@
 module
 
-public import Input
+public import Input.CoreCode
 import Input.Proofs
 
 /-! The input decoder's headline theorems, proved of the decoder: `lake comparator` checks that
-these are exactly the statements of `InputChallenge.lean`. -/
+these are exactly the statements of `Challenge.lean`. -/
 
 public section
 

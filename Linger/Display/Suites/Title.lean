@@ -1,10 +1,10 @@
 module
 
 public import Verify.Harness
-import Terminal.Mediation
-import Terminal.Title
-import Linger.Display.Title
-import Linger.Session.Shell.Client
+import Terminal.CoreCode.Mediation
+import Terminal.CoreCode.Title
+import Linger.Display.CoreCode.Title
+import Linger.Session.WorldCode.Client
 
 public section
 

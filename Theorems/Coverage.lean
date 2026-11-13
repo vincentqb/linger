@@ -40,14 +40,14 @@ import all Theorems.Solution
 public meta import Lean.Elab.Command
 import Lean.Parser.Command
 meta import SoftwareChallenge.Commands -- shake: keep
+public meta import SoftwareChallenge.Policy
 public meta import Lean.Compiler.CSimpAttr
 import Lean.Compiler.CSimpAttr
 
 /-! # Pure definitions, their `@[csimp]` replacements and the renderer's emitters
 
 `pureDefNames` reads every explicit `def` or `abbrev` in a pure module (`pureModule`: a
-component's top module and each component's own modules other than its boundary and shell)
-from the sources, and `runtimeEmitters` finds those of the renderer and the replay that the
+`CoreSpec` or `CoreCode` module) from the sources, and `runtimeEmitters` finds those of the renderer and the replay that the
 program references outside their own module, which `Verify/Coverage.lean` classifies. Pure code
 reaches a global `@[csimp]` replacement only through its specification, from definitions
 declared after the theorem, which is tagged in the specification's module; `scripts/verify.sh`
@@ -60,24 +60,11 @@ namespace Theorems.Coverage
 
 open Lean Elab Command
 
-/-- The module roots of the packages under `packages/`. A package's top module (`Fuzzy`), its
-other top-level modules (`Terminal.Vt`) but its boundary, shell, suites, `Proofs`, `Tests` and
-`Solution`, and the modules under its `Spec` are pure code. -/
-public meta def packageRoots : List String := ["Fuzzy", "Input", "Terminal", "Os"]
-
-/-- A module of pure code: a component's top module (`Linger.Session`), each component's
-top-level modules other than its boundary and shell, the modules under its `Spec`, and a
-package's pure modules (`packageRoots`). -/
+/-- A module of pure code: one whose role, as the challenge library reads it from the module's
+name (`SoftwareChallenge.Role.ofName`), is `CoreSpec` or `CoreCode`, linger's or a package's. -/
 public meta def pureModule (mod : Lean.Name) : Bool :=
-  match mod.components.map toString with
-  | ["Linger", _] => true
-  | ["Linger", _, leaf] => !["Boundary", "Shell"].contains leaf
-  | ["Linger", _, "Spec", _] => true
-  | [root] => packageRoots.contains root
-  | [root, leaf] =>
-    packageRoots.contains root &&
-      !["Boundary", "Shell", "Suites", "Proofs", "Tests", "Solution"].contains leaf
-  | root :: "Spec" :: _ => packageRoots.contains root
+  match SoftwareChallenge.Role.ofName mod with
+  | .coreSpec | .coreCode => true
   | _ => false
 
 /-- The source files under `Linger/`, `Theorems/` and each package's directory whose module
@@ -184,8 +171,9 @@ binary runs.
 Reading implementation metadata stays in the friend region; callers receive
 names only. Run after building the program. Alternate artifacts let the regression
 check inspect a separately compiled fixture without changing the search path. -/
-public meta def runtimeEmitters (defs : Array Lean.Name) (main : Lean.Name := `Main)
-    (arts : NameMap ImportArtifacts := {}) : IO (Array String) := do
+public meta def runtimeEmitters (defs : Array Lean.Name)
+    (main : Lean.Name := `Linger.App.WorldCode.Main) (arts : NameMap ImportArtifacts := {}) :
+    IO (Array String) := do
   let env ← importModules #[{ module := main }] {} (arts := arts)
   let mut refs : NameHashSet := {}
   let program (mod : Lean.Name) :=
@@ -202,8 +190,10 @@ public meta def runtimeEmitters (defs : Array Lean.Name) (main : Lean.Name := `M
       let logical := privateToUserName target
       if
           defs.contains logical && mod != targetMod &&
-            [`Terminal.Render, `Terminal.Replay].any
-              (fun family => family.isPrefixOf logical && family.isPrefixOf targetMod) then
+            [(`Terminal.Render, `Terminal.CoreCode.Render),
+                  (`Terminal.Replay, `Terminal.CoreCode.Replay)].any
+              (fun (family, module) =>
+                family.isPrefixOf logical && module.isPrefixOf targetMod) then
         refs := refs.insert logical
   return (refs.toList.map (fun n => (n.replacePrefix `Terminal .anonymous).toString)).toArray.qsort
       (· < ·)
@@ -278,7 +268,7 @@ run_cmd
     r#"module
 public import Lean.Elab.Command
 public import Linger.Probe.CoverageShadow
-public import Terminal.Render
+public import Terminal.CoreCode.Render
 public section
 namespace Probe
   def indented : Nat := 0

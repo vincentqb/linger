@@ -52,7 +52,7 @@ in the foreground, as the verifier.
 - `Linger/Target/`: session names and remote targets.
 - `Linger/Display/`: session status, titles and listings.
 - `Linger/Terminal/Suites/`: live suites of the VT toolkit as linger runs it.
-- `Linger/Session.lean` and `Linger/Session/`: the session machine, its effect `Driver`,
+- `Linger/Session/CoreCode.lean` and `Linger/Session/`: the session machine, its effect `Driver`,
   `Wire` format, `Buf` queues and `Checkpoint`s; `Shell/` holds the daemon, the attach
   client, checkpoint files and state paths.
 - `Linger/Selector/`: interactive selection: `Key` bindings of the `input` package's keys and
@@ -99,7 +99,7 @@ Lean erases proofs regardless of file placement.
 - State invariants in `Challenge.lean` and the `Spec.lean` files, and design code for
   provability.
 - The files the audit lists as `Owned:` (`Challenge.lean`, `comparator.json`, `Audit.lean`,
-  each `Spec.lean`, `packages/os/Os/Boundary.lean`, the Lake configuration and the toolchain) say
+  each `Spec.lean`, `packages/os/Os/WorldSpec.lean`, the Lake configuration and the toolchain) say
   what linger claims. Change them to change a claim, never to make a proof pass, and restate a
   theorem there no weaker than its source. Each package root's `owned.lock` records their
   hashes, and a build fails when one drifts: delete the lock to record a changed claim, and
@@ -124,11 +124,11 @@ Lean erases proofs regardless of file placement.
   fixes with a failing check and verify that new assertions detect a deliberate break;
   a check of a failure or cleanup path also asserts that the path was reached.
 - Read SHELL, HOME for remote hosts and for a resume, and LINGER_NO_DETACH_KEY once, into
-  the pure policies of `Linger/Os/Env.lean`, which `scripts/gates.sh` ties to each read,
+  the pure policies of `Linger/Os/CoreCode/Env.lean`, which `scripts/gates.sh` ties to each read,
   and run every variable the program reads unset and empty in a suite.
 - Raw OS access belongs in the `os` package: `packages/os/Os/` and `packages/os/c/shim.c`.
-  Every `@[extern]` declaration stays private in `packages/os/Os/Boundary.lean`, which declares
-  nothing else, and `packages/os/Os/Shell.lean` wraps each one: it is the surface callers use.
+  Every `@[extern]` declaration stays private in `packages/os/Os/WorldSpec.lean`, which declares
+  nothing else, and `packages/os/Os/WorldCode.lean` wraps each one: it is the surface callers use.
   Keep the shim to syscalls and errno.
   Return `-errno` and avoid numeric errno values in Lean. A binding that takes a pid also
   takes the proof `Os.Shell.checkPid` returns.

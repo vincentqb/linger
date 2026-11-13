@@ -1,9 +1,9 @@
 module
 
-public import Terminal.Title
-public import Terminal.Render
-import all Terminal.Title
-import all Terminal.Vt
+public import Terminal.CoreCode.Title
+public import Terminal.CoreCode.Render
+import all Terminal.CoreCode.Title
+import all Terminal.CoreCode.Vt
 import all Terminal.Proofs.Vt
 import all Terminal.Proofs.Render.Ends
 

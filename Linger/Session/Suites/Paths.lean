@@ -1,8 +1,8 @@
 module
 
 public import Linger.Display.Suites.Overview
-import Linger.Session.Shell.Paths
-import Linger.Target.Name
+import Linger.Session.WorldCode.Paths
+import Linger.Target.CoreCode.Name
 
 public section
 

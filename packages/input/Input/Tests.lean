@@ -1,7 +1,7 @@
 module
 
-import Input
-meta import Input
+import Input.CoreCode
+meta import Input.CoreCode
 
 /-! Byte-level fixtures exercise incremental state, including paste boundaries, as physical
 events before any application binds them. Unicode validation is Lean's bounded UTF-8

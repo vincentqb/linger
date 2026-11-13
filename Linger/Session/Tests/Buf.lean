@@ -1,7 +1,7 @@
 module
 
-import Linger.Session.Buf
-meta import Linger.Session.Buf
+import Linger.Session.CoreCode.Buf
+meta import Linger.Session.CoreCode.Buf
 
 /-! # Buf fixtures — the cap decisions, evaluated
 

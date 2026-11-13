@@ -1,11 +1,10 @@
 module
 
 public import Verify.Harness
-import Linger.App.Entry
-import Linger.Target.Remote
-public import Linger.Target.Spec
+import Linger.App.CoreCode.Entry
+import Linger.Target.CoreCode.Remote
+public import Linger.Target.CoreSpec
 import Linger.Target.Suites.Remote
-import SoftwareChallenge.Commands
 
 public section
 
@@ -70,7 +69,6 @@ def through (root bin shell line : String) : IO (List String × Bool × Array IO
 
 /-- The shells suite: the encoded command line of `send` through each shell this host has, then
 the real binary on encoded command lines. -/
-@[exercises Linger.Target.Remote.Shell.Literal]
 def run : IO UInt32 :=
   Env.suite "shells" fun e => do
     let root := s!"{e.dir}/shells"

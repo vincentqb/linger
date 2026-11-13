@@ -1,8 +1,8 @@
 module
 
-public import Linger.Target.Name
-public import Linger.Target.Spec
-import all Linger.Target.Name
+public import Linger.Target.CoreCode.Name
+public import Linger.Target.CoreSpec
+import all Linger.Target.CoreCode.Name
 
 public section
 

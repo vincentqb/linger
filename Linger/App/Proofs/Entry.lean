@@ -1,8 +1,8 @@
 module
 
-import all Linger.App.Entry
-import Linger.Target.Spec
-import Linger.Target.Remote
+import all Linger.App.CoreCode.Entry
+import Linger.Target.CoreSpec
+import Linger.Target.CoreCode.Remote
 
 /-! Entry selection, interchange ownership, exact command forwarding and encoded command
 lines. -/

@@ -1,6 +1,6 @@
 module
 
-import all Linger.Selector.Key
+import all Linger.Selector.CoreCode.Key
 import Input.Proofs
 
 /-! The selector's bindings are checked against concrete byte defaults.

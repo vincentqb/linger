@@ -1,8 +1,8 @@
 module
 
-public import Terminal.Spec
-import all Terminal.Render
-import all Terminal.Vt
+public import Terminal.CoreSpec
+import all Terminal.CoreCode.Render
+import all Terminal.CoreCode.Vt
 import all Terminal.Proofs.Render.Keeps
 import all Init.Data.String.Legacy
 
@@ -14,7 +14,7 @@ The lead-in that grounds any receiver, the hand-back's canonical modes
 (`leave_canonical`), `MMap` (modes-from-ground with per-chunk transforms), and the
 value claims that `restore` installs the session's modes and pen in any receiver
 (`restore_modes_any` and `restore_pen_any`, behind `replay_restores` in
-`packages/terminal/TerminalChallenge.lean`). -/
+`packages/terminal/Challenge.lean`). -/
 
 namespace Terminal.Render
 

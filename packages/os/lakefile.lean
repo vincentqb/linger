@@ -4,7 +4,7 @@ open Lake DSL
 
 /-- The OS boundary: the foreign declarations, the C shim they bind, the checked wrappers callers
 use and the bounded wait. It imports no other linger package and has its own challenge
-(`OsChallenge.lean`) and audit. It shares the packages of the checkout that requires it, so
+(`Challenge.lean`) and audit. It shares the packages of the checkout that requires it, so
 building it alone fetches nothing. -/
 package os where
   leanOptions :=
@@ -14,7 +14,7 @@ package os where
   packagesDir := "../../.lake/packages"
 
 require software_challenge from git
-  "https://github.com/vincentqb/lean-software-challenge"@"a2970a16ec31dfd7b51df60b5751292cc73218fb"
+  "https://github.com/vincentqb/lean-software-challenge"@"203f0aff941844ccade71343c76a707bd19747a4"
 
 /-- Options for every library but the challenge: with the package's `warningAsError`, a public
 declaration without a docstring fails the build. -/
@@ -33,15 +33,21 @@ extern_lib liblingershim pkg := do
   let shimO ← fetch <| pkg.target ``shim.o
   buildStaticLib (pkg.staticLibDir / nameToStaticLib "lingershim") #[shimO]
 
-/-- The boundary, its specification, its proofs, the solution its challenge is checked against
-and the wait checks a program's shim suite runs: every module under `Os`. -/
+/-- The boundary, its specification, its proofs, its checks and the solution its challenge is
+checked against: every module under `Os`. Each is also compiled to a shared library that links
+the shim, which a check of a world claim then calls, as a checkout's checks of its own claims
+do through `Os.Shell`. A root other than `Os`, which is no module, keeps that library from being
+loaded as a plugin, whose initializer would be `Os`'s. -/
 @[default_target] lean_lib Os where
+  roots := #[`Os.Solution]
   globs := #[.submodules `Os]
   leanOptions := implementationOptions
+  precompileModules := true
 
 /-- The boundary's headline theorems and their kills, stated with `sorry` for `lake comparator`,
-which checks that `Os.Solution` proves the same statements. -/
-lean_lib OsChallenge where leanOptions := #[⟨`warn.sorry, false⟩]
+which checks that `Os.Solution` proves the same statements. The build writes
+`comparator.json` from them. -/
+lean_lib Challenge where leanOptions := #[⟨`warn.sorry, false⟩]
 
 /-- The Lean Software Challenge audit of every module the default targets build. -/
 @[default_target] target audit pkg : Unit := do

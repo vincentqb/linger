@@ -1,9 +1,9 @@
 module
 
 -- The codec fixtures compare decoded screens field by field and run compiled under `native_decide`.
-import all Terminal.Vt
-import all Linger.Session.Checkpoint
-meta import Linger.Session.Checkpoint
+import all Terminal.CoreCode.Vt
+import all Linger.Session.CoreCode.Checkpoint
+meta import Linger.Session.CoreCode.Checkpoint
 
 /-! # Checkpoint codec tests
 

@@ -1,7 +1,7 @@
 module
 
-public import Fuzzy
-import all Fuzzy
+public import Fuzzy.CoreCode
+import all Fuzzy.CoreCode
 
 public section
 

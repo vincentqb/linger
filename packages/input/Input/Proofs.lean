@@ -1,7 +1,7 @@
 module
 
-public import Input
-import all Input
+public import Input.CoreCode
+import all Input.CoreCode
 
 public section
 

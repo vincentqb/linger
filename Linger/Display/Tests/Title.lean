@@ -1,9 +1,9 @@
 module
 
-import Linger.Display.Title
-import Terminal.Title
-meta import Linger.Display.Title
-meta import Terminal.Title
+import Linger.Display.CoreCode.Title
+import Terminal.CoreCode.Title
+meta import Linger.Display.CoreCode.Title
+meta import Terminal.CoreCode.Title
 
 namespace Linger.Display.Title.Tests
 

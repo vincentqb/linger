@@ -1,7 +1,7 @@
 module
 
-public import Linger.App.Spec
-import all Linger.App.Capture
+public import Linger.App.CoreSpec
+import all Linger.App.CoreCode.Capture
 
 /-! # What `capture` of a saved session waits on while it holds the name
 

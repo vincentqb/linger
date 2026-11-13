@@ -1,7 +1,7 @@
 module
 
-import all Linger.Display.Listing
-import all Linger.Display.Status
+import all Linger.Display.CoreCode.Listing
+import all Linger.Display.CoreCode.Status
 -- The proof layer is module-private, so `utf8s_no_ctl` arrives through `import all`.
 import all Terminal.Proofs.Render
 import all Linger.Display.Proofs.Status
