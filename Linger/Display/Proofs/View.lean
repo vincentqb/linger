@@ -5,8 +5,9 @@ import all Linger.Display.CoreCode.Status
 
 /-! # Views of many sessions — nothing that needs you is hidden, and every count adds up
 
-A view's order lists every status once, those that ask for someone first; sorting by it loses
-no row and keeps the listing's order within a status. Groups count exactly and add up to the
+A view's order lists every place once, those that ask for someone first, and a running session
+has one place whether it is printing or quiet; sorting by it loses no row, keeps the listing's
+order within a place and moves no row whose session only starts or stops printing. Groups count exactly and add up to the
 rows they sum up, a group's name starts every member's name, and the depth names are cut at is
 the most even of those that help a summary. -/
 
@@ -14,11 +15,18 @@ namespace Linger.Display.View
 
 open Linger.Display.Status (Status)
 
-/-- Every status has a place in a view's order, -/
-theorem order_complete (st : Status) : st ∈ order := by cases st <;> decide
+/-- Every status's place is in a view's order, -/
+theorem place_mem_order (st : Status) : place st ∈ order := by cases st <;> decide
 
-/-- …and only one. -/
+/-- …once. -/
 theorem order_nodup : order.Nodup := by decide
+
+/-- A quiet session's place is a printing one's. -/
+theorem place_idle : place .idle = place .working := rfl
+
+/-- A status asks for someone exactly when its place does. -/
+theorem place_attention (st : Status) : place st ∈ Status.attention ↔ st ∈ Status.attention := by
+  cases st <;> decide
 
 /-- Rows that no two filters both keep are, between the two, the rows either keeps. -/
 theorem filter_append_filter_perm {α : Type} (p q : α → Bool) (l : List α)
@@ -60,11 +68,14 @@ theorem flatMap_filter_perm {α : Type} (status : α → Status) (rows : List α
 /-- **A view loses no row**: sorting rows by status is a permutation of them. -/
 theorem sort_perm {α : Type} (status : α → Status) (rows : List α) :
     (sort status rows).Perm rows := by
-  have h := flatMap_filter_perm status rows order order_nodup
-  have hall : (rows.filter fun x => order.contains (status x)) = rows := by
+  have h :
+    (order.flatMap fun st => rows.filter fun x => place (status x) == st).Perm
+      (rows.filter fun x => order.contains (place (status x))) :=
+    flatMap_filter_perm (fun x => place (status x)) rows order order_nodup
+  have hall : (rows.filter fun x => order.contains (place (status x))) = rows := by
     apply List.filter_eq_self.mpr
     intro x _
-    simpa using order_complete (status x)
+    simpa using place_mem_order (status x)
   rw [hall] at h
   exact h
 
@@ -75,21 +86,26 @@ theorem sort_attention_first {α : Type} (status : α → Status) (rows : List �
       sort status rows = first ++ rest ∧
         (∀ x ∈ first, status x ∈ Status.attention) ∧ ∀ x ∈ rest, status x ∉ Status.attention := by
   refine
-    ⟨[Status.unknown, .exitedBad, .wantsYou].flatMap fun st => rows.filter (status · == st),
-      [Status.exitedOk, .working, .idle, .resumable].flatMap fun st => rows.filter (status · == st),
+    ⟨[Status.unknown, .exitedBad, .wantsYou].flatMap fun st =>
+        rows.filter fun x => place (status x) == st,
+      [Status.exitedOk, .working, .resumable].flatMap fun st =>
+        rows.filter fun x => place (status x) == st,
       ?_, ?_, ?_⟩
   · rw [← List.flatMap_append]
     rfl
   · intro x hx
     simp only [List.mem_flatMap, List.mem_filter, beq_iff_eq] at hx
     obtain ⟨st, hst, _, heq⟩ := hx
+    apply (place_attention (status x)).mp
+    rw [heq]
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hst
-    rcases hst with rfl | rfl | rfl <;> simp [heq, Status.attention]
+    rcases hst with rfl | rfl | rfl <;> simp [Status.attention]
   · intro x hx
     simp only [List.mem_flatMap, List.mem_filter, beq_iff_eq] at hx
     obtain ⟨st, hst, _, heq⟩ := hx
+    rw [← place_attention (status x), heq]
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hst
-    rcases hst with rfl | rfl | rfl | rfl <;> simp [heq, Status.attention]
+    rcases hst with rfl | rfl | rfl <;> simp [Status.attention]
 
 /-- Filtering by one status after filtering by distinct statuses keeps that status's rows when
 it is among them, and none otherwise. -/
@@ -117,12 +133,42 @@ theorem flatMap_filter_filter {α : Type} (status : α → Status) (rows : List 
       · simp [hin]
       · simp [hin, Ne.symm hst]
 
-/-- **A view keeps the listing's order within a status.** -/
+/-- **A view keeps the listing's order within a place.** -/
 theorem sort_stable {α : Type} (status : α → Status) (rows : List α) (st : Status) :
-    (sort status rows).filter (status · == st) = rows.filter (status · == st) := by
+    (sort status rows).filter (fun x => place (status x) == st) =
+      rows.filter fun x => place (status x) == st := by
+  have h :
+    (order.flatMap fun s => rows.filter fun x => place (status x) == s).filter
+        (fun x => place (status x) == st) =
+      if st ∈ order then rows.filter (fun x => place (status x) == st) else [] :=
+    flatMap_filter_filter (fun x => place (status x)) rows st order order_nodup
   unfold sort
-  rw [flatMap_filter_filter status rows st order order_nodup]
-  simp [order_complete st]
+  rw [h]
+  by_cases hst : st ∈ order
+  · simp [hst]
+  · simp only [hst, ite_false]
+    symm
+    apply List.filter_eq_nil_iff.mpr
+    intro x _ heq
+    exact hst ((beq_iff_eq.mp heq) ▸ place_mem_order (status x))
+
+/-- **A row keeps its place while its session prints or goes quiet**: statuses that differ only
+between `⣷` and `⣀` sort rows the same. -/
+theorem sort_keeps_place {α : Type} (status status' : α → Status) (rows : List α)
+    (h :
+      ∀ x ∈ rows,
+        status x = status' x ∨
+          ((status x = .working ∨ status x = .idle) ∧ (status' x = .working ∨ status' x = .idle))) :
+    sort status rows = sort status' rows := by
+  have hp : ∀ x ∈ rows, place (status x) = place (status' x) := by
+    intro x hx
+    rcases h x hx with heq | ⟨h1, h2⟩
+    · rw [heq]
+    · rcases h1 with h1 | h1 <;> rcases h2 with h2 | h2 <;> simp only [h1, h2, place_idle]
+  unfold sort
+  congr 1
+  funext st
+  exact List.filter_congr fun x hx => by rw [hp x hx]
 
 /-- A view's header says how many rows it lists, -/
 theorem headerParts_count (labels : List String) (statuses : List Status) :

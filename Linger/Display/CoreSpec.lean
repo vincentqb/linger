@@ -198,4 +198,12 @@ view lists the sessions that want attention first is shown to reject it. -/
 @[expose]
 def View.arrival {α : Type} (_ : α → Status.Status) (rows : List α) : List α := rows
 
+/-- A wrong order: each status has its own place, a printing session's before a quiet one's, so
+a row moves whenever its session starts or stops printing. The headline that a running session's
+row keeps its place is shown to reject it. -/
+@[expose]
+def View.byActivity {α : Type} (status : α → Status.Status) (rows : List α) : List α :=
+  [Status.Status.unknown, .exitedBad, .wantsYou, .exitedOk, .working, .idle, .resumable].flatMap
+    fun st => rows.filter fun x => status x == st
+
 end Linger.Display

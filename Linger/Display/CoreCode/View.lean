@@ -8,8 +8,11 @@ public section
 /-! # Linger.Display.View — what a view of many sessions shows first, and how it sums up the rest
 
 **Nothing that needs you is hidden, and every count adds up.** A view lists the statuses that
-ask for someone first (`sort_attention_first`), keeps the listing's order within a status
-(`sort_stable`) and loses no row (`sort_perm`). Its header counts every row and, among them,
+ask for someone first (`sort_attention_first`), keeps the listing's order within a place
+(`sort_stable`) and loses no row (`sort_perm`). A running session has one place whether it is
+printing or quiet, so its row stays where it is when it starts or stops (`sort_keeps_place`),
+and a row moves only when its session starts or stops needing you, ends or can only be resumed.
+Its header counts every row and, among them,
 those that ask for someone, whatever a query shows (`headerParts`). The rows a window cannot
 show are summed up by groups of names, with exact counts that add up to the rows left out
 (`groups_count`, `groups_sum`). A group is named by the start of its members' names, so typing
@@ -20,12 +23,19 @@ namespace Linger.Display.View
 
 open Linger.Display.Status (Status)
 
-/-- The order a view shows statuses in, those that ask for someone first: `? ! ⣿ ✓ ⣷ ⣀ ~`. -/
-def order : List Status := [.unknown, .exitedBad, .wantsYou, .exitedOk, .working, .idle, .resumable]
+/-- The place a view shows a status in, named by a status: a running session's, printing (`⣷`)
+or quiet (`⣀`), is `working`'s, and every other status has its own. -/
+def place : Status → Status
+  | .idle => .working
+  | st => st
 
-/-- Rows in `order` of their status, each status's rows in listing order. -/
+/-- The order a view shows places in, those that ask for someone first: `? ! ⣿ ✓`, then the
+running sessions, `⣷` and `⣀` together, then `~`. -/
+def order : List Status := [.unknown, .exitedBad, .wantsYou, .exitedOk, .working, .resumable]
+
+/-- Rows in `order` of their status's `place`, each place's rows in listing order. -/
 def sort {α : Type} (status : α → Status) (rows : List α) : List α :=
-  order.flatMap fun st => rows.filter (status · == st)
+  order.flatMap fun st => rows.filter fun x => place (status x) == st
 
 /-- The parts of a view's header, which a view joins with ` · `: `linger`, what it lists
 (`labels`), how many rows it lists, and the attention counts over all of them when there are

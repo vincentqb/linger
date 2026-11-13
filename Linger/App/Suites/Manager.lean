@@ -1253,18 +1253,19 @@ private def statusChecks (e : Env) : IO Unit := do
       "picker redraws changed metadata with unchanged names and preserves query, target and all details"
       fun f => do
       f.listing
-          "name\talpha\nstatus\tidle\ncmd\tsh\npid\t1\nfg\told\nfgpid\t7\nlabel.description\tbefore\nclients\t1\nname\tbeta\nstatus\tworking\ncmd\tother\n"
+          "name\tbeta\nstatus\tworking\ncmd\tother\nname\talpha\nstatus\tidle\ncmd\tsh\npid\t1\nfg\told\nfgpid\t7\nlabel.description\tbefore\nclients\t1\n"
       withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "a" "a" do
             return false
           let before ← s.capture "metadata-before"
           let start ← s.mark
           f.listing
-              "name\talpha\nstatus\texited-bad\ncmd\tsh\npid\t2\nfg\tnew\nfgpid\t8\nlabel.description\tafter\nclients\t3\nname\tbeta\nstatus\tworking\ncmd\tother\n"
+              "name\tbeta\nstatus\tworking\ncmd\tother\nname\talpha\nstatus\texited-bad\ncmd\tsh\npid\t2\nfg\tnew\nfgpid\t8\nlabel.description\tafter\nclients\t3\n"
           unless ← s.until "after  new" start do
             return false
           let after ← s.capture "metadata-after"
-          -- what asks for someone comes first, and the cursor stays on the row it was on
+          -- beta, listed first, shares its place with the quiet alpha; what asks for someone
+          -- comes first, and the cursor stays on the row it was on
           let changed :=
             rowText before 4 == "  ▸ ⣷ beta  other" && has (rowText before 5) "before  old  +1" &&
               rowText after 4 == "    ! alpha after  new  +3" &&
@@ -1552,6 +1553,32 @@ private def refreshChecks (e : Env) : IO Unit := do
         let screen := String.fromUTF8! (ByteArray.mk (screenText vt).toArray)
         let retained := has screen "  › a" && has screen "  ▸ ? Beta  (busy)"
         return retained && (← acceptThenCancel s) && (← f.visits) == attachVisit ["Beta"]
+  check e "refresh-activity"
+      "automatic refresh keeps each running session's row where it was when it starts or stops printing"
+      fun f => do
+      f.listing "name\talpha\nstatus\tworking\nname\tbeta\nstatus\tidle\n"
+      withPrompt f.picker #[] fun s => do
+          unless ← s.untilRow "⣷ alpha" do
+            return false
+          unless ← s.untilRow "⣀ beta" do
+            return false
+          let before ← s.capture "activity-before"
+          let start ← s.mark
+          f.listing "name\talpha\nstatus\tidle\nname\tbeta\nstatus\tworking\n"
+          unless ← s.untilRow "⣀ alpha" start do
+            return false
+          unless ← s.untilRow "⣷ beta" start do
+            return false
+          let after ← s.capture "activity-after"
+          let rowOf := fun (vt : Vt) (name : String) =>
+            (List.range vt.rowCount).find? fun row => has (rowText vt row) name
+          let kept :=
+            match rowOf before "alpha", rowOf before "beta" with
+            | some alpha, some beta =>
+              alpha < beta && rowOf after "alpha" == some alpha && rowOf after "beta" == some beta
+            | _, _ => false
+          return kept && (← s.selected "alpha" start) && (← acceptThenCancel s) &&
+              (← f.visits) == attachVisit ["alpha"]
   check e "refresh-removed"
       "automatic refresh clamps a removed selection while preserving an invalid creation query"
       fun f => do

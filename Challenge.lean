@@ -57,7 +57,8 @@ The status rule: a session's status is one glyph for one observation, `⣷` outp
 new output, then it stopped, `⣀` nothing new since you looked, `✓` ended with status 0, `!` ended
 any other way, `~` saved with no daemon and `?` no answer, and titles and `ls --summary` count
 `⣿`, `!` and `?`. Its section follows the ten parts, with the titles, listings and selector
-views that show statuses.
+views that show statuses: a view lists `⣿`, `!` and `?` first, and a running session's row keeps
+its place whether it is printing or quiet.
 
 Each theorem below is stated over definitions in the components' `CoreSpec` modules and the world
 claims in their `WorldSpec` modules, over the terminal package's parts, which its own challenge
@@ -2608,6 +2609,23 @@ theorem sort_attention_first_rejects_arrival :
               (∀ x ∈ first, status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) ∧
               ∀ x ∈ rest,
                 ¬(status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) := by
+  sorry
+
+theorem sort_keeps_place {α : Type} (status status' : α → Status.Status) (rows : List α)
+    (h :
+      ∀ x ∈ rows,
+        status x = status' x ∨
+          ((status x = .working ∨ status x = .idle) ∧ (status' x = .working ∨ status' x = .idle))) :
+    View.sort status rows = View.sort status' rows := by sorry
+
+@[kills sort_keeps_place]
+theorem sort_keeps_place_rejects_activity :
+    ¬∀ {α : Type} (status status' : α → Status.Status) (rows : List α),
+        (∀ x ∈ rows,
+            status x = status' x ∨
+              ((status x = .working ∨ status x = .idle) ∧
+                (status' x = .working ∨ status' x = .idle))) →
+          View.byActivity status rows = View.byActivity status' rows := by
   sorry
 
 theorem groups_exact (keys : List String) :

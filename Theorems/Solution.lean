@@ -2652,6 +2652,28 @@ theorem sort_attention_first_rejects_arrival :
     have head : a = .idle := (List.cons.inj split).1.symm
     exact absurd (front a (by simp)) (by simp [head])
 
+theorem sort_keeps_place {α : Type} (status status' : α → Status.Status) (rows : List α)
+    (h :
+      ∀ x ∈ rows,
+        status x = status' x ∨
+          ((status x = .working ∨ status x = .idle) ∧ (status' x = .working ∨ status' x = .idle))) :
+    View.sort status rows = View.sort status' rows := View.sort_keeps_place status status' rows h
+
+theorem sort_keeps_place_rejects_activity :
+    ¬∀ {α : Type} (status status' : α → Status.Status) (rows : List α),
+        (∀ x ∈ rows,
+            status x = status' x ∨
+              ((status x = .working ∨ status x = .idle) ∧
+                (status' x = .working ∨ status' x = .idle))) →
+          View.byActivity status rows = View.byActivity status' rows := by
+  intro h
+  have kept :=
+    h (fun b : Bool => if b then .working else .idle)
+      (fun b : Bool => if b then .idle else .working) [true, false]
+      (by
+        intro x _; cases x <;> simp)
+  exact absurd kept (by decide)
+
 theorem groups_exact (keys : List String) :
     ((View.groups keys).map (·.2)).sum = keys.length ∧
       ∀ (k : String) (n : Nat), (k, n) ∈ View.groups keys → n = keys.count k :=
