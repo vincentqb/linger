@@ -11,10 +11,10 @@ public section
 
 /-! # Os.Shell — the POSIX surface callers use
 
-Every binding in `Os.Boundary` is private, and each is wrapped here under its own
-name, so this module is the program's only route to `packages/os/c/shim.c`. The wrappers check what
-the C side cannot represent and state the binding's contract. A few operations are thin
-wrappers over Lean core's own primitives rather than our shim — `getpid`, `chmod`,
+Every binding of `Os.WorldSpec`, in namespace `Os.Boundary`, is private, and each is wrapped here
+under its own name, so this module is the program's only route to `packages/os/c/shim.c`. The
+wrappers check what the C side cannot represent and state the binding's contract. A few operations
+are thin wrappers over Lean core's own primitives rather than our shim — `getpid`, `chmod`,
 `monotonicMs`, `realtimeS`, `stdinIsTty`, `gethostname` — so the shim is smaller for them.
 
 Strings passed to the shim are checked for NUL before conversion to C strings.

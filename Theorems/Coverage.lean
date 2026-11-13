@@ -41,14 +41,16 @@ public meta import Lean.Elab.Command
 import Lean.Parser.Command
 meta import SoftwareChallenge.Commands -- shake: keep
 public meta import SoftwareChallenge.Policy
+import SoftwareChallenge.Policy
 public meta import Lean.Compiler.CSimpAttr
 import Lean.Compiler.CSimpAttr
 
 /-! # Pure definitions, their `@[csimp]` replacements and the renderer's emitters
 
 `pureDefNames` reads every explicit `def` or `abbrev` in a pure module (`pureModule`: a
-`CoreSpec` or `CoreCode` module) from the sources, and `runtimeEmitters` finds those of the renderer and the replay that the
-program references outside their own module, which `Verify/Coverage.lean` classifies. Pure code
+`CoreSpec` or `CoreCode` module) from the sources, and `runtimeEmitters` finds those of the
+renderer and the replay that the program references outside their own module, which
+`Verify/Coverage.lean` classifies. Pure code
 reaches a global `@[csimp]` replacement only through its specification, from definitions
 declared after the theorem, which is tagged in the specification's module; `scripts/verify.sh`
 checks on the generated C that each replacement, a module-local one included, is still called.

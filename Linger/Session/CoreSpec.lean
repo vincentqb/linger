@@ -10,12 +10,13 @@ public section
 The values a session exchanges with its clients and its runtime (messages, client records,
 events and effects, and the end record a name keeps), what a command answers for each way a
 session ends, the caps its state keeps and how long its changes may go unsaved, the time its
-events tell it, the contract on the effect interpreter, and predicates over the session's
-operations, which they take as parameters: which messages fit a frame and what a decoder reads
-from a chunked stream, the bounds a state keeps, the events a session handles when every effect
-succeeds, the reachable states of the daemon's byte queues, and a model of how daemons and
-offline readers claim a session's resources; and the wrong transition and drivers the kills put
-in place of the program's. Bodies are exposed: each definition here is its own specification. -/
+events tell it, and predicates over the session's operations, which they take as parameters:
+which messages fit a frame and what a decoder reads from a chunked stream, the bounds a state
+keeps, the events a session handles when every effect succeeds, the reachable states of the
+daemon's byte queues, and a model of how daemons and offline readers claim a session's
+resources; and the wrong transition, decision and drivers the kills put in place of the
+program's. Bodies are exposed: each definition here is its own specification. What the headlines
+assume of the world, the effect executor's answers among it, is in `Linger.Session.WorldSpec`. -/
 
 namespace Linger.Session
 
@@ -744,12 +745,13 @@ end Linger.Session.Buf
 
 /-! ## Claiming a session's resources
 
-A resource identifies a stable lock inode, not a pathname string. The operating system decides
-which attempts to take a lock succeed (`grant`), and `Exclusive` claims that it grants only a free
-lock. A failed attempt leaves the state unchanged, so a starting daemon that retries a held lock
-for a short time takes only `unchanged` steps until it acquires. A daemon or offline reader
-enters when linger's decision `enters`, given which of the lease's two locks it holds, lets it,
-and releases a lock only after leaving and completing its cleanup.
+A resource identifies a stable lock inode, not a pathname string. The operating system decides which
+attempts to take a lock succeed (`grant`), and the world claim `Exclusive`
+(`Linger.Session.WorldSpec`) says that it grants only a free lock. A failed attempt leaves the state
+unchanged, so a starting daemon that retries a held lock for a short time takes only `unchanged`
+steps until it acquires. A daemon or offline reader enters when linger's decision `enters`, given
+which of the lease's two locks it holds, lets it, and releases a lock only after leaving and
+completing its cleanup.
 
 The model permits acquisition, release and later reuse by different processes. The runtime
 takes each lock with `flock` and asks the decision before it acts; that correspondence is tested

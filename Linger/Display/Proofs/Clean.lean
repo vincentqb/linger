@@ -16,7 +16,7 @@ public section
 
 /-! # Clean terminal: what linger writes on its own account
 
-`Clean` bytes are pieces linger may write (`Linger.Display.Spec`): printable text, line breaks,
+`Clean` bytes are pieces linger may write (`Linger.Display.CoreSpec`): printable text, line breaks,
 tabs, and a short list of control sequences. Clean bytes join into clean bytes; the renderer's
 sequences are pieces; the listing, the window titles, the capture text and the handback are
 clean. -/

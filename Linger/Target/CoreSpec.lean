@@ -10,10 +10,10 @@ not begin with a dot, so it cannot name a path outside the socket directory.
 A remote command is the line SSH hands to the login shell of the remote account, which may be
 any shell, each with its own quoting. A plain word starts with a lowercase ASCII letter and goes
 on with lowercase letters, digits and colons, which no shell expands, quotes, escapes or splits
-at, and the world claim `Shell.Literal` says that every shell passes `linger` and then plain
-words, one space apart, to `linger` as exactly those words. `marker` opens an encoded command
-line; holding a colon, it is no valid session name. Bodies are exposed: each definition here is
-its own specification. -/
+at, and the world claim `Shell.Literal` (`Linger.Target.WorldSpec`) says that every shell passes
+`linger` and then plain words, one space apart, to `linger` as exactly those words. `marker`
+opens an encoded command line; holding a colon, it is no valid session name. Bodies are exposed:
+each definition here is its own specification. -/
 
 namespace Linger.Target.Name
 

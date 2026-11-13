@@ -1,7 +1,6 @@
 module
 
 import Os.WorldCode
-import Os.Suites.Wait
 
 /-! # lingertest — IO smoke tests for the Posix shim
 
@@ -643,6 +642,32 @@ def testSignalPipe : IO Unit := do
   check "the signal pipe carries a child's end as 0 and SIGTERM as 15, which ends nothing"
       (heard.contains 0 && heard.count 15 == 1 && heard.all (fun b => b == 0 || b == 15))
 
+/-- A sleep lasts at least as long as asked (`Os.Wait.Lasts`), and a wait naps only until
+its deadline and then gives up: with the deadline ahead each nap sleeps and none goes past it,
+and a nap asked for once the deadline has passed reports so without sleeping. Each result goes
+to `check`. -/
+def testWaits : IO Unit := do
+  let mut lasted := true
+  for ms in [1, 7, 20] do
+    let before ← monotonicMs
+    IO.sleep ms.toUInt32
+    lasted := lasted && before + ms ≤ (← monotonicMs)
+  check "a sleep lasts at least as long as asked" lasted
+  let start ← monotonicMs
+  let deadline := start + 50
+  let mut naps := 0
+  repeat
+    unless ← nap deadline 7 do
+      break
+    naps := naps + 1
+  let ended ← monotonicMs
+  check "a wait naps until its deadline, at most once a millisecond, and then gives up"
+      (deadline ≤ ended && 0 < naps && naps ≤ 50)
+  let before ← monotonicMs
+  let gaveUp := !(← nap start 7)
+  check "a wait whose deadline has passed gives up without sleeping"
+      (gaveUp && (← monotonicMs) < before + 7)
+
 /-- Run every check; the exit code counts the failures. -/
 public def main (args : List String) : IO UInt32 := do
   if let ["--closed-stdio", kind, logPath] := args then
@@ -668,7 +693,7 @@ public def main (args : List String) : IO UInt32 := do
   testWinsizeBounds
   testDeepCwd
   testDurable
-  testWaits check
+  testWaits
   testSignalPipe
   let n ← failed.get
   IO.println (if n == 0 then "ALL PASS" else s!"{n} FAILURES")

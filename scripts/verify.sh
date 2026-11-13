@@ -80,7 +80,7 @@ fi
 logs="$(mktemp -d "${TMPDIR:-/tmp}/linger-verify.XXXXXX")"
 export LINGER_LOG_DIR="$logs"
 
-say "1. build (program + theorems + tests + audit)"
+say "1. build (program + theorems + tests + checks + audit)"
 # Lake checks source/dependency content and replays cached diagnostics. Rehash
 # artifacts too, and fail on warnings even after a local warningAsError override.
 # Run `./lake clean` first for clean release/compiler validation. The list holds every
@@ -97,11 +97,14 @@ fi
 # Shake reads the oleans just built. The proof library has no root module, so the proof
 # modules are named one by one. Tests stay out: shake cannot see `example` or
 # `#guard` uses. Linger.Os.Suites.Shim and Verify.Main stay out to bound the cost.
+# Shake writes its suggestions to standard output; the build log it replays first, the
+# challenge audit's report among it, goes to standard error.
 shake_modules="$(git ls-files 'Theorems/*.lean' 'Linger/*/Proofs/*.lean' | sed 's/[.]lean$//; s#/#.#g')"
 # shellcheck disable=SC2086  # one module name per word
-./lake shake --keep-implied Linger Linger.App.WorldCode.Main $shake_modules > "$logs/shake.log" 2>&1 \
+./lake shake --keep-implied Linger Linger.App.WorldCode.Main $shake_modules \
+  > "$logs/shake.log" 2> "$logs/shake-build.log" \
   && [ ! -s "$logs/shake.log" ] \
-  || { cat "$logs/shake.log"; fail "lake shake suggests import changes"; }
+  || { cat "$logs/shake.log" "$logs/shake-build.log"; fail "lake shake suggests import changes"; }
 # The generated C of the program's modules, linger's and each package's, named from the
 # tracked sources: a module that moved leaves its old C file in .lake, which must not answer
 # for it. The program's modules are the umbrella and the modules of a role, but for the checks

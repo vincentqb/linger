@@ -59,17 +59,18 @@ any other way, `~` saved with no daemon and `?` no answer, and titles and `ls --
 `⣿`, `!` and `?`. Its section follows the ten parts, with the titles, listings and selector
 views that show statuses.
 
-Each theorem below is stated over definitions in the components' `Spec` modules, over the
-terminal package's parts, which its own challenge claims, and over the program parts declared
-below as holes: each hole is `sorry` here, the program supplies it, and
-the claims say what it must do. `Theorems/Solution.lean` proves the same statements of the
-program's parts, and `./lake comparator` checks that it proves exactly these, that each part has
-the declared type, and that no axiom beyond `propext`, `Quot.sound` and `Classical.choice` is
+Each theorem below is stated over definitions in the components' `CoreSpec` modules and the world
+claims in their `WorldSpec` modules, over the terminal package's parts, which its own challenge
+claims, and over the program parts declared below as holes: each hole is `sorry` here, the program
+supplies it, and the claims say what it must do. `Theorems/Solution.lean` proves the same statements
+of the program's parts, and `./lake comparator` checks that it proves exactly these, that each part
+has the declared type, and that no axiom beyond `propext`, `Quot.sound` and `Classical.choice` is
 used. Changing a statement or a hole here changes what linger claims.
 
 Not claimed: that the IO executors, the C shim and the operating system behave as the world
-claims say, which the suites named with each claim exercise instead, except for power loss,
-which `Disk.Durable` speaks of and no suite causes; scheduling, allocation failure, termination
+claims say, which each claim's check tests on the host it runs on and the suites named with
+each claim test through linger, except for power loss, which `Disk.Durable` speaks of and no
+check or suite causes; scheduling, allocation failure, termination
 by SIGKILL or power loss and failures of the compiler, the runtime or the C shim; a bound in bytes
 or rows on what a crash loses, which is bounded in time; memory beyond the logical bytes the
 buffers retain; ownership among processes that do not cooperate or replace the lock files;
@@ -294,29 +295,29 @@ door, which every terminal linger's checkpoint decoder returns passes
 positive byte budget, the stream ends, and a receiver of the same size that parses it shows what the
 terminal shows and, for a repaint taken between control sequences and characters, keeps showing it
 as the same output reaches both; and a terminal's history only gains rows at its end, unless output
-may ask to erase it. Here: a read that attaches a connection, writable or read-only,
-streams it the repaint of the session's terminal as the attach leaves it, and the read sends it
-nothing before the repaint: only the pty's resize and the program's focus report come first. A chunk
-of program output feeds the session's terminal exactly that chunk, reaches every attached client,
-writable or read-only, in roster order, as the same frames, each nonempty and of at most 64 KiB,
-whose payloads are exactly the bytes the terminal package's mediator releases, in order, and writes
-the program only the mediator's replies to its queries. The daemon does what the session asks: when
-every effect succeeds, its driver hands the session each event and then what the event's effects
-feed back, ends in the state of their trace, and executes exactly the trace's effects, in order,
-each with the state its event left (`run_refines`, in part 5). Linger writes to a session's terminal
-exactly the input it accepted for the program, in order, whatever mode the program set, and a
-program whose terminal is in raw mode reads exactly that, when the kernel hands raw input on
-unchanged (`Pty.Delivers`, which the agent suite exercises byte for byte); linger accepts each frame
-a writable client sends, whatever its terminal's size, whole, or refuses it whole when the program's
-queue is full; and `send` hands the program text of any length in frames the decoder takes, whose
-payloads are the text, in order. A program that enabled focus reporting hears that it gained focus
-when a writable client attaches to a session nobody could type into, whatever its size, and that it
-lost it when the last one leaves. Not claimed: which bytes the mediator releases, which
-`Terminal.Mediation` decides: all the program wrote but the queries linger answers itself, a request
-still incomplete at a chunk's end waiting for the next; an attach a read completes with other
-messages; that the runtime streams a repaint ahead of the output that follows it, which the delivery
-suite checks; and what a program reads in any other mode than raw, such as the cooked mode a
-terminal starts in, whose line discipline edits lines and turns ^C into a signal. -/
+may ask to erase it. Here: a read that attaches a connection, writable or read-only, streams it the
+repaint of the session's terminal as the attach leaves it, and the read sends it nothing before the
+repaint: only the pty's resize and the program's focus report come first. A chunk of program output
+feeds the session's terminal exactly that chunk, reaches every attached client, writable or
+read-only, in roster order, as the same frames, each nonempty and of at most 64 KiB, whose payloads
+are exactly the bytes the terminal package's mediator releases, in order, and writes the program
+only the mediator's replies to its queries. The daemon does what the session asks: when every effect
+succeeds, its driver hands the session each event and then what the event's effects feed back, ends
+in the state of their trace, and executes exactly the trace's effects, in order, each with the state
+its event left (`run_refines`, in part 5). Linger writes to a session's terminal exactly the input
+it accepted for the program, in order, whatever mode the program set, and a program whose terminal
+is in raw mode reads exactly that, when the kernel hands raw input on unchanged (`Pty.Delivers`,
+which its check and the agent suite test byte for byte); linger accepts each frame a writable client
+sends, whatever its terminal's size, whole, or refuses it whole when the program's queue is full;
+and `send` hands the program text of any length in frames the decoder takes, whose payloads are the
+text, in order. A program that enabled focus reporting hears that it gained focus when a writable
+client attaches to a session nobody could type into, whatever its size, and that it lost it when the
+last one leaves. Not claimed: which bytes the mediator releases, which `Terminal.Mediation` decides:
+all the program wrote but the queries linger answers itself, a request still incomplete at a chunk's
+end waiting for the next; an attach a read completes with other messages; that the runtime streams a
+repaint ahead of the output that follows it, which the delivery suite checks; and what a program
+reads in any other mode than raw, such as the cooked mode a terminal starts in, whose line
+discipline edits lines and turns ^C into a signal. -/
 
 theorem step_attach_repaint (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {mode : Mode} {cols rows : UInt32} (hc : s.client? id = some c)
@@ -1033,15 +1034,15 @@ theorem metadata_dirs_rejects_silent :
 A session runs the program its creation named, with its words, or without a command the
 session's shell alone, which is what a resume runs again on the saved session's last screen
 (`resume_restores`, in part 7). The operating system runs it as asked: the world claim
-`Spawn.Runs`, which the agent and resume suites exercise.
+`Spawn.Runs`, which its check and the agent and resume suites test.
 
-The program starts from what its start asks, never from how linger was started: every signal at
-its default action, none blocked, and its terminal on descriptors 0, 1 and 2 with no other open,
-whatever the command that asked for the session ignored, blocked or left open, as a shell's `&`
-job ignores SIGINT and SIGQUIT and `exec 3>&1` leaves a pipe open (`start_clean`, over the world
-claim `Spawn.Clean`, which the agent suite exercises). Not claimed: the rest of what a program
-inherits as any child does, such as resource limits, the file mode mask, scheduling priority and
-the user and groups it runs as. -/
+The program starts from what its start asks, never from how linger was started: every signal at its
+default action, none blocked, and its terminal on descriptors 0, 1 and 2 with no other open,
+whatever the command that asked for the session ignored, blocked or left open, as a shell's `&` job
+ignores SIGINT and SIGQUIT and `exec 3>&1` leaves a pipe open (`start_clean`, over the world claim
+`Spawn.Clean`, which its check and the agent suite test). Not claimed: the rest of what a program
+inherits as any child does, such as resource limits, the file mode mask, scheduling priority and the
+user and groups it runs as. -/
 
 theorem programOf_exact (shell : String) (argv : List String) :
     Start.programOf shell argv = (argv.headD shell, (argv.drop 1).toArray) := by sorry
@@ -1143,39 +1144,37 @@ theorem start_clean_rejects_inherited :
 
 /-! ## 5. Accountability
 
-A session ends through one ending, whatever ends it (`step_ended_reports`): its program, by
-itself; a kill, once the daemon has stopped the program; or SIGHUP, SIGINT, SIGQUIT or SIGTERM to
-the daemon, the system stopping linger at logout or shutdown, after which the daemon stops the
-program the same way (`step_signal_saves`). Every client attached or waiting hears how the
-session ended before the daemon exits, the daemon leaves its name an end record that says so, and
-the session's last screen, as the ending found it, is saved and kept, except after a kill, which
-discards it. A session a signal stopped is saved, not ended: everyone hears which signal stopped
-the daemon and nothing of an outcome of its program, which `resume` runs again from that screen. When the file
-system keeps what linger saves (`Record.Kept`, which the agent suite exercises), a name's end
-record keeps how its last session ended, for whoever asks later: how its program ended, or which
+A session ends through one ending, whatever ends it (`step_ended_reports`): its program, by itself;
+a kill, once the daemon has stopped the program; or SIGHUP, SIGINT, SIGQUIT or SIGTERM to the
+daemon, the system stopping linger at logout or shutdown, after which the daemon stops the program
+the same way (`step_signal_saves`). Every client attached or waiting hears how the session ended
+before the daemon exits, the daemon leaves its name an end record that says so, and the session's
+last screen, as the ending found it, is saved and kept, except after a kill, which discards it. A
+session a signal stopped is saved, not ended: everyone hears which signal stopped the daemon and
+nothing of an outcome of its program, which `resume` runs again from that screen. When the file
+system keeps what linger saves (`Record.Kept`, which its check and the agent suite test), a name's
+end record keeps how its last session ended, for whoever asks later: how its program ended, or which
 signal stopped its daemon, which never reads as an outcome or an unknown ending; a record its
-session left while the program still ran answers that the ending is unknown, and only a name
-with no record answers nothing (`record_answer`). `info` reports each ending in fields no other
-ending has (`endingFields_injective`).
-`wait` answers with how the session ended when its daemon or the end record says, `interrupted`
-for a saved session, never a status of its program, and that it could not find out only when
-that is so: the program's ending is unknown, or the name stays held, with no daemon answering,
-from the look that first found it so for longer than a daemon's ending lasts.
-Every command answers with one of the answers `Os.Answer` names, the operating system's
-vocabulary, the selector and the tmux interchange as the session commands do, and exits with its
-code (`code_documented`); help lists each of linger's own once (`listed_once`).
-An attach goes only to a daemon whose `info` answer reports this version's protocol level, as
-every daemon of this version does (`infoFields_protocol`), so a daemon an older linger started,
-of any earlier level, is refused with a reason, never sent an attach it would refuse as unknown
-or drop unanswered.
-Not claimed: that the answer comes within the client's wait and that the refusal names the
-session and the level, which the attach suite checks against a level-2 daemon, one that reports
-no level and one that never answers; that a daemon hears a stop signal, which the operating
-system delivers through the daemon's signal pipe and the resume suite checks, and when it cannot
-make the pipe takes its default action; that an attached client or the selector, given SIGTERM,
-SIGHUP or SIGINT, hands its terminal back and answers `interrupted`, which the attach and manager
-suites check; and that the process exits with the code of its command's answer, which the type
-of every executor's result, `main`'s one exit and a gate on the shells keep.
+session left while the program still ran answers that the ending is unknown, and only a name with no
+record answers nothing (`record_answer`). `info` reports each ending in fields no other ending has
+(`endingFields_injective`). `wait` answers with how the session ended when its daemon or the end
+record says, `interrupted` for a saved session, never a status of its program, and that it could not
+find out only when that is so: the program's ending is unknown, or the name stays held, with no
+daemon answering, from the look that first found it so for longer than a daemon's ending lasts.
+Every command answers with one of the answers `Os.Answer` names, the operating system's vocabulary,
+the selector and the tmux interchange as the session commands do, and exits with its code
+(`code_documented`); help lists each of linger's own once (`listed_once`). An attach goes only to a
+daemon whose `info` answer reports this version's protocol level, as every daemon of this version
+does (`infoFields_protocol`), so a daemon an older linger started, of any earlier level, is refused
+with a reason, never sent an attach it would refuse as unknown or drop unanswered. Not claimed: that
+the answer comes within the client's wait and that the refusal names the session and the level,
+which the attach suite checks against a level-2 daemon, one that reports no level and one that never
+answers; that a daemon hears a stop signal, which the operating system delivers through the daemon's
+signal pipe and the resume suite checks, and when it cannot make the pipe takes its default action;
+that an attached client or the selector, given SIGTERM, SIGHUP or SIGINT, hands its terminal back
+and answers `interrupted`, which the attach and manager suites check; and that the process exits
+with the code of its command's answer, which the type of every executor's result, `main`'s one exit
+and a gate on the shells keep.
 
 The daemon's driver runs the session's trace. When every effect succeeds, a stop replying how the
 program ended, the driver hands the session each event and then what that event's effects feed
@@ -1678,23 +1677,23 @@ theorem run_stop_exits_rejects_jump :
 
 /-! ## 6. Bounded and clean
 
-After every batch of events, the driver leaves the session's clients, labels, frame decoders and
-pty scanner within their caps, whatever its effects reply, when its executor answers every effect
+After every batch of events, the driver leaves the session's clients, labels, frame decoders and pty
+scanner within their caps, whatever its effects reply, when its executor answers every effect
 (`run_total_safe`, in part 5); when every effect succeeds, the states it leaves are those of the
-session's trace (`run_refines`, in part 5). The pty's input queue never owes more than its cap,
-nor does a client's output queue the daemon keeps (`reachableIn_bound`, `reachableOut_bound`); a
-read gets at most one rendered reply, its frames followed by `done`, and when it leaves its sender
-unattached at most one pty resize (`step_bytes_one_reply`); every frame of program output carries
-at most 64 KiB (`step_output_delivered`, in part 1); and a tmux capture's bytes are at most twice
-its limit (`captureBytes_bounded`). When a session ends, the daemon sends SIGHUP to its program
-and the rest of the program's terminal session, then SIGKILL to those still running a second
-later, and reaps the program last, so the program's pid, which is the session's id, stays
-reserved until then: of the processes of the terminal session its signals reach, none still runs
-once the ending is over (`ending_clean`), when SIGKILL ends within a second each process it
-reaches (`Signal.Ends`, which the attach suite exercises and a process stuck in the kernel
-falsifies). Not claimed: how many pty resizes a read asks for while its sender stays attached;
-and the processes linger's signals miss, as the claim's comment names them: one that left the
-terminal session with `setsid`, one of another user and one forked after the daemon looked. -/
+session's trace (`run_refines`, in part 5). The pty's input queue never owes more than its cap, nor
+does a client's output queue the daemon keeps (`reachableIn_bound`, `reachableOut_bound`); a read
+gets at most one rendered reply, its frames followed by `done`, and when it leaves its sender
+unattached at most one pty resize (`step_bytes_one_reply`); every frame of program output carries at
+most 64 KiB (`step_output_delivered`, in part 1); and a tmux capture's bytes are at most twice its
+limit (`captureBytes_bounded`). When a session ends, the daemon sends SIGHUP to its program and the
+rest of the program's terminal session, then SIGKILL to those still running a second later, and
+reaps the program last, so the program's pid, which is the session's id, stays reserved until then:
+of the processes of the terminal session its signals reach, none still runs once the ending is over
+(`ending_clean`), when SIGKILL ends within a second each process it reaches (`Signal.Ends`, which
+its check and the attach suite test and a process stuck in the kernel falsifies). Not claimed: how
+many pty resizes a read asks for while its sender stays attached; and the processes linger's signals
+miss, as the claim's comment names them: one that left the terminal session with `setsid`, one of
+another user and one forked after the daemon looked. -/
 
 theorem reachableIn_bound {cap : Nat} {b : Buf.Buf}
     (h : Buf.InputReach Buf.Buf.empty Buf.bufOffer Buf.bufAdvance cap b) : Buf.owedLen b ≤ cap := by
@@ -1787,18 +1786,18 @@ theorem ending_clean_rejects_hangup :
 
 The terminal package's claims cover every terminal the checkpoint decoder returns
 (`Checkpoint.live_of_decoded`), so any bytes on disk resume a session those claims cover, or are
-refused, and a command never takes bytes that do not decode for no checkpoint: it starts
-nothing over them and leaves them as they are, for `kill` to discard (`recovery_exact`). A crash
-costs at most the changes of the last interval. A session asks for a save within
-`ckptIntervalMs` of every change no save holds, by the clock its ticks give it (`unsaved_due`);
-its daemon saves off its loop and replaces the checkpoint whole and durably, as the tmux import
-writes one, so that after a crash the file at the path is the last save whose flushes returned,
-or the one then running, whole (`Disk.Durable`, which the resume suite exercises by killing a
-daemon while it saves); and resuming then gives back that save, never a fresh session
-(`crash_resumes`). Not claimed: a bound in bytes or rows on what a crash loses, since the bound
-is in time, the interval and the saves then running, whatever the program wrote in it, and a
-bound in rows waits for an append-only store of the history; and that power loss keeps what the
-flushes returned for, which rests on `Disk.Durable` and which no suite exercises. -/
+refused, and a command never takes bytes that do not decode for no checkpoint: it starts nothing
+over them and leaves them as they are, for `kill` to discard (`recovery_exact`). A crash costs at
+most the changes of the last interval. A session asks for a save within `ckptIntervalMs` of every
+change no save holds, by the clock its ticks give it (`unsaved_due`); its daemon saves off its loop
+and replaces the checkpoint whole and durably, as the tmux import writes one, so that after a crash
+the file at the path is the last save whose flushes returned, or the one then running, whole
+(`Disk.Durable`, which the resume suite tests by killing a daemon while it saves, and its check once
+both flushes returned); and resuming then gives back that save, never a fresh session
+(`crash_resumes`). Not claimed: a bound in bytes or rows on what a crash loses, since the bound is
+in time, the interval and the saves then running, whatever the program wrote in it, and a bound in
+rows waits for an append-only store of the history; and that power loss keeps what the flushes
+returned for, which rests on `Disk.Durable` and which no check or suite causes. -/
 
 theorem loadBytes_saveBytes_live (c : Checkpoint.Ckpt Vt.Vt)
     (h :
@@ -2075,15 +2074,14 @@ theorem writes_clean_rejects_reset :
 
 /-! ## 9. Work follows events
 
-A daemon's state holds its own session alone, so no event's work depends on how many sessions
-exist. Program output costs work only for the clients attached to its session
-(`step_output_delivered`, in part 1), and a daemon's
-poll that no event or signal ends returns no sooner than the earliest deadline the daemon holds,
-and never when it holds none (`poll_wakes`), when poll(2) waits out its timeout (`Poll.Sleeps`,
-which the quiet suite exercises by timing quiet polls; it also counts the wakeups of idle
-sessions). `scripts/gates.sh` lists every timer the program sets, with its bound. Not claimed:
-how much later than its deadline a loaded host lets a daemon wake. Not claimed yet: that an
-event's work follows its size. -/
+A daemon's state holds its own session alone, so no event's work depends on how many sessions exist.
+Program output costs work only for the clients attached to its session (`step_output_delivered`, in
+part 1), and a daemon's poll that no event or signal ends returns no sooner than the earliest
+deadline the daemon holds, and never when it holds none (`poll_wakes`), when poll(2) waits out its
+timeout (`Poll.Sleeps`, which its check tests by timing quiet polls, as the quiet suite does, which
+also counts the wakeups of idle sessions). `scripts/gates.sh` lists every timer the program sets,
+with its bound. Not claimed: how much later than its deadline a loaded host lets a daemon wake. Not
+claimed yet: that an event's work follows its size. -/
 
 theorem ticks_settle (s : State) (now t₁ t₂ : Nat)
     (h₁ : (Session.trace Session.step s [.tick now]).1.nextTick = some t₁)

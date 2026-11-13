@@ -34,6 +34,10 @@ See [.github/workflows/ci.yml](.github/workflows/ci.yml) for tool installation.
 CI runs at 06:17 UTC on the first of each month, on Linux and macOS, when the month
 brought commits, and on manual dispatch. Pushes and pull requests do not trigger it.
 
+`./lake test` is the full verifier, `scripts/verify.sh`: among its stages it runs every `Check`
+of linger's world claims and of each package's, as the challenge library's checks runner does.
+`./lake script run software_challenge/test_challenge` is the library's own test: the build, the
+lint, every `Check` and a sandboxed `lake comparator`.
 `./lake script run software_challenge/grade <commit>` judges a commit as the Lean Software
 Challenge does: it refuses one that changes a file the audit lists as `Owned:`, then builds it
 from scratch in a temporary worktree and runs `lake comparator` and `lake test` there. Run it
@@ -41,77 +45,99 @@ in the foreground, as the verifier.
 
 ## Layout
 
-- `Linger/<Component>/`: a component's pure modules, its `Shell.lean` or `Shell/` for IO
-  and, for the OS, `Boundary.lean` for the foreign declarations; then `Proofs/`, `Tests/`
-  (elaboration-time unit tests) and `Suites/` (executable suites). `Spec.lean` holds what
-  gives headline theorems their meaning: value types, reference models and predicates over
-  the program's operations, never the representation of a state or code that runs. It
-  imports only `Spec` modules.
-- `Linger/Os/`: linger's environment policies (`Env.lean`) and the shim's smoke tests
+A module's role is the first component of its name that is `CoreSpec`, `CoreCode`, `WorldSpec`
+or `WorldCode`, as the Lean Software Challenge reads it, and any other module is tooling.
+
+- `Linger/<Component>/`: `CoreSpec.lean` holds what gives headline theorems their meaning: value
+  types, reference models and predicates over the program's operations, never the
+  representation of a state or code that runs, and the wrong parts kills name. `WorldSpec.lean`
+  holds the component's world claims. `CoreCode.lean` and `CoreCode/` hold its pure code,
+  `WorldCode.lean` and `WorldCode/` its IO, and `WorldCode/Checks.lean` the checks of its world
+  claims; then `Proofs/`, `Tests/` (elaboration-time unit tests) and `Suites/` (executable
+  suites).
+- `Linger/Os/`: the answers every command gives (`CoreSpec.lean`, `CoreCode/Answer.lean`),
+  linger's environment policies (`CoreCode/Env.lean`) and the shim's smoke tests
   (`Suites/Shim.lean`, `./lake exe lingertest`).
-- `Linger/Target/`: session names and remote targets.
+- `Linger/Target/`: session names and remote targets, and the login shells' world claim.
 - `Linger/Display/`: session status, titles and listings.
 - `Linger/Terminal/Suites/`: live suites of the VT toolkit as linger runs it.
-- `Linger/Session/CoreCode.lean` and `Linger/Session/`: the session machine, its effect `Driver`,
-  `Wire` format, `Buf` queues and `Checkpoint`s; `Shell/` holds the daemon, the attach
+- `Linger/Session/`: the session machine (`CoreCode.lean`), its effect `Driver`, `Wire` format,
+  `Buf` queues and `Checkpoint`s (`CoreCode/`); `WorldCode/` holds the daemon, the attach
   client, checkpoint files and state paths.
 - `Linger/Selector/`: interactive selection: `Key` bindings of the `input` package's keys and
-  the `Picker`, which ranks names with the `fuzzy` package; `Shell.lean` runs the picker on a
-  terminal.
-- `Linger/Import/`: importing tmux-resurrect saves: the `Resurrect` policy, and `Shell.lean`
+  the `Picker`, which ranks names with the `fuzzy` package; `WorldCode.lean` runs the picker on
+  a terminal.
+- `Linger/Import/`: importing tmux-resurrect saves: the `Resurrect` policy, and `WorldCode.lean`
   runs it.
-- `Linger/App/`: the command line: the `Entry` route and, in `Shell.lean`, the commands.
+- `Linger/App/`: the command line: the `Entry` route and, in `WorldCode.lean`, the commands;
+  `WorldCode/Main.lean` holds `main`.
 - `Challenge.lean`: the program parts headline theorems name, declared as holes, and the
-  headline theorems and their kills, stated with `sorry`. It imports only `Spec` modules; `comparator.json`
-  names the holes and theorems for `lake comparator`.
-- `Audit.lean`: the Lean Software Challenge role of each module prefix; `./lake build` runs the audit.
-  List a new component there: a module no entry covers is tooling, which program code
-  cannot import.
+  headline theorems and their kills, stated with `sorry`. It imports only `CoreSpec` and
+  `WorldSpec` modules and the packages' modules, and the build writes `comparator.json` from it
+  for `lake comparator`.
+- `Linger.lean`: the session library's umbrella module.
 - `Theorems/`: the headline proofs (`Solution.lean`) and `Coverage.lean`, which checks the
   pure code's `@[csimp]` replacements and lists its definitions for the emitter check in
   `Verify/Coverage.lean`; `Verify/`: the verifier's harness, runner and own suites.
-- `packages/`: Lake packages linger requires by path, each with its own `Challenge`, solution,
-  `comparator.json` and audit: `fuzzy`, the fuzzy matcher (module and namespace `Fuzzy`),
-  `input`, the bounded terminal key decoder (`Input`), `terminal`, the VT toolkit
-  (`Terminal`): the emulator `Vt`, `Render`, streaming `Replay`, child-facing `Mediation` and
-  safe `Title` updates, and `os`, the operating system (`Os`): `Boundary.lean` holds the
-  foreign declarations, `c/shim.c` the C they bind, `Shell.lean` the checked surface callers
-  use, `Wait.lean` the bounded wait and `Write.lean` what a full write does after each
-  attempt. Linger's audit trusts each package, and linger's
-  headlines may name a package's parts, which its own headlines claim. Build one alone with
-  `../../lake build` in its directory; it shares linger's `.lake/packages`.
+- `packages/`: Lake packages linger requires by path, each with its own `Challenge.lean`,
+  solution, audit and `owned.lock`, and laid out by role as a component is: `fuzzy`, the fuzzy
+  matcher (namespace `Fuzzy`), `input`, the bounded terminal key decoder (`Input`), `terminal`,
+  the VT toolkit (`Terminal`): the emulator `Vt`, `Render`, streaming `Replay`, child-facing
+  `Mediation` and safe `Title` updates, and `os`, the operating system (`Os`): `WorldSpec.lean`
+  holds the foreign declarations and the world claim the bounded waits rest on, `c/shim.c` the
+  C they bind, `WorldCode.lean` the checked surface callers use, `CoreCode/Wait.lean` the
+  bounded wait and `CoreCode/Write.lean` what a full write does after each attempt. The `os`
+  library compiles each module to a shared library too, so a check can reach the shim. Linger's
+  audit trusts every module outside linger's package, and linger's headlines may name a
+  package's parts, which its own headlines claim. Build one alone with `../../lake build` in its
+  directory; it shares linger's `.lake/packages`.
+- `first/`: a package linger requires first, which declares nothing and whose build directory is
+  linger's: a workspace looks for a module in its dependencies' builds, the first required last,
+  before its own, and each package names its challenge `Challenge`, as linger does.
 - `scripts/`: build and verification orchestration.
 
 Components depend downward only: `Os` and `Target`; then `Display`; then `Session` and
 `Selector`; then `Import`; then `App`. Packages import no component.
 
-Keep module paths and namespaces aligned. Use ordinary `import` for implementation
+Namespaces do not change; module paths gain a role component: `Linger.Session.Buf` lives in
+`Linger/Session/CoreCode/Buf.lean` and `Linger.Session.Shell.Daemon` in
+`Linger/Session/WorldCode/Daemon.lean`. Use ordinary `import` for implementation
 dependencies; reserve `public import` for types in the public interface and
-deliberate reexports. `Linger.lean` is the session library's umbrella module.
-Keep proofs separate to control imports and verification, not for binary size:
-Lean erases proofs regardless of file placement.
+deliberate reexports. Keep proofs separate to control imports and verification, not for binary
+size: Lean erases proofs regardless of file placement.
 
 ## Implementation rules
 
-- Pure modules have no `IO`, `partial def` or `sorry`: a component's top module and each
-  component's modules other than `Boundary.lean` and `Shell.lean`. Model effects as data;
-  execute them in `Shell.lean` or `Shell/`.
-- State invariants in `Challenge.lean` and the `Spec.lean` files, and design code for
+- `CoreSpec` and `CoreCode` modules are pure: each build's audit rejects IO, `partial`,
+  `unsafe`, `@[extern]`, `@[implemented_by]`, initializers and `dbg` there, and lets `CoreCode`
+  import only `CoreSpec` and `CoreCode`. A `WorldSpec` module holds `@[extern] opaque`
+  declarations and world claims and is otherwise pure, and `WorldCode` does the IO. Model effects
+  as data; execute them in `WorldCode`.
+- State invariants in `Challenge.lean` and the `CoreSpec` modules, and design code for
   provability.
-- The files the audit lists as `Owned:` (`Challenge.lean`, `comparator.json`, `Audit.lean`,
-  each `Spec.lean`, `packages/os/Os/WorldSpec.lean`, the Lake configuration and the toolchain) say
-  what linger claims. Change them to change a claim, never to make a proof pass, and restate a
-  theorem there no weaker than its source. Each package root's `owned.lock` records their
-  hashes, and a build fails when one drifts: delete the lock to record a changed claim, and
-  commit the new lock with it. The challenges follow the library's convention: a module doc
-  says what is claimed and what is not, and holes, headlines and kills carry no doc comments.
-- Every headline in `Challenge.lean` needs a kill: a theorem there stating the headline's
-  negation with a wrong part in place of a hole, proved in `Theorems/Solution.lean`.
-- State each assumption about the outside world as a `WorldClaim` in a `Spec.lean`, and mark
-  the suites that exercise it with `@[exercises]`. A module that declares claims imports their
-  syntax with a private `import SoftwareChallenge.Commands`, which `Audit.lean` trusts:
-  `lake shake` rejects a `meta` import there, and a public one would pass Lean's own syntax to
-  every importer, where `{ id }` then reads as a singleton set.
+- The files the audit lists as `Owned:` (`Challenge.lean`, each `CoreSpec` and `WorldSpec`
+  module, the Lake configuration and the toolchain) say what linger claims. Change them to
+  change a claim, never to make a proof pass, and restate a theorem there no weaker than its
+  source. Each package root's `owned.lock` records their hashes, and a build fails when one
+  drifts: delete the lock to record a changed claim, build twice, and commit the new lock with
+  it. The challenges follow the library's convention: a module doc says what is claimed and
+  what is not, and holes, headlines and kills carry no doc comments.
+- Every headline in `Challenge.lean` needs a kill marked `@[kills headline]`: a theorem there
+  stating the headline's negation with a wrong part in place of a hole, proved in
+  `Theorems/Solution.lean`. The audit matches a kill against its headline term by term, so a
+  wrong part is a closed term of the hole's type as written: when a hole takes type parameters,
+  or the elaborator would widen a lambda's type, name the wrong part in a `CoreSpec` module
+  (`Offloop.eager`, `Render.escape`). Statements bind no `let` and match no pattern, whose
+  auxiliary definitions a challenge may not declare.
+- State each assumption about the outside world as a `WorldClaim` in a `WorldSpec` module, over
+  the foreign behaviour it constrains, and give it a `Check` in its component's
+  `WorldCode/Checks.lean` that tests the real behaviour on the host: the check names the
+  claim's parameter with a bodiless `opaque` and observes it by running the real thing. No
+  program module imports a module of checks, and the `Checks` library, a default target, builds
+  each one so that the audit counts them. A module that declares claims or checks imports their
+  syntax with a private `import SoftwareChallenge.Commands`: `lake shake` rejects a `meta`
+  import there, and a public one would pass Lean's own syntax to every importer, where `{ id }`
+  then reads as a singleton set.
 - Every public declaration in a library needs a docstring: `lakefile.lean` enables
   `linter.missingDocs` for every library but `Verify` and the challenges, and
   `scripts/verify.sh` checks the modules under `Linger/` outside `Proofs/` and `Tests/` directly.
@@ -128,7 +154,8 @@ Lean erases proofs regardless of file placement.
   and run every variable the program reads unset and empty in a suite.
 - Raw OS access belongs in the `os` package: `packages/os/Os/` and `packages/os/c/shim.c`.
   Every `@[extern]` declaration stays private in `packages/os/Os/WorldSpec.lean`, which declares
-  nothing else, and `packages/os/Os/WorldCode.lean` wraps each one: it is the surface callers use.
+  nothing else but the world claim the waits rest on, and `packages/os/Os/WorldCode.lean`, the one
+  module that imports all of it, wraps each one in `Os.Shell`: it is the surface callers use.
   Keep the shim to syscalls and errno.
   Return `-errno` and avoid numeric errno values in Lean. A binding that takes a pid also
   takes the proof `Os.Shell.checkPid` returns.

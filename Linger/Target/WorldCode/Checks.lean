@@ -18,13 +18,14 @@ namespace Linger.Target.Checks
 the observation `Shell.Literal` constrains. -/
 opaque split : String → List String
 
-/-- The shells an account may log in with. Each one this host has is tried. -/
-def shells : List String :=
+/-- The shells an account may log in with. Each one this host has is tried, here and by the
+shells suite. -/
+public def shells : List String :=
   ["sh", "bash", "zsh", "fish", "dash", "ksh", "mksh", "yash", "posh", "tcsh", "csh"]
 
 /-- Words a shell would expand, quote, escape, split or run: quotes, the escape fish reads inside
 single quotes, substitutions, globs, operators, controls, option-like words and Unicode. -/
-def hostile : List String :=
+public def hostile : List String :=
   ["", " ", "two words", "\\' ; id ; \\'", "'\\''", "a'b\"c", "back\\slash \\\\ \\", "$(id)",
     "`id`", "${HOME} $HOME ~ ~root", "* ? [ab] {a,b}", "!! !$ %self ^x #hash",
     "; & | > out < in ( ) &&", "line\nbreak", "tab\there", "\r", "\x01\x1b[31m\x7f", "--", "-n",

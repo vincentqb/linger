@@ -112,7 +112,8 @@ code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(
 # `@[never_extract, extern "f"]` and `attribute [extern "f"] g`
 [ "$(code_grep '(^|[^[:alnum:]_])extern([^[:alnum:]_]|$)' '*.lean' | awk -F: '!seen[$1]++ { print $1 }' | tr -d ' ')" = "packages/os/Os/WorldSpec.lean" ] \
   || fail "extern declarations outside packages/os/Os/WorldSpec.lean"
-# The boundary declares foreign functions and nothing else: no Lean body, no wrapper.
+# The os WorldSpec declares foreign functions and the world claim of the waits, and nothing else:
+# no Lean body, no wrapper.
 ! code_grep '^[[:space:]]*(private[[:space:]]+)?(def|abbrev|theorem|instance|structure|inductive)[[:space:]]' \
     packages/os/Os/WorldSpec.lean \
   || fail "packages/os/Os/WorldSpec.lean holds a Lean definition: wrappers and checks belong in packages/os/Os/WorldCode.lean"
@@ -387,7 +388,7 @@ module_imports packages/terminal/Terminal/Proofs/Vt.lean 'packages/terminal/Term
   }
   END { exit bad }' >&2 || fail "the VT proofs import outside the standalone library boundary"
 
-# Entry and manager policies have explicit, small import closures. Main
+# Entry and manager policies have explicit, small import closures. `main`
 # composes their executors with the session backend. The session library never
 # imports them, even through an intermediate module: every library import stays in
 # the closure that the check after `Linger.lean`'s list below declares.
@@ -503,12 +504,12 @@ spec_imports_bad="$(module_imports 'Linger/*/CoreSpec*.lean' 'Linger/*/WorldSpec
 ! grep -qE '^@[[]default_target[]][[:space:]]+lean_lib Challenge' lakefile.lean \
   || fail "the Challenge library proves nothing; keep it out of the default targets"
 
-# Pure route proofs do not observe terminal IO or inspect Main's call sites, so these ties
-# keep Main's dispatch on the proved route; Linger.App.Suites.Manager,
+# Pure route proofs do not observe terminal IO or inspect `main`'s call sites, so these ties
+# keep its dispatch on the proved route; Linger.App.Suites.Manager,
 # Linger.Import.Suites.Recipes and Linger.Import.Suites.Interop exercise it in subprocesses.
 # Every route gives an answer, which `main` binds as one `Linger.Os.Answer`, so each executor
 # returns one, and the process exits only with that answer's code (`code_documented`).
-# Fold layout whitespace for Main's small dispatch. Reuse the backtick-aware
+# Fold layout whitespace for `main`'s small dispatch. Reuse the backtick-aware
 # matcher below, so quoted prose cannot stand in for these call sites.
 entry_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/WorldCode/Main.lean)"
 for tie in \
@@ -1023,7 +1024,7 @@ awk '
 code_grep '^[[:space:]]+deadlines := deadline :: deadlines$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "ordinary polling ignores close deadlines"
 # A daemon sleeps until its earliest deadline, or for an event however long that takes when it
-# holds none (`poll_wakes`, over the world claim `Poll.Sleeps`, which the quiet suite exercises):
+# holds none (`poll_wakes`, over the world claim `Poll.Sleeps`, which its check and the quiet suite test):
 # the round's one poll waits `Session.pollTimeout` of the deadlines it gathered.
 printf '%s\n' "$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/WorldCode/Daemon.lean)" \
   | CG_RE='(^|[[:space:]])let timeout := Linger[.]Session[.]pollTimeout now deadlines let accepting := .* let revs ← poll fds evts timeout([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
@@ -1061,9 +1062,9 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def Rt[.]closeConn [(]rt : 
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let [(]prog, args[)] := Start[.]programOf [(]Linger[.]Os[.]Env[.]shellOf [(]← IO[.]getEnv "SHELL"[)][)] argv([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "a session's program bypasses Start.programOf or Env.shellOf"
 # The program reads the session's variables as `Start.environment` sets them (`start_runs`, over
-# the world claim `Spawn.Runs`, which the agent and resume suites exercise), and starts without
-# what `Start.reset` resets (`start_clean`, over the world claim `Spawn.Clean`, which the agent
-# suite exercises); a program that cannot start reports `Start.failureStatus`
+# the world claim `Spawn.Runs`, which its check and the agent and resume suites test), and starts
+# without what `Start.reset` resets (`start_clean`, over the world claim `Spawn.Clean`, which its
+# check and the agent suite test); a program that cannot start reports `Start.failureStatus`
 # (`failureStatus_exact`); and `info` reports the start as `Start.metadata` says
 # (`metadata_dirs`). The daemon asks the operating system with exactly these.
 for tie in \
@@ -1078,7 +1079,7 @@ for tie in \
 done
 # A session's end sends its program and the rest of the program's terminal session the signals
 # of `Session.ending`, SIGHUP and then SIGKILL (`ending_clean`, over the world claim
-# `Signal.Ends`, which the attach suite exercises), both while the program is unreaped. A stop
+# `Signal.Ends`, which its check and the attach suite test), both while the program is unreaped. A stop
 # that cannot send a signal reports it and sends the next all the same.
 for tie in \
   'for [(]sig, ms[)] in Linger[.]Session[.]ending do if ← ended then break try kill pid sig catch err => report s!"[^"]*" try discard <[|] signalSession pid sig catch err => report s!"[^"]*" if ← within ms 10 ended then break' \
@@ -1163,7 +1164,7 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def pump [(]rt : Rt[)] [(]e
 code_grep '^private def perform [(]st : State[)] [(]rt : Rt[)] : [(]eff : Effect Plan[)] → IO [(]Rt × Driver[.]Reply eff[)]$' 'Linger/Session/WorldCode/Daemon.lean' > /dev/null \
   || fail "effect interpreter must implement the driver's dependent reply type"
 # The executor the driver runs answers every effect and raises nothing (`run_total_safe`, over
-# the world claim `Driver.Responds`, which the delivery suite exercises): `BaseIO` has no error to
+# the world claim `Driver.Responds`, which its check and the delivery suite test): `BaseIO` has no error to
 # raise, and an error `perform` raises all the same is reported and answered as its effect's
 # failure.
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])private def executeEffect [(]st : State[)] [(]rt : Rt[)] [(]eff : Effect Plan[)] : BaseIO [(]Rt × Driver[.]Reply eff[)] := [(]perform st rt eff[)][.]catchExceptions fun err => do discard <[|] [(]report s!"[^"]*"[)][.]toBaseIO failed rt eff([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
@@ -1228,7 +1229,7 @@ done
 
 # Lifetime ownership covers two resources: the socket namespace and the saved
 # state namespace. The model takes the operating system's lock contract as the world claim
-# `Claim.Exclusive`, which Linger.Session.Suites.Robust exercises, and linger's decision to act as
+# `Claim.Exclusive`, which its check and Linger.Session.Suites.Robust test, and linger's decision to act as
 # an owner as `Claim.enters`, which every two-lock acquisition asks before it acts; these IO ties
 # and Linger.Session.Suites.Identity check acquisition before use and release after cleanup. A
 # connected daemon's failure must never fall back to older saved data.
@@ -1589,8 +1590,8 @@ code_grep '^sentinel_dir="[$]socket_root/linger-verify-sentinel-[$][$]"$' script
 # `./lake build suites` is the only build of the suites suites, under Verify/ and each component's
 # Suites/, and it builds only the import closure of Verify/Main.lean, the suites root: a module
 # outside it is never built, and none of its suites can run. Walk that closure forwards
-# over the import lines; each suite module but Coverage, lingertest's root, the shim
-# smoke test, and the wait checks it runs, must be in it.
+# over the import lines; each suite module but Coverage and lingertest's root, the shim smoke
+# test, must be in it.
 suite_unreached="$(module_imports Verify/Main.lean 'Verify/*' 'Linger/*/Suites/*' \
 | awk -F: -v files="$(git ls-files 'Verify/*.lean' 'Linger/*/Suites/*.lean' | tr '\n' ' ')" "$IMPORT_AWK"'
   { mod = import_mod($3); gsub(/[.]/, "/", mod)
@@ -1604,7 +1605,7 @@ suite_unreached="$(module_imports Verify/Main.lean 'Verify/*' 'Linger/*/Suites/*
     k = split(files, F, " ")
     for (j = 1; j <= k; j++)
       if (F[j] != "Verify/Coverage.lean" && F[j] != "Linger/Os/Suites/Shim.lean" &&
-          F[j] != "packages/os/Os/Suites/Wait.lean" && !(F[j] in reached)) printf "%s ", F[j] }')"
+          !(F[j] in reached)) printf "%s ", F[j] }')"
 [ -z "$suite_unreached" ] \
   || fail "outside the import closure of Verify/Main.lean, so './lake build suites' never elaborates them: ${suite_unreached% }"
 # Every registered suite but the opt-in remote-live and perf runs in the verifier: Verify.Main.suites

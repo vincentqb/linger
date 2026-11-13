@@ -5,6 +5,7 @@ import Linger.App.CoreCode.Entry
 import Linger.Target.CoreCode.Remote
 public import Linger.Target.CoreSpec
 import Linger.Target.Suites.Remote
+import Linger.Target.WorldCode.Checks
 
 public section
 
@@ -23,18 +24,7 @@ namespace Linger.Target.Suites.Shells
 
 open Verify.Harness
 open Linger.Target.Remote (encodeWord marker)
-
-/-- The shells an account may log in with. Each one this host has is tried. -/
-def candidates : List String :=
-  ["sh", "bash", "zsh", "fish", "dash", "ksh", "mksh", "yash", "posh", "tcsh", "csh"]
-
-/-- Words a shell would expand, quote, escape, split or run: quotes, the escape that fish reads
-inside single quotes, substitutions, globs, operators, controls, option-like words and Unicode. -/
-def hostile : List String :=
-  ["", " ", "two words", "\\' ; id ; \\'", "'\\''", "a'b\"c", "back\\slash \\\\ \\", "$(id)",
-    "`id`", "${HOME} $HOME ~ ~root", "* ? [ab] {a,b}", "!! !$ %self ^x #hash",
-    "; & | > out < in ( ) &&", "line\nbreak", "tab\there", "\r", "\x01\x1b[31m\x7f", "--", "-n",
-    "=x", "a=b", "ünïcödé ✓ 🎉 界"]
+open Linger.Target.Checks (hostile)
 
 /-- The first file called `name` in a directory of `path`. -/
 def onPath (path name : String) : IO (Option String) := do
@@ -80,7 +70,7 @@ def run : IO UInt32 :=
       Os.Shell.chmod s!"{bin}/{name}" 0o755
     let path := (← IO.getEnv "PATH").getD "/usr/bin:/bin"
     let shells ←
-      candidates.filterMapM fun name => do
+      Checks.shells.filterMapM fun name => do
           return (← onPath path name).map (name, ·)
     let names := String.intercalate " " (shells.map (·.1))
     -- every word in one line, and each word in a line of its own: a shell that misreads one word

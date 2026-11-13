@@ -338,7 +338,7 @@ theorem foldlM_preserves {α β ε : Type} (xs : List α) (f : β → α → Exc
     obtain ⟨out, ho, hout⟩ := ih (fun acc y hp hy => htotal acc y hp (by simp [hy])) next hp
     exact ⟨out, by simpa only [List.foldlM_cons, hn, bind, Except.bind] using ho, hout⟩
 
-/-- The external contract (`Responds`, in `Linger/Session/CoreSpec.lean`) gives every primitive a
+/-- The external contract (`Responds`, in `Linger/Session/WorldSpec.lean`) gives every primitive a
 result, so the effects of one event complete. -/
 theorem effects_no_error {ε : Type}
     (execute : State → World → (eff : Effect Plan) → Except ε (World × Reply eff))

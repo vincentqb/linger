@@ -29,7 +29,7 @@ public section
 
 Verb surface: attach creates if needed; read-only attach and capture also
 read offline checkpoints. Every session verb accepts an exact name or name@host.
-`Main` routes terminal selection and import before
+`main` routes terminal selection and import before
 entering this session backend. Bare invocation reaches help; `ls` prints an
 overview and exits. `__daemon` is the internal re-exec target of the detached
 spawn.
@@ -1249,7 +1249,7 @@ with the higher code. -/
 private def worse (a b : Answer) : Answer := if a.code < b.code then b else a
 
 /-- Run one session command and give its answer, whose code is its exit status: `usage` for a
-usage error or invalid target, otherwise the verb's own. `Main` routes interactive selection and
+usage error or invalid target, otherwise the verb's own. `main` routes interactive selection and
 tmux interchange elsewhere; `__daemon` runs a session's daemon in this process. -/
 def main (args : List String) : IO Answer := do
   match args with

@@ -27,5 +27,5 @@ This umbrella's closure is the library `./lake build` checks: the session machin
 shell, the components it builds on — the VT toolkit (`packages/terminal`), targets, displays
 and the OS boundary — and the command line's shell (`Linger/App/WorldCode.lean`). The entry
 route, the selector and the import component stay outside it: they may import this
-library, which never imports them. `Main` routes argv through `Entry.route` to an
-executor or to `App.Shell.main`. -/
+library, which never imports them. `main` (`Linger/App/WorldCode/Main.lean`) routes argv
+through `Entry.route` to an executor or to `App.Shell.main`. -/
