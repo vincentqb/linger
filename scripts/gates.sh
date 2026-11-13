@@ -698,7 +698,7 @@ picker_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Selector/WorldCode.lea
 for tie in \
   'for byte in bytes do let [(]next, emitted[)] := Input[.]feed decoder byte decoder := next keys := keys [+][+] [(]emitted[.]filterMap Linger[.]Selector[.]Key[.]ofInput[)][.]toArray else if Input[.]pending decoder && [(]← monotonicMs[)] - lastInput ≥ 150 then let [(]next, emitted[)] := Input[.]flush decoder decoder := next keys := [(]emitted[.]filterMap Linger[.]Selector[.]Key[.]ofInput[)][.]toArray for key in keys do' \
   'let incomingStatuses := statusesOf incoming let ordered := Linger[.]Display[.]View[.]sort [(]incomingStatuses[.]getD · [.]unknown[)] incoming[.]candidates let next := if loaded then Linger[.]Selector[.]Picker[.]refresh state ordered else [{] [(]Linger[.]Selector[.]Picker[.]init ordered state[.]allowCreate[)] with query := state[.]query [}] dirty := dirty [|][|] !loaded [|][|] next != state [|][|] incoming != snapshot state := next snapshot := incoming statuses := incomingStatuses loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
-  'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let frame := Linger[.]Selector[.]Picker[.]frame state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor savedTmux current[.]1[.]toNat current[.]2[.]toNat if frame != lastFrame [|][|] current != size then writeAll stdoutFd [(]ByteArray[.]mk frame[.]toArray[)] lastFrame := frame size := current dirty := false let ready ← poll fds events 50' \
+  'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let rows := Linger[.]Selector[.]Picker[.]frameRows state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor savedTmux current[.]1[.]toNat current[.]2[.]toNat let frame := match shown with [|] some before => if current == size then Linger[.]Selector[.]Picker[.]update before rows else Linger[.]Selector[.]Picker[.]frame state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor savedTmux current[.]1[.]toNat current[.]2[.]toNat [|] none => Linger[.]Selector[.]Picker[.]frame state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor savedTmux current[.]1[.]toNat current[.]2[.]toNat if !frame[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk frame[.]toArray[)] shown := some rows size := current dirty := false let ready ← poll fds events 50' \
   'for key in keys do if !loaded && key == [.]accept then continue match Linger[.]Selector[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target snapshot [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Os[.]Shell[.]Command[.]poll pending then' \
   'if full then lastFull := listed nextRemote := [(]← monotonicMs[)] [+] remoteRefreshMs let incoming := if full then listed else listed[.]withRemote lastFull' \
   'nextListing := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextListing then full := savedTmux [|][|] [(]← monotonicMs[)] ≥ nextRemote let args := if full then fullArgs else #[[]"ls", "--porcelain"[]] pending[.]set [(]some [(]← Os[.]Shell[.]Command[.]start executable args[)][)] return [.]cancel finally' \
@@ -1701,8 +1701,8 @@ emitter_claims="$(awk '
         if (name ~ /^[A-Za-z][A-Za-z0-9_.]*$/) sub(/.*[.]/, "", name)
         print "Verify/Coverage.lean:emitters:" name } }
     print "#rows " rows }' Verify/Coverage.lean)"
-[ "$(printf '%s\n' "$emitter_claims" | sed -n 's/^#rows //p')" = 30 ] \
-  || fail "Verify/Coverage.lean's emitter table no longer reads as its 30 rows"
+[ "$(printf '%s\n' "$emitter_claims" | sed -n 's/^#rows //p')" = 31 ] \
+  || fail "Verify/Coverage.lean's emitter table no longer reads as its 31 rows"
 { printf '%s\n' "$thm_decls" '#cites'; cite_scan; printf '%s\n' "$emitter_claims" | grep -v '^#rows '; } \
 | CITE_ABSENT="$cite_absent" CITE_FOREIGN="$cite_foreign" awk -F: '
   BEGIN { n = split(ENVIRON["CITE_ABSENT"], L, " "); for (i = 1; i <= n; i++) absent[L[i]] = 1
@@ -1891,7 +1891,8 @@ $timers"
 #     rendered at the plan's `render` step and written at its `write` step, tied above).
 #   Import/WorldCode: `tmux ls` (`terminalListing`).
 #   Selector/WorldCode: taking the terminal (`enterAnsi`) and naming it, the window size, the frame
-#     (`frame`), giving the terminal back (`exitAnsi`) and clearing its title.
+#     (`frame`, or the `update` between the `frameRows` of two frames of one size), giving the
+#     terminal back (`exitAnsi`) and clearing its title.
 #   Session/WorldCode/Client: a one-shot reply, which is the daemon's `infoText`, `screenText` or
 #     `history` in frames; a saved view's repaint (the session's), title (`Title.update`) and
 #     handback; an attach's output (the session's), title and handback.

@@ -67,7 +67,8 @@ act on the displayed snapshot, which is returned on acceptance; a completed
 replacement is applied afterward and rendered before polling again.
 Saved-tmux and read-only visits have no creation choice. The first listing is cancellable too.
 A native visit starts with a full listing, then lists local rows alone between
-remote queries. Native listings get a cooperative stop so they can retire isolated SSH groups.
+remote queries. The first frame, and the first after a resize, paints every row; after that a
+change writes only the rows it changed (`Picker.update`). Native listings get a cooperative stop so they can retire isolated SSH groups.
 Once `stopped` says a watched signal came, the visit ends on the cancellation's path, as
 `interrupted`. -/
 def choose (executable : String) (save : Option String := none) (readOnly : Bool := false)
@@ -97,17 +98,27 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
     let mut lastFull : Linger.Selector.Picker.Snapshot := {}
     let mut nextRemote := 0
     let mut size := (0, 0)
-    let mut lastFrame : List UInt8 := []
+    let mut shown : Option (List (List UInt8)) := none
     let mut dirty := true
     while true do
       let current ← winsizeGet stdoutFd
       if dirty || current != size then
+        let rows :=
+          Linger.Selector.Picker.frameRows state snapshot (statuses.getD · .unknown) loaded
+            withColor savedTmux current.1.toNat current.2.toNat
         let frame :=
-          Linger.Selector.Picker.frame state snapshot (statuses.getD · .unknown) loaded withColor
-            savedTmux current.1.toNat current.2.toNat
-        if frame != lastFrame || current != size then
+          match shown with
+          | some before =>
+            if current == size then Linger.Selector.Picker.update before rows
+            else
+              Linger.Selector.Picker.frame state snapshot (statuses.getD · .unknown) loaded
+                withColor savedTmux current.1.toNat current.2.toNat
+          | none =>
+            Linger.Selector.Picker.frame state snapshot (statuses.getD · .unknown) loaded withColor
+              savedTmux current.1.toNat current.2.toNat
+        if !frame.isEmpty then
           writeAll stdoutFd (ByteArray.mk frame.toArray)
-          lastFrame := frame
+        shown := some rows
         size := current
         dirty := false
       let ready ← poll fds events 50

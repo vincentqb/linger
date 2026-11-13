@@ -40,6 +40,7 @@ import all Linger.Display.Proofs.Status
 import all Linger.Display.Proofs.View
 import all Linger.Import.Proofs.Resurrect
 import Linger.Selector.Proofs.Frame
+import Linger.Selector.Proofs.Repaint
 import all Linger.Selector.Proofs.Picker
 import all Linger.Display.Proofs.Title
 import all Linger.Os.Proofs.Answer
@@ -2080,6 +2081,13 @@ theorem writes_clean :
       (∀ state snapshot statusOf loaded withColor savedTmux cols rows,
         Display.Clean
           (Selector.Picker.frame state snapshot statusOf loaded withColor savedTmux cols rows)) ∧
+      (∀ state snapshot statusOf loaded withColor savedTmux cols rows,
+        ∀
+          row ∈
+            Selector.Picker.frameRows state snapshot statusOf loaded withColor savedTmux cols rows,
+          Display.Clean row) ∧
+      (∀ before after : List (List UInt8),
+        (∀ row ∈ after, Display.Clean row) → Display.Clean (Selector.Picker.update before after)) ∧
       Display.Clean Selector.Picker.enterAnsi ∧
       Display.Clean Selector.Picker.exitAnsi ∧
       (∀ title, Display.Clean (Terminal.Title.ansi title)) ∧
@@ -2095,9 +2103,10 @@ theorem writes_clean :
         (safe c hc).elim (fun tab => .inr (.inr tab)) fun rest =>
           rest.elim (fun newline => .inr (.inl newline)) .inl
   exact
-    ⟨Display.terminalListing_clean, Selector.Picker.frame_clean, Selector.Picker.enterAnsi_clean,
-      Selector.Picker.exitAnsi_clean, Display.title_ansi_clean, Display.title_update_clean,
-      Display.screenText_clean, Display.history_clean, info, Display.leaveAnsi_clean⟩
+    ⟨Display.terminalListing_clean, Selector.Picker.frame_clean, Selector.Picker.frameRows_clean,
+      Selector.Picker.update_clean, Selector.Picker.enterAnsi_clean, Selector.Picker.exitAnsi_clean,
+      Display.title_ansi_clean, Display.title_update_clean, Display.screenText_clean,
+      Display.history_clean, info, Display.leaveAnsi_clean⟩
 
 theorem writes_clean_rejects_reset :
     ¬((∀ withColor rows,
@@ -2107,6 +2116,15 @@ theorem writes_clean_rejects_reset :
         (∀ state snapshot statusOf loaded withColor savedTmux cols rows,
           Display.Clean
             (Selector.Picker.frame state snapshot statusOf loaded withColor savedTmux cols rows)) ∧
+        (∀ state snapshot statusOf loaded withColor savedTmux cols rows,
+          ∀
+            row ∈
+              Selector.Picker.frameRows state snapshot statusOf loaded withColor savedTmux cols
+                rows,
+            Display.Clean row) ∧
+        (∀ before after : List (List UInt8),
+          (∀ row ∈ after, Display.Clean row) →
+            Display.Clean (Selector.Picker.update before after)) ∧
         Display.Clean Selector.Picker.enterAnsi ∧
         Display.Clean Selector.Picker.exitAnsi ∧
         (∀ title, Display.Clean (Terminal.Title.ansi title)) ∧
@@ -2167,6 +2185,112 @@ theorem poll_wakes_rejects_polling :
     fun _ _ waited => waited
   obtain ⟨_, none_due, -⟩ := h _ sleeps 0 [] (by simp) 100 ⟨by decide, by decide⟩
   simp at none_due
+
+theorem picker_repaints_changes (sa sb : Selector.Picker.State) (na nb : Selector.Picker.Snapshot)
+    (fa fb : String → Status.Status) (la ca ta lb cb tb : Bool) (v : Vt.Vt)
+    (hv : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v)
+    (between : v.atBoundary = true) (replacing : v.getModes.insert = false)
+    (wraps : v.getModes.wrap = true) (absolute : v.getModes.origin = false)
+    (top : (Vt.stick v).top = 0) (bottom : (Vt.stick v).bot = v.rowCount - 1)
+    (ascii0 : (Vt.stick v).g0 = false) (ascii1 : (Vt.stick v).g1 = false) :
+    (∀ y < v.rowCount,
+        ((v.feed (Selector.Picker.frame sa na fa la ca ta v.colCount v.rowCount)).feed
+                (Selector.Picker.update
+                  (Selector.Picker.frameRows sa na fa la ca ta v.colCount v.rowCount)
+                  (Selector.Picker.frameRows sb nb fb lb cb tb v.colCount v.rowCount))).getRow
+            y =
+          (v.feed (Selector.Picker.frame sb nb fb lb cb tb v.colCount v.rowCount)).getRow y) ∧
+      (∀ y < v.rowCount,
+        (Selector.Picker.frameRows sa na fa la ca ta v.colCount v.rowCount)[y]? =
+            (Selector.Picker.frameRows sb nb fb lb cb tb v.colCount v.rowCount)[y]? →
+          (v.feed
+                  (Selector.Picker.update
+                    (Selector.Picker.frameRows sa na fa la ca ta v.colCount v.rowCount)
+                    (Selector.Picker.frameRows sb nb fb lb cb tb v.colCount v.rowCount))).getRow
+              y =
+            v.getRow y) ∧
+      (Selector.Picker.update (Selector.Picker.frameRows sa na fa la ca ta v.colCount v.rowCount)
+            (Selector.Picker.frameRows sb nb fb lb cb tb v.colCount v.rowCount)).length ≤
+        ((List.range (Selector.Picker.frameRows sb nb fb lb cb tb v.colCount v.rowCount).length).map
+            fun y =>
+            if
+                (Selector.Picker.frameRows sa na fa la ca ta v.colCount v.rowCount)[y]? =
+                  (Selector.Picker.frameRows sb nb fb lb cb tb v.colCount v.rowCount)[y]? then
+              0
+            else
+              (Display.digits (y + 1)).length + 5 +
+                ((Selector.Picker.frameRows sb nb fb lb cb tb v.colCount v.rowCount)[y]?.getD
+                    []).length).sum :=
+  Selector.Picker.repaints_changes sa sb na nb fa fb la ca ta lb cb tb v hv between replacing wraps
+    absolute top bottom ascii0 ascii1
+
+theorem picker_repaints_changes_rejects_full :
+    ¬∀ (sa sb : Selector.Picker.State) (na nb : Selector.Picker.Snapshot)
+        (fa fb : String → Status.Status) (la ca ta lb cb tb : Bool) (v : Vt.Vt),
+        Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v →
+          v.atBoundary = true →
+          v.getModes.insert = false →
+          v.getModes.wrap = true →
+          v.getModes.origin = false →
+          (Vt.stick v).top = 0 →
+          (Vt.stick v).bot = v.rowCount - 1 →
+          (Vt.stick v).g0 = false →
+          (Vt.stick v).g1 = false →
+          (∀ y < v.rowCount,
+              ((v.feed (Selector.Picker.frame sa na fa la ca ta v.colCount v.rowCount)).feed
+                      ((fun (_ after : List (List UInt8)) =>
+                          ([0x1B, 0x5B, 0x48, 0x1B, 0x5B, 0x32, 0x4A] : List UInt8) ++
+                            (after.intersperse [0x0D, 0x0A]).flatten)
+                        (Selector.Picker.frameRows sa na fa la ca ta v.colCount v.rowCount)
+                        (Selector.Picker.frameRows sb nb fb lb cb tb v.colCount v.rowCount))).getRow
+                  y =
+                (v.feed (Selector.Picker.frame sb nb fb lb cb tb v.colCount v.rowCount)).getRow y) ∧
+            (∀ y < v.rowCount,
+              (Selector.Picker.frameRows sa na fa la ca ta v.colCount v.rowCount)[y]? =
+                  (Selector.Picker.frameRows sb nb fb lb cb tb v.colCount v.rowCount)[y]? →
+                (v.feed
+                        ((fun (_ after : List (List UInt8)) =>
+                            ([0x1B, 0x5B, 0x48, 0x1B, 0x5B, 0x32, 0x4A] : List UInt8) ++
+                              (after.intersperse [0x0D, 0x0A]).flatten)
+                          (Selector.Picker.frameRows sa na fa la ca ta v.colCount v.rowCount)
+                          (Selector.Picker.frameRows sb nb fb lb cb tb v.colCount
+                            v.rowCount))).getRow
+                    y =
+                  v.getRow y) ∧
+            ((fun (_ after : List (List UInt8)) =>
+                    ([0x1B, 0x5B, 0x48, 0x1B, 0x5B, 0x32, 0x4A] : List UInt8) ++
+                      (after.intersperse [0x0D, 0x0A]).flatten)
+                  (Selector.Picker.frameRows sa na fa la ca ta v.colCount v.rowCount)
+                  (Selector.Picker.frameRows sb nb fb lb cb tb v.colCount v.rowCount)).length ≤
+              ((List.range
+                      (Selector.Picker.frameRows sb nb fb lb cb tb v.colCount
+                          v.rowCount).length).map
+                  fun y =>
+                  if
+                      (Selector.Picker.frameRows sa na fa la ca ta v.colCount v.rowCount)[y]? =
+                        (Selector.Picker.frameRows sb nb fb lb cb tb v.colCount v.rowCount)[y]? then
+                    0
+                  else
+                    (Display.digits (y + 1)).length + 5 +
+                      ((Selector.Picker.frameRows sb nb fb lb cb tb v.colCount v.rowCount)[y]?.getD
+                          []).length).sum := by
+  intro h
+  have init :=
+    Vt.Live.init (init := Vt.Vt.init) (feed := Vt.Vt.feed) (resize := Vt.Vt.resize) (quiesce :=
+      Vt.Vt.quiesce) (decodable := Vt.Vt.Decodable) 1 1
+  have bound :=
+    (h (Selector.Picker.init []) (Selector.Picker.init []) {} {} (fun _ => .unknown)
+        (fun _ => .unknown) false false false false false false (Vt.Vt.init 1 1) init
+        (by decide +kernel) (by decide +kernel) (by decide +kernel) (by decide +kernel)
+        (by decide +kernel) (by decide +kernel) (by decide +kernel) (by decide +kernel)).2.2
+  have zero : ∀ n, (List.replicate n (0 : Nat)).sum = 0 := by
+    intro n
+    induction n with
+    | zero => rfl
+    | succ n ih => rw [List.replicate_succ, List.sum_cons, ih]
+  simp only [↓reduceIte, List.map_const', zero, List.length_append, List.length_cons,
+    List.length_nil] at bound
+  omega
 
 theorem start_answer_true (r : Start.Request) (h : Start.Reachable Start.proceeds Start.answer r) :
     (r.answer = some .started → r.runs = true) ∧ (r.answer = some .notStarted → r.runs = false) :=

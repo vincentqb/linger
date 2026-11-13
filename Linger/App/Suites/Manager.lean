@@ -411,16 +411,6 @@ private def Session.untilAny (s : Session) (needles : List String) (start : Nat 
 private def Session.until (s : Session) (needle : String) (start : Nat := 0)
     (ms : Nat := patienceMs) : IO Bool := s.untilAny [needle] start ms
 
-/-- Match rendered cells from this action's output: inline emphasis may split
-a target's bytes, and an earlier selected row must not satisfy a new wait. -/
-private def Session.untilScreen (s : Session) (ready : Vt → Bool) (start : Nat := 0)
-    (ms : Nat := patienceMs) : IO Bool := do
-  let (cols, rows) ← winsizeGet s.client.fd
-  s.untilOutput (fun output => ready ((Vt.init cols.toNat rows.toNat).feedBytes output)) start ms
-
-private def Session.untilRow (s : Session) (text : String) (start : Nat := 0) : IO Bool :=
-  s.untilScreen (fun vt => (List.range vt.rowCount).any fun row => has (rowText vt row) text) start
-
 /-- Negative assertions must observe an interval, not accept the first quiet poll. -/
 private def Session.observe (s : Session) (ms : Nat) : IO Unit := do
   let deadline := (← monotonicMs) + ms
@@ -434,6 +424,24 @@ private def Session.observe (s : Session) (ms : Nat) : IO Unit := do
       | some bytes =>
         s.output.modify (· ++ bytes)
 
+/-- Match rendered cells once this action has written something: inline emphasis may split a
+target's bytes, and an earlier selected row must not satisfy a new wait. The cells are the
+whole stream's, since a frame repaints only the rows that changed. -/
+private def Session.untilScreen (s : Session) (ready : Vt → Bool) (start : Nat := 0)
+    (ms : Nat := patienceMs) : IO Bool := do
+  let (cols, rows) ← winsizeGet s.client.fd
+  let shows := fun (output : ByteArray) =>
+    output.size > start && ready ((Vt.init cols.toNat rows.toNat).feedBytes output)
+  let _ ←
+    Verify.Harness.waitFor ms do
+        s.observe 20
+        let output ← s.output.get
+        return shows output || hasText (output.extract start output.size) "MANAGER-EXIT:"
+  return shows (← s.output.get)
+
+private def Session.untilRow (s : Session) (text : String) (start : Nat := 0) : IO Bool :=
+  s.untilScreen (fun vt => (List.range vt.rowCount).any fun row => has (rowText vt row) text) start
+
 /-- `waitFor` that keeps reading this terminal. A client blocked writing to it does
 not read the keys a check waits on, as when an attach's replay exceeds the pty's
 output buffer: about 1 KB on macOS, tens of KB on Linux. -/
@@ -446,15 +454,18 @@ private def Session.send (s : Session) (bytes : ByteArray) : IO Unit := writeAll
 
 private def Session.text (s : Session) (text : String) : IO Unit := s.send text.toUTF8
 
-private def Session.prompt (s : Session) (query : String := "") (start : Nat := 0) : IO Bool := do
-  unless ← s.untilAny ["  › " ++ query, "linger> " ++ query] start do
-    return false
+private def Session.prompt (s : Session) (query : String := "") (start : Nat := 0) : IO Bool :=
   -- Normal actions need a loaded snapshot. The initial loading frame also has
   -- an editable prompt; the held-initial-list checks exercise that separately.
-  s.untilAny
-      ["  ↵ attach", "  ↵ create", "  Type a valid name",
-        " | enter choose | esc quit | ctrl-r refresh"]
-      start
+  s.untilScreen
+    (fun vt =>
+      let rows := (List.range vt.rowCount).map (rowText vt)
+      rows.any
+          (fun row =>
+            if query.isEmpty then row.startsWith "  › Find" else row.startsWith s!"  › {query} ") &&
+        rows.any fun row =>
+          ["  ↵ attach", "  ↵ create", "  Type a valid name"].any fun help => row.startsWith help)
+    start
 
 /-- Require the selected marker, exact target prefix and reverse video.
 Do not depend on where the renderer starts or resets inline styles. -/
@@ -915,6 +926,29 @@ private def selectionChecks (e : Env) : IO Unit := do
     check e slug s!"picker probe navigation selects the expected row ({slug})" fun f =>
         withPrompt f.picker #[] fun s => do
           return (← acceptThenCancel s (keys ++ "\r")) && (← f.visits) == attachVisit [target]
+  check e "keystroke-rows"
+      "picker probe repaints only the rows a move changes, in place, and clears nothing" fun f =>
+      withPrompt f.picker #[] fun s => do
+        s.observe 150
+        let (cols, _) ← winsizeGet s.client.fd
+        let mut sizes : List Nat := []
+        let mut cleared := false
+        for keys in ["\x1b[B", "\x1b[B", "\x1b[A"] do
+          let start ← s.mark
+          s.text keys
+          let _ ← s.untilOutput (fun written => !written.isEmpty) start
+          s.observe 150
+          let out ← s.output.get
+          let written := out.extract start out.size
+          sizes := sizes ++ [written.size]
+          cleared := cleared || hasBytes written (csiNum 2 0x4A)
+        appendText (f.root / "keystroke-observation")
+            s!"bytes per keystroke {sizes}, cleared {cleared}, columns {cols}\n"
+        -- two rows change: the one the highlight leaves and the one it reaches
+        let near := sizes.all fun n => 0 < n && n ≤ 2 * (cols.toNat + 48)
+        let moved ← s.selected "Beta"
+        return !cleared && near && moved && (← acceptThenCancel s) &&
+            (← f.visits) == attachVisit ["Beta"]
   check e "subsequence" "picker probe filtering is case-insensitive, subsequence-based and stable"
       fun f => do
       f.listing "name\tPrefix\nname\tWork\nname\tweak\n"
@@ -993,14 +1027,12 @@ private def selectionChecks (e : Env) : IO Unit := do
         do
         f.listing listing
         withPrompt f.picker #[] fun s => do
-            let start ← s.mark
             if !query.isEmpty then
               unless ← s.typeQuery query query do
                 return false
             s.observe 150
             let output ← s.output.get
-            let frame := output.extract (if query.isEmpty then 0 else start) output.size
-            let screen := ByteArray.mk (screenText ((Vt.init 80 12).feedBytes frame)).toArray
+            let screen := ByteArray.mk (screenText ((Vt.init 80 12).feedBytes output)).toArray
             let suppressed := !hasText screen s!"Create {absent}"
             let clean ← acceptThenCancel s "\x1b[F\r"
             return suppressed && clean && (← f.visits) == attachVisit [target]
@@ -1042,15 +1074,12 @@ private def selectionChecks (e : Env) : IO Unit := do
         fun f =>
         withPrompt f.picker #[]
           (fun s => do
-            let start ← s.mark
             unless ← s.typeQuery query query do
               return false
             s.text "\r"
             s.observe 350
             let output ← s.output.get
-            let vt :=
-              (Vt.init (Linger.Target.Name.maxLen + 40) 12).feedBytes
-                (output.extract start output.size)
+            let vt := (Vt.init 80 12).feedBytes output
             let noChoice := !hasText (ByteArray.mk (screenText vt).toArray) "Create "
             let waiting := !(← (f.root / "result").pathExists)
             let noAttach := (← f.visits) == listed
@@ -1131,7 +1160,7 @@ private def inputChecks (e : Env) : IO Unit := do
         s.observe 350
         let output ← s.output.get
         let frame := output.extract start output.size
-        let screen := ByteArray.mk (screenText ((Vt.init 80 12).feedBytes frame)).toArray
+        let screen := ByteArray.mk (screenText ((Vt.init 80 12).feedBytes output)).toArray
         let ignored := !hasText screen "Create " && !hasText frame "\u0085"
         let waiting := !(← (f.root / "result").pathExists)
         let noCommand := (← f.visits) == listed

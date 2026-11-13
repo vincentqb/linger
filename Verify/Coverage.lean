@@ -26,6 +26,7 @@ def emitters : List (String × String) :=
     ("Render.crlfB", "Display.clean_crlf / Picker.frame_clean"),
     ("Render.csiB", "component of Replay.start_faithful / drain_start"),
     ("Render.csiNum", "component of Replay.start_faithful / drain_start"),
+    ("Render.csiNum2", "Picker.csiNum2_bytes / Picker.repaints_changes"),
     ("Render.csiPlain", "Display.csiPlain_bytes / Picker.frame_clean"),
     ("Render.csiPriv", "component of Replay.start_faithful / drain_start"),
     ("Render.cursorAnsi", "component of Replay.start_faithful / drain_start"),

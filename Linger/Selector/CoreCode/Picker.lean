@@ -327,49 +327,104 @@ def frameLines (state : State) (snapshot : Snapshot)
 /-- A character as a frame shows it: itself when a terminal prints it, `?` otherwise. -/
 private def frameChar (raw : Char) : Char := if Input.printable raw then raw else '?'
 
-/-- The characters of one run of a frame line that fit `width` cells after `used` of them are
-taken, each as `frameChar` shows it: their bytes, the cells now used, and whether the run was
-cut short. -/
-private def frameChars (width : Nat) : Nat → List Char → List UInt8 × Nat × Bool
-  | used, [] => ([], used, false)
-  | used, raw :: rest =>
-    if used + Terminal.Vt.charWidth (frameChar raw) > width then ([], used, true)
+/-- A style as the pen it selects, applying its SGR parameters to the default pen as a terminal
+does: a reset, bold, faint, underline, reverse and the eight foreground colours, the default
+foreground, and nothing for any other parameter, which the picker does not use. -/
+private def styleAttr (pen : Terminal.Vt.Pen) (n : Nat) : Terminal.Vt.Pen :=
+  if n == 0 then {}
+  else
+    if n == 1 then { pen with bold := true }
     else
-      let more := frameChars width (used + Terminal.Vt.charWidth (frameChar raw)) rest
-      (String.utf8EncodeChar (frameChar raw) ++ more.1, more.2)
+      if n == 2 then { pen with dim := true }
+      else
+        if n == 4 then { pen with underline := true }
+        else
+          if n == 7 then { pen with reverse := true }
+          else
+            if 30 ≤ n && n ≤ 37 then { pen with fg := .idx (UInt8.ofNat (n - 30)) }
+            else if n == 39 then { pen with fg := .default } else pen
 
-/-- What a frame writes to put `style` in effect after `active`: nothing when they are the
-same, else an SGR reset and then the style's sequences. -/
-private def frameSwitch (active style : List (List Nat)) : List UInt8 :=
-  if style != active then ([0] :: style).flatMap Linger.Display.Listing.sgr else []
+/-- The pen a style puts in effect after a reset. -/
+private def stylePen (style : List (List Nat)) : Terminal.Vt.Pen := style.flatten.foldl styleAttr {}
 
-/-- The runs of one frame line from the given cells used and style in effect: each run in its
-style, until a run is cut short. The bytes, and the style in effect at the end. -/
-private def framePieces (width : Nat) :
-    Nat → List (List Nat) → List (String × List (List Nat)) → List UInt8 × List (List Nat)
-  | _, active, [] => ([], active)
-  | used, active, run :: rest =>
-    let chars := frameChars width used run.1.toList
-    if chars.2.2 then (frameSwitch active run.2 ++ chars.1, run.2)
+/-- The cells of a frame line's characters, each in its pen, that fit `width` columns after
+`used` of them are taken, added to `cells`, which holds the cells so far, last first. Each
+character shows as `frameChar` shows it; a character of width zero joins the cell before it
+when that cell is narrow and holds fewer than eight, and is dropped otherwise; the first
+character that does not fit ends the line. -/
+private def lineCells (width : Nat) :
+    Nat → List Terminal.Vt.Cell → List (Char × Terminal.Vt.Pen) → List Terminal.Vt.Cell
+  | _, cells, [] => cells
+  | used, cells, (raw, pen) :: rest =>
+    if Terminal.Vt.charWidth (frameChar raw) == 0 then
+      match cells with
+      | last :: before =>
+        if last.width == 1 && last.marks.length < 8 then
+          lineCells width used ({ last with marks := last.marks ++ [frameChar raw] } :: before) rest
+        else lineCells width used cells rest
+      | [] => lineCells width used cells rest
     else
-      let more := framePieces width chars.2.1 run.2 rest
-      (frameSwitch active run.2 ++ chars.1 ++ more.1, more.2)
+      if used + Terminal.Vt.charWidth (frameChar raw) > width then cells
+      else
+        if Terminal.Vt.charWidth (frameChar raw) == 2 then
+          lineCells width (used + 2)
+            ({ base := ' ', marks := [], width := 0, pen } ::
+              { base := frameChar raw, width := 2, pen } :: cells)
+            rest
+        else lineCells width (used + 1) ({ base := frameChar raw, pen } :: cells) rest
 
-/-- One frame line, within `width` cells, its style reset at its end. -/
-private def frameLine (width : Nat) (line : List (String × List (List Nat))) : List UInt8 :=
-  let body := framePieces width 0 [] line
-  body.1 ++ if body.2.isEmpty then [] else Linger.Display.Listing.sgr [0]
+/-- One frame line as the row of cells it shows on a terminal `cols` wide: its characters
+within `cols - 1` columns, so that the final column stays blank, then blanks to the width. -/
+private def lineRow (cols : Nat) (line : List (String × List (List Nat))) : Terminal.Vt.Row :=
+  let cells :=
+    (lineCells (cols - 1) 0 []
+        (line.flatMap fun run => run.1.toList.map fun char => (char, stylePen run.2))).reverse
+  (cells ++ List.replicate (cols - cells.length) ({} : Terminal.Vt.Cell)).toArray
 
-/-- The picker frame's terminal bytes: reset the pen, home the cursor, clear the screen, then
-the lines of `frameLines` separated by CR LF. Each line keeps the final column unused, so
-neither a full-width name nor a resize induces an automatic line wrap. -/
+/-- What a frame shows on a terminal `cols` wide and `rows` tall: the row of each line of
+`frameLines`, then blank rows, one row for each of the terminal's (at least one). -/
+private def picture (state : State) (snapshot : Snapshot)
+    (statusOf : String → Linger.Display.Status.Status) (loaded withColor savedTmux : Bool)
+    (cols rows : Nat) : List Terminal.Vt.Row :=
+  let lines := frameLines state snapshot statusOf loaded withColor savedTmux rows
+  (lines ++ List.replicate (max 1 rows - lines.length) []).map (lineRow cols)
+
+/-- Each row's paint, from the pen the row before it left in effect, as a full repaint
+threads them. -/
+private def threadRows : List Terminal.Vt.Row → Terminal.Vt.Pen → List (List UInt8)
+  | [], _ => []
+  | row :: rest, pen =>
+    (Terminal.Render.rowAnsi row pen).1 :: threadRows rest (Terminal.Render.rowAnsi row pen).2
+
+/-- Each row of a frame as its own paint: the pen reset, then every cell of the row, from the
+first column to the last, so a row painted over another leaves nothing of it. -/
+def frameRows (state : State) (snapshot : Snapshot)
+    (statusOf : String → Linger.Display.Status.Status) (loaded withColor savedTmux : Bool)
+    (cols rows : Nat) : List (List UInt8) :=
+  (picture state snapshot statusOf loaded withColor savedTmux cols rows).map fun row =>
+    Terminal.Render.csiNum 0 0x6D ++ (Terminal.Render.rowAnsi row {}).1
+
+/-- The picker frame's terminal bytes, which paint every cell of the screen: reset the pen, home
+the cursor, then each row of the frame, separated by CR LF. Each line keeps the final column
+blank, so neither a full-width name nor a resize induces an automatic line wrap. -/
 def frame (state : State) (snapshot : Snapshot) (statusOf : String → Linger.Display.Status.Status)
     (loaded withColor savedTmux : Bool) (cols rows : Nat) : List UInt8 :=
-  Linger.Display.Listing.sgr [0] ++ Terminal.Render.csiPlain 0x48 ++
-    Terminal.Render.csiNum 2 0x4A ++
-    (((frameLines state snapshot statusOf loaded withColor savedTmux rows).map
-            (frameLine (cols - 1))).intersperse
+  Terminal.Render.csiNum 0 0x6D ++ Terminal.Render.csiPlain 0x48 ++
+    ((threadRows (picture state snapshot statusOf loaded withColor savedTmux cols rows)
+            {}).intersperse
         Terminal.Render.crlfB).flatten
+
+/-- The rows from row `y` on of the update from the rows `before` shows there to `after`. -/
+private def updateFrom : Nat → List (List UInt8) → List (List UInt8) → List UInt8
+  | _, _, [] => []
+  | y, before, row :: after =>
+    (if before.head? = some row then [] else Terminal.Render.csiNum2 (y + 1) 1 0x48 ++ row) ++
+      updateFrom (y + 1) before.tail after
+
+/-- What turns a terminal that shows the rows `before` into one that shows `after`, rows as
+`frameRows` gives them: for each row that differs, the cursor to its first column and the row's
+paint, and nothing for a row that stays. -/
+def update (before after : List (List UInt8)) : List UInt8 := updateFrom 0 before after
 
 /-- What the picker writes when it takes the terminal: the alternate screen, the cursor
 hidden, bracketed paste on. -/
