@@ -1068,21 +1068,23 @@ theorem start_runs (inherited : String → Option String)
       started.dir = dir ∧
       started.env "LINGER_SESSION" = some name ∧
       started.env "TERM" = some "xterm-256color" ∧
+      started.env "COLORTERM" = some "truecolor" ∧
       started.env "TERM_PROGRAM" = some "linger" ∧
       started.env "TERM_PROGRAM_VERSION" = some Mediation.versionNumber ∧
       ∀ key,
-        key ∉ ["LINGER_SESSION", "TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"] →
+        key ∉ ["LINGER_SESSION", "TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"] →
           started.env key = inherited key := by
   obtain ⟨hargv, hdir, henv⟩ := runs _ _ _ _ _ _ ok
   rw [Start.programOf_exact] at hargv
-  refine ⟨by simpa using hargv, hdir, ?_, ?_, ?_, ?_, fun key hkey => ?_⟩
+  refine ⟨by simpa using hargv, hdir, ?_, ?_, ?_, ?_, ?_, fun key hkey => ?_⟩
   all_goals rw [henv, Start.environment_lookup]
   · simp
   · simp
   · simp
   · simp
+  · simp
   · simp only [List.mem_cons, List.not_mem_nil, or_false, not_or] at hkey
-    simp [hkey.1, hkey.2.1, hkey.2.2.1, hkey.2.2.2]
+    simp [hkey.1, hkey.2.1, hkey.2.2.1, hkey.2.2.2.1, hkey.2.2.2.2]
 
 theorem start_runs_rejects_unnamed :
     ¬∀ (inherited : String → Option String)
@@ -1098,10 +1100,13 @@ theorem start_runs_rejects_unnamed :
                 started.dir = dir ∧
                 started.env "LINGER_SESSION" = some name ∧
                 started.env "TERM" = some "xterm-256color" ∧
+                started.env "COLORTERM" = some "truecolor" ∧
                 started.env "TERM_PROGRAM" = some "linger" ∧
                 started.env "TERM_PROGRAM_VERSION" = some Mediation.versionNumber ∧
                 ∀ key,
-                  key ∉ ["LINGER_SESSION", "TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"] →
+                  key ∉
+                      ["LINGER_SESSION", "TERM", "COLORTERM", "TERM_PROGRAM",
+                        "TERM_PROGRAM_VERSION"] →
                     started.env key = inherited key := by
   intro h
   have runs :

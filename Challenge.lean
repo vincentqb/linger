@@ -908,9 +908,9 @@ theorem picker_create_new_rejects_empty :
 /-! ## 3. Exactness
 
 `start` runs its program in the caller's directory and with the caller's environment, which only
-`LINGER_SESSION`, `TERM`, `TERM_PROGRAM` and `TERM_PROGRAM_VERSION` change, when the operating
-system runs what linger asks (`start_runs`, in part 4). A program that cannot start there makes
-`start` return what `env -C` would, and a resume that runs elsewhere than its saved directory
+`LINGER_SESSION`, `TERM`, `COLORTERM`, `TERM_PROGRAM` and `TERM_PROGRAM_VERSION` change, when the
+operating system runs what linger asks (`start_runs`, in part 4). A program that cannot start there
+makes `start` return what `env -C` would, and a resume that runs elsewhere than its saved directory
 says so.
 
 A command on a `name@host` target reaches the linger on that host as exactly its verb and words,
@@ -1144,7 +1144,9 @@ theorem metadata_dirs_rejects_silent :
 A session runs the program its creation named, with its words, or without a command the
 session's shell alone, which is what a resume runs again on the saved session's last screen
 (`resume_restores`, in part 7). The operating system runs it as asked: the world claim
-`Spawn.Runs`, which its check and the agent and resume suites test.
+`Spawn.Runs`, which its check and the agent and resume suites test. Its terminal says what it is:
+`TERM=xterm-256color`, `COLORTERM=truecolor`, since the session's terminal keeps and repaints
+24-bit colour, and linger's name and version (`start_runs`).
 
 The program starts from what its start asks, never from how linger was started: every signal at its
 default action, none blocked, and its terminal on descriptors 0, 1 and 2 with no other open,
@@ -1192,10 +1194,11 @@ theorem start_runs (inherited : String → Option String)
       started.dir = dir ∧
       started.env "LINGER_SESSION" = some name ∧
       started.env "TERM" = some "xterm-256color" ∧
+      started.env "COLORTERM" = some "truecolor" ∧
       started.env "TERM_PROGRAM" = some "linger" ∧
       started.env "TERM_PROGRAM_VERSION" = some Mediation.versionNumber ∧
       ∀ key,
-        key ∉ ["LINGER_SESSION", "TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"] →
+        key ∉ ["LINGER_SESSION", "TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"] →
           started.env key = inherited key := by
   sorry
 
@@ -1214,10 +1217,13 @@ theorem start_runs_rejects_unnamed :
                 started.dir = dir ∧
                 started.env "LINGER_SESSION" = some name ∧
                 started.env "TERM" = some "xterm-256color" ∧
+                started.env "COLORTERM" = some "truecolor" ∧
                 started.env "TERM_PROGRAM" = some "linger" ∧
                 started.env "TERM_PROGRAM_VERSION" = some Mediation.versionNumber ∧
                 ∀ key,
-                  key ∉ ["LINGER_SESSION", "TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"] →
+                  key ∉
+                      ["LINGER_SESSION", "TERM", "COLORTERM", "TERM_PROGRAM",
+                        "TERM_PROGRAM_VERSION"] →
                     started.env key = inherited key := by
   sorry
 

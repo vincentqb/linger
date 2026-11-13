@@ -259,12 +259,13 @@ private def startChecks (e : Env) : IO Unit := do
       !line.isEmpty && !["PWD=", "OLDPWD=", "SHLVL=", "_="].any (line.startsWith ·)
   let expected :=
     caller ++
-      ["LINGER_SESSION=st0", "TERM=xterm-256color", "TERM_PROGRAM=linger",
+      ["LINGER_SESSION=st0", "TERM=xterm-256color", "COLORTERM=truecolor", "TERM_PROGRAM=linger",
         s!"TERM_PROGRAM_VERSION={Terminal.Mediation.versionNumber}"]
   expect
       (exact.exitCode == 0 && envRc == 0 && seen.length == expected.length &&
         expected.all seen.contains)
-      s!"start passes the caller's environment exactly, but for TERM* and LINGER_SESSION ({seen})"
+      s!"start passes the caller's environment exactly, but for TERM*, COLORTERM and \
+        LINGER_SESSION ({seen})"
   let (liveRc, liveErr) ← startIn e work #[] #["st1", "true"]
   expect (liveRc == 1 && has liveErr "is running" && (← e.info "st1" "pid") == pid)
       "start refuses a name a live session holds, and says so"

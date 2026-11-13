@@ -34,8 +34,9 @@ WHAT IS DERIVED, AND WHAT CANNOT BE:
   the half `feed_replies_noNl` cannot see;
 * the stable child profile's `TERM_PROGRAM_VERSION` is derived: `Start.environment`,
   the environment `Daemon.serve` starts the program with, and this check both read
-  `Mediation.versionNumber`. `TERM=xterm-256color` and `TERM_PROGRAM=linger` are
-  literals here, as the headline `start_runs` (`Challenge.lean`, part 4) states them. -/
+  `Mediation.versionNumber`. `TERM=xterm-256color`, `COLORTERM=truecolor` and
+  `TERM_PROGRAM=linger` are literals here, as the headline `start_runs` (`Challenge.lean`,
+  part 4) states them. -/
 
 namespace Linger.Terminal.Suites.Mediation
 
@@ -133,7 +134,7 @@ def probe (resultPath readyPath triggerPath : String) : IO UInt32 := do
     -- writes no record), published by rename so the parent never reads a partial file
     IO.FS.writeBinFile s!"{resultPath}.reply" (ByteArray.mk reply.toArray)
     let mut txt := ""
-    for k in ["TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"] do
+    for k in ["TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"] do
       match ← IO.getEnv k with
       | some v =>
         txt := txt ++ s!"{k}\t{v}\n"
@@ -157,6 +158,8 @@ structure Case where
   reply : List UInt8 := []
   /-- `TERM` as the probe saw it. -/
   term : Option String := none
+  /-- `COLORTERM` as the probe saw it. -/
+  colorTerm : Option String := none
   /-- `TERM_PROGRAM` as the probe saw it. -/
   termProgram : Option String := none
   /-- `TERM_PROGRAM_VERSION` as the probe saw it. -/
@@ -179,11 +182,11 @@ def runCase (e : Env) (index clients : Nat) (inheritedTerm : Option String)
   let trigger := (caseDir / "trigger").toString
   -- The DAEMON's environment, which the child inherits but for the variables
   -- `Start.environment` sets. In `("TERM", inheritedTerm)`, `some v` sets it and `none`
-  -- REMOVES it, which is what case 0 needs.
+  -- REMOVES it, which is what case 0 needs; `COLORTERM` goes with it, as `24bit` or absent.
   let mut env :=
     e.procEnv ++
       #[("TERM_PROGRAM", some "inherited-program"), ("TERM_PROGRAM_VERSION", some "9.9.9"),
-        ("TERM", inheritedTerm)]
+        ("TERM", inheritedTerm), ("COLORTERM", inheritedTerm.map fun _ => "24bit")]
   if let some q := query then
     env := env.push ("PROBE_QUERY", some q)
   -- `__daemon` directly rather than `attach`, because the child has to be the
@@ -226,8 +229,9 @@ def runCase (e : Env) (index clients : Nat) (inheritedTerm : Option String)
         else
           pure []
       c :=
-        { reply, term := field "TERM", termProgram := field "TERM_PROGRAM",
-          termVersion := field "TERM_PROGRAM_VERSION", clientOut := outs, err := field "error" }
+        { reply, term := field "TERM", colorTerm := field "COLORTERM",
+          termProgram := field "TERM_PROGRAM", termVersion := field "TERM_PROGRAM_VERSION",
+          clientOut := outs, err := field "error" }
       -- the daemon exits when its child does (`.childExited` → `.exit`), so this
       -- is a wait and not a kill
       if (← waitProcess daemon 5000).isNone then
@@ -259,10 +263,11 @@ def run : IO UInt32 :=
       -- equality, not "contains": a duplicate reply is the failure this is for
       expect (data.reply == da1Expected)
           s!"DA1 progresses with {clients} client(s), exactly one reply"
-      -- `TERM` and `TERM_PROGRAM` are literals, as `start_runs` states them; the version
-      -- is derived. See the module docstring
+      -- `TERM`, `COLORTERM` and `TERM_PROGRAM` are literals, as `start_runs` states them; the
+      -- version is derived. See the module docstring
       expect
-          (data.term == some "xterm-256color" && data.termProgram == some "linger" &&
+          (data.term == some "xterm-256color" && data.colorTerm == some "truecolor" &&
+            data.termProgram == some "linger" &&
             data.termVersion == some Terminal.Mediation.versionNumber)
           s!"stable child terminal profile with {clients} client(s)"
       if clients != 0 then

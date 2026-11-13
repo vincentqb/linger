@@ -49,20 +49,25 @@ theorem environment_lookup (name key : String) (inherited : String → Option St
       else
         if key = "TERM" then some "xterm-256color"
         else
-          if key = "TERM_PROGRAM" then some "linger"
+          if key = "COLORTERM" then some "truecolor"
           else
-            if key = "TERM_PROGRAM_VERSION" then some Terminal.Mediation.versionNumber
-            else inherited key := by
+            if key = "TERM_PROGRAM" then some "linger"
+            else
+              if key = "TERM_PROGRAM_VERSION" then some Terminal.Mediation.versionNumber
+              else inherited key := by
   by_cases h1 : key = "LINGER_SESSION"
   · subst h1; rfl
   by_cases h2 : key = "TERM"
   · subst h2; rfl
+  by_cases h5 : key = "COLORTERM"
+  · subst h5; rfl
   by_cases h3 : key = "TERM_PROGRAM"
   · subst h3; rfl
   by_cases h4 : key = "TERM_PROGRAM_VERSION"
   · subst h4; rfl
   simp [environment, List.lookup, beq_eq_false_iff_ne.2 h1, beq_eq_false_iff_ne.2 h2,
-    beq_eq_false_iff_ne.2 h3, beq_eq_false_iff_ne.2 h4, h1, h2, h3, h4]
+    beq_eq_false_iff_ne.2 h5, beq_eq_false_iff_ne.2 h3, beq_eq_false_iff_ne.2 h4, h1, h2, h5, h3,
+    h4]
 
 /-- A session's program starts with every signal at its default action, none blocked, and no
 descriptor open past the three of its terminal. -/
