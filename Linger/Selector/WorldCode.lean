@@ -12,6 +12,7 @@ import Linger.Display.CoreCode.View
 import Std.Data.HashMap.Basic
 import Linger.Display.CoreCode.Status
 import Linger.Selector.CoreCode.Key
+import Linger.Selector.CoreCode.Fetch
 import Input.CoreCode
 
 public section
@@ -57,20 +58,17 @@ private def statusesOf (snapshot : Linger.Selector.Picker.Snapshot) :
         pure ()
     return statuses
 
-/-- A native visit lists local rows every second but queries remote hosts again only
-this long after its previous remote query completed: each host costs an SSH
-connection. Meanwhile remote rows stay as that query reported them. -/
-def remoteRefreshMs : Nat := 5000
-
 /-- Own raw mode and at most one listing for one selection visit. Keys always
 act on the displayed snapshot, which is returned on acceptance; a completed
 replacement is applied afterward and rendered before polling again.
 Saved-tmux and read-only visits have no creation choice. The first listing is cancellable too.
-A native visit starts with a full listing, then lists local rows alone between
-remote queries. The first frame, and the first after a resize, paints every row; after that a
-change writes only the rows it changed (`Picker.update`). Native listings get a cooperative stop so they can retire isolated SSH groups.
-Once `stopped` says a watched signal came, the visit ends on the cancellation's path, as
-`interrupted`. -/
+A native visit queries remote hosts only when remote rows are due (`fetch_follows_events`): when
+it opens, and at once after the refresh key, or once the listing running then ends. Its other
+listings, one each second, list local rows alone and keep the remote rows the last remote query
+reported. The first frame, and the first after a resize, paints every row; after that a
+change writes only the rows it changed (`Picker.update`). Native listings get a cooperative stop
+so they can retire the transports' isolated groups. Once `stopped` says a watched signal came,
+the visit ends on the cancellation's path, as `interrupted`. -/
 def choose (executable : String) (save : Option String := none) (readOnly : Bool := false)
     (stopped : IO Bool := pure false) : IO Choice := do
   let savedTmux := save.isSome
@@ -97,7 +95,7 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
     let mut nextListing := 0
     let mut full := true
     let mut lastFull : Linger.Selector.Picker.Snapshot := {}
-    let mut nextRemote := 0
+    let mut remoteDue := true
     let mut size := (0, 0)
     let mut shown : Option (List (List UInt8)) := none
     let mut dirty := true
@@ -145,6 +143,7 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
         decoder := next
         keys := (emitted.filterMap Linger.Selector.Key.ofInput).toArray
       for key in keys do
+        remoteDue := Linger.Selector.Picker.fetch remoteDue (.key key)
         if !loaded && key == .accept then
           continue
         match Linger.Selector.Picker.step state key with
@@ -161,7 +160,6 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
         let listed ← IO.ofExcept (Linger.Selector.Picker.parseSnapshot result.stdout)
         if full then
           lastFull := listed
-          nextRemote := (← monotonicMs) + remoteRefreshMs
         let incoming := if full then listed else listed.withRemote lastFull
         -- what asks for someone first, as `ls` lists it (`View.sort`); the query finds a row by
         -- its description too, and a directory under the account's home shows as `~`, as in `ls`
@@ -180,8 +178,9 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
         statuses := incomingStatuses
         loaded := true
         nextListing := (← monotonicMs) + 1000
-      if (← pending.get).isNone && (← monotonicMs) ≥ nextListing then
-        full := savedTmux || (← monotonicMs) ≥ nextRemote
+      if (← pending.get).isNone && (remoteDue || (← monotonicMs) ≥ nextListing) then
+        full := savedTmux || remoteDue
+        remoteDue := Linger.Selector.Picker.fetch remoteDue .list
         let args := if full then fullArgs else #["ls", "--porcelain"]
         pending.set (some (← Os.Shell.Command.start executable args))
     return .cancel

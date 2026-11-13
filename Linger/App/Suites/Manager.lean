@@ -1437,7 +1437,7 @@ private def fuzzyChecks (e : Env) : IO Unit := do
 
 private def displayChecks (e : Env) : IO Unit := do
   check e "normal-frame"
-      "picker normal frame has the spaced title, dim placeholder, exact rows and attach help"
+      "picker normal frame has the spaced title, dim placeholder, exact rows and the keys' help, Ctrl-R's included"
       fun f =>
       withPrompt f.picker #[] fun s => do
         let vt ← s.capture "normal-frame"
@@ -1465,8 +1465,8 @@ private def displayChecks (e : Env) : IO Unit := do
           | some row =>
             row ≥ 9 && rowText vt (row - 1) == "" && (rowText vt row).startsWith "  ↵ attach" &&
               has (rowText vt row) "↑↓ move" &&
+              has (rowText vt row) "^R refresh" &&
               has (rowText vt row) "esc / ^C quit" &&
-              !has (rowText vt row) "refresh" &&
               (vt.getCell 2 row).pen.dim
         s.text "\x03"
         return layout && help && (← restored s 130)
@@ -1531,6 +1531,34 @@ private def Fixture.waitListing (f : Fixture) (serial : Nat) (completed : Bool :
 
 private def Fixture.releaseListing (f : Fixture) (serial : Nat) : IO Unit :=
   IO.FS.writeFile (f.root / s!"release-listing-{serial}") ""
+
+/-- Each listing the visit has started, in order: whether it queried remote hosts, and when it
+started in the recording child, on the monotonic clock this process reads too. -/
+private def Fixture.listings (f : Fixture) : IO (List (Bool × Nat)) := do
+  let kinds :=
+    (lines (← f.calls)).filterMap fun record =>
+      if record == (listed.dropEnd 1).toString then some true
+      else if record == ((call ["ls", "--porcelain"]).dropEnd 1).toString then some false else none
+  let starts :=
+    (lines (← readText (f.root / "list-starts"))).filterMap fun line =>
+      ((line.splitOn "\t")[2]?).bind String.toNat?
+  return kinds.zip starts
+
+/-- Whether the first listing that started at `since` or later queried remote hosts, once it has
+completed; `none` when none completes in time. -/
+private def Fixture.firstListingFrom (f : Fixture) (since : Nat) : IO (Option Bool) := do
+  let found ← IO.mkRef (none : Option Bool)
+  let _ ←
+    waitFor patienceMs do
+        match (← f.listings).zipIdx.find? (fun ((_, start), _) => start ≥ since) with
+        | some ((remote, _), index) =>
+          if ← (f.root / s!"list-completed-{index + 1}").pathExists then
+            found.set (some remote)
+            return true
+          return false
+        | none =>
+          return false
+  found.get
 
 private def refreshChecks (e : Env) : IO Unit := do
   check e "refresh-reordered"
@@ -1620,9 +1648,9 @@ private def refreshChecks (e : Env) : IO Unit := do
               has screen "↵ attach" &&
               (← acceptThenCancel s) &&
               (← f.visits) == attachVisit ["work"]
-  check e "ctrl-r-ignored"
-      "picker Ctrl-R preserves query and highlight without repaint or a new terminal visit" fun f =>
-      do
+  check e "ctrl-r-refresh"
+      "picker Ctrl-R keeps query and highlight, lists remote hosts again at once and repaints nothing unchanged"
+      fun f => do
       f.listing "name\tBeta\nname\tBravo\n"
       withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "B" "B" do
@@ -1631,15 +1659,25 @@ private def refreshChecks (e : Env) : IO Unit := do
           s.text "\x1b[F"
           unless ← s.selected "+ Create B" selection do
             return false
+          -- the opening's listing queried remote hosts, the one after it only local sessions
+          unless ← f.waitListing 2 true do
+            return false
           s.observe 100
           let start ← s.mark
+          let pressed ← monotonicMs
           s.text "\x12"
+          -- the first listing to start after the key queries remote hosts
+          let fetched ← f.firstListingFrom pressed
           s.observe 400
           let quiet := (← s.mark) == start
           let vt ← s.capture "ctrl-r-frame"
           let screen := String.fromUTF8! (ByteArray.mk (screenText vt).toArray)
+          IO.FS.writeFile (f.root / "ctrl-r-observation")
+              s!"pressed={pressed}\nlistings={← f.listings}\nfetched={fetched}\n"
           s.text "\x03"
-          return quiet && has screen "  › B" && has screen "  ▸ + Create B" && (← restored s 130) &&
+          return fetched == some true && quiet && has screen "  › B" &&
+              has screen "  ▸ + Create B" &&
+              (← restored s 130) &&
               (← f.visits) == listed
   check e "idle-refresh"
       "picker repeats complete listings about one second apart without repainting unchanged snapshots"
@@ -1661,8 +1699,8 @@ private def refreshChecks (e : Env) : IO Unit := do
         s.text "\x03"
         return repeated && quiet && spaced && (← restored s 130) && (← f.visits) == listed &&
             !(← (f.root / "listing-overlap").pathExists)
-  check e "remote-cadence"
-      "picker refreshes local rows every second and remote rows only from its next remote query"
+  check e "remote-on-events"
+      "picker lists local rows every second and queries remote hosts only when it opens and on Ctrl-R"
       fun f => do
       f.listing "name\tAlpha\nstatus\tidle\nname\twork@host\nstatus\tidle\n"
       withPrompt f.picker #[] fun s => do
@@ -1672,44 +1710,34 @@ private def refreshChecks (e : Env) : IO Unit := do
           f.listing "name\tBeta\nstatus\tidle\nname\tnext@host\nstatus\tidle\n"
           unless ← s.untilRow "Beta" start do
             return false
+          -- six seconds of listings, longer than the cadence the chooser once queried hosts at:
+          -- no event asked for remote rows, so none of them queries a remote host
+          unless ← f.waitListing 7 true do
+            return false
           let localFrame ← s.capture "local-refresh-frame"
           let localScreen := String.fromUTF8! (ByteArray.mk (screenText localFrame).toArray)
           let held := has localScreen "work@host" && !has localScreen "next@host"
+          let before ← f.listings
           let start ← s.mark
+          let pressed ← monotonicMs
+          s.text "\x12"
           let shown ←
             s.untilScreen
                 (fun vt => (List.range vt.rowCount).any fun row => has (rowText vt row) "next@host")
-                start (Linger.Selector.Shell.remoteRefreshMs + 3000)
+                start
           let remoteFrame ← s.capture "remote-refresh-frame"
           let remoteScreen := String.fromUTF8! (ByteArray.mk (screenText remoteFrame).toArray)
+          let fetched ← f.firstListingFrom pressed
           s.text "\x03"
           let clean ← restored s 130
-          -- Pair each listing attempt, in order, with its start in the recording child.
-          let kinds :=
-            (lines (← f.calls)).filterMap fun record =>
-              if record == (listed.dropEnd 1).toString then some true
-              else
-                if record == ((call ["ls", "--porcelain"]).dropEnd 1).toString then some false
-                else none
-          let starts :=
-            (lines (← readText (f.root / "list-starts"))).filterMap fun line =>
-              ((line.splitOn "\t")[2]?).bind String.toNat?
-          let firstDone ← numberFile (f.root / "list-completed-1")
-          let gaps := (starts.zip starts.tail).map fun (a, b) => b - a
+          let gaps := (before.zip before.tail).map fun ((_, a), (_, b)) => b - a
           IO.FS.writeFile (f.root / "cadence-observation")
-              s!"kinds={kinds}\nstarts={starts}\nfirst-completed={firstDone}\ngaps={gaps}\n"
-          -- Local listings run until the next remote query, which waits out the cadence
-          -- after the first one completed.
-          let cadence :=
-            match (kinds.drop 1).findIdx? id with
-            | none => false
-            | some index =>
-              kinds.head? == some true && index ≥ 1 &&
-                (starts[index + 1]?.getD 0) ≥ firstDone + Linger.Selector.Shell.remoteRefreshMs
-          return held && shown && has remoteScreen "Beta" && !has remoteScreen "work@host" &&
-              cadence &&
-              kinds.length == starts.length &&
-              gaps.all (· ≥ 850) &&
+              s!"before={before}\npressed={pressed}\nfetched={fetched}\ngaps={gaps}\n"
+          let opened := before.map (·.1) == true :: List.replicate (before.length - 1) false
+          return held && before.length ≥ 7 && opened && gaps.all (· ≥ 850) && shown &&
+              has remoteScreen "Beta" &&
+              !has remoteScreen "work@host" &&
+              fetched == some true &&
               clean &&
               (← f.visits) == listed &&
               !(← (f.root / "listing-overlap").pathExists)

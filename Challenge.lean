@@ -124,13 +124,16 @@ def Linger.App.Capture.plan : List App.Capture.Step := sorry
 
 def Linger.Target.Name.check : String → Option String := sorry
 
-def Linger.Target.Remote.command : String → List String → String := sorry
+def Linger.Target.Remote.commandWords : String → List String → List String := sorry
 
 def Linger.Target.Remote.decode : List String → Option (List String) := sorry
 
 def Linger.Target.Remote.targetArgs : List String → Option (String × List String) := sorry
 
 def Linger.Target.Remote.targetOperands : String → List String := sorry
+
+def Linger.Target.Remote.targetArgv :
+    Remote.Transport → String → List String → String → List String → List String := sorry
 
 def Linger.Target.Remote.checkHosts : List String → Except String (List String) := sorry
 
@@ -294,6 +297,8 @@ def Linger.Selector.Picker.frameRows :
       (String → Status.Status) → Bool → Bool → Bool → Nat → Nat → List (List UInt8) := sorry
 
 def Linger.Selector.Picker.update : List (List UInt8) → List (List UInt8) → List UInt8 := sorry
+
+def Linger.Selector.Picker.fetch : Bool → Selector.Picker.Event → Bool := sorry
 
 def Linger.Selector.Picker.enterAnsi : List UInt8 := sorry
 
@@ -921,13 +926,21 @@ operating system runs what linger asks (`start_runs`, in part 4). A program that
 makes `start` return what `env -C` would, and a resume that runs elsewhere than its saved directory
 says so.
 
-A command on a `name@host` target reaches the linger on that host as exactly its verb and words,
-whatever they hold, through any login shell that passes plain words on (`Shell.Literal`):
-`Remote.command` encodes them as plain words, and the remote entry decodes them before it routes
-the command line and refuses one that does not decode as a usage error. POSIX quoting would not:
-fish reads a backslash inside single quotes, so a quoted word could close its quote there and
-run what follows. Not claimed: that the remote linger decodes, since an older one refuses the
-encoded line as a usage error, nor that a command line fits the remote host's argument limit. -/
+A command on a `name@host` target runs through the host's transport, a command that runs linger
+elsewhere: the one the remotes file names for the host, or else ssh. Linger runs the transport's
+attach command for an attach, which gives the far end a terminal, and its query command for every
+other verb, followed by `linger` and the verb and words encoded as plain words, with the target
+placed as `targetOperands` places it for `attach` and `capture`, which read it with `targetArgs`
+(`transport_exact`). A transport that runs a `linger` with exactly the plain words after its own,
+or nothing (`Transport.Delivers`), delivers words the remote entry routes as exactly the verb and
+words, whatever they hold. SSH joins those words with spaces into one line, which any login shell
+that passes plain words on (`Shell.Literal`) hands the remote linger as they are
+(`command_exact`); the remote entry decodes them before it routes the command line, and refuses
+one that does not decode as a usage error. POSIX quoting would not: fish reads a backslash inside
+single quotes, so a quoted word could close its quote there and run what follows. Not claimed:
+that a transport reaches its host, which is the transport's, its keys, jumps, latency and
+authentication included; that the remote linger decodes, since an older one refuses the encoded
+line as a usage error; nor that a command line fits the remote host's argument limit. -/
 
 theorem route_exact (args : List String) :
     App.Entry.route args =
@@ -1024,7 +1037,7 @@ theorem check_eq_some_iff_rejects_any :
 theorem command_exact (split : String → List String) (literal : Remote.Shell.Literal split)
     (verb : String) (words : List String) :
     ∃ args,
-      split (Remote.command verb words) = "linger" :: args ∧
+      split (String.intercalate " " (Remote.commandWords verb words)) = "linger" :: args ∧
         App.Entry.route args = App.Entry.Route.of (verb :: words) := by
   sorry
 
@@ -1035,17 +1048,57 @@ theorem command_exact_rejects_quoted :
           ∀ (verb : String) (words : List String),
             ∃ args,
               split
-                    ((fun (verb : String) (words : List String) =>
-                        String.intercalate " "
-                          (("linger" :: verb :: words).map fun word =>
+                    (String.intercalate " "
+                      ((fun (verb : String) (words : List String) =>
+                          ("linger" :: verb :: words).map fun word =>
                             String.ofList
                               ('\'' ::
                                   word.toList.flatMap
                                     (fun c => if c = '\'' then ['\'', '\\', '\'', '\''] else [c]) ++
-                                ['\''])))
-                      verb words) =
+                                ['\'']))
+                        verb words)) =
                   "linger" :: args ∧
                 App.Entry.route args = App.Entry.Route.of (verb :: words) := by
+  sorry
+
+theorem transport_exact (t : Remote.Transport) (verb name : String) (options args : List String)
+    (deliver : List String → List String → Option (List String))
+    (delivers : Remote.Transport.Delivers deliver t) :
+    ∃ line,
+      Remote.targetArgv t verb options name args =
+          (if verb = "attach" then t.attach else t.query) ++ "linger" :: line ∧
+        (∀ received,
+          deliver (if verb = "attach" then t.attach else t.query) ("linger" :: line) =
+              some received →
+            received = "linger" :: line) ∧
+        App.Entry.route line =
+          App.Entry.Route.of
+            (verb :: options ++
+              (if verb = "attach" ∨ verb = "capture" then Remote.targetOperands name else [name]) ++
+              args) := by
+  sorry
+
+@[kills transport_exact]
+theorem transport_exact_rejects_ssh :
+    ¬∀ (t : Remote.Transport) (verb name : String) (options args : List String)
+        (deliver : List String → List String → Option (List String)),
+        Remote.Transport.Delivers deliver t →
+          ∃ line,
+            (fun (_ : Remote.Transport) (_ : String) (_ : List String) (_ : String)
+                      (_ : List String) =>
+                    ["ssh", "-T", "--"])
+                  t verb options name args =
+                (if verb = "attach" then t.attach else t.query) ++ "linger" :: line ∧
+              (∀ received,
+                deliver (if verb = "attach" then t.attach else t.query) ("linger" :: line) =
+                    some received →
+                  received = "linger" :: line) ∧
+              App.Entry.route line =
+                App.Entry.Route.of
+                  (verb :: options ++
+                    (if verb = "attach" ∨ verb = "capture" then Remote.targetOperands name
+                    else [name]) ++
+                    args) := by
   sorry
 
 theorem check_no_alias (a b name : String) (ha : Name.check a = some name)
@@ -2313,7 +2366,12 @@ with its bound. On the screen, the selector repaints only what an event changed
 that differs, the cursor's move to that row and the row's paint, so it costs the rows that differ
 and moving the highlight costs two; it writes nothing to a row the two frames share, whatever that
 row shows; and over a terminal showing the first frame it shows exactly what the second frame shows
-there. Only the first frame and the first after a resize paint every row. Not claimed: how much
+there. Only the first frame and the first after a resize paint every row. The chooser queries
+remote hosts, through a transport command each, only when an event asks it to
+(`fetch_follows_events`): a listing it starts queries them exactly when no listing came before it
+since it opened, or the refresh key, Ctrl-R, came after the one before; its other listings, one
+each second while it is open, a timer `scripts/gates.sh` names, read its local sessions alone and
+keep the remote rows the last query reported. Not claimed: how much
 later than its deadline a loaded host lets a daemon wake, and an update over a terminal in insert or
 origin mode, without autowrap, with a narrower scroll region or a DEC line-drawing character set,
 none of which the picker sets. Not claimed yet: that an event's work follows its size. -/
@@ -2440,6 +2498,22 @@ theorem picker_repaints_changes_rejects_full :
                     (Display.digits (y + 1)).length + 5 +
                       ((Selector.Picker.frameRows sb nb fb lb cb tb v.colCount v.rowCount)[y]?.getD
                           []).length).sum := by
+  sorry
+
+theorem fetch_follows_events (events : List Selector.Picker.Event) :
+    Selector.Picker.due Selector.Picker.fetch events = true ↔
+      (∀ e ∈ events, e.isKey = true) ∨
+        Selector.Picker.Event.key .refresh ∈
+          events.reverse.takeWhile Selector.Picker.Event.isKey := by
+  sorry
+
+@[kills fetch_follows_events]
+theorem fetch_follows_events_rejects_polling :
+    ¬∀ (events : List Selector.Picker.Event),
+        Selector.Picker.due (fun (_ : Bool) (_ : Selector.Picker.Event) => true) events = true ↔
+          (∀ e ∈ events, e.isKey = true) ∨
+            Selector.Picker.Event.key .refresh ∈
+              events.reverse.takeWhile Selector.Picker.Event.isKey := by
   sorry
 
 /-! ## 10. Graceful under load

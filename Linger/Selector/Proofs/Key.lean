@@ -17,12 +17,14 @@ theorem ofInput_control_iff (byte : UInt8) (key : Linger.Selector.Key) :
     ofInput (.control byte) = some key ↔
       (byte = 21 ∧ key = .clear) ∨
         (byte = 16 ∧ key = .up) ∨
-        (byte = 14 ∧ key = .down) ∨ (byte = 3 ∧ key = .cancel) ∨ (byte = 4 ∧ key = .cancel) := by
+        (byte = 14 ∧ key = .down) ∨
+        (byte = 18 ∧ key = .refresh) ∨ (byte = 3 ∧ key = .cancel) ∨ (byte = 4 ∧ key = .cancel) := by
   simp only [ofInput]
   split <;> simp_all [eq_comm]
 
 theorem ofInput_control_none_iff (byte : UInt8) :
-    ofInput (.control byte) = none ↔ byte ≠ 21 ∧ byte ≠ 16 ∧ byte ≠ 14 ∧ byte ≠ 3 ∧ byte ≠ 4 := by
+    ofInput (.control byte) = none ↔
+      byte ≠ 21 ∧ byte ≠ 16 ∧ byte ≠ 14 ∧ byte ≠ 18 ∧ byte ≠ 3 ∧ byte ≠ 4 := by
   simp only [ofInput]
   split <;> simp_all
 
@@ -46,7 +48,7 @@ theorem ofInput_text_iff (event : Input.Key) (char : Char) :
         | split
         | simp_all)
 
-/-- All 256 possible bytes have their original selector meaning at idle.
+/-- All 256 possible bytes have their selector meaning at idle.
 This statement fixes the defaults independently of the adapter's body. -/
 theorem feed_byte_bindings (byte : UInt8) :
     (Input.feed Input.init byte).2.filterMap ofInput =
@@ -55,6 +57,7 @@ theorem feed_byte_bindings (byte : UInt8) :
       | 21 => [.clear]
       | 16 => [.up]
       | 14 | 9 => [.down]
+      | 18 => [.refresh]
       | 13 | 10 => [.accept]
       | 3 | 4 => [.cancel]
       | _ => if 32 ≤ byte ∧ byte < 127 then [.text (Char.ofUInt8 byte)] else [] := by
@@ -66,21 +69,21 @@ theorem feed_byte_bindings (byte : UInt8) :
   all_goals simp_all [ofInput, UInt8.le_iff_toNat_le, UInt8.lt_iff_toNat_lt]
   all_goals omega
 
-/-- The original control-byte shortcuts remain selector policy. -/
+/-- The control-byte shortcuts remain selector policy. -/
 theorem feed_controls (byte : UInt8) (key : Linger.Selector.Key)
     (h :
       (byte, key) ∈
         [(8, .backspace), (127, .backspace), (21, .clear), (16, .up), (14, .down), (9, .down),
-          (13, .accept), (10, .accept), (3, .cancel), (4, .cancel)]) :
+          (18, .refresh), (13, .accept), (10, .accept), (3, .cancel), (4, .cancel)]) :
     (Input.feed Input.init byte).2.filterMap ofInput = [key] := by
   simp only [List.mem_cons, List.not_mem_nil, or_false, Prod.mk.injEq] at h
-  rcases h with h | h | h | h | h | h | h | h | h | h
+  rcases h with h | h | h | h | h | h | h | h | h | h | h
   all_goals rcases h with ⟨rfl, rfl⟩; rw [feed_byte_bindings]; rfl
 
-/-- Automatic listing refresh has no manual keyboard action. -/
-theorem feed_ctrl_r : (Input.feed Input.init 18).2.filterMap ofInput = [] := by
+/-- Ctrl-R asks for the remote hosts' rows again: it is the refresh key. -/
+theorem feed_ctrl_r : (Input.feed Input.init 18).2.filterMap ofInput = [.refresh] := by
   rw [feed_byte_bindings]
-  decide
+  rfl
 
 theorem feed_ascii (paste : Bool) (byte : UInt8) (h : 32 ≤ byte ∧ byte < 127) :
     (Input.feed { paste } byte).2.filterMap ofInput = [.text (Char.ofUInt8 byte)] := by
@@ -102,7 +105,8 @@ theorem feed_paste_no_commands (state : Input.State) (byte : UInt8) (hpaste : st
       .first ∉ (Input.feed state byte).2.filterMap ofInput ∧
       .last ∉ (Input.feed state byte).2.filterMap ofInput ∧
       .backspace ∉ (Input.feed state byte).2.filterMap ofInput ∧
-      .clear ∉ (Input.feed state byte).2.filterMap ofInput := by
+      .clear ∉ (Input.feed state byte).2.filterMap ofInput ∧
+      .refresh ∉ (Input.feed state byte).2.filterMap ofInput := by
   repeat' constructor
   all_goals
     intro member

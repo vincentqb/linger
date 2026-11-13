@@ -4,10 +4,10 @@
 # plain ssh — with linger on the other end they are free: disconnection
 # just detaches the session, and reattach restores the screen.
 #
-# linger deliberately sets no such policy on the ssh it execs for
-# `attach name@host`: a command-line -o would silently override this
-# file, and the transport's patience is your call, not the session
-# manager's.
+# linger sets no such policy on the ssh it runs for a host of
+# ~/.config/linger/remotes: a command-line -o would silently override
+# this file, and the transport's patience is your call, not the session
+# manager's. A listing waits for each host at most 3 s whatever ssh does.
 Host *
     ServerAliveInterval 5
     ServerAliveCountMax 3

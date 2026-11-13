@@ -4,8 +4,8 @@ public section
 
 /-! # What selector headlines are stated in
 
-The actions the selector takes, the state of one selection visit, the listing it shows, and what
-one action leads to. -/
+The actions the selector takes, the state of one selection visit, the listing it shows, what one
+action leads to, and the events its listings follow: which of them query remote hosts. -/
 
 namespace Linger.Selector
 
@@ -29,6 +29,8 @@ inductive Key where
   | accept
   /-- Leave without a choice. -/
   | cancel
+  /-- List the remote hosts' sessions again. -/
+  | refresh
   deriving BEq, Repr
 
 end Linger.Selector
@@ -70,5 +72,26 @@ inductive Outcome where
   /-- Leave without a choice. -/
   | cancel
   deriving BEq, Repr
+
+/-- What a chooser's listings follow: a key it reads, or a listing it starts, each second or at
+once when remote rows are due. -/
+inductive Event where
+  /-- The chooser read a key that requests this action. -/
+  | key (key : Key)
+  /-- The chooser starts a listing. -/
+  | list
+  deriving BEq, Repr
+
+/-- Whether an event is a key the chooser read, rather than a listing it starts. -/
+@[expose]
+def Event.isKey : Event → Bool
+  | .key _ => true
+  | .list => false
+
+/-- Whether a listing the chooser starts after `events`, since it opened, queries remote hosts,
+as `next` decides after each event from whether they were due before it: they are when the
+chooser opens. -/
+@[expose]
+def due (next : Bool → Event → Bool) (events : List Event) : Bool := events.foldl next true
 
 end Linger.Selector.Picker

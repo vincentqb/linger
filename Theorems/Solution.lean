@@ -10,6 +10,7 @@ public import Linger.Display.CoreCode.Status
 public import Linger.Display.CoreCode.View
 public import Linger.Import.CoreCode.Resurrect
 public import Linger.Selector.CoreCode.Picker
+public import Linger.Selector.CoreCode.Fetch
 public import Linger.Display.CoreCode.Title
 public import Linger.Os.CoreCode.Answer
 public import Linger.Os.CoreCode.Env
@@ -42,6 +43,7 @@ import all Linger.Import.Proofs.Resurrect
 import Linger.Selector.Proofs.Frame
 import Linger.Selector.Proofs.Repaint
 import all Linger.Selector.Proofs.Picker
+import all Linger.Selector.Proofs.Fetch
 import all Linger.Display.Proofs.Title
 import all Linger.Os.Proofs.Answer
 import all Linger.Os.Proofs.Env
@@ -894,9 +896,10 @@ theorem check_eq_some_iff_rejects_any :
 theorem command_exact (split : String → List String) (literal : Remote.Shell.Literal split)
     (verb : String) (words : List String) :
     ∃ args,
-      split (Remote.command verb words) = "linger" :: args ∧
+      split (String.intercalate " " (Remote.commandWords verb words)) = "linger" :: args ∧
         App.Entry.route args = App.Entry.Route.of (verb :: words) := by
   obtain ⟨encoded, received, decoded⟩ := Remote.command_decode split literal verb words
+  rw [← Remote.intercalate_commandWords] at received
   exact ⟨Remote.marker :: encoded, received, App.Entry.route_encoded encoded _ decoded⟩
 
 theorem command_exact_rejects_quoted :
@@ -905,15 +908,15 @@ theorem command_exact_rejects_quoted :
           ∀ (verb : String) (words : List String),
             ∃ args,
               split
-                    ((fun (verb : String) (words : List String) =>
-                        String.intercalate " "
-                          (("linger" :: verb :: words).map fun word =>
+                    (String.intercalate " "
+                      ((fun (verb : String) (words : List String) =>
+                          ("linger" :: verb :: words).map fun word =>
                             String.ofList
                               ('\'' ::
                                   word.toList.flatMap
                                     (fun c => if c = '\'' then ['\'', '\\', '\'', '\''] else [c]) ++
-                                ['\''])))
-                      verb words) =
+                                ['\'']))
+                        verb words)) =
                   "linger" :: args ∧
                 App.Entry.route args = App.Entry.Route.of (verb :: words) := by
   intro h
@@ -925,6 +928,81 @@ theorem command_exact_rejects_quoted :
   subst received
   rw [App.Entry.route_eq] at routed
   simp [App.Entry.Route.of, Remote.marker] at routed
+
+theorem transport_exact (t : Remote.Transport) (verb name : String) (options args : List String)
+    (deliver : List String → List String → Option (List String))
+    (delivers : Remote.Transport.Delivers deliver t) :
+    ∃ line,
+      Remote.targetArgv t verb options name args =
+          (if verb = "attach" then t.attach else t.query) ++ "linger" :: line ∧
+        (∀ received,
+          deliver (if verb = "attach" then t.attach else t.query) ("linger" :: line) =
+              some received →
+            received = "linger" :: line) ∧
+        App.Entry.route line =
+          App.Entry.Route.of
+            (verb :: options ++
+              (if verb = "attach" ∨ verb = "capture" then Remote.targetOperands name else [name]) ++
+              args) := by
+  refine
+    ⟨Remote.marker ::
+        (verb :: options ++
+              (if verb = "attach" ∨ verb = "capture" then Remote.targetOperands name else [name]) ++
+              args).map
+          Remote.encodeWord,
+      Remote.targetArgv_eq t verb options name args, ?_,
+      App.Entry.route_encoded _ _ (Remote.decode_map_encodeWord _)⟩
+  intro received ran
+  -- the words after `linger` are plain, so the transport runs a `linger` with exactly them
+  have plain :
+    ∀
+      word ∈
+        Remote.marker ::
+          (verb :: options ++
+                (if verb = "attach" ∨ verb = "capture" then Remote.targetOperands name
+                else [name]) ++
+                args).map
+            Remote.encodeWord,
+      Remote.Shell.plain word = true := by
+    intro word member
+    simp only [List.mem_cons, List.mem_map] at member
+    rcases member with rfl | ⟨original, -, rfl⟩
+    · exact Remote.plain_marker
+    · exact Remote.plain_encodeWord original
+  have chosen : (if verb = "attach" then t.attach else t.query) ∈ [t.query, t.attach] := by
+    split <;> simp
+  rcases delivers _ chosen _ plain with nothing | exactly
+  · rw [nothing] at ran
+    cases ran
+  · rw [exactly] at ran
+    exact (Option.some.inj ran).symm
+
+theorem transport_exact_rejects_ssh :
+    ¬∀ (t : Remote.Transport) (verb name : String) (options args : List String)
+        (deliver : List String → List String → Option (List String)),
+        Remote.Transport.Delivers deliver t →
+          ∃ line,
+            (fun (_ : Remote.Transport) (_ : String) (_ : List String) (_ : String)
+                      (_ : List String) =>
+                    ["ssh", "-T", "--"])
+                  t verb options name args =
+                (if verb = "attach" then t.attach else t.query) ++ "linger" :: line ∧
+              (∀ received,
+                deliver (if verb = "attach" then t.attach else t.query) ("linger" :: line) =
+                    some received →
+                  received = "linger" :: line) ∧
+              App.Entry.route line =
+                App.Entry.Route.of
+                  (verb :: options ++
+                    (if verb = "attach" ∨ verb = "capture" then Remote.targetOperands name
+                    else [name]) ++
+                    args) := by
+  intro h
+  -- a transport the remotes file names, `docker`, which ssh hard-coded in its place ignores
+  obtain ⟨line, ran, -, -⟩ :=
+    h { query := ["docker"], attach := ["docker"] } "send" "w" [] [] (fun _ words => some words)
+      (fun _ _ _ _ => Or.inr rfl)
+  simp at ran
 
 theorem check_no_alias (a b name : String) (ha : Name.check a = some name)
     (hb : Name.check b = some name) : a = b := Name.check_no_alias ha hb
@@ -2480,6 +2558,23 @@ theorem picker_repaints_changes_rejects_full :
   simp only [↓reduceIte, List.map_const', zero, List.length_append, List.length_cons,
     List.length_nil] at bound
   omega
+
+theorem fetch_follows_events (events : List Selector.Picker.Event) :
+    Selector.Picker.due Selector.Picker.fetch events = true ↔
+      (∀ e ∈ events, e.isKey = true) ∨
+        Selector.Picker.Event.key .refresh ∈ events.reverse.takeWhile Selector.Picker.Event.isKey :=
+  Selector.Picker.due_fetch_iff events
+
+theorem fetch_follows_events_rejects_polling :
+    ¬∀ (events : List Selector.Picker.Event),
+        Selector.Picker.due (fun (_ : Bool) (_ : Selector.Picker.Event) => true) events = true ↔
+          (∀ e ∈ events, e.isKey = true) ∨
+            Selector.Picker.Event.key .refresh ∈
+              events.reverse.takeWhile Selector.Picker.Event.isKey := by
+  intro h
+  -- a chooser that fetched remote rows for every listing would fetch them for its second
+  have second := (h [.list]).mp rfl
+  simp at second
 
 theorem start_answer_true (r : Start.Request) (h : Start.Reachable Start.proceeds Start.answer r) :
     (r.answer = some .started → r.runs = true) ∧ (r.answer = some .notStarted → r.runs = false) :=

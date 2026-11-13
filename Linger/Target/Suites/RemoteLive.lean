@@ -1,22 +1,20 @@
 module
 
 import Verify.Harness
-import Linger.Target.CoreCode.Remote
+import Linger.Target.Suites.Remote
 
 public section
 
-/-! # Linger.Target.Suites.RemoteLive — the remote path against a REAL second machine
+/-! # Linger.Target.Suites.RemoteLive — the remote path against a second linger
 
-Unlike `Linger.Target.Suites.Remote` — which puts a fake `ssh` on `PATH`, is hermetic,
-and is in the gate — this needs an actual reachable host running a real `linger`, so it
-is **deliberately not in `scripts/verify.sh`**:
-
-    LINGER_REMOTE=<host> ./lake exe suites remote-live
-
-Assumes the remote has `linger` on its non-interactive `PATH` and two live sessions
-named `alpha` and `beta`; the host key comes from `~/.ssh/config`. It is the only
-suite whose preconditions live outside the repo, which is exactly why it is opt-in —
-a suite that cannot pass on a fresh checkout must not be able to fail the gate. -/
+With `LINGER_REMOTE=<host>`, `./lake exe suites remote-live` drives a real host that ssh reaches,
+with `linger` on its non-interactive `PATH` and two live sessions named `alpha` and `beta`; ssh
+finds the host's key in its own configuration. Without it, the far side is this checkout's
+`linger` under a state directory of its own, reached through a transport script in the suite's
+directory, which starts `alpha` and `beta` there, and an `ssh` first on `PATH` that refuses to
+run, so no check reaches the network. Either way the suite writes its own remotes file under a
+`HOME` of its own and never reads the user's. It is not in `scripts/verify.sh`: its real-host mode
+needs preconditions outside the repo. -/
 
 namespace Linger.Target.Suites.RemoteLive
 
@@ -38,42 +36,65 @@ def stripCsi (s : String) : String :=
     · simp_wf
   String.ofList (go s.toList [])
 
-/-- Run the suite against `LINGER_REMOTE`; exit 2 when it is unset. -/
+/-- Run the suite against `LINGER_REMOTE`, or against a far linger in a state directory of its
+own when it is unset. -/
 def run : IO UInt32 := do
-  let some host ← IO.getEnv "LINGER_REMOTE" |
-    IO.eprintln "suites remote-live: set LINGER_REMOTE=<host>";
-    return 2
+  let real ← IO.getEnv "LINGER_REMOTE"
   Env.suite "live" fun e => do
-      IO.println s!"driving local overview + remote attach against real host: {host}"
+      let home := s!"{e.dir}/home"
+      IO.FS.createDirAll s!"{home}/.config/linger"
+      let remotes := s!"{home}/.config/linger/remotes"
+      let far : Env := { e with dir := s!"{e.dir}/far" }
+      let host := real.getD "far"
       -- `SSH_AUTH_SOCK` removed for every child (`("K", none)` is a removal), so a
-      -- wedged local ssh-agent cannot hang the `ssh` linger spawns.
-      let noAgent : Array (String × Option String) := #[("SSH_AUTH_SOCK", none)]
-      -- the overview folds the remote's sessions in over real ssh
-      let (_, out, _) ← e.cliEnv noAgent #["-r", host]
-      expect (has out s!"alpha@{host}") s!"remote alpha@{host} listed over real ssh"
-      expect (has out s!"beta@{host}") s!"remote beta@{host} listed over real ssh"
-      -- `attach alpha@HOST` runs `ssh -t -- HOST` with the command line `Remote.command`
-      -- encodes for `attach alpha` → real remote shell
-      let c ← e.spawnEnv #["SSH_AUTH_SOCK="] #["attach", s!"alpha@{host}"] 110 30
-      IO.sleep 3000
-      let _ ← drain c.fd 2000
-      c.type "echo REMOTE-HOST-$((40+2))\r"
-      let seen := stripCsi (← drainStr c.fd 5000)
-      expect (has seen "REMOTE-HOST-42") "attach name@host dropped into the real remote shell"
-      -- detach (ctrl-\), leaving the session alive on the remote
-      c.detach
-      IO.sleep 1500
-      c.bye (sendDetach := false)
-      -- …and it must still be there. Parsed through `Remote.parse`, the reader
-      -- `cmdList` in `Linger.App.Shell` uses, rather than substring-matching the porcelain.
-      let ssh ←
-        IO.Process.output
-            { cmd := "ssh",
-              args :=
-                #["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "--", host, "linger", "ls",
-                  "--porcelain"] }
-      let rows := Linger.Target.Remote.parse ssh.stdout
-      expect (rows.any (fun r => r.name == "alpha" && r.live))
-          "remote session survived detach (still listed live, via Remote.parse)"
+      -- wedged local ssh-agent cannot hang an `ssh` linger runs
+      let mut env : Array (String × Option String) :=
+        #[("SSH_AUTH_SOCK", none), ("HOME", some home)]
+      match real with
+      | some name =>
+        IO.FS.writeFile remotes s!"{name}\n"
+      | none =>
+        let bin := s!"{e.dir}/bin"
+        IO.FS.createDirAll bin
+        IO.FS.createDirAll far.dir
+        IO.FS.writeFile s!"{bin}/ssh" "#!/bin/sh\nexit 255\n"
+        IO.FS.writeFile s!"{e.dir}/transport"
+            (Linger.Target.Suites.Remote.fakeTransport e.bin s!"{e.dir}/transport.log" far.dir)
+        for script in [s!"{bin}/ssh", s!"{e.dir}/transport"] do
+          Os.Shell.chmod script 0o755
+        IO.FS.writeFile remotes s!"far {e.dir}/transport\n"
+        env := env.push ("PATH", some s!"{bin}:{(← IO.getEnv "PATH").getD "/usr/bin:/bin"}")
+        for name in ["alpha", "beta"] do
+          discard <| far.cli #["start", name, "/bin/sh"]
+      let ptyEnv := env.map fun (key, value) => s!"{key}={value.getD ""}"
+      try
+        IO.println s!"driving the overview and a remote attach against {host}"
+        -- the overview folds in the far linger's sessions through the remotes file's command
+        let (_, out, _) ← e.cliEnv env #["-r"]
+        expect (has out s!"alpha@{host}") s!"remote alpha@{host} listed through its transport"
+        expect (has out s!"beta@{host}") s!"remote beta@{host} listed through its transport"
+        -- `attach alpha@HOST` runs the host's attach command, then `linger` and the words
+        -- `Remote.command` encodes for `attach alpha`, there
+        let c ← e.spawnEnv ptyEnv #["attach", s!"alpha@{host}"] 110 30
+        IO.sleep 3000
+        let _ ← drain c.fd 2000
+        c.type "echo REMOTE-HOST-$((40+2))\r"
+        let seen := stripCsi (← drainStr c.fd 5000)
+        expect (has seen "REMOTE-HOST-42") "attach name@host dropped into the far session's shell"
+        -- detach (ctrl-\), leaving the session alive on the far side
+        c.detach
+        IO.sleep 1500
+        c.bye (sendDetach := false)
+        -- …and it must still be there, as the far linger's own porcelain says
+        let (_, listing, _) ← e.cliEnv env #["ls", "--porcelain", "-r"]
+        let recs := records listing
+        let after := (recs.dropWhile (· != ("name", s!"alpha@{host}"))).drop 1
+        expect
+            (recs.contains ("name", s!"alpha@{host}") &&
+              (after.takeWhile (·.1 != "name")).lookup "state" != some "resumable")
+            "remote session survived detach (still listed live, from its linger's porcelain)"
+      finally
+        if real.isNone then
+          far.killAll #["alpha", "beta"]
 
 end Linger.Target.Suites.RemoteLive

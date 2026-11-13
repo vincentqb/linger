@@ -816,6 +816,9 @@ theorem step_stay_valid (s next : State) (key : Linger.Selector.Key) (hs : s.Val
       exact ⟨cursor, query⟩
     | some item => cases item <;> simp [he] at h
   | cancel => cases h
+  | refresh =>
+    cases h
+    exact ⟨cursor, query⟩
 
 /-- Editing and navigation cannot change the listing snapshot. -/
 theorem step_stay_candidates (s next : State) (key : Linger.Selector.Key)

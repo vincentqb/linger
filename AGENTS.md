@@ -58,7 +58,8 @@ or `WorldCode`, as the Lean Software Challenge reads it, and any other module is
 - `Linger/Os/`: the answers every command gives (`CoreSpec.lean`, `CoreCode/Answer.lean`),
   linger's environment policies (`CoreCode/Env.lean`) and the shim's smoke tests
   (`Suites/Shim.lean`, `./lake exe lingertest`).
-- `Linger/Target/`: session names and remote targets, and the login shells' world claim.
+- `Linger/Target/`: session names, remote targets and the transports that reach their hosts, and
+  the world claims of login shells and transports.
 - `Linger/Display/`: session status, titles and listings.
 - `Linger/Terminal/Suites/`: live suites of the VT toolkit as linger runs it.
 - `Linger/Session/`: the session machine (`CoreCode.lean`), its effect `Driver`, `Wire` format,

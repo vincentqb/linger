@@ -7,13 +7,17 @@ public section
 A valid session name is nonempty, at most `maxLen` characters, made only of `okChar`s, and does
 not begin with a dot, so it cannot name a path outside the socket directory.
 
-A remote command is the line SSH hands to the login shell of the remote account, which may be
-any shell, each with its own quoting. A plain word starts with a lowercase ASCII letter and goes
-on with lowercase letters, digits and colons, which no shell expands, quotes, escapes or splits
-at, and the world claim `Shell.Literal` (`Linger.Target.WorldSpec`) says that every shell passes
-`linger` and then plain words, one space apart, to `linger` as exactly those words. `marker`
-opens an encoded command line; holding a colon, it is no valid session name. Bodies are exposed:
-each definition here is its own specification. -/
+A remote command runs through a transport, a command that runs linger elsewhere: ssh, which hands
+its command line to the login shell of the remote account, or a command such as `docker exec`
+that runs its words as they are. A `Transport` is the command for an attach, which gives the far
+end a terminal, and the one for every other command. A shell may be any shell, each with its own
+quoting. A plain word starts with a lowercase ASCII letter and goes on with lowercase letters,
+digits and colons, which no shell expands, quotes, escapes or splits at, and the world claim
+`Shell.Literal` (`Linger.Target.WorldSpec`) says that every shell passes `linger` and then plain
+words, one space apart, to `linger` as exactly those words; `Transport.Delivers` says that a
+transport runs a `linger` with exactly the plain words after it, or nothing. `marker` opens an
+encoded command line; holding a colon, it is no valid session name. Bodies are exposed: each
+definition here is its own specification. -/
 
 namespace Linger.Target.Name
 
@@ -35,7 +39,7 @@ end Linger.Target.Name
 
 namespace Linger.Target.Remote
 
-/-- A host fit to hand to `ssh` argv: no C0 or C1 control character and no DEL. Not
+/-- A host fit to hand to a transport's argv: no C0 or C1 control character and no DEL. Not
 `Name.sanitize`, which would be wrong twice over: `@` is not an `okChar`, so it would destroy a
 legitimate `user@host` target, and silently rewriting a host means connecting somewhere the user
 did not ask for. -/
@@ -47,6 +51,16 @@ each encoded as plain words. A colon is no `Name.okChar`, so no session has it f
 command does either: a linger that does not decode its command line refuses this one as a usage
 error rather than acting on it. -/
 @[expose] def marker : String := "argv:hex"
+
+/-- How linger reaches a host: the command that runs linger there for an attach, which gives the
+far end a terminal, and the one for every other command. Each is the words a command line holds
+before `linger`, and what they do is the transport's. -/
+structure Transport where
+  /-- The command that runs linger there for every command but an attach. -/
+  query : List String
+  /-- The command that runs linger there for an attach, with a terminal at the far end. -/
+  attach : List String
+  deriving DecidableEq, Repr, Inhabited
 
 end Linger.Target.Remote
 

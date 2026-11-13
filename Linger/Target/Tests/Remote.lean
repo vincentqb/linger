@@ -154,4 +154,63 @@ example :
       true := by
   native_decide
 
+/-- The remotes file: a host alone reaches it with ssh, as such a line always did; the words after
+it are its command for every verb, or, either side of one `|`, the query's and the attach's.
+Blanks separate words; a comment or an empty line names nothing. -/
+example :
+    (match
+        config
+          ["# hosts", "", "dev", "  box\tdocker exec -i box | docker exec -it box  ",
+            "pod kubectl exec -i pod --", "far\r", "   # indented comment"] with
+      | .ok entries =>
+        entries ==
+          [("dev", ssh "dev"),
+            ("box",
+              { query := ["docker", "exec", "-i", "box"],
+                attach := ["docker", "exec", "-it", "box"] }),
+            ("pod",
+              { query := ["kubectl", "exec", "-i", "pod", "--"],
+                attach := ["kubectl", "exec", "-i", "pod", "--"] }),
+            ("far", ssh "far")]
+      | .error _ => false) =
+      true := by
+  native_decide
+
+/-- A line with no one meaning refuses the whole file, naming its host: an empty side of the
+`|`, a second `|`, a host listed twice, or a command word holding a control character. -/
+example :
+    (["far |", "far | ssh -t far", "far ssh -T far |", "far a | b | c", "far ssh\x1b[31m far"].all
+        fun line =>
+        match config ["dev", line] with
+        | .ok _ => false
+        | .error e => e.startsWith "remote host 'far'" && !e.toList.contains '\x1b') &&
+      (match config ["far", "far ssh -T -- far"] with
+        | .ok _ => false
+        | .error e => e == "remote host 'far' listed more than once") =
+        true := by
+  native_decide
+
+/-- A host the file does not name reaches with ssh; one it names, with its own commands. -/
+example :
+    (transportFor [("box", { query := ["q"], attach := ["a"] })] "box" ==
+          { query := ["q"], attach := ["a"] } &&
+        transportFor [("box", { query := ["q"], attach := ["a"] })] "dev" == ssh "dev") =
+      true := by
+  native_decide
+
+/-- A target verb's argv: the host's attach command for an attach and its query command otherwise,
+then `linger`, the marker and the encoded words, the target after `--` for an attach or capture
+whose name starts with `-`, and by position for the other verbs. -/
+example :
+    (targetArgv (ssh "dev") "attach" ["--read-only"] "-w" [] ==
+          ["ssh", "-t", "--", "dev", "linger", "argv:hex"] ++
+            ["attach", "--read-only", "--", "-w"].map encodeWord &&
+        targetArgv { query := ["docker", "exec", "-i", "box"], attach := ["docker"] } "kill" [] "-w"
+            [] ==
+          ["docker", "exec", "-i", "box", "linger", "argv:hex"] ++ ["kill", "-w"].map encodeWord &&
+        argv (ssh "dev") "ls" ["--porcelain"] ==
+          ["ssh", "-T", "--", "dev", "linger", "argv:hex", "x6c73", "x2d2d706f7263656c61696e"]) =
+      true := by
+  native_decide
+
 end Linger.Target.Remote.Tests

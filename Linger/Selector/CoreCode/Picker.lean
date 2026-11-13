@@ -217,7 +217,8 @@ def refresh (s : State) (candidates : List String)
     candidates, descriptions, cursor }
 
 /-- Editing resets the cursor. Navigation clamps; acceptance acts on the selected
-row. No selectable row stays editable. Effects remain the caller's job. -/
+row. No selectable row stays editable. A refresh leaves the state as it is: what it fetches is
+the executor's (`fetch`). Effects remain the caller's job. -/
 def step (s : State) (key : Linger.Selector.Key) : Outcome :=
   match key with
   | .text char =>
@@ -250,6 +251,7 @@ def step (s : State) (key : Linger.Selector.Key) : Outcome :=
     | some (.create target) => .create target
     | none => .stay s
   | .cancel => .cancel
+  | .refresh => .stay s
 
 /-- How many listed rows the query matches: what the query line shows beside it. -/
 def matchCount (s : State) : Nat := (visible s.candidates s.query s.descriptions).length
@@ -348,7 +350,9 @@ def frameLines (state : State) (snapshot : Snapshot)
             else if state.allowCreate then "  ↵ attach" else "  ↵ view"
           | some (.create _) => "  ↵ create"
           | none => if state.allowCreate then "  Type a valid name" else "  Type to search"
-      (if height ≥ 6 then [[]] else []) ++ [[(s!"{action}  ·  ↑↓ move  ·  esc / ^C quit", [[2]])]]
+      (if height ≥ 6 then [[]] else []) ++
+        [[(s!"{action}  ·  ↑↓ move  ·  {if savedTmux then "" else "^R refresh  ·  "}esc / ^C quit",
+              [[2]])]]
     else []
   (title ++ query ++ body ++ footer).take height
 

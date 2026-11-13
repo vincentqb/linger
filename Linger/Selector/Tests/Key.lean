@@ -40,6 +40,7 @@ def input (text : String) : State × List Linger.Selector.Key := walk init text.
       | 21 => [.clear]
       | 16 => [.up]
       | 14 | 9 => [.down]
+      | 18 => [.refresh]
       | 13 | 10 => [.accept]
       | 3 | 4 => [.cancel]
       | _ => if 32 ≤ n && n < 127 then [.text (Char.ofNat n)] else []
@@ -53,6 +54,7 @@ def input (text : String) : State × List Linger.Selector.Key := walk init text.
       | 21 => some .clear
       | 16 => some .up
       | 14 => some .down
+      | 18 => some .refresh
       | 3 | 4 => some .cancel
       | _ => none
     Linger.Selector.Key.ofInput (.control (UInt8.ofNat n)) == expected
@@ -66,12 +68,13 @@ def input (text : String) : State × List Linger.Selector.Key := walk init text.
 #guard (input "a Z!").2 == [.text 'a', .text ' ', .text 'Z', .text '!']
 
 #guard
-  (walk init [8, 127, 21, 16, 14, 9, 13, 10, 3, 4]).2 ==
-    [.backspace, .backspace, .clear, .up, .down, .down, .accept, .accept, .cancel, .cancel]
+  (walk init [8, 127, 21, 16, 14, 9, 18, 13, 10, 3, 4]).2 ==
+    [.backspace, .backspace, .clear, .up, .down, .down, .refresh, .accept, .accept, .cancel,
+      .cancel]
 
-#guard (walk init [0, 1, 2, 7, 11, 12, 17, 18, 19, 20, 22, 26, 28, 31]).2.isEmpty
+#guard (walk init [0, 1, 2, 7, 11, 12, 17, 19, 20, 22, 26, 28, 31]).2.isEmpty
 
-#guard boundFeed init 18 == (init, [])
+#guard boundFeed init 18 == (init, [.refresh])
 
 #guard
   let (state, keys) := boundFeed init 27

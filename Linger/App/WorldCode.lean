@@ -488,14 +488,36 @@ private def invalidTarget : IO Answer := do
   IO.eprintln s!"linger: invalid session name or malformed name@host target (use {Paths.nameRule})"
   return .usage
 
-/-- One transport boundary for all session verbs. SSH hands a command string to the login
-shell of the remote account, whichever shell that is; `Remote.command` spells the verb and every
-word, empty ones included, in plain words that every shell passes on as they are, and the
-remote linger routes exactly the original argv (`command_exact`). Encoding doubles a word's
-length, and a Linux host takes a command line of at most 128 KiB, so `send name@host -`,
-whose inherited stdin stays byte-exact, carries longer text. The remote linger reads an attach
-or capture target with `targetArgs`, so it travels as `targetOperands`; the other verbs take it
-by position. SSH's status, the remote command's, is the answer of a remote target. -/
+/-- The remotes file's hosts, each with its transport (`Remote.config`): none when
+`Env.remotesFile` names no file, as for an unset or empty HOME, or the file does not exist. A line
+with no one meaning refuses the whole file, before any command runs. -/
+private def remoteConfig : IO (List (String × Linger.Target.Remote.Transport)) := do
+  let lines ←
+    match Linger.Os.Env.remotesFile (← IO.getEnv "HOME") with
+    | none =>
+      pure []
+    | some path =>
+      if ← System.FilePath.pathExists path then
+        pure ((← IO.FS.readFile path).splitOn "\n")
+      else
+        pure []
+  match Linger.Target.Remote.config lines with
+  | .ok config =>
+    return config
+  | .error e =>
+    throw (IO.userError e)
+
+/-- One transport boundary for all session verbs. The host's transport, which the remotes file
+gives it or else ssh (`Remote.transportFor`), runs linger there: its attach command for an attach,
+which gives the far end a terminal, and its query command for every other verb. Linger hands it
+`linger` and words every shell passes on as they are (`transport_exact`), the verb and every word,
+empty ones included, encoded: ssh joins them into the line `Remote.command` spells, and a command
+such as `docker exec` runs them as they are. Encoding doubles a word's length, and a Linux host
+takes a command line of at most 128 KiB, so `send name@host -`, whose inherited stdin stays
+byte-exact, carries longer text. The remote linger reads an attach or capture target with
+`targetArgs`, so it travels as `targetOperands`; the other verbs take it by position
+(`Remote.operands`). The transport's status, the remote command's, is the answer of a remote
+target. -/
 private def runTarget (verb : String) (target : Linger.Target.Remote.Target) (args : List String)
     (localAction : String → IO Answer) (options : List String := []) : IO Answer := do
   let interactive := verb == "attach"
@@ -507,21 +529,17 @@ private def runTarget (verb : String) (target : Linger.Target.Remote.Target) (ar
   | none =>
     localAction target.name
   | some host =>
-    let operands :=
-      if verb == "attach" || verb == "capture" then Linger.Target.Remote.targetOperands target.name
-      else [target.name]
-    let child ←
-      IO.Process.spawn
-          { cmd := "ssh",
-            args :=
-              #[if interactive then "-t" else "-T", "--", host,
-                Linger.Target.Remote.command verb (options ++ operands ++ args)],
-            stdin := .inherit }
-    try
-      return .program (← child.wait)
-    finally
-      if interactive then
-        writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
+    let transport := Linger.Target.Remote.transportFor (← remoteConfig) host
+    match Linger.Target.Remote.targetArgv transport verb options target.name args with
+    | [] =>
+      throw (IO.userError s!"remote host '{Linger.Target.Remote.scrub host}' has no command")
+    | cmd :: argv =>
+      let child ← IO.Process.spawn { cmd, args := argv.toArray, stdin := .inherit }
+      try
+        return .program (← child.wait)
+      finally
+        if interactive then
+          writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
 
 /-- Run `verb` through `runTarget` once `Remote.parseTarget` accepts the operand; a
 malformed operand answers `usage` (`invalidTarget`) without connecting. -/
@@ -537,39 +555,34 @@ abbrev remoteQueryLimit : Nat := 4
 /-- All remote overview commands share this polling window. -/
 abbrev remoteQueryTimeoutMs : Nat := 3000
 
-/-- Remote hosts for `-r`: explicit flag list, else `Env.remotesFile`, which an
-unset or empty HOME leaves unconfigured. Duplicates are a hard error
-(`Remote.checkHosts`). `none` means no `-r` (local only); `some []` means `-r`
-with no arg (read the file). -/
-private def resolveRemotes (flag : Option (List String)) : IO (List String) := do
+/-- Remote hosts for `-r`, each with its transport: the explicit flag list, each host with the
+transport the remotes file gives it or else ssh, or, for `-r` with no list, the file's hosts
+(`remoteConfig`). Duplicates are a hard error (`Remote.checkHosts`). `none` means no `-r` (local
+only); `some []` means `-r` with no arg (read the file). -/
+private def resolveRemotes (flag : Option (List String)) :
+    IO (List (String × Linger.Target.Remote.Transport)) := do
   match flag with
   | none =>
     return []
   | some given =>
-    let raw ←
-      if given.isEmpty then
-        match Linger.Os.Env.remotesFile (← IO.getEnv "HOME") with
-        | none =>
-          pure []
-        | some path =>
-          if ← System.FilePath.pathExists path then
-            pure ((← IO.FS.readFile path).splitOn "\n")
-          else
-            pure []
-      else
-        pure given
-    let hosts := (raw.map (·.trimAscii.toString)).filter (fun h => !h.isEmpty && !h.startsWith "#")
+    let config ← remoteConfig
+    if given.isEmpty then
+      return config
+    let hosts :=
+      (given.map (·.trimAscii.toString)).filter (fun h => !h.isEmpty && !h.startsWith "#")
     match Linger.Target.Remote.checkHosts hosts with
     | .ok l =>
-      return l
+      return l.map fun host => (host, Linger.Target.Remote.transportFor config host)
     | .error e =>
       throw (IO.userError e)
 
-/-- Four SSH jobs at most share a three-second command deadline. Transport
-keepalives alone cannot bound a remote command that never exits. Collect only
-complete successful outputs, in host order; stop and join every remaining group.
-Signal waiters let a cancelled chooser's listing retire its isolated SSH groups. -/
-private def listRemotes (hosts : Array String) : IO (Option (Array String)) := do
+/-- Four transport commands at most share a three-second command deadline, the bounded wait
+linger keeps whatever the transport: a transport's own keepalives alone cannot bound a remote
+command that never exits. Each host's answer, in host order, is the complete output of a command
+that succeeded, or `none`; stop and join every remaining group. Signal waiters let a cancelled
+chooser's listing retire the transports' isolated groups. -/
+private def listRemotes (hosts : Array (String × Linger.Target.Remote.Transport)) :
+    IO (Option (Array (Option String))) := do
   let signals ← IO.mkRef (#[] : Array (Std.Async.Signal.Waiter × Std.Async.AsyncTask Int))
   let jobs ← IO.mkRef (#[] : Array (Nat × IO.Ref (Option Command.Job)))
   try
@@ -582,7 +595,7 @@ private def listRemotes (hosts : Array String) : IO (Option (Array String)) := d
         waiter.stop
         throw e
     let deadline := (← monotonicMs) + remoteQueryTimeoutMs
-    let mut outputs := Array.replicate hosts.size ""
+    let mut outputs := Array.replicate hosts.size none
     let mut next := 0
     while next < hosts.size || !(← jobs.get).isEmpty do
       for (_, signal) in ← signals.get do
@@ -597,13 +610,8 @@ private def listRemotes (hosts : Array String) : IO (Option (Array String)) := d
         let pending ← IO.mkRef none
         jobs.modify (·.push (index, pending))
         try
-          pending.set
-              (some
-                (←
-                  Command.start "ssh"
-                      #["-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "-o",
-                        "ServerAliveInterval=2", "-o", "ServerAliveCountMax=2", "--", hosts[index]!,
-                        "linger", "ls", "--porcelain"]))
+          if let cmd :: args := Linger.Target.Remote.argv hosts[index]!.2 "ls" ["--porcelain"] then
+            pending.set (some (← Command.start cmd args.toArray))
         catch _ =>
           pure ()
       let mut running := #[]
@@ -611,7 +619,7 @@ private def listRemotes (hosts : Array String) : IO (Option (Array String)) := d
         try
           if let some output← Command.poll pending then
             if output.exitCode == 0 then
-              outputs := outputs.set! index output.stdout
+              outputs := outputs.set! index (some output.stdout)
         catch _ =>
           pure ()
         if (← pending.get).isSome then
@@ -834,9 +842,12 @@ private def humanWidth : IO (Option Nat) := do
 
 /-- `ls`: local rows, then each remote host's rows named `name@host`, printed as
 `k<TAB>v` records separated by blank lines (`porcelain`) or as the terminal listing.
-Remote rows keep only name, command, state and status. Answers `interrupted` when a signal
+Remote rows keep only name, command, state and status, as the host's linger reports them; a host
+that does not answer within the bounded wait is one record, its `host` with the status `?` no
+answer gives, which the terminal listing names `@host`. Answers `interrupted` when a signal
 cancels the remote queries. -/
-private def cmdList (porcelain : Bool) (remotes : List String) : IO Answer := do
+private def cmdList (porcelain : Bool) (remotes : List (String × Linger.Target.Remote.Transport)) :
+    IO Answer := do
   let (locals, remote) ←
     if remotes.isEmpty then
       pure (← localRows, some #[])
@@ -851,19 +862,23 @@ private def cmdList (porcelain : Bool) (remotes : List String) : IO Answer := do
           discard <| IO.wait task
   let some remote := remote | return .interrupted
   let mut rows := locals
-  for (host, output) in remotes.zip remote.toList do
-    for row in Linger.Target.Remote.parse output do
-      -- a remote row is built from what the peer's porcelain says about identity
-      -- and liveness. It also emits `clients` and `label.*`; those are dropped
-      -- rather than rendered, so a remote row's label and watcher columns are
-      -- blank whatever the peer reports.
-      rows :=
-        rows ++
-          [[("name", s!"{row.name}@{host}"), ("cmd", row.cmd),
-              ("state", if row.live then "live" else "resumable"),
-              ("status",
-                Linger.Display.Status.name
-                  (Linger.Display.Listing.rowStatus (.remote row.live row.status)))]]
+  for ((host, _), output) in remotes.zip remote.toList do
+    match output with
+    | none =>
+      rows := rows ++ [[("host", host), ("status", Linger.Display.Status.name .unknown)]]
+    | some output =>
+      for row in Linger.Target.Remote.parse output do
+        -- a remote row is built from what the peer's porcelain says about identity
+        -- and liveness. It also emits `clients` and `label.*`; those are dropped
+        -- rather than rendered, so a remote row's label and watcher columns are
+        -- blank whatever the peer reports.
+        rows :=
+          rows ++
+            [[("name", s!"{row.name}@{host}"), ("cmd", row.cmd),
+                ("state", if row.live then "live" else "resumable"),
+                ("status",
+                  Linger.Display.Status.name
+                    (Linger.Display.Listing.rowStatus (.remote row.live row.status)))]]
   if porcelain then
     for info in rows do
       for (k, v) in info do
@@ -873,11 +888,17 @@ private def cmdList (porcelain : Bool) (remotes : List String) : IO Answer := do
     -- The selector consumes these same row pieces. Only the status badge has
     -- a palette style; redirected output and NO_COLOR retain the plain row. What asks for
     -- someone comes first, as in the selector (`View.sort`). A terminal's rows fit its width, and
-    -- a directory under the account's home shows as `~`.
+    -- a directory under the account's home shows as `~`. A host that did not answer has no
+    -- session name, so its row shows `@host`.
     let withColor := (← (← IO.getStdout).isTty) && (← IO.getEnv "NO_COLOR").isNone
+    let named :=
+      rows.map fun info =>
+        match info.lookup "name", info.lookup "host" with
+        | none, some host => ("name", "@" ++ host) :: info
+        | _, _ => info
     let ordered :=
       Linger.Display.View.sort
-        (fun info => Linger.Display.Status.ofName ((info.lookup "status").getD "")) rows
+        (fun info => Linger.Display.Status.ofName ((info.lookup "status").getD "")) named
     let width ← humanWidth
     let home ← accountHome
     writeAll stdoutFd

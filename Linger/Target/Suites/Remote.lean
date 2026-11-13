@@ -14,7 +14,9 @@ public section
 /-! Remote listing and command transport. A fake SSH hands its command line to `/bin/sh`, as
 sshd hands it to a login shell; a fake remote linger records the words it receives, which the
 checks read as the remote entry routes them (`Entry.route`). The shells suite runs the same
-command lines through every login shell this host has. -/
+command lines through every login shell this host has. The remotes file's commands reach a far
+linger, this checkout's binary under a state directory of its own, through scripts that stand
+for a transport such as `docker exec`; every check runs under a `HOME` of the suite's own. -/
 
 namespace Linger.Target.Suites.Remote
 
@@ -56,19 +58,36 @@ private def fakeSsh (log : String) : String :=
     "exec /bin/sh -c \"$*\"\n"
 
 private def fakeLinger : String :=
-  "#!/bin/sh\n" ++ "printf '%s\\000' \"$@\" > \"$LINGER_REMOTE_ARGS\"\n" ++ "case \"$1\" in\n" ++
-    "  ls)\n" ++
-    s!"    printf 'name\\t{goodName}\\nstate\\tlive\\nclients\\t1\\ncmd\\tvim\\033[31mINJECT\\nlabel.env\\tprod\\n\\n'\n" ++
-    s!"    printf 'name\\t{hostileName}\\nstate\\tresumable\\n\\n'\n" ++
-    "    printf 'garbage line with no tabs\\n\\n'\n" ++
-    "    ;;\n" ++
+  "#!/bin/sh\n" ++ "printf '%s\\000' \"$@\" > \"$LINGER_REMOTE_ARGS\"\n" ++ "rows() {\n" ++
+    s!"  printf 'name\\t{goodName}\\nstate\\tlive\\nclients\\t1\\ncmd\\tvim\\033[31mINJECT\\nlabel.env\\tprod\\n\\n'\n" ++
+    s!"  printf 'name\\t{hostileName}\\nstate\\tresumable\\n\\n'\n" ++
+    "  printf 'garbage line with no tabs\\n\\n'\n" ++
+    "}\n" ++
+    "case \"$1\" in\n" ++
     s!"  {Linger.Target.Remote.marker})\n" ++
     "    case \"$2\" in\n" ++
+    s!"      {encodeWord "ls"}) rows ;;\n" ++
     s!"      {encodeWord "attach"}) printf '\\033]2;remote-editor\\007{attachMark}\\n' ;;\n" ++
     s!"      {encodeWord "send"}) if [ \"$4\" = {encodeWord "-"} ]; then cat > \"$LINGER_REMOTE_STDIN\"; fi ;;\n" ++
     "    esac ;;\n" ++
     "esac\n" ++
     "exit 0\n"
+
+/-- A transport for the checks: a script that writes the words it is given to `log`, then runs
+them, `linger` first, as this checkout's `linger` under `state`, the state directory of a far
+machine's linger. Words that do not start with `linger` are no command linger sends. -/
+def fakeTransport (linger log state : String) : String :=
+  "#!/bin/sh\n" ++ s!"printf '%s\\000' \"$@\" > {shellQuote log}\n" ++
+    "[ \"$1\" = linger ] || exit 99\n" ++
+    "shift\n" ++
+    s!"LINGER_DIR={shellQuote state} exec {shellQuote linger} \"$@\"\n"
+
+/-- One field of the row a porcelain listing names `name`: a `name` record opens a row, and
+later keys belong to it until the next one. -/
+private def rowField (recs : List (String × String)) (name field : String) : Option String :=
+  ((((recs.dropWhile (· != ("name", name))).drop 1).takeWhile (·.1 != "name")).find?
+        (·.1 == field)).map
+    (·.2)
 
 /-- NUL framing preserves empty arguments, embedded spaces and newlines. -/
 def readArgs (path : System.FilePath) : IO (List String) := do
@@ -289,11 +308,129 @@ private def discoveryChecks (e : Env) : IO Unit := do
 /-- The discovery checks alone, as `suites remote discovery` runs them. -/
 def runDiscovery : IO UInt32 := Env.suite "discovery" discoveryChecks
 
-/-- The hermetic remote suite: a fake `ssh` and a fake remote `linger` on `PATH`. -/
+/-- The remotes file's commands, against a far linger: this checkout's `linger` under a state
+directory of its own, reached through scripts in the suite's directory that stand for ssh,
+`docker exec` or `kubectl exec`, which `procPath` and `ptyPath` find under `home`. -/
+private def transportChecks (e : Env) (procPath : Array (String × Option String))
+    (ptyPath : Array String) (home sshLog : System.FilePath) : IO Unit := do
+  let root := (System.FilePath.mk e.dir) / "transport"
+  let far : Env := { e with dir := (root / "far").toString }
+  IO.FS.createDirAll (root / "far")
+  IO.FS.createDirAll (home / ".config" / "linger")
+  let script (name body : String) : IO String := do
+    let path := root / name
+    IO.FS.writeFile path body
+    chmod path.toString 0o755
+    return path.toString
+  let queryLog := root / "query.log"
+  let attachLog := root / "attach.log"
+  let stallPid := root / "stall.pid"
+  let query ← script "query" (fakeTransport e.bin queryLog.toString far.dir)
+  let attach ← script "attach" (fakeTransport e.bin attachLog.toString far.dir)
+  let stall ←
+    script "stall" s!"#!/bin/sh\necho $$ > {shellQuote stallPid.toString}\nexec sleep 600\n"
+  let failing ← script "failing" "#!/bin/sh\nexit 3\n"
+  let remotes := home / ".config" / "linger" / "remotes"
+  let configured :=
+    ["# the remote suite's hosts", "", s!"far {query} | {attach}", s!"slow\t{stall}",
+      s!"  down {failing}  ", devHost]
+  IO.FS.writeFile remotes (String.intercalate "\n" configured ++ "\n")
+  -- what linger runs after a host's command: `linger`, the marker, then the encoded words
+  let sent (verb : String) (words : List String) : List String :=
+    "linger" :: Linger.Target.Remote.marker :: (verb :: words).map encodeWord
+  try
+    let (startRc, _, _) ← far.cli #["start", "alpha", "sleep", "600"]
+    IO.FS.writeFile sshLog ""
+    let (rc, out, _) ← e.cliEnv procPath #["ls", "--porcelain", "-r"]
+    let recs := records out
+    let status ← far.field "alpha" "status"
+    expect
+        (startRc == 0 && rc == 0 && status.isSome && rowField recs "alpha@far" "status" == status &&
+          (← readArgs queryLog) == sent "ls" ["--porcelain"] &&
+          (← readArgs attachLog).isEmpty)
+        "a host's line names the command that lists its sessions, each as name@host with the status its linger reports"
+    expect
+        (recs.contains ("name", s!"{goodName}@{devHost}") &&
+          (← readArgs sshLog) == ["-T", "--", devHost] ++ sent "ls" ["--porcelain"])
+        "a line that names only a host lists it through ssh -T, as such a line always did"
+    -- a listing waits for each host a bounded time, then shows what it missed
+    let listing ←
+      IO.Process.spawn
+          { cmd := e.bin, args := #["ls", "-r"], env := e.procEnv ++ procPath, stdout := .piped,
+            stderr := .null }
+    let printed ← IO.asTask listing.stdout.readToEnd Task.Priority.dedicated
+    let code ← waitOrKill listing (Linger.App.Shell.remoteQueryTimeoutMs + hangMs)
+    let human ←
+      if code.isSome then
+        pure ((← IO.wait printed).toOption.getD "")
+      else
+        pure ""
+    let (_, porcelain, _) ← e.cliEnv procPath #["ls", "--porcelain", "-r"]
+    let retired ←
+      match (← readText stallPid).trimAscii.toString.toNat? with
+      | some pid =>
+        waitFor patienceMs (return !(← Os.Shell.alive (UInt32.ofNat pid)))
+      | none =>
+        pure false
+    expect
+        (code == some 0 && has human "? @slow" && has human "? @down" &&
+          has porcelain "host\tslow\nstatus\tunknown\n" &&
+          has porcelain "host\tdown\nstatus\tunknown\n" &&
+          !(records porcelain).any
+              (fun kv => kv.1 == "name" && (kv.2.endsWith "@slow" || kv.2.endsWith "@down")) &&
+          retired)
+        "a host whose command does not answer within the bounded wait lists as ?, and its command is retired"
+    let c ← e.spawnEnv ptyPath #["attach", "work@far"] 100 24
+    let acc ← IO.mkRef ByteArray.empty
+    let prompted ← c.awaitText acc (fun out => hasText out "$ ")
+    c.type "echo TRANSPORT-$((40+2))\r"
+    let answered ← c.awaitText acc (fun out => hasText out "TRANSPORT-42")
+    c.detach
+    let attachRc ← c.reap patienceMs
+    c.bye (sendDetach := false)
+    let (liveRc, _, _) ← far.cli #["info", "work"]
+    expect
+        (prompted && answered && attachRc == 0 && liveRc == 0 &&
+          (← readArgs attachLog) == sent "attach" ["work"])
+        "an attach goes through the host's attach command, which gives the far session the terminal"
+    let (sendRc, _, _) ← e.cliEnv procPath #["send", "work@far", "echo SENT-$((6*7))\r"]
+    let captured ←
+      waitFor patienceMs do
+          let (_, screen, _) ← e.cliEnv procPath #["capture", "work@far"]
+          return has screen "SENT-42"
+    let captureWords ← readArgs queryLog
+    let (killRc, _, _) ← e.cliEnv procPath #["kill", "work@far"]
+    let gone := (← far.field "work" "status").isNone
+    expect
+        (sendRc == 0 && captured && captureWords == sent "capture" ["work"] && killRc == 0 && gone)
+        "every other verb on name@host goes through the host's query command, with its exact words"
+    for (shape, bad) in
+      [("HOST QUERY |", s!"far {query} |"), ("HOST | ATTACH", s!"far | {attach}"),
+        ("HOST |", "far |"),
+        ("HOST QUERY | ATTACH | ATTACH", s!"far {query} | {attach} | {attach}"),
+        ("HOST QUERY, then HOST ATTACH", s!"far {query}\nfar {attach}")] do
+      IO.FS.writeFile remotes (bad ++ "\n")
+      IO.FS.writeFile queryLog ""
+      IO.FS.writeFile attachLog ""
+      let (listRc, _, listErr) ← e.cliEnv procPath #["ls", "-r"]
+      let (infoRc, _, infoErr) ← e.cliEnv procPath #["info", "alpha@far"]
+      expect
+          (listRc != 0 && has listErr "far" && infoRc != 0 && has infoErr "far" &&
+            (← readArgs queryLog).isEmpty &&
+            (← readArgs attachLog).isEmpty)
+          s!"a remotes line without one meaning is refused before any command runs: {shape}"
+  finally
+    far.killAll #["alpha", "work"]
+
+/-- The hermetic remote suite: a fake `ssh` and a fake remote `linger` on `PATH`, a `HOME` of the
+suite's own, so no check reads the user's remotes file, and a far linger reached through the
+commands a remotes file names. -/
 def run : IO UInt32 :=
   Env.suite "remote" fun e => do
     let fakebin := (System.FilePath.mk e.dir) / "fakebin"
     IO.FS.createDirAll fakebin
+    let home := (System.FilePath.mk e.dir) / "home"
+    IO.FS.createDirAll home
     let log := (System.FilePath.mk e.dir) / "ssh.log"
     let remoteArgs := (System.FilePath.mk e.dir) / "remote-args"
     let remoteStdin := (System.FilePath.mk e.dir) / "remote-stdin"
@@ -307,10 +444,11 @@ def run : IO UInt32 :=
     let path0 := (← IO.getEnv "PATH").getD "/usr/bin:/bin"
     let newPath := s!"{fakebin.toString}:{path0}"
     let procPath : Array (String × Option String) :=
-      #[("PATH", some newPath), ("LINGER_REMOTE_ARGS", some remoteArgs.toString),
+      #[("PATH", some newPath), ("HOME", some home.toString),
+        ("LINGER_REMOTE_ARGS", some remoteArgs.toString),
         ("LINGER_REMOTE_STDIN", some remoteStdin.toString)]
     let ptyPath : Array String :=
-      #[s!"PATH={newPath}", s!"LINGER_REMOTE_ARGS={remoteArgs}",
+      #[s!"PATH={newPath}", s!"HOME={home}", s!"LINGER_REMOTE_ARGS={remoteArgs}",
         s!"LINGER_REMOTE_STDIN={remoteStdin}"]
     let _ ← e.typeInEnv procPath "localsess" #["echo local-content"]
     let tag := s!"{goodName}@{devHost}"
@@ -330,15 +468,16 @@ def run : IO UInt32 :=
           "invalid remote names are dropped without manufacturing another target"
       expect (!has out "\x1b") "remote display escape sequences are scrubbed"
       expect
-          (!has out s!"@{deadHost}" &&
+          (has out s!"? @{deadHost}" && has pout s!"host\t{deadHost}\nstatus\tunknown\n" &&
             !recs.any (fun kv => kv.1 == "name" && kv.2.endsWith s!"@{deadHost}"))
-          "unreachable host contributes no rows"
+          "an unreachable host lists as ?, with no session rows"
       let c1 ← e.spawnEnv ptyPath #["attach", tag] 100 24
       let attached ← drain c1.fd hangMs
       expect (hasText attached attachMark) "remote attach reaches linger"
       expect
           ((← readArgs log) ==
-              ["-t", "--", devHost, Linger.Target.Remote.command "attach" [goodName]] &&
+              ["-t", "--", devHost] ++
+                (Linger.Target.Remote.command "attach" [goodName]).splitOn " " &&
             (← remoteRoute remoteArgs) == .session ["attach", goodName])
           "remote attach uses a PTY and preserves the target"
       expect
@@ -351,7 +490,8 @@ def run : IO UInt32 :=
       let _ ← drain c2.fd hangMs
       expect
           ((← readArgs log) ==
-            ["-t", "--", userHost, Linger.Target.Remote.command "attach" [goodName]])
+            ["-t", "--", userHost] ++
+              (Linger.Target.Remote.command "attach" [goodName]).splitOn " ")
           "user@host round-trips through the first-at split"
       c2.bye (sendDetach := false)
       let lost ← e.spawnEnv ptyPath #["attach", s!"{goodName}@{deadHost}"] 100 24
@@ -496,6 +636,7 @@ def run : IO UInt32 :=
             else s!"ls -r with HOME {label} reads no remotes file and runs no SSH")
     finally
       e.killAll #["localsess"]
+    transportChecks e procPath ptyPath home log
     discoveryChecks e
 
 end Linger.Target.Suites.Remote

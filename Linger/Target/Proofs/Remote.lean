@@ -13,11 +13,11 @@ public section
 `parse` is total by construction (`filterMap` over `splitOnP`-split
 lines — no partiality to prove). The load-bearing theorems: every name
 in the result is `Valid` (name validation carries through, so remote data cannot
-build a path outside the socket dir or smuggle bytes into ssh argv),
+build a path outside the socket dir or smuggle bytes into a transport's argv),
 and display fields are scrubbed of control characters (nothing a
 remote returns can inject escape sequences into the local listing).
-The later sections prove what the headlines `command_exact`, `targetArgs_targetOperands` and
-`checkHosts_ok_iff` (`Challenge.lean`, part 3) rest on.
+The later sections prove what the headlines `command_exact`, `transport_exact`,
+`targetArgs_targetOperands` and `checkHosts_ok_iff` (`Challenge.lean`, part 3) rest on.
 -/
 
 namespace Linger.Target.Remote
@@ -83,7 +83,7 @@ theorem targetValid_iff (target : String) :
           String.intercalate "@" (target.splitOn "@").tail ≠ "") := by
   simp [targetValid, hostClean, sanitize_eq_self_iff, and_assoc]
 
-/-- Parsing preserves the exact name and complete SSH suffix; no fuzzy lookup
+/-- Parsing preserves the exact name and complete host suffix; no fuzzy lookup
 or name repair occurs at this boundary. -/
 theorem parseTarget_exact (target : String) (result : Target) :
     parseTarget target = some result ↔
@@ -415,6 +415,51 @@ theorem targetArgs_option_ne (name : String) (rest : List String)
       exact fun _ same => List.cons_ne_self word words same.symm
   · rw [targetArgs_option name rest option separator]
     exact nofun
+
+/-! ## Transports
+
+`targetArgv` runs the host's attach command for an attach and its query command for every other
+verb, then `commandWords`: `linger` and plain words, which a transport hands on as they are
+(`Transport.Delivers`), and which ssh joins into the line `command` spells. -/
+
+/-- Joined by spaces, as ssh joins its command's words, `commandWords` is `command`. -/
+theorem intercalate_commandWords (verb : String) (words : List String) :
+    String.intercalate " " (commandWords verb words) = command verb words := by
+  simp only [commandWords, command]
+
+/-- After `linger`, every word linger runs is plain, so every shell and transport passes it on. -/
+theorem plain_commandWords (verb : String) (words : List String) :
+    ∀ word ∈ (commandWords verb words).tail, Shell.plain word = true := by
+  intro word member
+  simp only [commandWords, List.tail_cons, List.mem_cons, List.mem_map] at member
+  rcases member with rfl | ⟨original, -, rfl⟩
+  · exact plain_marker
+  · exact plain_encodeWord original
+
+/-- The argv of a verb on a host's session: the host's attach command for an attach and its query
+command otherwise, then `linger`, the marker and the encoded verb, options, target operands and
+arguments. -/
+theorem targetArgv_eq (transport : Transport) (verb : String) (options : List String)
+    (name : String) (args : List String) :
+    targetArgv transport verb options name args =
+      (if verb = "attach" then transport.attach else transport.query) ++
+        "linger" ::
+          marker ::
+          (verb :: options ++
+                (if verb = "attach" ∨ verb = "capture" then targetOperands name else [name]) ++
+                args).map
+            encodeWord := by
+  simp [targetArgv, argv, operands, commandWords]
+
+/-- A line's words after its host name no command: ssh reaches it. -/
+theorem transportOf_nil (host : String) : transportOf host [] = .ok (ssh host) := by
+  simp [transportOf]
+
+/-- **A host's line still means what it meant.** A line whose one word is a host, as every line of
+the file was before lines named commands, reaches that host with ssh. -/
+theorem configLine_host {line host : String} (only : lineWords line = [host])
+    (named : host.startsWith "#" = false) : configLine line = some (.ok (host, ssh host)) := by
+  simp [configLine, only, named, transportOf_nil, Except.map]
 
 /-! ## The duplicate report
 
