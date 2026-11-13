@@ -38,7 +38,16 @@ def ownedCases (v : Vt) : List OwnedCase :=
     ⟨[ESC, 0x5D, 0x31, 0x32, 0x3B, 0x3F, BEL], paletteReply 0x32 0x66⟩,
     ⟨[ESC, 0x5D, 0x31, 0x32, 0x3B, 0x3F, ESC, STFinal], paletteReply 0x32 0x66⟩,
     ⟨[ESC, 0x50, 0x2B, 0x71, 0x54, 0x4E, ESC, STFinal], xtgetcapReply [0x54, 0x4E]⟩,
-    ⟨[ESC, 0x50, 0x24, 0x71, 0x6D, ESC, STFinal], decrqssReply⟩, ⟨[ESC, 0x5B, 0x3F, 0x75], []⟩]
+    ⟨[ESC, 0x50, 0x24, 0x71, 0x6D, ESC, STFinal], decrqssReply⟩, ⟨[ESC, 0x5B, 0x3F, 0x75], []⟩,
+    ⟨[ESC, 0x5B, 0x32, 0x30, 0x74], []⟩, ⟨[ESC, 0x5B, 0x32, 0x31, 0x74], []⟩,
+    ⟨[ESC, 0x5D, 0x35, 0x32, 0x3B, 0x63, 0x3B, 0x3F, ESC, STFinal], []⟩,
+    ⟨[ESC, 0x5D, 0x35, 0x32, 0x3B, 0x3B, 0x3F, BEL], []⟩,
+    ⟨[ESC, 0x5D, 0x35, 0x32, 0x3B, 0x70, 0x63, 0x3B, 0x3F, BEL], []⟩,
+    ⟨[ESC, 0x5D, 0x34, 0x3B, 0x31, 0x3B, 0x3F, BEL], []⟩,
+    ⟨[ESC, 0x5D, 0x34, 0x3B, 0x32, 0x35, 0x35, 0x3B, 0x3F, ESC, STFinal], []⟩,
+    ⟨[ESC, 0x5D, 0x35, 0x3B, 0x30, 0x3B, 0x3F, BEL], []⟩,
+    ⟨[ESC, 0x5D, 0x31, 0x33, 0x3B, 0x3F, BEL], []⟩,
+    ⟨[ESC, 0x5D, 0x31, 0x39, 0x3B, 0x3F, ESC, STFinal], []⟩]
 
 /-- XTVERSION reports the same version as `linger version` and `TERM_PROGRAM_VERSION`. -/
 example :
@@ -55,9 +64,10 @@ def ownedAllSplits (v : Vt) (c : OwnedCase) : Bool :=
   (List.range (c.request.length + 1)).all (ownedAtSplit v c)
 
 /-- Every owned grammar row, with both accepted spellings/terminators, emits
-its exact reply (or no reply for kitty) and is absent from presentation output
-at every possible chunk boundary. -/
-example : (ownedCases profileVt).length = 20 := by native_decide
+its exact reply (or no reply for kitty and for what only a client keeps: the titles, the
+clipboard and the colours past the three linger answers) and is absent from presentation
+output at every possible chunk boundary. -/
+example : (ownedCases profileVt).length = 30 := by native_decide
 
 example : (ownedCases profileVt).all (ownedAllSplits profileVt) = true := by native_decide
 
@@ -78,6 +88,19 @@ def unknownCsi : Bytes := [ESC, 0x5B, 0x39, 0x39, 0x7A]
 
 def unknownOsc : Bytes := [ESC, 0x5D, 0x32, 0x3B, 0x78, BEL]
 
+/-- A clipboard write, `52 ; c ; aGk=` with ST. -/
+def clipboardSet : Bytes :=
+  [ESC, 0x5D, 0x35, 0x32, 0x3B, 0x63, 0x3B, 0x61, 0x47, 0x6B, 0x3D, ESC, STFinal]
+
+/-- Requests that look like the owned queries but are not one of their spellings: data other
+than `?`, a palette set, a request of two pairs, an empty index and the title stack's push
+(`CSI 22 ; 0 t`). -/
+def unownedLookalikes : List Bytes :=
+  [[ESC, 0x5D, 0x35, 0x32, 0x3B, 0x63, 0x3B, 0x3F, 0x78, BEL],
+    [ESC, 0x5D, 0x34, 0x3B, 0x31, 0x3B, 0x72, 0x67, 0x62, 0x3A, 0x66, 0x2F, 0x30, 0x2F, 0x30, BEL],
+    [ESC, 0x5D, 0x34, 0x3B, 0x31, 0x3B, 0x3F, 0x3B, 0x32, 0x3B, 0x3F, BEL],
+    [ESC, 0x5D, 0x34, 0x3B, 0x3B, 0x3F, BEL], [ESC, 0x5B, 0x32, 0x32, 0x3B, 0x30, 0x74]]
+
 def apcPayload : Bytes := List.replicate 300 0x41 ++ [ESC, 0x5B, 0x63] ++ List.replicate 300 0x42
 
 def apc : Bytes := [ESC, 0x5F] ++ apcPayload ++ [ESC, STFinal]
@@ -96,6 +119,11 @@ larger than every candidate cap and bytes that look like an owned query. -/
 example : passthroughAllSplits profileVt unknownCsi = true := by native_decide
 
 example : passthroughAllSplits profileVt unknownOsc = true := by native_decide
+
+/-- A clipboard write and every look-alike pass through exactly, at every split. -/
+example : passthroughAllSplits profileVt clipboardSet = true := by native_decide
+
+example : unownedLookalikes.all (passthroughAllSplits profileVt) = true := by native_decide
 
 example : passthroughWhole profileVt apc = true := by native_decide
 

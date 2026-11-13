@@ -89,6 +89,40 @@ theorem classifyOsc_cursor_st :
       .owned (paletteReply 0x32 0x66) := by
   simp [classifyOsc]
 
+/-- The title reports are owned with no reply: a client's terminal would answer with the title
+it shows. -/
+theorem classifyCsi_titles (v : Vt) :
+    classifyCsi v [ESC, 0x5B, 0x32, 0x30, 0x74] = .owned [] ∧
+      classifyCsi v [ESC, 0x5B, 0x32, 0x31, 0x74] = .owned [] := by
+  simp [classifyCsi]
+
+/-- Any bytes but `;`, then `; ?` and BEL or ST, are what follows `52 ;` in a clipboard query. -/
+theorem selectionQuery_query (sel term : Bytes) (h : 0x3B ∉ sel) (ht : terminated term = true) :
+    selectionQuery (sel ++ 0x3B :: 0x3F :: term) = true := by
+  induction sel with
+  | nil => simp [selectionQuery, ht]
+  | cons b sel
+    ih =>
+    have hb : b ≠ 0x3B := by
+      intro e
+      apply h
+      simp [e]
+    have hs : 0x3B ∉ sel := by
+      intro m
+      apply h
+      simp [m]
+    simp [selectionQuery, hb, ih hs]
+
+/-- **No program reads a client's clipboard through linger.** A clipboard query, whatever its
+selection and with either terminator, is owned and gets no reply, so no client receives it. -/
+theorem classifyOsc_clipboard (sel term : Bytes) (h : 0x3B ∉ sel)
+    (ht : term = [BEL] ∨ term = [ESC, STFinal]) :
+    classifyOsc ([ESC, 0x5D, 0x35, 0x32, 0x3B] ++ sel ++ 0x3B :: 0x3F :: term) = .owned [] := by
+  have hq : selectionQuery (sel ++ 0x3B :: 0x3F :: term) = true :=
+    selectionQuery_query sel term h (by rcases ht with rfl | rfl <;> rfl)
+  unfold classifyOsc
+  simp [unanswered, unansweredOsc, hq]
+
 /-- The fixed replies themselves have the exact bytes promised by the table. -/
 theorem fixed_replies_exact :
     da1Reply = [ESC, 0x5B, 0x3F, 0x31, 0x3B, 0x32, 0x63] ∧

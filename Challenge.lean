@@ -331,11 +331,11 @@ and `send` hands the program text of any length in frames the decoder takes, who
 text, in order. A program that enabled focus reporting hears that it gained focus when a writable
 client attaches to a session nobody could type into, whatever its size, and that it lost it when the
 last one leaves. Not claimed: which bytes the mediator releases, which `Terminal.Mediation` decides:
-all the program wrote but the queries linger answers itself, a request still incomplete at a chunk's
-end waiting for the next; an attach a read completes with other messages; that the runtime streams a
-repaint ahead of the output that follows it, which the delivery suite checks; and what a program
-reads in any other mode than raw, such as the cooked mode a terminal starts in, whose line
-discipline edits lines and turns ^C into a signal. -/
+all the program wrote but the queries linger owns, which its terminal answers or nobody does, a
+request still incomplete at a chunk's end waiting for the next; an attach a read completes with
+other messages; that the runtime streams a repaint ahead of the output that follows it, which the
+delivery suite checks; and what a program reads in any other mode than raw, such as the cooked mode
+a terminal starts in, whose line discipline edits lines and turns ^C into a signal. -/
 
 theorem step_attach_repaint (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {mode : Mode} {cols rows : UInt32} (hc : s.client? id = some c)

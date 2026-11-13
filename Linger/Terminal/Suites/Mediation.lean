@@ -32,6 +32,10 @@ WHAT IS DERIVED, AND WHAT CANNOT BE:
   emitter performing its own filtering. The CR/LF check is deliberately NOT
   derived: it is about the bytes that actually reached the child, which is exactly
   the half `feed_replies_noNl` cannot see;
+* the queries a client's terminal would answer from what it keeps for its user, the
+  clipboard, title and colour queries, are literals, spelled as leanvim and other programs
+  send them, beside a clipboard write: with two clients attached, neither receives a query
+  nor does the program read a reply, and both receive the write;
 * the stable child profile's `TERM_PROGRAM_VERSION` is derived: `Start.environment`,
   the environment `Daemon.serve` starts the program with, and this check both read
   `Mediation.versionNumber`. `TERM=xterm-256color`, `COLORTERM=truecolor` and
@@ -63,6 +67,18 @@ def evilPayload : List UInt8 := "54\r;id>x\r".toUTF8.toList
 the `+q` kind byte pair `Scan.dcsIntro`/`dcsKind` route into the buffered state,
 the payload, ST. -/
 def evilQuery : List UInt8 := escSeq 0x50 ++ [0x2B, 0x71] ++ evilPayload ++ escSeq STFinal
+
+/-- The queries a client's terminal would answer from what it keeps for its user, as programs
+send them: leanvim's clipboard query `OSC 52 ; c ; ?` with ST, the same with no selection and
+BEL, the title report `CSI 21 t` and a palette query `OSC 4 ; 1 ; ?`. -/
+def keptQueries : List (List UInt8) :=
+  [escSeq 0x5D ++ "52;c;?".toUTF8.toList ++ escSeq STFinal,
+    escSeq 0x5D ++ "52;;?".toUTF8.toList ++ [0x07], escSeq 0x5B ++ "21t".toUTF8.toList,
+    escSeq 0x5D ++ "4;1;?".toUTF8.toList ++ [0x07]]
+
+/-- A clipboard write, `OSC 52 ; c ; <base64 of linger-clip>` with ST, as leanvim writes one. -/
+def clipboardWrite : List UInt8 :=
+  escSeq 0x5D ++ "52;c;bGluZ2VyLWNsaXA=".toUTF8.toList ++ escSeq STFinal
 
 /-- What the mediator decides to answer for an owned CSI request, read out of
 `classifyCsi` rather than copied from the test that used to spell it. The `Vt` is
@@ -294,6 +310,21 @@ def run : IO UInt32 :=
     -- equality, so a trailing byte from elsewhere in the stream does not decide it.
     expect (ir.take evilExpected.length == evilExpected)
         "XTGETTCAP still answered (filtered negative reply reached the child)"
+    -- What a client's terminal keeps for its user is nobody's to give a program: the clipboard,
+    -- title and colour queries reach no client and get no reply, while a clipboard write, which
+    -- the same bytes frame, reaches every client unchanged.
+    let kept ←
+      runCase e 10 2 none
+          (String.fromUTF8? (ByteArray.mk (keptQueries.flatten ++ clipboardWrite).toArray))
+    if let some err := kept.err then
+      IO.eprintln s!"note: kept-query probe case: {err}"
+    expect
+        (kept.err.isNone && kept.reply.isEmpty && kept.clientOut.length == 2 &&
+          kept.clientOut.all fun o =>
+            hasText o "PROBE-DONE" && keptQueries.all fun q => !hasBytes o q)
+        "clipboard, title and colour queries reach neither of 2 clients and get no reply"
+    expect (kept.clientOut.length == 2 && kept.clientOut.all (hasBytes · clipboardWrite))
+        "a clipboard write reaches both clients unchanged"
     -- The original regression: an interactive fish must consume a command before
     -- any client attaches. This is required coverage, so an environment without
     -- fish fails instead of converting the missing check into a counted pass.

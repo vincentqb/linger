@@ -109,7 +109,9 @@ inductive Decision where
   deriving Repr, DecidableEq
 
 /-- Exact CSI rows from the normative profile. No prefix or parameter
-normalization is intentional: every unlisted spelling is passthrough. -/
+normalization is intentional: every unlisted spelling is passthrough. The title reports
+`CSI 20 t` and `CSI 21 t` are owned with no reply: a client's terminal would answer with the
+title it shows, which the program would read as typed. -/
 def classifyCsi (v : Vt) (seq : Bytes) : Decision :=
   if seq == [ESC, 0x5B, 0x63] || seq == [ESC, 0x5B, 0x30, 0x63] then .owned da1Reply
   else
@@ -127,10 +129,59 @@ def classifyCsi (v : Vt) (seq : Bytes) : Decision :=
                 .owned versionReply
               else
                 if seq == [ESC, 0x5B, 0x31, 0x38, 0x74] then .owned (textAreaReply v)
-                else if seq == [ESC, 0x5B, 0x3F, 0x75] then .owned [] else .unowned
+                else
+                  if
+                      seq == [ESC, 0x5B, 0x3F, 0x75] || seq == [ESC, 0x5B, 0x32, 0x30, 0x74] ||
+                        seq == [ESC, 0x5B, 0x32, 0x31, 0x74] then
+                    .owned []
+                  else .unowned
 
-/-- Exact fixed-palette OSC rows. Both BEL and ST terminate requests; replies
-always use ST. -/
+/-- Whether bytes end a request: BEL, or ST. -/
+private def terminated (rest : Bytes) : Bool := rest == [BEL] || rest == [ESC, STFinal]
+
+/-- A selection, any bytes but `;`, then `; ?` and the terminator: what follows `52 ;` in a
+clipboard query. -/
+private def selectionQuery : Bytes → Bool
+  | [] => false
+  | b :: rest =>
+    if b == 0x3B then rest.head? == some 0x3F && terminated rest.tail else selectionQuery rest
+
+/-- Decimal digits, then `; ?` and the terminator. -/
+private def digitsQuery : Bytes → Bool
+  | [] => false
+  | b :: rest =>
+    if b == 0x3B then rest.head? == some 0x3F && terminated rest.tail
+    else 0x30 ≤ b && b ≤ 0x39 && digitsQuery rest
+
+/-- A decimal colour index, then `; ?` and the terminator: what follows `4 ;` or `5 ;` in a
+colour query. -/
+private def indexQuery : Bytes → Bool
+  | [] => false
+  | b :: rest => 0x30 ≤ b && b ≤ 0x39 && digitsQuery rest
+
+/-- The OSC queries no terminal answers to the program, by what follows their `ESC ]`: a
+client's terminal would answer them from what it keeps for its user, and linger's terminal keeps
+none of it. A clipboard query, `52 ; <selection> ; ?`, a palette or special colour query,
+`4 ; <index> ; ?` or `5 ; <index> ; ?`, and a query of a dynamic colour past the three linger
+answers, `13 ; ?` to `19 ; ?`, each ended by BEL or ST: one query per request, as xterm documents
+it. -/
+private def unansweredOsc : Bytes → Bool
+  | 0x35 :: 0x32 :: 0x3B :: rest => selectionQuery rest
+  | 0x34 :: 0x3B :: rest => indexQuery rest
+  | 0x35 :: 0x3B :: rest => indexQuery rest
+  | 0x31 :: d :: 0x3B :: 0x3F :: rest => 0x33 ≤ d && d ≤ 0x39 && terminated rest
+  | _ => false
+
+/-- Whether a complete request is an OSC query no terminal answers (`unansweredOsc`). -/
+private def unanswered : Bytes → Bool
+  | 0x1B :: 0x5D :: rest => unansweredOsc rest
+  | _ => false
+
+/-- Exact fixed-palette OSC rows, and the queries no terminal answers (`unansweredOsc`), owned
+with no reply: a program's query is answered by linger's terminal or by nobody, never by a
+client's, whose answer the program would read as typed input. Both BEL and ST terminate
+requests; replies always use ST. A clipboard write and every other OSC pass through, as does a
+request longer than `oscCap`, which the scanner releases before it ends. -/
 private def classifyOsc (seq : Bytes) : Decision :=
   if
       seq == [ESC, 0x5D, 0x31, 0x30, 0x3B, 0x3F, BEL] ||
@@ -146,7 +197,7 @@ private def classifyOsc (seq : Bytes) : Decision :=
           seq == [ESC, 0x5D, 0x31, 0x32, 0x3B, 0x3F, BEL] ||
             seq == [ESC, 0x5D, 0x31, 0x32, 0x3B, 0x3F, ESC, STFinal] then
         .owned (paletteReply 0x32 0x66)
-      else .unowned
+      else if unanswered seq then .owned [] else .unowned
 
 /-! ## Bounded scanner -/
 
