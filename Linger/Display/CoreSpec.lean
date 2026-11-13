@@ -82,7 +82,8 @@ inductive Row where
   program ended: the session was interrupted, as by a reboot. -/
   | stale
   /-- No socket, a checkpoint, and an end record saying its program ended with this status, as
-  a shell reports it: the session's result, until `kill` discards it. -/
+  a shell reports it: the session's result, nobody saw it end, until the first attach shows it
+  or `kill` discards it. -/
   | ended (status : Nat)
   /-- No socket, and the saved session cannot be read: its end record, which says whether its
   program ended, cannot be read. A checkpoint that will not load would be one too, but the

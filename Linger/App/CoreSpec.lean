@@ -8,7 +8,8 @@ public section
 /-! # What command-line headlines are stated in
 
 The executor a command line reaches, where a command line of plain words goes, one row of the
-command table, what a command does with a name's saved session, what `wait` hears on each look
+command table, what a command does with a name's saved session and what an attach to it does,
+what `wait` hears on each look
 at a name and does next, and the steps of `capture` of a saved session, which of them hold the
 name's locks and which wait on a party outside linger. What a command answers is the operating
 system's vocabulary, `Linger.Os.Answer`, which the selector and the tmux interchange answer in
@@ -76,6 +77,25 @@ inductive Recovery (C : Type) where
   deriving Repr, DecidableEq
 
 end Linger.App
+
+namespace Linger.App.Visit
+
+/-- One step of an attach to a session its checkpoint saved, which an attach takes when no
+daemon answers for the name. -/
+inductive Step where
+  /-- Run the session's program again from its saved screen, as `resume` does. -/
+  | resume
+  /-- Show the saved screen until the viewer leaves with the detach key. A viewer a signal
+  interrupts may not have shown it, and takes no later step. -/
+  | show
+  /-- Tell the viewer how the session's program ended, and answer as its ending does. -/
+  | tell (outcome : Linger.Session.Outcome)
+  /-- Discard the session, as `kill` discards a saved one: delete its checkpoint, when it is
+  still the one shown, and leave its end record, which `wait` and `info` read. -/
+  | discard
+  deriving Repr, DecidableEq
+
+end Linger.App.Visit
 
 namespace Linger.App.Wait
 

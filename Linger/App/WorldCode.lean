@@ -263,7 +263,7 @@ private def startRefused (name : String) (saved : Bool) : IO Answer := do
   | some (.ended outcome) =>
     IO.eprintln
         s!"linger: session '{name}' ended ({(Client.Ending.outcome outcome).describe}); \
-        kill it to discard it, or attach to resume it"
+        attach to see it, which discards it, or kill it to discard it"
   | _ =>
     IO.eprintln s!"linger: session '{name}' is saved; attach to resume it, or kill it to discard it"
   return .notDone
@@ -682,12 +682,82 @@ private def attachSpoken (name : String) (fd : UInt32) (readOnly : Bool) :
           it, or attach with that linger"
   return .error .notDone
 
+/-- Discard the saved session `name` once a viewer has seen it, as `kill` discards one: delete its
+checkpoint while holding the name, when it still holds `shown`, the bytes the viewer was shown, so
+that a session resumed or replaced since is never lost. Its end record stays, for `wait` and
+`info`. A name another process holds, or a checkpoint that cannot be read or deleted, keeps the
+session and says so. -/
+private def discardShown (name : String) (shown : ByteArray) : IO Unit := do
+  let discarded ←
+    try
+      Paths.withSessionLock name do
+          if (← Resume.readCkpt name).map (·.data) == some shown.data then
+            Resume.dropCkpt name
+      pure none
+    catch err =>
+      pure (some err.toString)
+  if let some why := discarded then
+    IO.eprintln s!"\r\nlinger: session '{name}' was seen but not discarded: {why}"
+
+/-- Take the steps `Recovery.visit` names for the saved session `name`, whose checkpoint held
+`shown`, decoding to the screen `vt`, under the status the listing shows for it: `none` when the
+session is to be resumed, and otherwise how the attach ended. A view a signal interrupts takes no
+later step, so a session it may not have shown is kept; a view the viewer leaves goes on to tell
+how the program ended and discard the session. -/
+private def runVisit (name : String) (shown : ByteArray) (vt : Terminal.Vt.Vt)
+    (status : Linger.Display.Status.Status) (steps : List Linger.App.Visit.Step) :
+    IO (Option Client.Outcome) := do
+  let mut result : Client.Outcome := .detached
+  for step in steps do
+    match step with
+    | .resume =>
+      return none
+    | .show =>
+      let viewed ← Client.viewSaved name vt status
+      if let .detached := viewed then
+        pure ()
+      else
+        return some viewed
+    | .tell outcome =>
+      result := .ended (.outcome outcome)
+    | .discard =>
+      discardShown name shown
+  return some result
+
+/-- What an attach does with `name` when no daemon answers for it, from its end record and then,
+unless the attach resumes it, its checkpoint, both read while holding the name: the result of a
+program that ended, shown and then discarded, or a saved session viewed or, `none`, resumed
+(`Recovery.visit`), or, when its checkpoint does not decode or there is none, the refusal
+`Recovery.decide` answers. The record alone decides a resume, so a resume leaves the checkpoint
+unread, to the daemon it starts. -/
+private def visitOffline (name : String) (readOnly : Bool) :
+    IO (Except Answer (Option Client.Outcome)) := do
+  let (steps, record, file) ←
+    Paths.withSessionLock name do
+        let record ← (Record.load name).toBaseIO
+        let steps := Linger.App.Recovery.visit readOnly record.toOption.join
+        if steps == [.resume] then
+          return (steps, record, none)
+        return (steps, record, ← Resume.readCkpt name)
+  if steps == [.resume] then
+    return .ok none
+  let status := Linger.Display.Listing.rowStatus (savedRow record).1
+  match Linger.App.Recovery.decide false file, file with
+  | .resume ck, some shown =>
+    return .ok (← runVisit name shown ck.vt status steps)
+  | .refuse answer, _ =>
+    return .error answer
+  | _, _ =>
+    return .error .notFound
+
 /-- A live connection is authoritative, once its daemon says it speaks this version's protocol
-(`attachSpoken`). Only read-only attachment can view an offline checkpoint, loaded with its end
-record while owning both resources and displayed after releasing them, under the status the
-listing shows for it. Writable attachment keeps the create/resume path, which resumes an ended
-session too. Either refuses a checkpoint that does not decode, which stays as it is
-(`Recovery.decide`). Live titles sample `summaryText` in this process. -/
+(`attachSpoken`). With no daemon, an offline checkpoint is loaded with its end record while owning
+both resources and displayed after releasing them, under the status the listing shows for it
+(`visitOffline`): a session whose program ended is a result, which either mode shows, then tells
+how it ended and discards once the viewer leaves, since it has been seen; read-only attachment
+views any other saved session, and writable attachment keeps the create/resume path for it. Either
+refuses a checkpoint that does not decode, which stays as it is (`Recovery.decide`). Live titles
+sample `summaryText` in this process. -/
 private def cmdAttach (name : String) (cmd : List String) (readOnly : Bool) : IO Answer := do
   let result : Except Answer Client.Outcome ←
     if readOnly then
@@ -695,24 +765,30 @@ private def cmdAttach (name : String) (cmd : List String) (readOnly : Bool) : IO
       | some fd =>
         attachSpoken name fd true
       | none =>
-        let (recovery, record) ←
-          Paths.withSessionLock name do
-              return (Linger.App.Recovery.decide false (← Resume.readCkpt name),
-                  ← (Record.load name).toBaseIO)
-        let status := Linger.Display.Listing.rowStatus (savedRow record).1
-        match recovery with
-        | .resume ck =>
-          pure (.ok (← Client.viewSaved name ck.vt status))
-        | .refuse answer =>
+        match ← visitOffline name true with
+        | .ok (some outcome) =>
+          pure (.ok outcome)
+        | .ok none =>
+          -- a watcher's visit never resumes (`visit_result`)
+          .error <$> refused name .notDone
+        | .error answer =>
           .error <$> refused name answer
-        | .fresh =>
-          .error <$> refused name .notFound
     else
-      match ← connectUpsert name cmd with
-      | .ok fd =>
+      -- a result is shown, not resumed: only a saved session that is no result, or none, takes
+      -- the create/resume path, as does a name another process holds
+      match ← Client.connect name with
+      | some fd =>
         attachSpoken name fd false
-      | .error answer =>
-        .error <$> refused name answer
+      | none =>
+        match ← (visitOffline name false).toBaseIO with
+        | .ok (.ok (some outcome)) =>
+          pure (.ok outcome)
+        | _ =>
+          match ← connectUpsert name cmd with
+          | .ok fd =>
+            attachSpoken name fd false
+          | .error answer =>
+            .error <$> refused name answer
   match result with
   | .error answer =>
     return answer

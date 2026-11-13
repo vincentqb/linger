@@ -110,6 +110,8 @@ def Linger.App.Wait.decide : Option Nat → Option Nat → Nat → App.Wait.Hear
 def Linger.App.Recovery.decide : Bool → Option ByteArray → App.Recovery (Checkpoint.Ckpt Vt.Vt) :=
   sorry
 
+def Linger.App.Recovery.visit : Bool → Option (List UInt8) → List App.Visit.Step := sorry
+
 def Linger.App.Capture.plan : List App.Capture.Step := sorry
 
 /-! ### Session targets -/
@@ -1155,9 +1157,16 @@ A session ends through one ending, whatever ends it (`step_ended_reports`): its 
 a kill, once the daemon has stopped the program; or SIGHUP, SIGINT, SIGQUIT or SIGTERM to the
 daemon, the system stopping linger at logout or shutdown, after which the daemon stops the program
 the same way (`step_signal_saves`). Every client attached or waiting hears how the session ended
-before the daemon exits, the daemon leaves its name an end record that says so, and the session's
-last screen, as the ending found it, is saved and kept, except after a kill, which discards it. A
-session a signal stopped is saved, not ended: everyone hears which signal stopped the daemon and
+before the daemon exits, and the daemon leaves its name an end record that says so. A kill discards
+the session (`step_stopped_discards`), and a program's own ending stays exactly until someone has
+seen it: one that ends while a client is attached, typist or watcher, is seen as it ends, and the
+session then ends as a kill ends it, its checkpoint deleted once every client is told
+(`step_childExited_seen`); one that ends with nobody attached saves its last screen, as the ending
+found it, and keeps it (`step_childExited_keeps`), and the first attach to it, in either mode,
+shows that screen, then how its program ended, and discards it once it leaves (`visit_result`). A
+watcher counts as seeing, since it is shown the same screen and told the same ending as a typist
+(`seenBy`); `wait`, `info` and `ls` tell the status, not the screen, and `capture` exports it, so
+none of them sees it. A session a signal stopped is saved, not ended: everyone hears which signal stopped the daemon and
 nothing of an outcome of its program, which `resume` runs again from that screen. When the file
 system keeps what linger saves (`Record.Kept`, which its check and the agent suite test), a name's
 end record keeps how its last session ended, for whoever asks later: how its program ended, or which
@@ -1179,7 +1188,10 @@ which the attach suite checks against a level-2 daemon, one that reports no leve
 answers; that a daemon hears a stop signal, which the operating system delivers through the daemon's
 signal pipe and the resume suite checks, and when it cannot make the pipe takes its default action;
 that an attached client or the selector, given SIGTERM, SIGHUP or SIGINT, hands its terminal back
-and answers `interrupted`, which the attach and manager suites check; and that the process exits
+and answers `interrupted`, which the attach and manager suites check; that a client the model counts
+as attached when the program ends still reads what it is told, and that an attach executes the
+steps `visit_result` names, discarding only the checkpoint it showed and keeping the session when a
+signal interrupts the view, which the attach and watch suites check; and that the process exits
 with the code of its command's answer, which the type of every executor's result, `main`'s one exit
 and a gate on the shells keep.
 
@@ -1223,9 +1235,9 @@ theorem step_kill_stops_rejects_exit :
   sorry
 
 theorem step_ended_reports (s : State) (ev : Event) :
-    (Effect.exit ∈ (Session.step s ev).2 ↔ ev.ends.isSome) ∧
+    (Effect.exit ∈ (Session.step s ev).2 ↔ (ev.ends (seenBy s.roster)).isSome) ∧
       ∀ e keep,
-        ev.ends = some (e, keep) →
+        ev.ends (seenBy s.roster) = some (e, keep) →
           ∃ front,
             (Session.step s ev).2 =
                 front ++
@@ -1244,16 +1256,20 @@ theorem step_ended_reports_rejects_status :
         (Effect.exit ∈
               ((fun s _ =>
                     (s,
-                      ([.send 0 (.exited 1), .record (.ended .unknown), .checkpoint, .exit] :
+                      ([.send 0 (.exited 1), .record (.ended .unknown), .dropCheckpoint, .exit] :
                         List (Effect Replay.Plan))))
                   s ev).2 ↔
-            ev.ends.isSome) ∧
+            (ev.ends
+                (seenBy
+                  ((fun (_ : State) => [({ id := 0, attached := true } : Client)]) s))).isSome) ∧
           ∀ e keep,
-            ev.ends = some (e, keep) →
+            ev.ends (seenBy ((fun (_ : State) => [({ id := 0, attached := true } : Client)]) s)) =
+                some (e, keep) →
               ∃ front,
                 ((fun s _ =>
                           (s,
-                            ([.send 0 (.exited 1), .record (.ended .unknown), .checkpoint, .exit] :
+                            ([.send 0 (.exited 1), .record (.ended .unknown), .dropCheckpoint,
+                                .exit] :
                               List (Effect Replay.Plan))))
                         s ev).2 =
                     front ++
@@ -1266,7 +1282,8 @@ theorem step_ended_reports_rejects_status :
                       e.told.map (Effect.send c.id) <:+: front) ∧
                   ((fun s _ =>
                           (s,
-                            ([.send 0 (.exited 1), .record (.ended .unknown), .checkpoint, .exit] :
+                            ([.send 0 (.exited 1), .record (.ended .unknown), .dropCheckpoint,
+                                .exit] :
                               List (Effect Replay.Plan))))
                         s ev).1.terminal =
                     s.terminal := by
@@ -1346,7 +1363,8 @@ theorem step_stopped_discards_rejects_save :
             s.terminal := by
   sorry
 
-theorem step_childExited_keeps (s : State) (o : Outcome) :
+theorem step_childExited_keeps (s : State) (o : Outcome)
+    (unseen : ∀ c ∈ s.roster, c.attached = false) :
     (∃ front,
         (Session.step s (.childExited o)).2 = front ++ [.checkpoint, .exit] ∧
           Effect.dropCheckpoint ∉ front) ∧
@@ -1356,16 +1374,87 @@ theorem step_childExited_keeps (s : State) (o : Outcome) :
 @[kills step_childExited_keeps]
 theorem step_childExited_keeps_rejects_drop :
     ¬∀ (s : State) (o : Outcome),
-        (∃ front,
+        (∀ c ∈ s.roster, c.attached = false) →
+          (∃ front,
+              ((fun (s : State) (_ : Event) =>
+                        (s, ([.dropCheckpoint, .checkpoint, .exit] : List (Effect Replay.Plan))))
+                      s (.childExited o)).2 =
+                  front ++ [.checkpoint, .exit] ∧
+                Effect.dropCheckpoint ∉ front) ∧
             ((fun (s : State) (_ : Event) =>
-                      (s, ([.dropCheckpoint, .checkpoint, .exit] : List (Effect Replay.Plan))))
-                    s (.childExited o)).2 =
-                front ++ [.checkpoint, .exit] ∧
-              Effect.dropCheckpoint ∉ front) ∧
-          ((fun (s : State) (_ : Event) =>
-                  (s, ([.dropCheckpoint, .checkpoint, .exit] : List (Effect Replay.Plan))))
-                s (.childExited o)).1.terminal =
-            s.terminal := by
+                    (s, ([.dropCheckpoint, .checkpoint, .exit] : List (Effect Replay.Plan))))
+                  s (.childExited o)).1.terminal =
+              s.terminal := by
+  sorry
+
+theorem step_childExited_seen (s : State) (o : Outcome) {c : Client} (hc : c ∈ s.roster)
+    (attached : c.attached = true) :
+    (∃ front,
+        (Session.step s (.childExited o)).2 =
+            front ++ [.record (.ended o), .dropCheckpoint, .exit] ∧
+          Effect.checkpoint ∉ front ∧
+          ∀ c ∈ s.roster,
+            c.attached = true ∨ c.waiting = true →
+              (Ending.program o).told.map (Effect.send c.id) <:+: front) ∧
+      (Session.step s (.childExited o)).1.terminal = s.terminal := by
+  sorry
+
+@[kills step_childExited_seen]
+theorem step_childExited_seen_rejects_keep :
+    ¬∀ (s : State) (o : Outcome) {c : Client},
+        c ∈ (fun (_ : State) => [({ id := 0, attached := true } : Client)]) s →
+          c.attached = true →
+          (∃ front,
+              ((fun (s : State) (_ : Event) =>
+                        (s,
+                          ([.record (.ended .unknown), .checkpoint, .exit] :
+                            List (Effect Replay.Plan))))
+                      s (.childExited o)).2 =
+                  front ++ [.record (.ended o), .dropCheckpoint, .exit] ∧
+                Effect.checkpoint ∉ front ∧
+                ∀ c ∈ (fun (_ : State) => [({ id := 0, attached := true } : Client)]) s,
+                  c.attached = true ∨ c.waiting = true →
+                    (Ending.program o).told.map (Effect.send c.id) <:+: front) ∧
+            ((fun (s : State) (_ : Event) =>
+                    (s,
+                      ([.record (.ended .unknown), .checkpoint, .exit] :
+                        List (Effect Replay.Plan))))
+                  s (.childExited o)).1.terminal =
+              s.terminal := by
+  sorry
+
+theorem visit_result (afterSave : List UInt8 → Option (List UInt8)) (kept : Record.Kept afterSave)
+    (readOnly : Bool) (o : Outcome) (n : UInt8) (seen : Option Seen) :
+    App.Recovery.visit readOnly (afterSave (Record.encode (.ended o))) =
+        [.show, .tell o, .discard] ∧
+      App.Recovery.visit readOnly (afterSave (Record.encode (.saved n))) =
+        (if readOnly then [.show] else [.resume]) ∧
+      App.Recovery.visit readOnly (afterSave (Record.encode (.running seen))) =
+        (if readOnly then [.show] else [.resume]) ∧
+      App.Recovery.visit readOnly none = (if readOnly then [.show] else [.resume]) := by
+  sorry
+
+@[kills visit_result]
+theorem visit_result_rejects_resume :
+    ¬∀ (afterSave : List UInt8 → Option (List UInt8)),
+        Record.Kept afterSave →
+          ∀ (readOnly : Bool) (o : Outcome) (n : UInt8) (seen : Option Seen),
+            (fun (readOnly : Bool) (_ : Option (List UInt8)) =>
+                    if readOnly then [App.Visit.Step.show] else [App.Visit.Step.resume])
+                  readOnly (afterSave (Record.encode (.ended o))) =
+                [.show, .tell o, .discard] ∧
+              (fun (readOnly : Bool) (_ : Option (List UInt8)) =>
+                    if readOnly then [App.Visit.Step.show] else [App.Visit.Step.resume])
+                  readOnly (afterSave (Record.encode (.saved n))) =
+                (if readOnly then [.show] else [.resume]) ∧
+              (fun (readOnly : Bool) (_ : Option (List UInt8)) =>
+                    if readOnly then [App.Visit.Step.show] else [App.Visit.Step.resume])
+                  readOnly (afterSave (Record.encode (.running seen))) =
+                (if readOnly then [.show] else [.resume]) ∧
+              (fun (readOnly : Bool) (_ : Option (List UInt8)) =>
+                    if readOnly then [App.Visit.Step.show] else [App.Visit.Step.resume])
+                  readOnly none =
+                (if readOnly then [.show] else [.resume]) := by
   sorry
 
 theorem record_answer (afterSave : List UInt8 → Option (List UInt8)) (kept : Record.Kept afterSave)

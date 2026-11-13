@@ -111,14 +111,27 @@ example :
   native_decide
 
 /-- Child exit flushes an incomplete prefix before exited/close effects and
-resets the scanner without feeding those bytes to `Vt` again. -/
+resets the scanner without feeding those bytes to `Vt` again; the attached client saw the
+ending, so the checkpoint is deleted. -/
 example :
     (let s : State := { s0 with scan := .csi [0x5B, ESC],
                                 clients := [{ id := 7, attached := true }] }
      let r := step s (.childExited (.exited 0))
      r.1.scan == .ground && r.1.vt.cursor == s.vt.cursor &&
        r.2 == [.send 7 (.output [ESC, 0x5B]), .send 7 (.ended (.exited 0)), .send 7 (.exited 0),
-               .close 7, .record (.ended (.exited 0)), .checkpoint, .exit]) = true := by
+               .close 7, .record (.ended (.exited 0)), .dropCheckpoint, .exit]) = true := by
+  native_decide
+
+/-- A watcher is told the same ending, and sees it as a typist does. A connection that only
+waits hears it but sees nothing, so the session is kept. -/
+example :
+    (let watched : State := { s0 with clients := [{ id := 7, attached := true, mode := .readOnly }] }
+     let waited : State := { s0 with clients := [{ id := 7, waiting := true }] }
+     (step watched (.childExited (.exited 0))).2.getLast? == some .exit &&
+       (step watched (.childExited (.exited 0))).2.contains .dropCheckpoint &&
+       (step waited (.childExited (.exited 0))).2 ==
+         [.send 7 (.ended (.exited 0)), .send 7 (.exited 0), .close 7,
+           .record (.ended (.exited 0)), .checkpoint, .exit]) = true := by
   native_decide
 
 /-- A client closing changes nothing but the roster (a checkpoint

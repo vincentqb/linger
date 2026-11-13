@@ -1,6 +1,7 @@
 module
 
 import all Linger.App.CoreCode.Recovery
+import all Linger.Session.Proofs.Record
 
 /-! # What a command does with a saved session
 
@@ -19,5 +20,30 @@ theorem recovery_exact (create : Bool) (file : Option ByteArray) :
               (.refuse .notDone)).getD
         (if create then .fresh else .refuse .notFound) := by
   cases file <;> rfl
+
+/-- **A result is shown once, then discarded**: an attach to a saved session whose end record says
+its program ended this way, typist or watcher alike, shows its last screen, tells how the program
+ended and discards it. -/
+theorem visit_ended (readOnly : Bool) (o : Linger.Session.Outcome) :
+    visit readOnly (some (Linger.Session.Record.encode (.ended o))) =
+      [.show, .tell o, .discard] := by
+  simp [visit, Linger.Session.Record.decode_encode]
+
+/-- **Any other saved session is resumed, or viewed**: one a signal to its daemon saved, or one
+whose daemon ended without saying how its program ended. -/
+theorem visit_saved (readOnly : Bool) (n : UInt8) :
+    visit readOnly (some (Linger.Session.Record.encode (.saved n))) =
+      if readOnly then [.show] else [.resume] := by
+  simp [visit, Linger.Session.Record.decode_encode]
+
+/-- …and so is one whose record its daemon left while the program still ran. -/
+theorem visit_running (readOnly : Bool) (seen : Option Linger.Session.Seen) :
+    visit readOnly (some (Linger.Session.Record.encode (.running seen))) =
+      if readOnly then [.show] else [.resume] := by
+  simp [visit, Linger.Session.Record.decode_encode]
+
+/-- …and one with no end record. -/
+theorem visit_none (readOnly : Bool) : visit readOnly none = if readOnly then [.show] else [.resume] :=
+  rfl
 
 end Linger.App.Recovery

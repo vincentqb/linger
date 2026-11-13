@@ -536,31 +536,21 @@ def run : IO UInt32 :=
     let savedCwd ← IO.FS.realPath e.dir
     expect (has (← drainStr boot2.fd 1500) savedCwd.toString) "fresh shell starts in the saved cwd"
     expect (has (← e.out #["get", "boot"]) "k=v") "labels survive the reboot"
-    -- a clean exit keeps the session as a result: its last screen stays saved, listed as
-    -- ended with status 0. The marker is an expansion, so the typed line cannot show it.
-    boot2.type "echo LAST-$((6*7)); exit\r"
+    -- a clean exit nobody sees keeps the session as a result: its last screen stays saved,
+    -- listed as ended with status 0. The marker is an expansion, so the typed line cannot show
+    -- it, and the program ends only once the client has left.
+    let trigger := s!"{e.dir}/boot.leave"
+    boot2.type s!"echo LAST-$((6*7)); exec sh -c 'while [ ! -e {trigger} ]; do sleep 0.1; done'\r"
+    let _ ← boot2.awaitNeedle "LAST-42"
+    boot2.bye
+    IO.FS.writeFile trigger ""
     let ended ← waitFor 5000 (return (← e.status "boot") == Status.exitedOk)
     let ckpts2 ← e.dirNames ".ckpt"
     expect
         (ended && (← e.field "boot" "exit") == some "0" && ckpts2 == ["boot.ckpt"] &&
           has (← e.out #["capture", "boot"]) "LAST-42")
-        s!"a clean exit keeps the last screen, listed as ended with status 0 ({ckpts2})"
-    boot2.bye (sendDetach := false)
-    -- writable attach resumes an ended session: its last screen, labels and directory, under
-    -- a fresh shell
-    let boot3 ← e.spawn #["attach", "boot"] cols rows
-    let replay3 ← IO.mkRef ByteArray.empty
-    let restored ← boot3.awaitText replay3 (hasText · "LAST-42") (ms := 5000)
-    expect
-        (restored &&
-          (←
-            waitFor 4000 do
-                return (← e.status "boot") != Status.exitedOk && (← e.info "boot" "pid").isSome) &&
-          has (← e.out #["get", "boot"]) "k=v")
-        "attach resumes an ended session with its last screen and labels"
-    boot3.type "exit\r"
-    let _ ← waitFor 5000 (return (← e.status "boot") == Status.exitedOk)
-    boot3.bye (sendDetach := false)
+        s!"a clean exit nobody sees keeps the last screen, listed as ended with status 0 \
+          ({ckpts2})"
     -- `resume` runs an ended session's program again without attaching and leaves a live one as
     -- it is; a name no session holds starts nothing
     let (resumedRc, _, _) ← e.cli #["resume", "boot"]
@@ -575,16 +565,31 @@ def run : IO UInt32 :=
           againRc == 0 &&
           (← e.info "boot" "pid") == pid)
         "resume runs an ended session's program again on its last screen, and leaves a live one as it is"
+    -- the resumed shell ends with nobody attached; the first attach shows its last screen and how
+    -- it ended, and once it leaves nothing of the session stays but its end record
+    let _ ← e.cli #["send", "boot", "exit\n"]
+    let _ ← waitFor 5000 (return (← e.status "boot") == Status.exitedOk)
+    let boot3 ← e.spawn #["attach", "boot"] cols rows
+    let shown ← boot3.awaitNeedle "LAST-42" (ms := 5000)
+    boot3.detach
+    let told ← drainStr boot3.fd hangMs
+    boot3.bye (sendDetach := false)
+    let (seenRc, _, _) ← e.cli #["wait", "boot"]
+    expect
+        (shown && has told "ended (status 0)" && (← e.dirNames ".ckpt") == [] &&
+          (← e.field "boot" "status").isNone &&
+          seenRc == 0)
+        "attach shows an ended session's last screen and how it ended, then discards it"
     let (missingRc, _, missingErr) ← e.cli #["resume", "nosuch"]
     expect
         (missingRc == 127 && has missingErr "no session 'nosuch'" &&
           !(← System.FilePath.pathExists s!"{e.dir}/nosuch.ckpt") &&
           !(← System.FilePath.pathExists s!"{e.dir}/nosuch.sock"))
         "resume of a name no session holds starts nothing and exits 127"
-    e.killAll #["boot"]
+    let (goneRc, _, _) ← e.cli #["kill", "boot"]
     let ckpts3 ← e.dirNames ".ckpt"
-    expect (ckpts3 == [] && !has (← e.out #["ls"]) "boot")
-        s!"kill discards an ended session's checkpoint ({ckpts3})"
+    expect (goneRc == 127 && ckpts3 == [] && !has (← e.out #["ls"]) "boot")
+        s!"a seen ending leaves kill nothing to discard ({ckpts3})"
     damagedChecks e
     durableChecks e
     -- ── the resumed pty is born at the CHECKPOINT's size, not a fixed 80x24 ────

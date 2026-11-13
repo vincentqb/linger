@@ -51,7 +51,7 @@ theorem rowStatus_unanswered (info : List (String × String)) (h : answered info
 theorem rowStatus_resumable : rowStatus .stale = Status.resumable := rfl
 
 /-- **An ended session is a result**: a saved row whose end record says its program ended shows
-`✓` for status 0 and `!` for any other, until `kill` discards it. -/
+`✓` for status 0 and `!` for any other, until the first attach shows it or `kill` discards it. -/
 theorem rowStatus_ended (status : Nat) :
     rowStatus (.ended status) = if status = 0 then Status.exitedOk else Status.exitedBad := by
   cases status <;> rfl

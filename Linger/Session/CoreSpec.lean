@@ -424,12 +424,22 @@ inductive Effect (Plan : Type) where
   | exit
   deriving Repr, DecidableEq
 
-/-- How an event ends the session, if it does: how the session ended, and whether its last
-screen stays saved. A program's own end leaves the session as its result, and a terminating signal
-to the daemon leaves it saved to resume; a kill discards it. -/
+/-- Whether a session's ending is seen as it happens, among these connections: one of them is
+attached, of either mode, and so is told how the session ended right after the screen it shows.
+A watcher is told the same ending as a typist, so it sees it too. A connection that only waits
+for the ending, as `wait` opens, hears the outcome but is shown no screen, and does not see it. -/
 @[expose]
-def Event.ends : Event → Option (Ending × Bool)
-  | .childExited outcome => some (.program outcome, true)
+def seenBy (roster : List Client) : Bool := roster.any (·.attached)
+
+/-- How an event ends the session, if it does, when `seen` says whether its ending is seen as it
+happens (`seenBy`): how the session ended, and whether its last screen stays saved. A program's
+own end leaves the session as its result exactly while nobody has seen it: seen as it happens, it
+is discarded as a kill discards it, and with nobody attached its last screen is saved until the
+first attach shows it (`Linger.App.Recovery.visit`). A terminating signal to the daemon leaves it
+saved to resume, which is no ending, seen or not; a kill discards it. -/
+@[expose]
+def Event.ends (seen : Bool) : Event → Option (Ending × Bool)
+  | .childExited outcome => some (.program outcome, !seen)
   | .stopped outcome => some (.program outcome, false)
   | .signal number => some (.saved number, true)
   | _ => none

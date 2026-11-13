@@ -1105,9 +1105,9 @@ theorem step_kill_stops_rejects_exit :
   simp at stopped
 
 theorem step_ended_reports (s : State) (ev : Event) :
-    (Effect.exit ∈ (Session.step s ev).2 ↔ ev.ends.isSome) ∧
+    (Effect.exit ∈ (Session.step s ev).2 ↔ (ev.ends (seenBy s.roster)).isSome) ∧
       ∀ e keep,
-        ev.ends = some (e, keep) →
+        ev.ends (seenBy s.roster) = some (e, keep) →
           ∃ front,
             (Session.step s ev).2 =
                 front ++
@@ -1124,16 +1124,20 @@ theorem step_ended_reports_rejects_status :
         (Effect.exit ∈
               ((fun s _ =>
                     (s,
-                      ([.send 0 (.exited 1), .record (.ended .unknown), .checkpoint, .exit] :
+                      ([.send 0 (.exited 1), .record (.ended .unknown), .dropCheckpoint, .exit] :
                         List (Effect Replay.Plan))))
                   s ev).2 ↔
-            ev.ends.isSome) ∧
+            (ev.ends
+                (seenBy
+                  ((fun (_ : State) => [({ id := 0, attached := true } : Client)]) s))).isSome) ∧
           ∀ e keep,
-            ev.ends = some (e, keep) →
+            ev.ends (seenBy ((fun (_ : State) => [({ id := 0, attached := true } : Client)]) s)) =
+                some (e, keep) →
               ∃ front,
                 ((fun s _ =>
                           (s,
-                            ([.send 0 (.exited 1), .record (.ended .unknown), .checkpoint, .exit] :
+                            ([.send 0 (.exited 1), .record (.ended .unknown), .dropCheckpoint,
+                                .exit] :
                               List (Effect Replay.Plan))))
                         s ev).2 =
                     front ++
@@ -1146,16 +1150,17 @@ theorem step_ended_reports_rejects_status :
                       e.told.map (Effect.send c.id) <:+: front) ∧
                   ((fun s _ =>
                           (s,
-                            ([.send 0 (.exited 1), .record (.ended .unknown), .checkpoint, .exit] :
+                            ([.send 0 (.exited 1), .record (.ended .unknown), .dropCheckpoint,
+                                .exit] :
                               List (Effect Replay.Plan))))
                         s ev).1.terminal =
                     s.terminal := by
   intro h
   obtain ⟨front, effects, -, -, heard, -⟩ :=
-    (h (State.boot (Vt.Vt.init 1 1) [] []) (.childExited .unknown)).2 (.program .unknown) true rfl
+    (h (State.boot (Vt.Vt.init 1 1) [] []) (.childExited .unknown)).2 (.program .unknown) false rfl
   have only :
-    [Effect.send 0 (.exited 1)] ++ [.record (.ended .unknown), .checkpoint, .exit] =
-      front ++ [.record (.ended .unknown), .checkpoint, .exit] :=
+    [Effect.send 0 (.exited 1)] ++ [.record (.ended .unknown), .dropCheckpoint, .exit] =
+      front ++ [.record (.ended .unknown), .dropCheckpoint, .exit] :=
     effects
   rw [← List.append_cancel_right only] at heard
   -- the ending's two messages cannot fit in the one the wrong daemon sends
@@ -1248,31 +1253,115 @@ theorem step_stopped_discards_rejects_save :
   rw [← List.append_cancel_right saved] at unsaved
   exact unsaved (List.mem_singleton_self _)
 
-theorem step_childExited_keeps (s : State) (o : Outcome) :
+theorem step_childExited_keeps (s : State) (o : Outcome)
+    (unseen : ∀ c ∈ s.roster, c.attached = false) :
     (∃ front,
         (Session.step s (.childExited o)).2 = front ++ [.checkpoint, .exit] ∧
           Effect.dropCheckpoint ∉ front) ∧
       (Session.step s (.childExited o)).1.terminal = s.terminal :=
-  Session.step_childExited_keeps s o
+  Session.step_childExited_keeps s o unseen
 
 theorem step_childExited_keeps_rejects_drop :
     ¬∀ (s : State) (o : Outcome),
-        (∃ front,
+        (∀ c ∈ s.roster, c.attached = false) →
+          (∃ front,
+              ((fun (s : State) (_ : Event) =>
+                        (s, ([.dropCheckpoint, .checkpoint, .exit] : List (Effect Replay.Plan))))
+                      s (.childExited o)).2 =
+                  front ++ [.checkpoint, .exit] ∧
+                Effect.dropCheckpoint ∉ front) ∧
             ((fun (s : State) (_ : Event) =>
-                      (s, ([.dropCheckpoint, .checkpoint, .exit] : List (Effect Replay.Plan))))
-                    s (.childExited o)).2 =
-                front ++ [.checkpoint, .exit] ∧
-              Effect.dropCheckpoint ∉ front) ∧
-          ((fun (s : State) (_ : Event) =>
-                  (s, ([.dropCheckpoint, .checkpoint, .exit] : List (Effect Replay.Plan))))
-                s (.childExited o)).1.terminal =
-            s.terminal := by
+                    (s, ([.dropCheckpoint, .checkpoint, .exit] : List (Effect Replay.Plan))))
+                  s (.childExited o)).1.terminal =
+              s.terminal := by
   intro h
-  obtain ⟨⟨front, effects, kept⟩, -⟩ := h (State.boot (Vt.Vt.init 1 1) [] []) .unknown
+  obtain ⟨⟨front, effects, kept⟩, -⟩ :=
+    h (State.boot (Vt.Vt.init 1 1) [] []) .unknown (by simp [State.roster, State.boot])
   have dropped : [Effect.dropCheckpoint] ++ [.checkpoint, .exit] = front ++ [.checkpoint, .exit] :=
     effects
   rw [← List.append_cancel_right dropped] at kept
   exact kept (List.mem_singleton_self _)
+
+theorem step_childExited_seen (s : State) (o : Outcome) {c : Client} (hc : c ∈ s.roster)
+    (attached : c.attached = true) :
+    (∃ front,
+        (Session.step s (.childExited o)).2 =
+            front ++ [.record (.ended o), .dropCheckpoint, .exit] ∧
+          Effect.checkpoint ∉ front ∧
+          ∀ c ∈ s.roster,
+            c.attached = true ∨ c.waiting = true →
+              (Ending.program o).told.map (Effect.send c.id) <:+: front) ∧
+      (Session.step s (.childExited o)).1.terminal = s.terminal :=
+  Session.step_childExited_seen s o hc attached
+
+theorem step_childExited_seen_rejects_keep :
+    ¬∀ (s : State) (o : Outcome) {c : Client},
+        c ∈ (fun (_ : State) => [({ id := 0, attached := true } : Client)]) s →
+          c.attached = true →
+          (∃ front,
+              ((fun (s : State) (_ : Event) =>
+                        (s,
+                          ([.record (.ended .unknown), .checkpoint, .exit] :
+                            List (Effect Replay.Plan))))
+                      s (.childExited o)).2 =
+                  front ++ [.record (.ended o), .dropCheckpoint, .exit] ∧
+                Effect.checkpoint ∉ front ∧
+                ∀ c ∈ (fun (_ : State) => [({ id := 0, attached := true } : Client)]) s,
+                  c.attached = true ∨ c.waiting = true →
+                    (Ending.program o).told.map (Effect.send c.id) <:+: front) ∧
+            ((fun (s : State) (_ : Event) =>
+                    (s,
+                      ([.record (.ended .unknown), .checkpoint, .exit] :
+                        List (Effect Replay.Plan))))
+                  s (.childExited o)).1.terminal =
+              s.terminal := by
+  intro h
+  obtain ⟨⟨front, effects, -⟩, -⟩ :=
+    h (State.boot (Vt.Vt.init 1 1) [] []) .unknown (c := { id := 0, attached := true }) (by simp)
+      rfl
+  have split :
+    ([] : List (Effect Replay.Plan)) ++ [.record (.ended .unknown), .checkpoint, .exit] =
+      front ++ [.record (.ended .unknown), .dropCheckpoint, .exit] :=
+    effects
+  simpa using (List.append_inj' split rfl).2
+
+theorem visit_result (afterSave : List UInt8 → Option (List UInt8)) (kept : Record.Kept afterSave)
+    (readOnly : Bool) (o : Outcome) (n : UInt8) (seen : Option Seen) :
+    App.Recovery.visit readOnly (afterSave (Record.encode (.ended o))) =
+        [.show, .tell o, .discard] ∧
+      App.Recovery.visit readOnly (afterSave (Record.encode (.saved n))) =
+        (if readOnly then [.show] else [.resume]) ∧
+      App.Recovery.visit readOnly (afterSave (Record.encode (.running seen))) =
+        (if readOnly then [.show] else [.resume]) ∧
+      App.Recovery.visit readOnly none = (if readOnly then [.show] else [.resume]) := by
+  rw [kept, kept, kept]
+  exact
+    ⟨App.Recovery.visit_ended readOnly o, App.Recovery.visit_saved readOnly n,
+      App.Recovery.visit_running readOnly seen, App.Recovery.visit_none readOnly⟩
+
+theorem visit_result_rejects_resume :
+    ¬∀ (afterSave : List UInt8 → Option (List UInt8)),
+        Record.Kept afterSave →
+          ∀ (readOnly : Bool) (o : Outcome) (n : UInt8) (seen : Option Seen),
+            (fun (readOnly : Bool) (_ : Option (List UInt8)) =>
+                    if readOnly then [App.Visit.Step.show] else [App.Visit.Step.resume])
+                  readOnly (afterSave (Record.encode (.ended o))) =
+                [.show, .tell o, .discard] ∧
+              (fun (readOnly : Bool) (_ : Option (List UInt8)) =>
+                    if readOnly then [App.Visit.Step.show] else [App.Visit.Step.resume])
+                  readOnly (afterSave (Record.encode (.saved n))) =
+                (if readOnly then [.show] else [.resume]) ∧
+              (fun (readOnly : Bool) (_ : Option (List UInt8)) =>
+                    if readOnly then [App.Visit.Step.show] else [App.Visit.Step.resume])
+                  readOnly (afterSave (Record.encode (.running seen))) =
+                (if readOnly then [.show] else [.resume]) ∧
+              (fun (readOnly : Bool) (_ : Option (List UInt8)) =>
+                    if readOnly then [App.Visit.Step.show] else [App.Visit.Step.resume])
+                  readOnly none =
+                (if readOnly then [.show] else [.resume]) := by
+  intro h
+  have shown := (h some (fun _ => rfl) false .unknown 0 none).1
+  simp at shown
 
 theorem record_answer (afterSave : List UInt8 → Option (List UInt8)) (kept : Record.Kept afterSave)
     (o : Outcome) (n : UInt8) (seen : Option Seen) (file : Option (List UInt8)) :
@@ -1525,7 +1614,8 @@ theorem run_refines_rejects_inert :
     @h Unit (fun _ world eff => (world, Driver.success .unknown eff)) .unknown (fun _ _ _ => rfl)
       { st := State.boot (Vt.Vt.init 1 1) [] [], world := () } [.childExited .unknown] rfl
   have ends :=
-    (Session.step_exit_iff (State.boot (Vt.Vt.init 1 1) [] []) (.childExited .unknown)).mpr rfl
+    (Session.step_exit_iff (State.boot (Vt.Vt.init 1 1) [] []) (.childExited .unknown) false).mpr
+      rfl
   cases handles with
   | exit => simp [Driver.inert] at stayed
   | next _ _ _ _ _ stays => exact stays ends

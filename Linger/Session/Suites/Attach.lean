@@ -70,10 +70,11 @@ def closeFeedback (e : Env) : IO Unit := do
         let after ← Linger.Session.Shell.Daemon.finishSaves after
         let clients := (Linger.Session.infoFields after.st).lookup "clients"
         if exiting then
-          -- the end saves the last screen once; the queued tick, which would save again, is
-          -- discarded with the rest of the queue
-          expect (after.exiting && (← saved.get) == 1 && (← dropped.get) == 0)
-              "child exit saves its last screen once and discards queued events"
+          -- the attached client saw the end, which deletes the checkpoint once; the queued
+          -- tick, which would save the pending change, is discarded with the rest of the queue
+          expect (after.exiting && (← saved.get) == 0 && (← dropped.get) == 1)
+              "child exit seen by an attached client deletes the checkpoint once and discards \
+                queued events"
         else
           expect (clients == some "0" && after.conns.isEmpty && (← saved.get) == 1)
               "detach-all removes the size owner and checkpoints the last detach"
@@ -132,6 +133,29 @@ def tcScript : String :=
     "  printf \"\\033[0m tcline-%d\\n\" $i\n" ++
     "  i=$((i+1))\n" ++
     "done\n"
+
+/-- `wait`, `info`, `ls` and `capture` see an ended session's status, not its screen: the result
+of `w5`, whose program ended while nobody was attached, stays listed until one attach shows its
+last screen and how its program ended, and is discarded once that client leaves, its end record
+still answering `wait`. -/
+private def unseenChecks (e : Env) : IO Unit := do
+  let _ ← e.cli #["capture", "w5"]
+  expect ((← e.status "w5") == .exitedBad)
+      "an ended session nobody saw stays listed after wait, info, ls and capture"
+  let looker ← e.spawn #["attach", "w5"]
+  let shown ← looker.awaitNeedle "exit 37"
+  looker.detach
+  let told ← drainStr looker.fd hangMs
+  let lookerRc ← looker.reap patienceMs
+  looker.bye (sendDetach := false)
+  let (afterRc, _, _) ← e.cli #["wait", "w5"]
+  expect
+      (shown && has told "ended (status 37)" && (← e.field "w5" "status").isNone &&
+        !(← System.FilePath.pathExists s!"{e.dir}/w5.ckpt") &&
+        (← e.info "w5" "pid").isNone &&
+        afterRc == 37)
+      s!"the first attach to an ended session shows its last screen and how it ended, and \
+        discards it once it leaves ({lookerRc}, {afterRc}, {told})"
 
 /-- A `find` result in a failure label: `-1` for absent. -/
 private def idxStr (o : Option Nat) : String := (o.map toString).getD "-1"
@@ -432,7 +456,8 @@ def run : IO UInt32 :=
     let receiver3 := (receiver.feed out3.toList).feed o3.toList
     expect (has receiver2.windowTitle "hostile-exit" && has receiver3.windowTitle "hostile-exit")
         "shell exit: both receivers hold the application's nonempty title"
-    -- 6. exit inside the shell ends the session and notifies clients
+    -- 6. exit inside the shell ends the session and notifies clients, who saw it end, so
+    -- nothing of it stays listed; its end record still answers `wait`
     c2.type "exit\r"
     -- Read both handbacks while the clients exit: Darwin discards a closed pty's unread
     -- output after about a second.
@@ -441,10 +466,11 @@ def run : IO UInt32 :=
     expect
         (←
           waitFor 4000 do
-              let status ← e.status "demo"
-              return (status == .exitedOk || status == .exitedBad) &&
-                  (← e.info "demo" "pid").isNone)
-        "shell exit ends the session, which stays listed as ended"
+              return (← e.field "demo" "status").isNone && (← e.info "demo" "pid").isNone &&
+                  !(← System.FilePath.pathExists s!"{e.dir}/demo.ckpt"))
+        "shell exit in an attached session ends it, and nothing of it stays listed"
+    let (seenRc, _, _) ← e.cli #["wait", "demo"]
+    expect (seenRc == 0) s!"a seen ending's record still answers wait (rc={seenRc})"
     let exit2 ← IO.ofExcept (← IO.wait drain2)
     let exit3 ← IO.ofExcept (← IO.wait drain3)
     let handed2 := receiver2.feed exit2.toList
@@ -492,6 +518,7 @@ def run : IO UInt32 :=
     expect (neverRc == 127 && has neverErr "no session") "wait on a name no session took exits 127"
     let (bothRc, _, _) ← e.cli #["wait", "w3", "w5"]
     expect (bothRc == 37) s!"wait reports the last of several sessions (rc={bothRc})"
+    unseenChecks e
     -- A time limit stops the wait with 124 and leaves the session running. Its program runs for
     -- 30 s, so a 124 says the limit, not the program, ended the wait, and the wait lasted at least
     -- the limit: load can only lengthen it.

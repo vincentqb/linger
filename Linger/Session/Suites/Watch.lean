@@ -107,6 +107,15 @@ def checkpointChecks (e : Env) : IO Unit := do
           (← e.status "done") == .exitedBad)
         s!"a saved view of an ended session shows its ending in the title ({title})"
     done.detach
+    -- a watcher is shown the same ending, so it has seen it: once it leaves, the session is
+    -- discarded, and its end record stays
+    let told ← drainStr done.fd hangMs
+    expect
+        (has told "ended (status 3)" && (← e.field "done" "status").isNone &&
+          !(← System.FilePath.pathExists s!"{e.dir}/done.ckpt") &&
+          (← System.FilePath.pathExists s!"{e.dir}/done.end"))
+        s!"a watcher that leaves an ended session's view discards it, and its record stays \
+          ({told})"
   finally
     done.bye
   e.killAll #["done"]

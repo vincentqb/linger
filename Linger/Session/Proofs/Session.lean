@@ -381,11 +381,12 @@ theorem conclude_effects (s : State) (ending : Ending) (keep : Bool) :
       flush ++ notify ++ closes ++
         [.record ending.record, if keep then .checkpoint else .dropCheckpoint, .exit] := rfl
 
-/-- A program's own end ends the session keeping it, as its result. -/
+/-- A program's own end ends the session keeping it, as its result, exactly when nobody attached
+sees it end. -/
 theorem step_childExited_effects (s : State) (outcome : Outcome) :
-    (step s (.childExited outcome)).2 = (conclude s (.program outcome) true).2 := rfl
+    (step s (.childExited outcome)).2 = (conclude s (.program outcome) (!seenBy s.roster)).2 := rfl
 
-/-- A stopped session ends the same way, discarding itself where an ended one is kept. -/
+/-- A stopped session ends the same way, discarding itself where an unseen ended one is kept. -/
 theorem step_stopped_effects (s : State) (outcome : Outcome) :
     (step s (.stopped outcome)).2 = (conclude s (.program outcome) false).2 := rfl
 
@@ -477,23 +478,54 @@ theorem front_quiet {front : List (Effect Plan)}
     rcases only _ h with ⟨_, _, he⟩ | ⟨_, he⟩ <;>
     cases he
 
-/-- **An ended session is a result**: when the program ends, the daemon saves the session's
-last screen, as the program left it, just before it exits, and deletes nothing. So the session
-stays listed with how its program ended, and `capture` shows what it left, until `kill`
-discards it; `kill` itself deletes the checkpoint (`onMsg_kill`). -/
-theorem step_childExited_keeps (s : State) (o : Outcome) :
+/-- Nobody attached sees a session end. -/
+theorem seenBy_false {roster : List Client} (unseen : ∀ c ∈ roster, c.attached = false) :
+    seenBy roster = false := by
+  simp only [seenBy, List.any_eq_false]
+  intro c hc
+  simp [unseen c hc]
+
+/-- An attached client sees a session end. -/
+theorem seenBy_true {roster : List Client} {c : Client} (hc : c ∈ roster)
+    (attached : c.attached = true) : seenBy roster = true := List.any_eq_true.mpr ⟨c, hc, attached⟩
+
+/-- **An unseen ending is a result**: when the program ends with nobody attached, the daemon saves
+the session's last screen, as the program left it, just before it exits, and deletes nothing. So
+the session stays listed with how its program ended, and `capture` shows what it left, until the
+first attach shows it or `kill` discards it; `kill` itself deletes the checkpoint
+(`onMsg_kill`). -/
+theorem step_childExited_keeps (s : State) (o : Outcome)
+    (unseen : ∀ c ∈ s.roster, c.attached = false) :
     (∃ front,
         (step s (.childExited o)).2 = front ++ [.checkpoint, .exit] ∧
           Effect.dropCheckpoint ∉ front) ∧
       (step s (.childExited o)).1.terminal = s.terminal := by
   obtain ⟨front, effects, only, -⟩ := conclude_shape s (.program o) true
   refine ⟨⟨front ++ [.record (.ended o)], ?_, ?_⟩, rfl⟩
-  · rw [step_childExited_effects, effects]
+  · rw [step_childExited_effects, seenBy_false unseen, Bool.not_false, effects]
     simp [Ending.record]
   · intro h
     rcases List.mem_append.mp h with h | h
     · exact (front_quiet only).2.1 h
     · simp at h
+
+/-- **A seen ending leaves nothing**: when the program ends while a client is attached, of
+either mode, every client attached or waiting is told how it ended, and then the session ends as
+a kill ends one: its end record says how the program ended, its checkpoint is deleted and nothing
+before that saves one. -/
+theorem step_childExited_seen (s : State) (o : Outcome) {c : Client} (hc : c ∈ s.roster)
+    (attached : c.attached = true) :
+    (∃ front,
+        (step s (.childExited o)).2 = front ++ [.record (.ended o), .dropCheckpoint, .exit] ∧
+          Effect.checkpoint ∉ front ∧
+          ∀ c ∈ s.roster,
+            c.attached = true ∨ c.waiting = true →
+              (Ending.program o).told.map (Effect.send c.id) <:+: front) ∧
+      (step s (.childExited o)).1.terminal = s.terminal := by
+  obtain ⟨front, effects, only, heard⟩ := conclude_shape s (.program o) false
+  refine ⟨⟨front, ?_, (front_quiet only).1, heard⟩, rfl⟩
+  rw [step_childExited_effects, seenBy_true hc attached, Bool.not_true, effects]
+  rfl
 
 /-- **A killed session is discarded**: once the daemon has stopped its program, the session ends
 as one whose program ended by itself, but its last effect before exit deletes its checkpoint, and
@@ -2959,7 +2991,8 @@ theorem step_bytes_no_exit (s : State) (id : Nat) (chunk : List UInt8) :
 /-- **A session ends only through an ending**: an event stops the daemon exactly when it ends the
 session (`Event.ends`): the end of the program, by itself or once the daemon stopped it, or a stop
 signal to the daemon. -/
-theorem step_exit_iff (s : State) (ev : Event) : Effect.exit ∈ (step s ev).2 ↔ ev.ends.isSome := by
+theorem step_exit_iff (s : State) (ev : Event) (seen : Bool) :
+    Effect.exit ∈ (step s ev).2 ↔ (ev.ends seen).isSome := by
   constructor
   · intro h
     cases ev with
@@ -2995,9 +3028,9 @@ decides, and the exit; before the tail nothing saves or deletes the checkpoint, 
 attached or waiting hears how the session ended, and the terminal the ending saves is the one it
 found. -/
 theorem step_ended_reports (s : State) (ev : Event) :
-    (Effect.exit ∈ (step s ev).2 ↔ ev.ends.isSome) ∧
+    (Effect.exit ∈ (step s ev).2 ↔ (ev.ends (seenBy s.roster)).isSome) ∧
       ∀ e keep,
-        ev.ends = some (e, keep) →
+        ev.ends (seenBy s.roster) = some (e, keep) →
           ∃ front,
             (step s ev).2 =
                 front ++
@@ -3008,7 +3041,7 @@ theorem step_ended_reports (s : State) (ev : Event) :
               (∀ c ∈ s.roster,
                 c.attached = true ∨ c.waiting = true → e.told.map (Effect.send c.id) <:+: front) ∧
               (step s ev).1.terminal = s.terminal := by
-  refine ⟨step_exit_iff s ev, fun e keep ends => ?_⟩
+  refine ⟨step_exit_iff s ev _, fun e keep ends => ?_⟩
   have shaped (front : List (Effect Plan))
     (only : ∀ eff ∈ front, (∃ id m, eff = .send id m) ∨ ∃ id, eff = .close id) :
     Effect.checkpoint ∉ front ∧ Effect.dropCheckpoint ∉ front :=
@@ -3017,7 +3050,7 @@ theorem step_ended_reports (s : State) (ev : Event) :
   | childExited o =>
     simp only [Event.ends, Option.some.injEq, Prod.mk.injEq] at ends
     obtain ⟨rfl, rfl⟩ := ends
-    obtain ⟨front, effects, only, heard⟩ := conclude_shape s (.program o) true
+    obtain ⟨front, effects, only, heard⟩ := conclude_shape s (.program o) (!seenBy s.roster)
     exact ⟨front, effects, (shaped front only).1, (shaped front only).2, heard, rfl⟩
   | stopped o =>
     simp only [Event.ends, Option.some.injEq, Prod.mk.injEq] at ends
@@ -3809,7 +3842,7 @@ theorem step_resizePty_source (s : State) (ev : Event) (cols rows : UInt32)
     · split at h <;> simp at h
     · obtain ⟨_, _, he⟩ := broadcast_sends _ _ _ h
       cases he
-  | childExited o => exact absurd resized (conclude_no_resize s (.program o) true cols rows)
+  | childExited o => exact absurd resized (conclude_no_resize s (.program o) _ cols rows)
   | stopped o => exact absurd resized (conclude_no_resize s (.program o) false cols rows)
   | signal n =>
     rw [step_signal_effects] at resized

@@ -630,9 +630,10 @@ def step (s : State) (ev : Event) : State × List (Effect Plan) :=
         lookSeq := if s.clients.any (·.attached) then s.outSeq + 1 else s.lookSeq },
       (if r.replies.isEmpty then [] else [.writePty r.replies]) ++ broadcast s r.visible)
   | .childExited outcome =>
-    -- an ended session is a result: its last screen is saved, and stays until `kill`
-    -- discards it or a writable attach resumes it
-    conclude s (.program outcome) true
+    -- an ended session is a result until someone sees it: told to an attached client, it is
+    -- discarded as a kill discards it; with nobody attached its last screen is saved, until the
+    -- first attach shows it
+    conclude s (.program outcome) (!seenBy s.clients)
   | .stopped outcome =>
     -- a session the daemon stopped, as `kill` asks, ends the same way and is discarded
     conclude s (.program outcome) false

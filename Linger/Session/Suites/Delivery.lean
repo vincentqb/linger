@@ -371,14 +371,15 @@ def childProbe (trigger : String) : IO UInt32 := do
   return 7
 
 /-- Run the actual serving loop in a separate process with a private state dir.
-The checkpoint hook signals child exit when it saves the ended session's last screen, before
-normal transport cleanup. -/
+The checkpoint hook signals child exit when it deletes the ended session's checkpoint, which the
+attached reader saw end, before normal transport cleanup. -/
 def serveProbe (dir : String) : IO UInt32 := do
   let bin ← IO.appPath
   let saveEnded := fun (st : Session.State) => do
     if ((Session.infoFields st).lookup "exit").isSome then
-      IO.FS.writeFile s!"{dir}/exited" ""
-  serve "tail" dir [bin.toString, "--delivery-child", s!"{dir}/go"] saveEnded (pure ())
+      IO.FS.writeFile s!"{dir}/saved" ""
+  serve "tail" dir [bin.toString, "--delivery-child", s!"{dir}/go"] saveEnded
+      (IO.FS.writeFile s!"{dir}/exited" "")
       (fun _ => pure (.ok (some (Terminal.Vt.Vt.init 20 5, dir, []))))
       { load := pure none, save := fun _ => pure (), restore := fun _ => pure () }
   return 0
@@ -416,7 +417,8 @@ private def serveTail (dir : String) : IO Unit := do
     -- Wait for the daemon to observe EOF while the client reads no bytes.
     IO.FS.writeFile s!"{dir}/go" ""
     let exited ← waitFor 15000 (System.FilePath.pathExists s!"{dir}/exited")
-    expect exited "delivery/serve/child-exit-observed"
+    expect (exited && !(← System.FilePath.pathExists s!"{dir}/saved"))
+        "delivery/serve/child-exit-observed"
     let deadline := (← IO.monoMsNow) + 15000
     while !got.eof && (← IO.monoMsNow) < deadline do
       got ← receive fd got
