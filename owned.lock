@@ -1,11 +1,11 @@
 2387718826936879436 lakefile.lean
 15944522727970333075 lake-manifest.json
 14208040065456890848 lean-toolchain
-6029243788373777114 Challenge.lean
+7851689773104637807 Challenge.lean
 7442030646809985522 Linger/Os/CoreSpec.lean
 5074205210777529219 Linger/Session/CoreSpec.lean
 2393769377848857612 Linger/Target/CoreSpec.lean
-5419052327869596746 Linger/Display/CoreSpec.lean
+3356003414826553513 Linger/Display/CoreSpec.lean
 12963758080761743789 Linger/App/CoreSpec.lean
 15990446918557346111 Linger/Import/CoreSpec.lean
 18429691754425580637 Linger/Target/WorldSpec.lean

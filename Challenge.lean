@@ -60,8 +60,10 @@ notification since you looked, from a program still running, `⣷` output right 
 then it stopped, `⣀` nothing new since you looked, `✓` ended with status 0, `✗` ended any other
 way, `~` saved with no daemon and `?` no answer; a program waiting for you outranks one printing,
 and titles and `ls --summary` count `⚑`, `⣿`, `✗` and `?`. Its section follows the ten parts, with
-the titles, listings and selector views that show statuses: a view lists `⚑`, then `?`, `✗` and
-`⣿`, first, and a running session's row keeps its place whether it is printing or quiet. A session
+the titles, listings and selector views that show statuses: a view ranks rows by what needs you
+to act, `⚑`, then `✗` and `?`, then `⣿`, first, then the running sessions, then `✓` and `~`, so
+no row that ended well or can only be resumed sits above a live one, and a running session's row
+keeps its place whether it is printing or quiet. A session
 asks exactly while its program has rung the bell or posted a notification since the session was
 last looked at: output with nobody attached asks as the terminal package's mediator hears it, a
 look, an attach, a capture or output while a client is attached, clears the ask, and nothing else
@@ -3076,6 +3078,24 @@ theorem sort_keeps_place_rejects_activity :
               ((status x = .working ∨ status x = .idle) ∧
                 (status' x = .working ∨ status' x = .idle))) →
           View.byActivity status rows = View.byActivity status' rows := by
+  sorry
+
+theorem sort_live_above_done {α : Type} (status : α → Status.Status) (rows first rest : List α)
+    (split : View.sort status rows = first ++ rest) (x : α) (above : x ∈ first)
+    (ended : status x = .exitedOk ∨ status x = .resumable) (y : α) (below : y ∈ rest) :
+    ¬(status y = .asks ∨ status y = .wantsYou ∨ status y = .working ∨ status y = .idle) := by sorry
+
+@[kills sort_live_above_done]
+theorem sort_live_above_done_rejects_done_above :
+    ¬∀ {α : Type} (status : α → Status.Status) (rows first rest : List α),
+        View.doneAboveLive status rows = first ++ rest →
+          ∀ (x : α),
+            x ∈ first →
+              (status x = .exitedOk ∨ status x = .resumable) →
+              ∀ (y : α),
+                y ∈ rest →
+                  ¬(status y = .asks ∨
+                      status y = .wantsYou ∨ status y = .working ∨ status y = .idle) := by
   sorry
 
 theorem groups_exact (keys : List String) :

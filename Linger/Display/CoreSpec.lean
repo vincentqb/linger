@@ -230,4 +230,15 @@ def View.byActivity {α : Type} (status : α → Status.Status) (rows : List α)
         .resumable].flatMap
     fun st => rows.filter fun x => status x == st
 
+/-- A wrong order: the one before views ranked by what needs you to act, `⚑ ? ✗ ⣿`, then `✓`,
+the running sessions, `⣷` and `⣀` together, then `~`, so a session that ended well sits above
+the live ones. The headline that no row that ended well or can only be resumed sits above a live
+one is shown to reject it. -/
+@[expose]
+def View.doneAboveLive {α : Type} (status : α → Status.Status) (rows : List α) : List α :=
+  ([[Status.Status.asks], [.unknown], [.exitedBad], [.wantsYou], [.exitedOk], [.working, .idle],
+          [.resumable]] :
+        List (List Status.Status)).flatMap
+    fun place => rows.filter fun x => place.contains (status x)
+
 end Linger.Display

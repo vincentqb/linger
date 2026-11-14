@@ -5,7 +5,8 @@ import all Linger.Display.CoreCode.Status
 
 /-! # Views of many sessions — nothing that needs you is hidden, and every count adds up
 
-A view's order lists every place once, those that ask for someone first, and a running session
+A view's order lists every place once, those that ask for someone first and those whose session
+ended well or can only be resumed last, and a running session
 has one place whether it is printing or quiet; sorting by it loses no row, keeps the listing's
 order within a place and moves no row whose session only starts or stops printing. Groups count exactly and add up to the
 rows they sum up, a group's name starts every member's name, and the depth names are cut at is
@@ -86,9 +87,9 @@ theorem sort_attention_first {α : Type} (status : α → Status) (rows : List �
       sort status rows = first ++ rest ∧
         (∀ x ∈ first, status x ∈ Status.attention) ∧ ∀ x ∈ rest, status x ∉ Status.attention := by
   refine
-    ⟨[Status.asks, .unknown, .exitedBad, .wantsYou].flatMap fun st =>
+    ⟨[Status.asks, .exitedBad, .unknown, .wantsYou].flatMap fun st =>
         rows.filter fun x => place (status x) == st,
-      [Status.exitedOk, .working, .resumable].flatMap fun st =>
+      [Status.working, .exitedOk, .resumable].flatMap fun st =>
         rows.filter fun x => place (status x) == st,
       ?_, ?_, ?_⟩
   · rw [← List.flatMap_append]
@@ -106,6 +107,60 @@ theorem sort_attention_first {α : Type} (status : α → Status) (rows : List �
     rw [← place_attention (status x), heq]
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hst
     rcases hst with rfl | rfl | rfl <;> simp [Status.attention]
+
+/-- A status is done when its session ended well or can only be resumed: `✓` or `~`. -/
+def done (st : Status) : Bool := st == .exitedOk || st == .resumable
+
+/-- A view lists every row whose session is still to be done with before every row whose session
+ended well or can only be resumed. -/
+theorem sort_done_last {α : Type} (status : α → Status) (rows : List α) :
+    ∃ first rest,
+      sort status rows = first ++ rest ∧
+        (∀ x ∈ first, done (status x) = false) ∧ ∀ x ∈ rest, done (status x) = true := by
+  refine
+    ⟨[Status.asks, .exitedBad, .unknown, .wantsYou, .working].flatMap fun st =>
+        rows.filter fun x => place (status x) == st,
+      [Status.exitedOk, .resumable].flatMap fun st => rows.filter fun x => place (status x) == st,
+      ?_, ?_, ?_⟩
+  · rw [← List.flatMap_append]
+    rfl
+  · intro x hx
+    simp only [List.mem_flatMap, List.mem_filter, beq_iff_eq] at hx
+    obtain ⟨st, hst, _, heq⟩ := hx
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hst
+    revert heq
+    cases status x <;> rcases hst with rfl | rfl | rfl | rfl | rfl <;> simp [place, done]
+  · intro x hx
+    simp only [List.mem_flatMap, List.mem_filter, beq_iff_eq] at hx
+    obtain ⟨st, hst, _, heq⟩ := hx
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hst
+    revert heq
+    cases status x <;> rcases hst with rfl | rfl <;> simp [place, done]
+
+/-- **What ended well or can only be resumed comes after what is live**: wherever a view's rows
+are cut in two, a row above the cut whose session exited 0 or can only be resumed leaves no live
+row, `⚑`, `⣿`, `⣷` or `⣀`, below it. -/
+theorem sort_live_above_done {α : Type} (status : α → Status) (rows first rest : List α)
+    (split : sort status rows = first ++ rest) (x : α) (above : x ∈ first)
+    (ended : status x = .exitedOk ∨ status x = .resumable) (y : α) (below : y ∈ rest) :
+    ¬(status y = .asks ∨ status y = .wantsYou ∨ status y = .working ∨ status y = .idle) := by
+  obtain ⟨front, back, whole, live, settled⟩ := sort_done_last status rows
+  rw [whole] at split
+  have hx : done (status x) = true := by rcases ended with h | h <;> simp [h, done]
+  rcases List.append_eq_append_iff.mp split with ⟨mid, hfirst, hback⟩ | ⟨mid, hfront, hrest⟩
+  · have hy :=
+      settled y
+        (by
+          rw [hback]; exact List.mem_append_right _ below)
+    revert hy
+    cases status y <;> simp [done]
+  · exact
+      absurd hx
+        (by
+          rw [live x
+              (by
+                rw [hfront]; exact List.mem_append_left _ above)];
+          simp)
 
 /-- Filtering by one status after filtering by distinct statuses keeps that status's rows when
 it is among them, and none otherwise. -/

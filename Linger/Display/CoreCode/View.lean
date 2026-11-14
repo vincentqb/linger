@@ -8,7 +8,8 @@ public section
 /-! # Linger.Display.View — what a view of many sessions shows first, and how it sums up the rest
 
 **Nothing that needs you is hidden, and every count adds up.** A view lists the statuses that
-ask for someone first (`sort_attention_first`), keeps the listing's order within a place
+ask for someone first (`sort_attention_first`), no row that ended well or can only be resumed
+above a live one (`sort_live_above_done`), keeps the listing's order within a place
 (`sort_stable`) and loses no row (`sort_perm`). A running session has one place whether it is
 printing or quiet, so its row stays where it is when it starts or stops (`sort_keeps_place`),
 and a row moves only when its session starts or stops needing you, ends or can only be resumed.
@@ -29,10 +30,11 @@ def place : Status → Status
   | .idle => .working
   | st => st
 
-/-- The order a view shows places in, those that ask for someone first: `⚑ ? ✗ ⣿`, then `✓`, the
-running sessions, `⣷` and `⣀` together, then `~`. A program waiting for you comes before
-everything. -/
-def order : List Status := [.asks, .unknown, .exitedBad, .wantsYou, .exitedOk, .working, .resumable]
+/-- The order a view shows places in, by what needs you to act: `⚑`, then `✗` and `?`, then `⣿`,
+then the running sessions, `⣷` and `⣀` together, then `✓`, then `~`. A program waiting for you
+comes before everything, and a session that ended well or can only be resumed comes after every
+live one. -/
+def order : List Status := [.asks, .exitedBad, .unknown, .wantsYou, .working, .exitedOk, .resumable]
 
 /-- Rows in `order` of their status's `place`, each place's rows in listing order. -/
 def sort {α : Type} (status : α → Status) (rows : List α) : List α :=

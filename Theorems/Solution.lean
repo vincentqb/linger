@@ -3136,6 +3136,27 @@ theorem sort_keeps_place_rejects_activity :
         intro x _; cases x <;> simp)
   exact absurd kept (by decide)
 
+theorem sort_live_above_done {α : Type} (status : α → Status.Status) (rows first rest : List α)
+    (split : View.sort status rows = first ++ rest) (x : α) (above : x ∈ first)
+    (ended : status x = .exitedOk ∨ status x = .resumable) (y : α) (below : y ∈ rest) :
+    ¬(status y = .asks ∨ status y = .wantsYou ∨ status y = .working ∨ status y = .idle) :=
+  View.sort_live_above_done status rows first rest split x above ended y below
+
+theorem sort_live_above_done_rejects_done_above :
+    ¬∀ {α : Type} (status : α → Status.Status) (rows first rest : List α),
+        View.doneAboveLive status rows = first ++ rest →
+          ∀ (x : α),
+            x ∈ first →
+              (status x = .exitedOk ∨ status x = .resumable) →
+              ∀ (y : α),
+                y ∈ rest →
+                  ¬(status y = .asks ∨
+                      status y = .wantsYou ∨ status y = .working ∨ status y = .idle) := by
+  intro h
+  exact
+    h (fun b : Bool => if b then .exitedOk else .working) [true, false] [true] [false] (by decide)
+      true (by simp) (by simp) false (by simp) (by simp)
+
 theorem groups_exact (keys : List String) :
     ((View.groups keys).map (·.2)).sum = keys.length ∧
       ∀ (k : String) (n : Nat), (k, n) ∈ View.groups keys → n = keys.count k :=
