@@ -286,7 +286,8 @@ Check Pty.Foreground reportedForeground seenForeground := do
 -- holds: that process ignores SIGHUP, as a daemon does, and the program, a shell, finds its
 -- terminal on descriptors 0, 1 and 2, no other descriptor from 3 to 64 open, and SIGHUP and
 -- SIGINT able to reach it; on Linux, once it is `sleep`, which changes none of it, its `/proc`
--- entry shows no signal ignored or blocked and only descriptors 0, 1 and 2, all its terminal.
+-- entry shows no signal ignored or blocked and, once `sleep` has closed what it opens as it
+-- starts, only descriptors 0, 1 and 2, all its terminal.
 -- The runner holds no descriptor a start could pass on, so the descriptors' reset goes untested.
 Check Spawn.Clean started := do
   IO.FS.withTempDir fun dir => do
@@ -327,13 +328,22 @@ Check Spawn.Clean started := do
               masks.all fun line =>
                 ((line.splitOn ":").getD 1 "").trimAscii.toString.all (· == '0') do
             refute s!"a started program finds signals ignored or blocked: {masks}"
-          let fds := ((← System.FilePath.readDir s!"{entry}/fd").map (·.fileName)).qsort (· < ·)
-          let targets ←
-            fds.mapM fun fd => do
-                return ((← (IO.FS.realPath s!"{entry}/fd/{fd}").toBaseIO).toOption.map
-                        (·.toString)).getD
-                    ""
-          unless fds.toList == ["0", "1", "2"] && targets.all (some · == targets[0]?) do
+          -- What `sleep` opens itself while it starts, its libraries and the locale archive,
+          -- closes before it sleeps, and what it inherited stays open: so the check waits for
+          -- the descriptors to be its terminal's alone, and a start that passed one on fails.
+          let held : IO (Array String × Array String) := do
+            let fds := ((← System.FilePath.readDir s!"{entry}/fd").map (·.fileName)).qsort (· < ·)
+            let targets ←
+              fds.mapM fun fd => do
+                  return ((← (IO.FS.realPath s!"{entry}/fd/{fd}").toBaseIO).toOption.map
+                          (·.toString)).getD
+                      ""
+            return (fds, targets)
+          let clean : IO Bool := do
+            let (fds, targets) ← held
+            return fds.toList == ["0", "1", "2"] && targets.all (some · == targets[0]?)
+          unless ← within ((← monotonicMs) + 10000) clean do
+            let (fds, targets) ← held
             refute s!"a started program holds descriptors {fds} on {targets}"
       finally
         stop pid master
