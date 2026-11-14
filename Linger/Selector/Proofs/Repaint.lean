@@ -117,8 +117,8 @@ private theorem lineRow_rowOk (cols : Nat) (line : List (String × List (List Na
 
 private theorem picture_rowOk (state : State) (snapshot : Snapshot)
     (statusOf : String → Linger.Display.Status.Status) (loaded withColor savedTmux : Bool)
-    (cols rows : Nat) :
-    ∀ row ∈ picture state snapshot statusOf loaded withColor savedTmux cols rows,
+    (remoteAge : Option Nat) (cols rows : Nat) :
+    ∀ row ∈ picture state snapshot statusOf loaded withColor savedTmux remoteAge cols rows,
       RowOk cols row := by
   intro row hrow
   simp only [picture, List.mem_map] at hrow
@@ -143,9 +143,11 @@ private theorem joinCRLF_eq :
 /-- The frame is a repaint's paint of its picture. -/
 private theorem frame_eq (state : State) (snapshot : Snapshot)
     (statusOf : String → Linger.Display.Status.Status) (loaded withColor savedTmux : Bool)
-    (cols rows : Nat) :
-    frame state snapshot statusOf loaded withColor savedTmux cols rows =
-      gridAnsi (picture state snapshot statusOf loaded withColor savedTmux cols rows).toArray := by
+    (remoteAge : Option Nat) (cols rows : Nat) :
+    frame state snapshot statusOf loaded withColor savedTmux remoteAge cols rows =
+      gridAnsi
+        (picture state snapshot statusOf loaded withColor savedTmux remoteAge cols
+            rows).toArray := by
   rw [gridAnsi_eq, frame, threadRows_eq, joinCRLF_eq]
   simp [csiPlain]
 
@@ -450,36 +452,37 @@ character sets: written over the paint of one frame, the update shows exactly th
 next; it leaves alone every row the two frames share, whatever that row holds; and it costs, for
 each row that differs, a cursor move and the row's paint. -/
 theorem repaints_changes (sa sb : State) (na nb : Snapshot)
-    (fa fb : String → Linger.Display.Status.Status) (la ca ta lb cb tb : Bool) (v : Vt)
-    (hv : Live Vt.init Vt.feed Vt.resize Vt.quiesce Vt.Decodable v) (between : v.atBoundary = true)
-    (replacing : v.getModes.insert = false) (wraps : v.getModes.wrap = true)
-    (absolute : v.getModes.origin = false) (top : (stick v).top = 0)
-    (bottom : (stick v).bot = v.rowCount - 1) (ascii0 : (stick v).g0 = false)
-    (ascii1 : (stick v).g1 = false) :
+    (fa fb : String → Linger.Display.Status.Status) (la ca ta lb cb tb : Bool) (aa ab : Option Nat)
+    (v : Vt) (hv : Live Vt.init Vt.feed Vt.resize Vt.quiesce Vt.Decodable v)
+    (between : v.atBoundary = true) (replacing : v.getModes.insert = false)
+    (wraps : v.getModes.wrap = true) (absolute : v.getModes.origin = false)
+    (top : (stick v).top = 0) (bottom : (stick v).bot = v.rowCount - 1)
+    (ascii0 : (stick v).g0 = false) (ascii1 : (stick v).g1 = false) :
     (∀ y < v.rowCount,
-        ((v.feed (frame sa na fa la ca ta v.colCount v.rowCount)).feed
-                (update (frameRows sa na fa la ca ta v.colCount v.rowCount)
-                  (frameRows sb nb fb lb cb tb v.colCount v.rowCount))).getRow
+        ((v.feed (frame sa na fa la ca ta aa v.colCount v.rowCount)).feed
+                (update (frameRows sa na fa la ca ta aa v.colCount v.rowCount)
+                  (frameRows sb nb fb lb cb tb ab v.colCount v.rowCount))).getRow
             y =
-          (v.feed (frame sb nb fb lb cb tb v.colCount v.rowCount)).getRow y) ∧
+          (v.feed (frame sb nb fb lb cb tb ab v.colCount v.rowCount)).getRow y) ∧
       (∀ y < v.rowCount,
-        (frameRows sa na fa la ca ta v.colCount v.rowCount)[y]? =
-            (frameRows sb nb fb lb cb tb v.colCount v.rowCount)[y]? →
+        (frameRows sa na fa la ca ta aa v.colCount v.rowCount)[y]? =
+            (frameRows sb nb fb lb cb tb ab v.colCount v.rowCount)[y]? →
           (v.feed
-                  (update (frameRows sa na fa la ca ta v.colCount v.rowCount)
-                    (frameRows sb nb fb lb cb tb v.colCount v.rowCount))).getRow
+                  (update (frameRows sa na fa la ca ta aa v.colCount v.rowCount)
+                    (frameRows sb nb fb lb cb tb ab v.colCount v.rowCount))).getRow
               y =
             v.getRow y) ∧
-      (update (frameRows sa na fa la ca ta v.colCount v.rowCount)
-            (frameRows sb nb fb lb cb tb v.colCount v.rowCount)).length ≤
-        ((List.range (frameRows sb nb fb lb cb tb v.colCount v.rowCount).length).map fun y =>
+      (update (frameRows sa na fa la ca ta aa v.colCount v.rowCount)
+            (frameRows sb nb fb lb cb tb ab v.colCount v.rowCount)).length ≤
+        ((List.range (frameRows sb nb fb lb cb tb ab v.colCount v.rowCount).length).map fun y =>
             if
-                (frameRows sa na fa la ca ta v.colCount v.rowCount)[y]? =
-                  (frameRows sb nb fb lb cb tb v.colCount v.rowCount)[y]? then
+                (frameRows sa na fa la ca ta aa v.colCount v.rowCount)[y]? =
+                  (frameRows sb nb fb lb cb tb ab v.colCount v.rowCount)[y]? then
               0
             else
               (Linger.Display.digits (y + 1)).length + 5 +
-                ((frameRows sb nb fb lb cb tb v.colCount v.rowCount)[y]?.getD []).length).sum := by
+                ((frameRows sb nb fb lb cb tb ab v.colCount v.rowCount)[y]?.getD
+                    []).length).sum := by
   have good := good_of_liveReachable hv
   have hc : Canon v.cols v.rows v := canon_of_live hv between replacing wraps absolute ascii0 ascii1
   have hpos : 0 < v.cols := good.colsPos
@@ -488,35 +491,35 @@ theorem repaints_changes (sa sb : State) (na nb : Snapshot)
   have hR : 1 ≤ v.rows := good.rowsPos
   have hRle : v.rows ≤ 1000 := good.rowsLe
   have hlen :
-    ∀ (s : State) (n : Snapshot) (f : String → Linger.Display.Status.Status) (l c t : Bool),
-      (picture s n f l c t v.colCount v.rowCount).length = v.rows := by
-    intro s n f l c t
+    ∀ (s : State) (n : Snapshot) (f : String → Linger.Display.Status.Status) (l c t : Bool)
+      (a : Option Nat), (picture s n f l c t a v.colCount v.rowCount).length = v.rows := by
+    intro s n f l c t a
     rw [picture_length]
     show max 1 v.rows = v.rows
     omega
   have hok :
-    ∀ (s : State) (n : Snapshot) (f : String → Linger.Display.Status.Status) (l c t : Bool),
-      ∀ g ∈ picture s n f l c t v.colCount v.rowCount, RowOk v.cols g :=
-    fun s n f l c t => picture_rowOk s n f l c t v.colCount v.rowCount
+    ∀ (s : State) (n : Snapshot) (f : String → Linger.Display.Status.Status) (l c t : Bool)
+      (a : Option Nat), ∀ g ∈ picture s n f l c t a v.colCount v.rowCount, RowOk v.cols g :=
+    fun s n f l c t a => picture_rowOk s n f l c t a v.colCount v.rowCount
   have hrowsA :
-    frameRows sa na fa la ca ta v.colCount v.rowCount =
-      (picture sa na fa la ca ta v.colCount v.rowCount).map seg :=
+    frameRows sa na fa la ca ta aa v.colCount v.rowCount =
+      (picture sa na fa la ca ta aa v.colCount v.rowCount).map seg :=
     rfl
   have hrowsB :
-    frameRows sb nb fb lb cb tb v.colCount v.rowCount =
-      (picture sb nb fb lb cb tb v.colCount v.rowCount).map seg :=
+    frameRows sb nb fb lb cb tb ab v.colCount v.rowCount =
+      (picture sb nb fb lb cb tb ab v.colCount v.rowCount).map seg :=
     rfl
-  generalize hpa : picture sa na fa la ca ta v.colCount v.rowCount = pa at hrowsA
-  generalize hpb : picture sb nb fb lb cb tb v.colCount v.rowCount = pb at hrowsB
-  have hla : pa.length = v.rows := hpa ▸ hlen _ _ _ _ _ _
-  have hlb : pb.length = v.rows := hpb ▸ hlen _ _ _ _ _ _
-  have hoka : ∀ g ∈ pa, RowOk v.cols g := hpa ▸ hok _ _ _ _ _ _
-  have hokb : ∀ g ∈ pb, RowOk v.cols g := hpb ▸ hok _ _ _ _ _ _
+  generalize hpa : picture sa na fa la ca ta aa v.colCount v.rowCount = pa at hrowsA
+  generalize hpb : picture sb nb fb lb cb tb ab v.colCount v.rowCount = pb at hrowsB
+  have hla : pa.length = v.rows := hpa ▸ hlen _ _ _ _ _ _ _
+  have hlb : pb.length = v.rows := hpb ▸ hlen _ _ _ _ _ _ _
+  have hoka : ∀ g ∈ pa, RowOk v.cols g := hpa ▸ hok _ _ _ _ _ _ _
+  have hokb : ∀ g ∈ pb, RowOk v.cols g := hpb ▸ hok _ _ _ _ _ _ _
   have htop : v.top = 0 := top
   have hbot : v.bot = v.rows - 1 := bottom
-  have hframeA : frame sa na fa la ca ta v.colCount v.rowCount = gridAnsi pa.toArray := by
+  have hframeA : frame sa na fa la ca ta aa v.colCount v.rowCount = gridAnsi pa.toArray := by
     rw [frame_eq, hpa]
-  have hframeB : frame sb nb fb lb cb tb v.colCount v.rowCount = gridAnsi pb.toArray := by
+  have hframeB : frame sb nb fb lb cb tb ab v.colCount v.rowCount = gridAnsi pb.toArray := by
     rw [frame_eq, hpb]
   rw [hframeA, hframeB, hrowsA, hrowsB]
   obtain ⟨hcu, hshowA⟩ := paint_full good hc htop hbot pa hla hoka

@@ -29,7 +29,11 @@ inductive Key where
   | accept
   /-- Leave without a choice. -/
   | cancel
-  /-- List the remote hosts' sessions again. -/
+  /-- Delete the character under the cursor, or end the input when the query is empty, as Ctrl-D
+  does in a line editor and in fzf (`delete-char/eof`). The cursor sits after the query, where
+  there is no character, so a query stays as it is. -/
+  | deleteCharEof
+  /-- Clear and redraw the screen, and list the sessions again, the remote hosts' included. -/
   | refresh
   deriving BEq, Repr
 

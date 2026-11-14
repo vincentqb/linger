@@ -65,10 +65,13 @@ Saved-tmux and read-only visits have no creation choice. The first listing is ca
 A native visit queries remote hosts only when remote rows are due (`fetch_follows_events`): when
 it opens, and at once after the refresh key, or once the listing running then ends. Its other
 listings, one each second, list local rows alone and keep the remote rows the last remote query
-reported. The first frame, and the first after a resize, paints every row; after that a
-change writes only the rows it changed (`Picker.update`). Native listings get a cooperative stop
-so they can retire the transports' isolated groups. Once `stopped` says a watched signal came,
-the visit ends on the cancellation's path, as `interrupted`. -/
+reported, and the header says how long before the latest listing that query started
+(`Picker.ageParts`), so the age changes as those listings repaint, with no timer of its own. The
+first frame, the first after a resize and the first after the refresh key, which clears and
+redraws the screen as Ctrl-L does in a line editor, paint every row; after that a change writes
+only the rows it changed (`Picker.update`). Native listings get a cooperative stop so they can
+retire the transports' isolated groups. Once `stopped` says a watched signal came, the visit ends
+on the cancellation's path, as `interrupted`. -/
 def choose (executable : String) (save : Option String := none) (readOnly : Bool := false)
     (stopped : IO Bool := pure false) : IO Choice := do
   let savedTmux := save.isSome
@@ -96,6 +99,11 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
     let mut full := true
     let mut lastFull : Linger.Selector.Picker.Snapshot := {}
     let mut remoteDue := true
+    -- when the running listing started, when the one that listed the remote rows shown did, and
+    -- how many seconds before the latest listing that was
+    let mut started := 0
+    let mut fetched : Option Nat := none
+    let mut remoteAge : Option Nat := none
     let mut size := (0, 0)
     let mut shown : Option (List (List UInt8)) := none
     let mut dirty := true
@@ -104,17 +112,17 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
       if dirty || current != size then
         let rows :=
           Linger.Selector.Picker.frameRows state snapshot (statuses.getD · .unknown) loaded
-            withColor savedTmux current.1.toNat current.2.toNat
+            withColor savedTmux remoteAge current.1.toNat current.2.toNat
         let frame :=
           match shown with
           | some before =>
             if current == size then Linger.Selector.Picker.update before rows
             else
               Linger.Selector.Picker.frame state snapshot (statuses.getD · .unknown) loaded
-                withColor savedTmux current.1.toNat current.2.toNat
+                withColor savedTmux remoteAge current.1.toNat current.2.toNat
           | none =>
             Linger.Selector.Picker.frame state snapshot (statuses.getD · .unknown) loaded withColor
-              savedTmux current.1.toNat current.2.toNat
+              savedTmux remoteAge current.1.toNat current.2.toNat
         if !frame.isEmpty then
           writeAll stdoutFd (ByteArray.mk frame.toArray)
         shown := some rows
@@ -144,6 +152,9 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
         keys := (emitted.filterMap Linger.Selector.Key.ofInput).toArray
       for key in keys do
         remoteDue := Linger.Selector.Picker.fetch remoteDue (.key key)
+        if key == .refresh then
+          shown := none
+          dirty := true
         if !loaded && key == .accept then
           continue
         match Linger.Selector.Picker.step state key with
@@ -160,9 +171,11 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
         let listed ← IO.ofExcept (Linger.Selector.Picker.parseSnapshot result.stdout)
         if full then
           lastFull := listed
+          fetched := if savedTmux then none else some started
         let incoming := if full then listed else listed.withRemote lastFull
         -- what asks for someone first, as `ls` lists it (`View.sort`); the query finds a row by
-        -- its description too, and a directory under the account's home shows as `~`, as in `ls`
+        -- its description too, and a directory under the account's home shows as `~`, as in `ls`;
+        -- the remote rows' age is as of this listing, which repaints it
         let incomingStatuses := statusesOf incoming
         let ordered :=
           Linger.Display.View.sort (incomingStatuses.getD · .unknown) incoming.candidates
@@ -172,16 +185,20 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
             { (Linger.Selector.Picker.init ordered state.allowCreate) with
               query := state.query, descriptions := incoming.descriptions }
         let atHome := incoming.atHome home
-        dirty := dirty || !loaded || next != state || atHome != snapshot
+        let now ← monotonicMs
+        let age := fetched.map fun start => (now - start) / 1000
+        dirty := dirty || !loaded || next != state || atHome != snapshot || age != remoteAge
         state := next
         snapshot := atHome
         statuses := incomingStatuses
+        remoteAge := age
         loaded := true
         nextListing := (← monotonicMs) + 1000
       if (← pending.get).isNone && (remoteDue || (← monotonicMs) ≥ nextListing) then
         full := savedTmux || remoteDue
         remoteDue := Linger.Selector.Picker.fetch remoteDue .list
         let args := if full then fullArgs else #["ls", "--porcelain"]
+        started ← monotonicMs
         pending.set (some (← Os.Shell.Command.start executable args))
     return .cancel
   finally

@@ -669,8 +669,11 @@ done
 # proved function, build attach argv from Remote.targetOperands and retain an
 # immutable poll snapshot. A native visit queries remote hosts only when Picker.fetch, fed every
 # key and every listing it starts, says remote rows are due (fetch_follows_events): when it opens,
-# and at once after the refresh key. Its other listings list local rows alone and keep the last
-# full listing's remote rows (withRemote_row_local, withRemote_row_remote).
+# and at once after the refresh key, which also clears and redraws the screen: the next paint is a
+# whole frame, as after a resize. Its other listings list local rows alone and keep the last full
+# listing's remote rows (withRemote_row_local, withRemote_row_remote), and the header gives their
+# age (Picker.ageParts) from the start of the listing that fetched them, as of each listing, so
+# no timer of its own repaints it.
 # Linger.App.Suites.Manager drives the terminal lifetime, failure paths, cadence and handoff itself.
 for tie in \
   'let listed ← IO[.]ofExcept [(]Linger[.]Selector[.]Picker[.]parseSnapshot result[.]stdout[)]' \
@@ -703,11 +706,11 @@ picker_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Selector/WorldCode.lea
 # application binding before dispatch.
 for tie in \
   'for byte in bytes do let [(]next, emitted[)] := Input[.]feed decoder byte decoder := next keys := keys [+][+] [(]emitted[.]filterMap Linger[.]Selector[.]Key[.]ofInput[)][.]toArray else if Input[.]pending decoder && [(]← monotonicMs[)] - lastInput ≥ 150 then let [(]next, emitted[)] := Input[.]flush decoder decoder := next keys := [(]emitted[.]filterMap Linger[.]Selector[.]Key[.]ofInput[)][.]toArray for key in keys do' \
-  'let incomingStatuses := statusesOf incoming let ordered := Linger[.]Display[.]View[.]sort [(]incomingStatuses[.]getD · [.]unknown[)] incoming[.]candidates let next := if loaded then Linger[.]Selector[.]Picker[.]refresh state ordered incoming[.]descriptions else [{] [(]Linger[.]Selector[.]Picker[.]init ordered state[.]allowCreate[)] with query := state[.]query, descriptions := incoming[.]descriptions [}] let atHome := incoming[.]atHome home dirty := dirty [|][|] !loaded [|][|] next != state [|][|] atHome != snapshot state := next snapshot := atHome statuses := incomingStatuses loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
-  'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let rows := Linger[.]Selector[.]Picker[.]frameRows state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor savedTmux current[.]1[.]toNat current[.]2[.]toNat let frame := match shown with [|] some before => if current == size then Linger[.]Selector[.]Picker[.]update before rows else Linger[.]Selector[.]Picker[.]frame state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor savedTmux current[.]1[.]toNat current[.]2[.]toNat [|] none => Linger[.]Selector[.]Picker[.]frame state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor savedTmux current[.]1[.]toNat current[.]2[.]toNat if !frame[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk frame[.]toArray[)] shown := some rows size := current dirty := false let ready ← poll fds events 50' \
-  'for key in keys do remoteDue := Linger[.]Selector[.]Picker[.]fetch remoteDue [(][.]key key[)] if !loaded && key == [.]accept then continue match Linger[.]Selector[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target snapshot [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Os[.]Shell[.]Command[.]poll pending then' \
-  'if full then lastFull := listed let incoming := if full then listed else listed[.]withRemote lastFull' \
-  'nextListing := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]remoteDue [|][|] [(]← monotonicMs[)] ≥ nextListing[)] then full := savedTmux [|][|] remoteDue remoteDue := Linger[.]Selector[.]Picker[.]fetch remoteDue [.]list let args := if full then fullArgs else #[[]"ls", "--porcelain"[]] pending[.]set [(]some [(]← Os[.]Shell[.]Command[.]start executable args[)][)] return [.]cancel finally' \
+  'let incomingStatuses := statusesOf incoming let ordered := Linger[.]Display[.]View[.]sort [(]incomingStatuses[.]getD · [.]unknown[)] incoming[.]candidates let next := if loaded then Linger[.]Selector[.]Picker[.]refresh state ordered incoming[.]descriptions else [{] [(]Linger[.]Selector[.]Picker[.]init ordered state[.]allowCreate[)] with query := state[.]query, descriptions := incoming[.]descriptions [}] let atHome := incoming[.]atHome home let now ← monotonicMs let age := fetched[.]map fun start => [(]now - start[)] / 1000 dirty := dirty [|][|] !loaded [|][|] next != state [|][|] atHome != snapshot [|][|] age != remoteAge state := next snapshot := atHome statuses := incomingStatuses remoteAge := age loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
+  'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let rows := Linger[.]Selector[.]Picker[.]frameRows state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor savedTmux remoteAge current[.]1[.]toNat current[.]2[.]toNat let frame := match shown with [|] some before => if current == size then Linger[.]Selector[.]Picker[.]update before rows else Linger[.]Selector[.]Picker[.]frame state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor savedTmux remoteAge current[.]1[.]toNat current[.]2[.]toNat [|] none => Linger[.]Selector[.]Picker[.]frame state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor savedTmux remoteAge current[.]1[.]toNat current[.]2[.]toNat if !frame[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk frame[.]toArray[)] shown := some rows size := current dirty := false let ready ← poll fds events 50' \
+  'for key in keys do remoteDue := Linger[.]Selector[.]Picker[.]fetch remoteDue [(][.]key key[)] if key == [.]refresh then shown := none dirty := true if !loaded && key == [.]accept then continue match Linger[.]Selector[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target snapshot [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Os[.]Shell[.]Command[.]poll pending then' \
+  'if full then lastFull := listed fetched := if savedTmux then none else some started let incoming := if full then listed else listed[.]withRemote lastFull' \
+  'nextListing := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]remoteDue [|][|] [(]← monotonicMs[)] ≥ nextListing[)] then full := savedTmux [|][|] remoteDue remoteDue := Linger[.]Selector[.]Picker[.]fetch remoteDue [.]list let args := if full then fullArgs else #[[]"ls", "--porcelain"[]] started ← monotonicMs pending[.]set [(]some [(]← Os[.]Shell[.]Command[.]start executable args[)][)] return [.]cancel finally' \
   'finally Os[.]Shell[.]Command[.]stop pending [(]if savedTmux then 0 else 1000[)]' \
   'let fullArgs := if savedTmux then #[[]"tmux", "ls", "--porcelain"[]] [+][+] save[.]toArray else #[[]"ls", "-r", "--porcelain"[]]' \
   'match ← choose executable [(]readOnly := readOnly[)] [(]stopped := stops[.]heard[)] with' \
@@ -1923,8 +1926,9 @@ $timers"
 #     rendered at the plan's `render` step and written at its `write` step, tied above).
 #   Import/WorldCode: `tmux ls` (`terminalListing`).
 #   Selector/WorldCode: taking the terminal (`enterAnsi`) and naming it, the window size, the frame
-#     (`frame`, or the `update` between the `frameRows` of two frames of one size), giving the
-#     terminal back (`exitAnsi`) and clearing its title.
+#     (`frame`, the first, after a resize and on the refresh key, or the `update` between the
+#     `frameRows` of two frames of one size), giving the terminal back (`exitAnsi`) and clearing
+#     its title.
 #   Session/WorldCode/Client: a one-shot reply, which is the daemon's `infoText`, `screenText` or
 #     `history` in frames; a saved view's repaint (the session's), title (`Title.update`) and
 #     handback; an attach's output (the session's), title and handback.

@@ -40,9 +40,10 @@ def input (text : String) : State × List Linger.Selector.Key := walk init text.
       | 21 => [.clear]
       | 16 => [.up]
       | 14 | 9 => [.down]
-      | 18 => [.refresh]
+      | 12 => [.refresh]
       | 13 | 10 => [.accept]
-      | 3 | 4 => [.cancel]
+      | 3 => [.cancel]
+      | 4 => [.deleteCharEof]
       | _ => if 32 ≤ n && n < 127 then [.text (Char.ofNat n)] else []
     (boundFeed init (UInt8.ofNat n)).2 == expected
 
@@ -54,8 +55,9 @@ def input (text : String) : State × List Linger.Selector.Key := walk init text.
       | 21 => some .clear
       | 16 => some .up
       | 14 => some .down
-      | 18 => some .refresh
-      | 3 | 4 => some .cancel
+      | 12 => some .refresh
+      | 3 => some .cancel
+      | 4 => some .deleteCharEof
       | _ => none
     Linger.Selector.Key.ofInput (.control (UInt8.ofNat n)) == expected
 
@@ -68,13 +70,17 @@ def input (text : String) : State × List Linger.Selector.Key := walk init text.
 #guard (input "a Z!").2 == [.text 'a', .text ' ', .text 'Z', .text '!']
 
 #guard
-  (walk init [8, 127, 21, 16, 14, 9, 18, 13, 10, 3, 4]).2 ==
+  (walk init [8, 127, 21, 16, 14, 9, 12, 13, 10, 3, 4]).2 ==
     [.backspace, .backspace, .clear, .up, .down, .down, .refresh, .accept, .accept, .cancel,
-      .cancel]
+      .deleteCharEof]
 
-#guard (walk init [0, 1, 2, 7, 11, 12, 17, 19, 20, 22, 26, 28, 31]).2.isEmpty
+#guard (walk init [0, 1, 2, 7, 11, 17, 18, 19, 20, 22, 26, 28, 31]).2.isEmpty
 
-#guard boundFeed init 18 == (init, [.refresh])
+-- Ctrl-L refreshes, Ctrl-D deletes or ends the input, and Ctrl-R, a history search in a line
+-- editor, does nothing.
+#guard
+  boundFeed init 12 == (init, [.refresh]) && boundFeed init 4 == (init, [.deleteCharEof]) &&
+    boundFeed init 18 == (init, [])
 
 #guard
   let (state, keys) := boundFeed init 27
@@ -134,7 +140,7 @@ def input (text : String) : State × List Linger.Selector.Key := walk init text.
 
 -- Paste changes query text only; no pasted byte can act as a control key.
 #guard
-  let (state, keys) := input "\x1b[200~a\r\n\x03\x04\t\x12\x15\x08\x7fé界🙂\x1b[201~"
+  let (state, keys) := input "\x1b[200~a\r\n\x03\x04\t\x0c\x12\x15\x08\x7fé界🙂\x1b[201~"
   keys == [.text 'a', .text 'é', .text '界', .text '🙂'] && !state.paste && !pending state &&
     boundFeed state 13 == (init, [.accept])
 
@@ -145,7 +151,7 @@ def input (text : String) : State × List Linger.Selector.Key := walk init text.
 #guard
   let (state, keys) := input "\x1b[200~"
   keys.isEmpty && state.paste && !pending state && boundFlush state == (state, []) &&
-    (walk (boundFlush state).1 [13, 3, 4, 18, 21]).2.isEmpty
+    (walk (boundFlush state).1 [13, 3, 4, 12, 18, 21]).2.isEmpty
 
 -- Timeouts discard an incomplete sequence but never disable paste suppression.
 #guard

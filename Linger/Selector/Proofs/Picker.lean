@@ -816,6 +816,12 @@ theorem step_stay_valid (s next : State) (key : Linger.Selector.Key) (hs : s.Val
       exact ⟨cursor, query⟩
     | some item => cases item <;> simp [he] at h
   | cancel => cases h
+  | deleteCharEof =>
+    simp only [step] at h
+    split at h
+    · cases h
+    · cases h
+      exact ⟨cursor, query⟩
   | refresh =>
     cases h
     exact ⟨cursor, query⟩
@@ -903,6 +909,13 @@ theorem step_init_empty : step (init []) .accept = .create Linger.Target.Name.de
 
 theorem step_cancel (s : State) : step s .cancel = .cancel := by simp [step]
 
+/-- **Ctrl-D ends only an empty line.** `deleteCharEof` deletes the character under the cursor,
+which sits after the query, so there is none: an empty query ends the visit, as cancelling does,
+and any other leaves the state as it is. -/
+theorem step_deleteCharEof (s : State) :
+    step s .deleteCharEof = if s.query = "" then .cancel else .stay s := by
+  simp [step, String.isEmpty_iff]
+
 theorem step_control_ignored (s : State) (char : Char)
     (h : char.toNat < 32 ∨ (127 ≤ char.toNat ∧ char.toNat < 160)) :
     step s (.text char) = .stay s := by
@@ -978,8 +991,9 @@ theorem stem_items (candidates : List String) (target : String) (depth : Nat) (a
 /-- **A frame never has more lines than the terminal.** -/
 theorem frameLines_length (state : State) (snapshot : Snapshot)
     (statusOf : String → Linger.Display.Status.Status) (loaded withColor savedTmux : Bool)
-    (rows : Nat) :
-    (frameLines state snapshot statusOf loaded withColor savedTmux rows).length ≤ max 1 rows := by
+    (remoteAge : Option Nat) (rows : Nat) :
+    (frameLines state snapshot statusOf loaded withColor savedTmux remoteAge rows).length ≤
+      max 1 rows := by
   unfold frameLines
   exact List.length_take_le _ _
 

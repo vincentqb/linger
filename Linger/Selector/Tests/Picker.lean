@@ -294,6 +294,58 @@ namespace Linger.Selector.Picker.Tests
 
 #guard step (init ["work"]) .cancel == .cancel
 
+-- Ctrl-D ends the visit on an empty query and changes nothing after a typed one: the cursor sits
+-- after the query, with no character under it.
+#guard step (init ["work"]) .deleteCharEof == .cancel
+
+#guard
+  let s : State := { candidates := ["work", "web"], query := "w", cursor := 1 }
+  step s .deleteCharEof == .stay s
+
+#guard
+  match step { candidates := ["work"], query := "w" } .clear with
+  | .stay emptied => step emptied .deleteCharEof == .cancel
+  | _ => false
+
+-- Ctrl-L leaves the selection as it is; what it fetches and repaints is the executor's.
+#guard
+  let s : State := { candidates := ["work", "web"], query := "w", cursor := 1 }
+  step s .refresh == .stay s
+
+/-- A frame line's text, without its styles. -/
+def lineText (line : List (String × List (List Nat))) : String := String.join (line.map (·.1))
+
+-- The header says how long ago the listing that fetched the remote rows started, in a row's age
+-- format, only when the snapshot holds remote rows; the footer names Ctrl-L as the refresh key.
+#guard
+  match parseSnapshot "name\twork\nstatus\tidle\nname\tdev@host\nstatus\tworking\n",
+    parseSnapshot "name\twork\nstatus\tidle\n" with
+  | .ok remote, .ok localOnly =>
+    let statusOf := fun (_ : String) => Linger.Display.Status.Status.idle
+    let lines (snapshot : Snapshot) (age : Option Nat) :=
+      (frameLines (init snapshot.candidates) snapshot statusOf true false false age 12).map lineText
+    ageParts remote (some 12) == ["remote 12s"] && ageParts remote (some 75) == ["remote 1m"] &&
+      ageParts remote none == [] &&
+      ageParts localOnly (some 12) == [] &&
+      (lines remote (some 3)).head? == some "  linger · 2 · remote 3s" &&
+      (lines remote none).head? == some "  linger · 2" &&
+      (lines localOnly (some 3)).head? == some "  linger · 1" &&
+      (lines remote (some 3)).getLast? ==
+        some "  ↵ attach  ·  ↑↓ move  ·  ^L refresh  ·  esc / ^C quit" &&
+      !(lines remote (some 3)).any (fun line => (line.splitOn "^R").length > 1)
+  | _, _ => false
+
+-- Only the header carries the age, so a new age changes that one row of the frame.
+#guard
+  match parseSnapshot "name\twork\nstatus\tidle\nname\tdev@host\nstatus\tworking\n" with
+  | .ok snapshot =>
+    let statusOf := fun (_ : String) => Linger.Display.Status.Status.idle
+    let rows (age : Nat) :=
+      frameRows (init snapshot.candidates) snapshot statusOf true false false (some age) 80 12
+    ((rows 3).zip (rows 4)).zipIdx.filterMap (fun ((a, b), y) => if a == b then none else some y) ==
+      [0]
+  | .error _ => false
+
 #guard
   step { candidates := ["alpha", "beta"], cursor := 1 } (.text 'a') ==
     .stay { candidates := ["alpha", "beta"], query := "a", cursor := 0 }

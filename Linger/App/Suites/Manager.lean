@@ -1090,13 +1090,38 @@ private def selectionChecks (e : Env) : IO Unit := do
           "both" (UInt32.ofNat (Linger.Target.Name.maxLen + 40)) 12
 
 private def inputChecks (e : Env) : IO Unit := do
-  for (slug, key) in [("ctrl-c", "\x03"), ("ctrl-d", "\x04"), ("escape", "\x1b")] do
+  -- Ctrl-D ends the input only once the query is empty, as on a line editor's empty line
+  for (slug, key) in [("ctrl-c", "\x03"), ("ctrl-d", "\x15\x04"), ("escape", "\x1b")] do
     check e slug s!"picker probe cancellation restores termios and display modes ({slug})" fun f =>
         withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "new-session" "new-session" do
             return false
           s.text key
           return (← restored s 130) && (← f.visits) == listed
+  check e "ctrl-d-query"
+      "picker Ctrl-D after a query deletes nothing and keeps the chooser open with its query and highlight, unrepainted"
+      fun f => do
+      f.listing "name\tBeta\nname\tBravo\n"
+      withPrompt f.picker #[] fun s => do
+          unless ← s.typeQuery "B" "B" do
+            return false
+          let selection ← s.mark
+          s.text "\x0e"
+          unless ← s.selected "Bravo" selection do
+            return false
+          s.observe 100
+          let start ← s.mark
+          s.text "\x04"
+          s.observe 400
+          let quiet := (← s.mark) == start
+          let waiting := !(← (f.root / "result").pathExists)
+          let vt := (Vt.init 80 12).feedBytes (← s.output.get)
+          let screen := String.fromUTF8! (ByteArray.mk (screenText vt).toArray)
+          IO.FS.writeFile (f.root / "ctrl-d-observation") s!"quiet={quiet}\nwaiting={waiting}\n"
+          s.text "\x03"
+          return quiet && waiting && has screen "  › B 2" && has screen "  ▸ ? Bravo" &&
+              (← restored s 130) &&
+              (← f.visits) == listed
   -- a signal that ends the picker leaves it as a cancellation does
   for (slug, sig) in [("sigterm", (15 : UInt32)), ("sighup", 1), ("sigint", 2)] do
     check e slug
@@ -1154,7 +1179,7 @@ private def inputChecks (e : Env) : IO Unit := do
         let start ← s.mark
         unless ← s.typeQuery "bad/" "bad/" do
           return false
-        s.text "\x1b[200~\x00\x07\x7f\u0085\r\n\x03\x04\x12\x1b[201~"
+        s.text "\x1b[200~\x00\x07\x7f\u0085\r\n\x03\x04\x0c\x12\x1b[201~"
         s.observe 350
         s.text "\r"
         s.observe 350
@@ -1437,7 +1462,7 @@ private def fuzzyChecks (e : Env) : IO Unit := do
 
 private def displayChecks (e : Env) : IO Unit := do
   check e "normal-frame"
-      "picker normal frame has the spaced title, dim placeholder, exact rows and the keys' help, Ctrl-R's included"
+      "picker normal frame has the spaced title, dim placeholder, exact rows and the keys' help, Ctrl-L's included"
       fun f =>
       withPrompt f.picker #[] fun s => do
         let vt ← s.capture "normal-frame"
@@ -1465,7 +1490,7 @@ private def displayChecks (e : Env) : IO Unit := do
           | some row =>
             row ≥ 9 && rowText vt (row - 1) == "" && (rowText vt row).startsWith "  ↵ attach" &&
               has (rowText vt row) "↑↓ move" &&
-              has (rowText vt row) "^R refresh" &&
+              has (rowText vt row) "^L refresh" &&
               has (rowText vt row) "esc / ^C quit" &&
               (vt.getCell 2 row).pen.dim
         s.text "\x03"
@@ -1648,8 +1673,8 @@ private def refreshChecks (e : Env) : IO Unit := do
               has screen "↵ attach" &&
               (← acceptThenCancel s) &&
               (← f.visits) == attachVisit ["work"]
-  check e "ctrl-r-refresh"
-      "picker Ctrl-R keeps query and highlight, lists remote hosts again at once and repaints nothing unchanged"
+  check e "ctrl-l-refresh"
+      "picker Ctrl-L clears and redraws the whole screen, keeps query and highlight and lists remote hosts again at once"
       fun f => do
       f.listing "name\tBeta\nname\tBravo\n"
       withPrompt f.picker #[] fun s => do
@@ -1665,17 +1690,55 @@ private def refreshChecks (e : Env) : IO Unit := do
           s.observe 100
           let start ← s.mark
           let pressed ← monotonicMs
-          s.text "\x12"
+          s.text "\x0c"
           -- the first listing to start after the key queries remote hosts
+          let fetched ← f.firstListingFrom pressed
+          s.observe 400
+          let vt ← s.capture "ctrl-l-frame"
+          let output ← s.output.get
+          -- over a screen something else covered with `X`, what the picker wrote after the key
+          -- shows exactly what the picker shows: it painted every row again
+          let covered :=
+            (Vt.init 80 12).feedBytes (ByteArray.mk (List.replicate (80 * 12) 0x58).toArray)
+          let redrawn :=
+            screenText (covered.feedBytes (output.extract start output.size)) == screenText vt
+          let screen := String.fromUTF8! (ByteArray.mk (screenText vt).toArray)
+          IO.FS.writeFile (f.root / "ctrl-l-observation")
+              s!"pressed={pressed}\nlistings={← f.listings}\nfetched={fetched}\nredrawn={redrawn}\n"
+          s.text "\x03"
+          return fetched == some true && redrawn && has screen "  › B" &&
+              has screen "  ▸ + Create B" &&
+              (← restored s 130) &&
+              (← f.visits) == listed
+  check e "ctrl-r-ignored"
+      "picker Ctrl-R preserves query and highlight without repaint or a listing of its own" fun f =>
+      do
+      f.listing "name\tBeta\nname\tBravo\n"
+      withPrompt f.picker #[] fun s => do
+          unless ← s.typeQuery "B" "B" do
+            return false
+          let selection ← s.mark
+          s.text "\x1b[F"
+          unless ← s.selected "+ Create B" selection do
+            return false
+          unless ← f.waitListing 2 true do
+            return false
+          s.observe 100
+          let start ← s.mark
+          let pressed ← monotonicMs
+          s.text "\x12"
+          -- the first listing to start after the key is the next second's, of local rows alone
           let fetched ← f.firstListingFrom pressed
           s.observe 400
           let quiet := (← s.mark) == start
           let vt ← s.capture "ctrl-r-frame"
           let screen := String.fromUTF8! (ByteArray.mk (screenText vt).toArray)
+          let listings ← f.listings
+          let gaps := (listings.zip listings.tail).map fun ((_, a), (_, b)) => b - a
           IO.FS.writeFile (f.root / "ctrl-r-observation")
-              s!"pressed={pressed}\nlistings={← f.listings}\nfetched={fetched}\n"
+              s!"pressed={pressed}\nlistings={listings}\nfetched={fetched}\ngaps={gaps}\n"
           s.text "\x03"
-          return fetched == some true && quiet && has screen "  › B" &&
+          return fetched == some false && quiet && gaps.all (· ≥ 850) && has screen "  › B" &&
               has screen "  ▸ + Create B" &&
               (← restored s 130) &&
               (← f.visits) == listed
@@ -1700,7 +1763,7 @@ private def refreshChecks (e : Env) : IO Unit := do
         return repeated && quiet && spaced && (← restored s 130) && (← f.visits) == listed &&
             !(← (f.root / "listing-overlap").pathExists)
   check e "remote-on-events"
-      "picker lists local rows every second and queries remote hosts only when it opens and on Ctrl-R"
+      "picker lists local rows every second and queries remote hosts only when it opens and on Ctrl-L"
       fun f => do
       f.listing "name\tAlpha\nstatus\tidle\nname\twork@host\nstatus\tidle\n"
       withPrompt f.picker #[] fun s => do
@@ -1720,7 +1783,7 @@ private def refreshChecks (e : Env) : IO Unit := do
           let before ← f.listings
           let start ← s.mark
           let pressed ← monotonicMs
-          s.text "\x12"
+          s.text "\x0c"
           let shown ←
             s.untilScreen
                 (fun vt => (List.range vt.rowCount).any fun row => has (rowText vt row) "next@host")
@@ -1741,6 +1804,48 @@ private def refreshChecks (e : Env) : IO Unit := do
               clean &&
               (← f.visits) == listed &&
               !(← (f.root / "listing-overlap").pathExists)
+  check e "remote-age"
+      "picker header says how long ago it listed the remote rows, as a row says its last output's age, updates it with each listing by repainting that row alone, and gives no age once no remote row is left"
+      fun f => do
+      f.listing "name\tAlpha\nstatus\tidle\nname\twork@host\nstatus\tworking\n"
+      withPrompt f.picker #[] fun s => do
+          let parts := Linger.Display.View.headerParts [] [.idle, .working]
+          -- the header's age, in the format a row gives the time since its session last printed
+          let ageOf := fun (vt : Vt) =>
+            (List.range 60).find? fun n =>
+              (rowText vt 0).trimAscii.toString ==
+                String.intercalate " · " (parts ++ [s!"remote {Linger.Display.Listing.ago n}"])
+          unless ← s.untilScreen (fun vt => (ageOf vt).any (· ≥ 1)) do
+            return false
+          let older ← s.capture "remote-age-first"
+          let start ← s.mark
+          let later := fun (vt : Vt) => (ageOf vt).any fun n => (ageOf older).any (· < n)
+          unless ← s.untilScreen later start do
+            return false
+          let newer ← s.capture "remote-age-next"
+          let output ← s.output.get
+          let written := output.extract start output.size
+          -- the listings in between changed the age alone: they rewrote the header's row and no
+          -- other, and painted no whole frame
+          let headerOnly :=
+            hasText written "\x1b[1;1H" && !hasText written "\x1b[H" &&
+              (List.range (newer.rowCount - 1)).all fun k => !hasText written s!"\x1b[{k + 2};1H"
+          -- once a listing of remote hosts finds no remote row, the header gives no age
+          f.listing "name\tAlpha\nstatus\tidle\n"
+          let cleared ← s.mark
+          s.text "\x0c"
+          let plain := String.intercalate " · " (Linger.Display.View.headerParts [] [.idle])
+          let gone ← s.untilScreen (fun vt => (rowText vt 0).trimAscii.toString == plain) cleared
+          s.observe 1200
+          let after ← s.capture "remote-age-gone"
+          let screen := String.fromUTF8! (ByteArray.mk (screenText after).toArray)
+          IO.FS.writeFile (f.root / "age-observation")
+              s!"first={ageOf older}\nnext={ageOf newer}\nheader-only={headerOnly}\ngone={gone}\nheader-after={rowText after 0}\nlistings={← f.listings}\n"
+          s.text "\x03"
+          return headerOnly && gone && (rowText after 0).trimAscii.toString == plain &&
+              !has screen "work@host" &&
+              (← restored s 130) &&
+              (← f.visits) == listed
   for (slug, text, rc, error) in
     [("failure", "name\tPartial\n", 9, "could not list sessions (exit 9)"),
       ("duplicate", "name\tFresh\nname\tFresh\n", 1, "duplicate session target"),

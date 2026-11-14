@@ -217,8 +217,10 @@ def refresh (s : State) (candidates : List String)
     candidates, descriptions, cursor }
 
 /-- Editing resets the cursor. Navigation clamps; acceptance acts on the selected
-row. No selectable row stays editable. A refresh leaves the state as it is: what it fetches is
-the executor's (`fetch`). Effects remain the caller's job. -/
+row. No selectable row stays editable. Ctrl-D's `deleteCharEof` ends the visit on an empty query
+and otherwise leaves the state as it is: the cursor sits after the query, with no character under
+it. A refresh leaves the state as it is: what it fetches and repaints is the executor's
+(`fetch`). Effects remain the caller's job. -/
 def step (s : State) (key : Linger.Selector.Key) : Outcome :=
   match key with
   | .text char =>
@@ -251,20 +253,33 @@ def step (s : State) (key : Linger.Selector.Key) : Outcome :=
     | some (.create target) => .create target
     | none => .stay s
   | .cancel => .cancel
+  | .deleteCharEof => if s.query.isEmpty then .cancel else .stay s
   | .refresh => .stay s
 
 /-- How many listed rows the query matches: what the query line shows beside it. -/
 def matchCount (s : State) : Nat := (visible s.candidates s.query s.descriptions).length
 
+/-- What a header says of the remote rows `snapshot` holds, when it holds any and `remoteAge`
+gives how many seconds ago the listing that fetched them started: that age, in the format a row
+gives the time since its session last printed (`Listing.ago`), after `remote`, the word linger
+names other hosts' sessions with. A remote row's status is the one its host reported then. -/
+def ageParts (snapshot : Snapshot) (remoteAge : Option Nat) : List String :=
+  match remoteAge with
+  | some seconds =>
+    if snapshot.candidates.any remoteTarget then [s!"remote {Linger.Display.Listing.ago seconds}"]
+    else []
+  | none => []
+
 /-- What a picker shows, as lines of text pieces with their styles, for a terminal `rows` tall
 (a style is the parameters of the SGR sequences that select it, in order):
 the header, which counts every listed row and, with `statusOf`, those that ask for someone
-(`View.headerParts`); the query, with how many rows it matches; the rows around the cursor; a
-line that sums up the matching rows the window leaves out (`View.hidden`); and the keys. It
-never has more lines than the terminal (`frameLines_length`). -/
+(`View.headerParts`), then says how old the remote rows are (`ageParts`); the query, with how
+many rows it matches; the rows around the cursor; a line that sums up the matching rows the window
+leaves out (`View.hidden`); and the keys. It never has more lines than the terminal
+(`frameLines_length`). -/
 def frameLines (state : State) (snapshot : Snapshot)
     (statusOf : String → Linger.Display.Status.Status) (loaded withColor savedTmux : Bool)
-    (rows : Nat) : List (List (String × List (List Nat))) :=
+    (remoteAge : Option Nat) (rows : Nat) : List (List (String × List (List Nat))) :=
   let height := max 1 rows
   let choices := items state.candidates state.query state.allowCreate state.descriptions
   let nameCol :=
@@ -277,7 +292,8 @@ def frameLines (state : State) (snapshot : Snapshot)
         "  " ++
           String.intercalate " · "
             (if loaded then
-              Linger.Display.View.headerParts labels (snapshot.candidates.map statusOf)
+              Linger.Display.View.headerParts labels (snapshot.candidates.map statusOf) ++
+                ageParts snapshot remoteAge
             else "linger" :: labels)
       let globals := snapshot.records.takeWhile (fun fields => fields.head? != some "name")
       let metadata : List String :=
@@ -351,7 +367,7 @@ def frameLines (state : State) (snapshot : Snapshot)
           | some (.create _) => "  ↵ create"
           | none => if state.allowCreate then "  Type a valid name" else "  Type to search"
       (if height ≥ 6 then [[]] else []) ++
-        [[(s!"{action}  ·  ↑↓ move  ·  {if savedTmux then "" else "^R refresh  ·  "}esc / ^C quit",
+        [[(s!"{action}  ·  ↑↓ move  ·  {if savedTmux then "" else "^L refresh  ·  "}esc / ^C quit",
               [[2]])]]
     else []
   (title ++ query ++ body ++ footer).take height
@@ -417,8 +433,8 @@ private def lineRow (cols : Nat) (line : List (String × List (List Nat))) : Ter
 `frameLines`, then blank rows, one row for each of the terminal's (at least one). -/
 private def picture (state : State) (snapshot : Snapshot)
     (statusOf : String → Linger.Display.Status.Status) (loaded withColor savedTmux : Bool)
-    (cols rows : Nat) : List Terminal.Vt.Row :=
-  let lines := frameLines state snapshot statusOf loaded withColor savedTmux rows
+    (remoteAge : Option Nat) (cols rows : Nat) : List Terminal.Vt.Row :=
+  let lines := frameLines state snapshot statusOf loaded withColor savedTmux remoteAge rows
   (lines ++ List.replicate (max 1 rows - lines.length) []).map (lineRow cols)
 
 /-- Each row's paint, from the pen the row before it left in effect, as a full repaint
@@ -432,17 +448,17 @@ private def threadRows : List Terminal.Vt.Row → Terminal.Vt.Pen → List (List
 first column to the last, so a row painted over another leaves nothing of it. -/
 def frameRows (state : State) (snapshot : Snapshot)
     (statusOf : String → Linger.Display.Status.Status) (loaded withColor savedTmux : Bool)
-    (cols rows : Nat) : List (List UInt8) :=
-  (picture state snapshot statusOf loaded withColor savedTmux cols rows).map fun row =>
+    (remoteAge : Option Nat) (cols rows : Nat) : List (List UInt8) :=
+  (picture state snapshot statusOf loaded withColor savedTmux remoteAge cols rows).map fun row =>
     Terminal.Render.csiNum 0 0x6D ++ (Terminal.Render.rowAnsi row {}).1
 
 /-- The picker frame's terminal bytes, which paint every cell of the screen: reset the pen, home
 the cursor, then each row of the frame, separated by CR LF. Each line keeps the final column
 blank, so neither a full-width name nor a resize induces an automatic line wrap. -/
 def frame (state : State) (snapshot : Snapshot) (statusOf : String → Linger.Display.Status.Status)
-    (loaded withColor savedTmux : Bool) (cols rows : Nat) : List UInt8 :=
+    (loaded withColor savedTmux : Bool) (remoteAge : Option Nat) (cols rows : Nat) : List UInt8 :=
   Terminal.Render.csiNum 0 0x6D ++ Terminal.Render.csiPlain 0x48 ++
-    ((threadRows (picture state snapshot statusOf loaded withColor savedTmux cols rows)
+    ((threadRows (picture state snapshot statusOf loaded withColor savedTmux remoteAge cols rows)
             {}).intersperse
         Terminal.Render.crlfB).flatten
 

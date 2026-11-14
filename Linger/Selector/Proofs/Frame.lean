@@ -199,9 +199,10 @@ private theorem lineRow_ok (cols : Nat) (line : List (String × List (List Nat))
 /-- A frame shows one row for each of the terminal's, at least one. -/
 private theorem picture_length (state : State) (snapshot : Snapshot)
     (statusOf : String → Linger.Display.Status.Status) (loaded withColor savedTmux : Bool)
-    (cols rows : Nat) :
-    (picture state snapshot statusOf loaded withColor savedTmux cols rows).length = max 1 rows := by
-  have := frameLines_length state snapshot statusOf loaded withColor savedTmux rows
+    (remoteAge : Option Nat) (cols rows : Nat) :
+    (picture state snapshot statusOf loaded withColor savedTmux remoteAge cols rows).length =
+      max 1 rows := by
+  have := frameLines_length state snapshot statusOf loaded withColor savedTmux remoteAge rows
   simp only [picture, List.length_map, List.length_append, List.length_replicate]
   omega
 
@@ -291,8 +292,8 @@ private theorem threadRows_mem :
 
 private theorem picture_fit (state : State) (snapshot : Snapshot)
     (statusOf : String → Linger.Display.Status.Status) (loaded withColor savedTmux : Bool)
-    (cols rows : Nat) :
-    ∀ row ∈ picture state snapshot statusOf loaded withColor savedTmux cols rows,
+    (remoteAge : Option Nat) (cols rows : Nat) :
+    ∀ row ∈ picture state snapshot statusOf loaded withColor savedTmux remoteAge cols rows,
       ∀ c ∈ row.toList, Fit c := by
   intro row hrow
   simp only [picture, List.mem_map] at hrow
@@ -302,8 +303,8 @@ private theorem picture_fit (state : State) (snapshot : Snapshot)
 /-- The selector's frame is clean, whatever it shows. -/
 theorem frame_clean (state : State) (snapshot : Snapshot)
     (statusOf : String → Linger.Display.Status.Status) (loaded withColor savedTmux : Bool)
-    (cols rows : Nat) :
-    Clean (frame state snapshot statusOf loaded withColor savedTmux cols rows) := by
+    (remoteAge : Option Nat) (cols rows : Nat) :
+    Clean (frame state snapshot statusOf loaded withColor savedTmux remoteAge cols rows) := by
   unfold frame
   rw [csiPlain_bytes, csiNum_bytes]
   refine
@@ -313,13 +314,14 @@ theorem frame_clean (state : State) (snapshot : Snapshot)
   obtain ⟨row, hrow, q, rfl⟩ := threadRows_mem _ _ bytes hbytes
   exact
     clean_rowAnsi row q
-      (picture_fit state snapshot statusOf loaded withColor savedTmux cols rows row hrow)
+      (picture_fit state snapshot statusOf loaded withColor savedTmux remoteAge cols rows row hrow)
 
 /-- Each row of the selector's frame, painted on its own, is clean. -/
 theorem frameRows_clean (state : State) (snapshot : Snapshot)
     (statusOf : String → Linger.Display.Status.Status) (loaded withColor savedTmux : Bool)
-    (cols rows : Nat) :
-    ∀ row ∈ frameRows state snapshot statusOf loaded withColor savedTmux cols rows, Clean row := by
+    (remoteAge : Option Nat) (cols rows : Nat) :
+    ∀ row ∈ frameRows state snapshot statusOf loaded withColor savedTmux remoteAge cols rows,
+      Clean row := by
   intro bytes hbytes
   simp only [frameRows, List.mem_map] at hbytes
   obtain ⟨row, hrow, rfl⟩ := hbytes
@@ -327,7 +329,8 @@ theorem frameRows_clean (state : State) (snapshot : Snapshot)
   exact
     clean_append (clean_piece (by simp [Piece.Ok]))
       (clean_rowAnsi row {}
-        (picture_fit state snapshot statusOf loaded withColor savedTmux cols rows row hrow))
+        (picture_fit state snapshot statusOf loaded withColor savedTmux remoteAge cols rows row
+          hrow))
 
 /-- `CSI row ; col H`, as the renderer writes it, is the spec's piece. -/
 theorem csiNum2_bytes (a b : Nat) (final : UInt8) :

@@ -18,13 +18,14 @@ theorem ofInput_control_iff (byte : UInt8) (key : Linger.Selector.Key) :
       (byte = 21 ∧ key = .clear) ∨
         (byte = 16 ∧ key = .up) ∨
         (byte = 14 ∧ key = .down) ∨
-        (byte = 18 ∧ key = .refresh) ∨ (byte = 3 ∧ key = .cancel) ∨ (byte = 4 ∧ key = .cancel) := by
+        (byte = 12 ∧ key = .refresh) ∨
+        (byte = 3 ∧ key = .cancel) ∨ (byte = 4 ∧ key = .deleteCharEof) := by
   simp only [ofInput]
   split <;> simp_all [eq_comm]
 
 theorem ofInput_control_none_iff (byte : UInt8) :
     ofInput (.control byte) = none ↔
-      byte ≠ 21 ∧ byte ≠ 16 ∧ byte ≠ 14 ∧ byte ≠ 18 ∧ byte ≠ 3 ∧ byte ≠ 4 := by
+      byte ≠ 21 ∧ byte ≠ 16 ∧ byte ≠ 14 ∧ byte ≠ 12 ∧ byte ≠ 3 ∧ byte ≠ 4 := by
   simp only [ofInput]
   split <;> simp_all
 
@@ -57,9 +58,10 @@ theorem feed_byte_bindings (byte : UInt8) :
       | 21 => [.clear]
       | 16 => [.up]
       | 14 | 9 => [.down]
-      | 18 => [.refresh]
+      | 12 => [.refresh]
       | 13 | 10 => [.accept]
-      | 3 | 4 => [.cancel]
+      | 3 => [.cancel]
+      | 4 => [.deleteCharEof]
       | _ => if 32 ≤ byte ∧ byte < 127 then [.text (Char.ofUInt8 byte)] else [] := by
   rw [Input.feed_init_keys]
   repeat'
@@ -74,14 +76,26 @@ theorem feed_controls (byte : UInt8) (key : Linger.Selector.Key)
     (h :
       (byte, key) ∈
         [(8, .backspace), (127, .backspace), (21, .clear), (16, .up), (14, .down), (9, .down),
-          (18, .refresh), (13, .accept), (10, .accept), (3, .cancel), (4, .cancel)]) :
+          (12, .refresh), (13, .accept), (10, .accept), (3, .cancel), (4, .deleteCharEof)]) :
     (Input.feed Input.init byte).2.filterMap ofInput = [key] := by
   simp only [List.mem_cons, List.not_mem_nil, or_false, Prod.mk.injEq] at h
   rcases h with h | h | h | h | h | h | h | h | h | h | h
   all_goals rcases h with ⟨rfl, rfl⟩; rw [feed_byte_bindings]; rfl
 
-/-- Ctrl-R asks for the remote hosts' rows again: it is the refresh key. -/
-theorem feed_ctrl_r : (Input.feed Input.init 18).2.filterMap ofInput = [.refresh] := by
+/-- Ctrl-L clears and redraws the screen, as in a line editor, and lists the sessions again: it
+is the refresh key. -/
+theorem feed_ctrl_l : (Input.feed Input.init 12).2.filterMap ofInput = [.refresh] := by
+  rw [feed_byte_bindings]
+  rfl
+
+/-- Ctrl-R, a reverse history search in a line editor, has no meaning here: the chooser has no
+history. -/
+theorem feed_ctrl_r : (Input.feed Input.init 18).2.filterMap ofInput = [] := by
+  rw [feed_byte_bindings]
+  decide
+
+/-- Ctrl-D deletes the character under the cursor, or ends the input on an empty line. -/
+theorem feed_ctrl_d : (Input.feed Input.init 4).2.filterMap ofInput = [.deleteCharEof] := by
   rw [feed_byte_bindings]
   rfl
 
@@ -106,7 +120,8 @@ theorem feed_paste_no_commands (state : Input.State) (byte : UInt8) (hpaste : st
       .last ∉ (Input.feed state byte).2.filterMap ofInput ∧
       .backspace ∉ (Input.feed state byte).2.filterMap ofInput ∧
       .clear ∉ (Input.feed state byte).2.filterMap ofInput ∧
-      .refresh ∉ (Input.feed state byte).2.filterMap ofInput := by
+      .refresh ∉ (Input.feed state byte).2.filterMap ofInput ∧
+      .deleteCharEof ∉ (Input.feed state byte).2.filterMap ofInput := by
   repeat' constructor
   all_goals
     intro member

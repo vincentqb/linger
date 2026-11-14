@@ -6,9 +6,12 @@ public import Input.CoreSpec
 public section
 
 /-! Selector actions and their terminal key bindings. The terminal decoder
-reports physical events without deciding which actions they request. Ctrl-R
-refreshes: a control byte types no query character, and it is the reload key of
-browsers and of fzf's own `reload` example. -/
+reports physical events without deciding which actions they request. A key means
+what it means in a line editor and in fzf, and nothing of linger's own: Ctrl-L
+clears and redraws the screen, which for a view of live sessions also lists them
+again, remote hosts included (`refresh`); Ctrl-D deletes the character under the
+cursor and on an empty line ends the input (`deleteCharEof`); Ctrl-R, a reverse
+history search there, which the chooser has no history for, does nothing. -/
 
 namespace Linger.Selector
 
@@ -20,8 +23,9 @@ def Key.ofInput : Input.Key → Option Key
     | 21 => some .clear
     | 16 => some .up
     | 14 => some .down
-    | 18 => some .refresh
-    | 3 | 4 => some .cancel
+    | 12 => some .refresh
+    | 3 => some .cancel
+    | 4 => some .deleteCharEof
     | _ => none
   | .backspace => some .backspace
   | .tab | .down => some .down
