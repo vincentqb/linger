@@ -5,8 +5,10 @@ public section
 /-! # Linger.Os.Env — what an environment value means
 
 The runtime reads SHELL, LINGER_NO_DETACH_KEY, the remotes file's HOME and a resume's HOME
-once each and passes the result here, so what an unset or empty value means is a pure decision
-with a theorem (`Linger/Os/Proofs/Env.lean`). The suites run the program with both.
+once each, and NO_COLOR and TERM once for each listing that may color, those of `ls` and
+`tmux ls` and the chooser's, and passes the result here, so what an unset or empty value means
+is a pure decision with a theorem (`Linger/Os/Proofs/Env.lean`). The suites run the program with
+both.
 -/
 
 namespace Linger.Os.Env
@@ -39,5 +41,12 @@ def resumeDir (home : Option String) (saved : String) (savedIsDir : Bool) : Opti
     match home with
     | some dir => if dir.isEmpty then none else some dir
     | none => none
+
+/-- Whether linger colors what it writes: exactly when it goes to a terminal, NO_COLOR is unset
+or empty, since a NO_COLOR of any other value turns color off (no-color.org), and TERM names a
+terminal other than `dumb`, which takes no escape sequences. An unset or empty TERM names no
+terminal. -/
+def withColor (terminal : Bool) (noColor term : Option String) : Bool :=
+  terminal && (noColor.getD "").isEmpty && !["", "dumb"].contains (term.getD "")
 
 end Linger.Os.Env

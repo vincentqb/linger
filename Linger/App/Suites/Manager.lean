@@ -236,18 +236,21 @@ private def launch (root : System.FilePath) (manager mode : String) (args : List
           #["-c", s!"exec \"$@\" >{quote (root / "stdout").toString}", "--", manager] ++
             args.toArray)
       else (manager, args.toArray)
-  -- spawnPty accepts K=V entries; remove presence-sensitive flags at this boundary.
-  let noColor ←
-    if ← (root / "no-color").pathExists then
-      some <$> IO.FS.readFile (root / "no-color")
-    else
-      pure none
+  -- spawnPty accepts K=V entries; remove presence-sensitive flags at this boundary. The files
+  -- `no-color` and `term` hold NO_COLOR and TERM, and a variable without its file is unset.
+  let valueOf (file : String) : IO (Option String) := do
+    if ← (root / file).pathExists then
+      return some (← IO.FS.readFile (root / file))
+    return none
+  let noColor ← valueOf "no-color"
+  let term ← valueOf "term"
   let child ←
     withLaunchLock <|
         IO.Process.spawn
           { cmd, args,
             env :=
-              #[("LINGER_SESSION", none), ("LINGER_NO_DETACH_KEY", none), ("NO_COLOR", noColor)],
+              #[("LINGER_SESSION", none), ("LINGER_NO_DETACH_KEY", none), ("NO_COLOR", noColor),
+                ("TERM", term)],
             stdin := if mode == "stdout-only" then .null else .inherit }
   IO.FS.writeFile (root / "manager-pid") (toString child.pid)
   let rc ← waitChild child
@@ -332,6 +335,7 @@ private def Fixture.make (e : Env) (slug : String) : IO Fixture := do
   IO.FS.writeFile (root / "listing") "name\tAlpha\nname\tBeta\nname\tGamma\n"
   IO.FS.writeFile (root / "listing-rc") "0"
   IO.FS.writeFile (root / "attach-rc") "7"
+  IO.FS.writeFile (root / "term") "xterm-256color"
   let env :=
     e.procEnv ++
       #[("PATH", some bin.toString), ("HOME", some root.toString), ("TERM", some "xterm-256color"),
@@ -363,6 +367,16 @@ private def Fixture.visits (f : Fixture) : IO String := do
 
 private def Fixture.listing (f : Fixture) (text : String) (rc : Nat := 0) : IO Unit := do
   writeListing f.root text rc
+
+/-- Give the launched command NO_COLOR and TERM as these say, each a value or unset. -/
+private def Fixture.colorEnv (f : Fixture) (noColor term : Option String) : IO Unit := do
+  for (file, value) in [("no-color", noColor), ("term", term)] do
+    match value with
+    | some value =>
+      IO.FS.writeFile (f.root / file) value
+    | none =>
+      if ← (f.root / file).pathExists then
+        IO.FS.removeFile (f.root / file)
 
 /-- Publish the return snapshot only when attach starts, so a periodic refresh
 cannot legitimately display the next visit's fixture before Enter is sent. -/
@@ -1212,9 +1226,14 @@ private def Session.capture (s : Session) (name : String) (cols : Nat := 80) (ro
   return vt
 
 private def statusChecks (e : Env) : IO Unit := do
-  for (slug, noColor) in
-    [("status-colors", none), ("status-no-color-empty", some ""),
-      ("status-no-color-set", some "1")] do
+  -- NO_COLOR and TERM as the picker reads them, and whether its badges have color: an empty
+  -- NO_COLOR asks for nothing, and an unset, empty or `dumb` TERM names no terminal that takes it
+  let xterm := some "xterm-256color"
+  for (slug, noColor, term, colored) in
+    [("status-colors", none, xterm, true), ("status-no-color-empty", some "", xterm, true),
+      ("status-no-color-set", some "1", xterm, false),
+      ("status-term-dumb", none, some "dumb", false), ("status-term-unset", none, none, false),
+      ("status-term-empty", none, some "", false)] do
     check e slug
         s!"picker shares listing rows and keeps match underline independent of selection and status ({slug})"
         fun f => do
@@ -1228,8 +1247,7 @@ private def statusChecks (e : Env) : IO Unit := do
             (String.intercalate "\n"
               (fields.map fun row =>
                 String.join (row.map fun (key, value) => s!"{key}\t{value}\n")))
-        if let some value := noColor then
-          IO.FS.writeFile (f.root / "no-color") value
+        f.colorEnv noColor term
         -- the picker lists them as `ls` does, what asks for someone first (`View.sort`), each
         -- with its badge's color and dimness
         let expectedColors : List Terminal.Vt.Color :=
@@ -1249,9 +1267,8 @@ private def statusChecks (e : Env) : IO Unit := do
                     String.fromUTF8! (ByteArray.mk (Linger.Display.Listing.humanRow 5 info).toArray)
                   rowText frame (4 + index) ==
                       (if index == 0 then "  ▸ " else "    ") ++ expected &&
-                    badge.pen.fg == (if noColor.isSome then .default else color) &&
-                    badge.pen.dim ==
-                      (!noColor.isSome && (status == .idle || status == .resumable)) &&
+                    badge.pen.fg == (if colored then color else .default) &&
+                    badge.pen.dim == (colored && (status == .idle || status == .resumable)) &&
                     (List.range (4 + expected.length)).all
                       (fun col => (frame.getCell col (4 + index)).pen.reverse == (index == 0)) &&
                     name.pen.fg == .default &&
@@ -2579,6 +2596,53 @@ private def interruptEvidence (root : System.FilePath) (pid : Nat) : IO (List St
   return (lines table.stdout).map ("ps " ++ ·) ++ stacks.map ("stack " ++ ·) ++
       [s!"direct-sigint-ends-program={direct}"]
 
+/-- What the command printed on standard output once it exited: the terminal's bytes before the
+launcher's completion marker, or the file a redirected standard output went to. -/
+private def Session.stdout (s : Session) (mode : String) : IO ByteArray := do
+  let _ ← s.until "MANAGER-EXIT:"
+  if mode == "stdin-only" then
+    return ← IO.FS.readBinFile (s.fixture.root / "stdout")
+  let output ← s.output.get
+  let some stop := findText output "\r\r\nMANAGER-EXIT:" | return output
+  return output.extract 0 stop
+
+/-- `ls` and `tmux ls` color their listing exactly when it goes to a terminal, NO_COLOR is unset
+or empty and TERM names a terminal other than `dumb`. Each lists one saved session, whose badge
+has its status's style when the listing colors, and no byte of a plain listing is an escape. -/
+private def colorChecks (e : Env) : IO Unit := do
+  let xterm := some "xterm-256color"
+  let cases : List (String × Option String × Option String × String × Bool) :=
+    [("colors", none, xterm, "both", true), ("no-color-empty", some "", xterm, "both", true),
+      ("no-color-set", some "1", xterm, "both", false),
+      ("term-dumb", none, some "dumb", "both", false), ("term-unset", none, none, "both", false),
+      ("term-empty", none, some "", "both", false),
+      ("redirected", none, xterm, "stdin-only", false)]
+  for verb in ["ls", "tmux-ls"] do
+    for (slug, noColor, term, mode, colored) in cases do
+      check e s!"color-{verb}-{slug}"
+          s!"linger {verb.replace "-" " "} {if colored then "colors" else "does not color"} its listing ({slug})"
+          fun f => do
+          let state := f.root / "state"
+          IO.FS.createDirAll state
+          IO.FS.writeBinFile (state / "saved.ckpt")
+              (Linger.Session.Checkpoint.saveBytes ⟨Vt.init 20 2, f.root.toString, []⟩)
+          let save := f.root / "save"
+          IO.FS.writeFile save (savedPane "saved" f.root.toString)
+          let f := { f with env := f.env.push ("LINGER_DIR", some state.toString) }
+          f.colorEnv noColor term
+          let args := if verb == "ls" then #["ls"] else #["tmux", "ls", save.toString]
+          withSession f args
+              (fun s => do
+                let out ← s.stdout mode
+                let clean ← termiosRestored s 0
+                let badge := Linger.Display.Listing.sgr (Linger.Display.Status.style .resumable)
+                IO.FS.writeBinFile (f.root / "listing.out") out
+                IO.FS.writeFile (f.root / "color-observation")
+                    s!"exit-clean={clean}\nbadge-styled={hasBytes out badge}\nescapes={hasBytes out [0x1B]}\n"
+                return clean && hasText out "saved" &&
+                    (if colored then hasBytes out badge else !hasBytes out [0x1B]))
+              mode
+
 private def programChecks (e : Env) : IO Unit := do
   for (slug, key) in [("ctrl-c", "\x03"), ("escape", "\x1b")] do
     check e s!"program-survives-{slug}"
@@ -2682,7 +2746,8 @@ def run : IO UInt32 :=
       [("refresh", refreshChecks), ("selection", selectionChecks), ("usage", usageChecks),
         ("failure", failureChecks), ("input", inputChecks), ("display", displayChecks),
         ("status", statusChecks), ("fuzzy", fuzzyChecks), ("default", defaultChecks),
-        ("real", realCheck), ("program", programChecks), ("saved", savedChecks)]
+        ("real", realCheck), ("program", programChecks), ("saved", savedChecks),
+        ("color", colorChecks)]
     let notes ← IO.mkRef (#[] : Array String)
     let timed (name : String) (checks : Env → IO Unit) : IO (String × Nat) := do
       let start ← monotonicMs

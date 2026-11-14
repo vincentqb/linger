@@ -53,4 +53,13 @@ theorem resumeDir_absent (saved : String) :
     resumeDir none saved false = none ∧ resumeDir (some "") saved false = none := by
   simp [resumeDir]
 
+/-- Linger colors its output exactly when it goes to a terminal, NO_COLOR is unset or empty and
+TERM names a terminal other than `dumb`. -/
+theorem withColor_iff (terminal : Bool) (noColor term : Option String) :
+    withColor terminal noColor term = true ↔
+      terminal = true ∧
+        (noColor = none ∨ noColor = some "") ∧
+        ∃ name, term = some name ∧ name ≠ "" ∧ name ≠ "dumb" := by
+  cases noColor <;> cases term <;> simp [withColor, String.isEmpty_iff, and_assoc]
+
 end Linger.Os.Env

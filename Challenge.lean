@@ -42,7 +42,8 @@ each with a kill, and says what it does not claim yet:
    control sequence, and a crash costs at most the changes of the last interval, never the
    session: a checkpoint that does not decode is kept and refused, not replaced.
 8. Clean terminal: what linger writes to a terminal on its own account is safe text or one of
-   its fixed sequences, and handing a terminal back leaves it canonical.
+   its fixed sequences, in color only where the caller's environment allows it, and handing a
+   terminal back leaves it canonical.
 9. Work follows events: linger works only in response to an event, a byte, a request, a program
    ending or a deadline an earlier event set, and each event sets at most a fixed number of
    deadlines. An event costs in proportion to its size and its audience, never to how many
@@ -152,6 +153,8 @@ def Linger.Os.Env.remotesFile : Option String → Option String := sorry
 def Linger.Os.Env.detachEnabled : Bool → Option String → Bool := sorry
 
 def Linger.Os.Env.resumeDir : Option String → String → Bool → Option String := sorry
+
+def Linger.Os.Env.withColor : Bool → Option String → Option String → Bool := sorry
 
 /-! ### Statuses -/
 
@@ -2308,9 +2311,13 @@ What linger writes to a terminal on its own account is clean (`Display.Clean`): 
 line breaks, tabs and a short list of control sequences, none of which asks the terminal for a
 reply, resets it or erases its scrollback. A gate lists every write to standard output in the
 program with whose bytes it writes: a printer `writes_clean` names, or the session's own bytes,
-its output and the repaint of its screen, which the terminal package's headlines describe. Not
-claimed: what linger prints as lines of text (help, version, `ls --summary`, porcelain records)
-and its messages on standard error. -/
+its output and the repaint of its screen, which the terminal package's headlines describe.
+Linger's listings, those of `ls`, `tmux ls` and the chooser, are in color exactly when they go to
+a terminal, NO_COLOR is unset or empty, as no-color.org reads it, and TERM names a terminal other
+than `dumb`, which takes no escape sequences (`withColor_iff`); a gate ties each to
+`Os.Env.withColor` of whether standard output is a terminal, NO_COLOR and TERM, each read once.
+Not claimed: what linger prints as lines of text (help, version, `ls --summary`, porcelain
+records) and its messages on standard error. -/
 
 theorem infoText_text (s : State) :
     ∃ cs : List Char,
@@ -2381,6 +2388,25 @@ theorem writes_clean_rejects_reset :
         (∀ v, Display.Clean (Terminal.Render.screenText v)) ∧
         (∀ v, Display.Clean (Terminal.Render.history v)) ∧
         (∀ s, Display.Clean (Session.infoText s)) ∧ Display.Clean Terminal.Render.leaveAnsi) := by
+  sorry
+
+theorem withColor_iff (terminal : Bool) (noColor term : Option String) :
+    Os.Env.withColor terminal noColor term = true ↔
+      terminal = true ∧
+        (noColor = none ∨ noColor = some "") ∧
+        ∃ name, term = some name ∧ name ≠ "" ∧ name ≠ "dumb" := by
+  sorry
+
+@[kills withColor_iff]
+theorem withColor_iff_rejects_presence :
+    ¬∀ (terminal : Bool) (noColor term : Option String),
+        (fun (terminal : Bool) (noColor : Option String) (_ : Option String) =>
+                terminal && noColor.isNone)
+              terminal noColor term =
+            true ↔
+          terminal = true ∧
+            (noColor = none ∨ noColor = some "") ∧
+            ∃ name, term = some name ∧ name ≠ "" ∧ name ≠ "dumb" := by
   sorry
 
 /-! ## 9. Work follows events

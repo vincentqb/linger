@@ -886,11 +886,13 @@ private def cmdList (porcelain : Bool) (remotes : List (String × Linger.Target.
       IO.println ""
   else
     -- The selector consumes these same row pieces. Only the status badge has
-    -- a palette style; redirected output and NO_COLOR retain the plain row. What asks for
+    -- a palette style, and only where `Env.withColor` allows color. What asks for
     -- someone comes first, as in the selector (`View.sort`). A terminal's rows fit its width, and
     -- a directory under the account's home shows as `~`. A host that did not answer has no
     -- session name, so its row shows `@host`.
-    let withColor := (← (← IO.getStdout).isTty) && (← IO.getEnv "NO_COLOR").isNone
+    let withColor :=
+      Linger.Os.Env.withColor (← (← IO.getStdout).isTty) (← IO.getEnv "NO_COLOR")
+        (← IO.getEnv "TERM")
     let named :=
       rows.map fun info =>
         match info.lookup "name", info.lookup "host" with

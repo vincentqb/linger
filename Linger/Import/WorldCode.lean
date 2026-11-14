@@ -14,6 +14,7 @@ import Linger.Target.CoreCode.Remote
 import Linger.Selector.WorldCode
 import Linger.Selector.CoreCode.Picker
 import Std.Async.System
+import Linger.Os.CoreCode.Env
 
 public section
 
@@ -343,7 +344,9 @@ private def listSave (file : Option String) (porcelain : Bool) : IO Unit :=
     else
       out.putStr s!"tmux save · {save.modified}\n{diagnostic save.path.toString}\n\n"
       out.flush
-      let withColor := (← out.isTty) && (← IO.getEnv "NO_COLOR").isNone
+      let withColor :=
+        Linger.Os.Env.withColor (← (← IO.getStdout).isTty) (← IO.getEnv "NO_COLOR")
+          (← IO.getEnv "TERM")
       Os.Shell.writeAll Os.Shell.stdoutFd
           (ByteArray.mk (Linger.Display.Listing.terminalListing withColor none rows).toArray)
 

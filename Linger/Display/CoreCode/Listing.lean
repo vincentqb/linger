@@ -286,7 +286,7 @@ private def renderPieces (withColor : Bool) (pieces : List RowPiece) : List UInt
 empty-state line), with the same row pieces as the picker, each within `width` characters when
 it is given. The name column is as wide as the widest name in the set, so the detail columns
 align. Callers choose
-whether color is enabled from terminal detection and `NO_COLOR`. -/
+whether color is enabled with `Linger.Os.Env.withColor`. -/
 def terminalListing (withColor : Bool) (width : Option Nat) (rows : List (List (String × String))) :
     List UInt8 :=
   if rows.isEmpty then utf8s "no sessions".toList ++ [0x0A]

@@ -2418,6 +2418,27 @@ theorem writes_clean_rejects_reset :
         (∀ s, Display.Clean (Session.infoText s)) ∧ Display.Clean Terminal.Render.leaveAnsi) :=
   fun h => Display.not_clean_reset (h.1 true none [])
 
+theorem withColor_iff (terminal : Bool) (noColor term : Option String) :
+    Os.Env.withColor terminal noColor term = true ↔
+      terminal = true ∧
+        (noColor = none ∨ noColor = some "") ∧
+        ∃ name, term = some name ∧ name ≠ "" ∧ name ≠ "dumb" :=
+  Os.Env.withColor_iff terminal noColor term
+
+theorem withColor_iff_rejects_presence :
+    ¬∀ (terminal : Bool) (noColor term : Option String),
+        (fun (terminal : Bool) (noColor : Option String) (_ : Option String) =>
+                terminal && noColor.isNone)
+              terminal noColor term =
+            true ↔
+          terminal = true ∧
+            (noColor = none ∨ noColor = some "") ∧
+            ∃ name, term = some name ∧ name ≠ "" ∧ name ≠ "dumb" := by
+  intro h
+  have colors :=
+    (h true (some "") (some "xterm")).mpr ⟨rfl, .inr rfl, "xterm", rfl, by simp, by simp⟩
+  exact absurd colors (by decide)
+
 theorem ticks_settle (s : State) (now t₁ t₂ : Nat)
     (h₁ : (Session.trace Session.step s [.tick now]).1.nextTick = some t₁)
     (h₂ : (Session.trace Session.step s [.tick now, .tick t₁]).1.nextTick = some t₂) :

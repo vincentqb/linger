@@ -432,9 +432,9 @@ shell_all="$(module_imports '*.lean' | awk -F: "$IMPORT_AWK"'
   printf '%s\n' "$shell_all" >&2
   fail "import all Os.WorldCode grants the private bindings of Os.WorldSpec: import it plainly"; }
 import_closure packages/os/Os/WorldCode/Command.lean 'import Os.WorldCode;'
-import_closure Linger/Import/WorldCode.lean 'public import Linger.Os.CoreSpec;import Linger.Os.CoreCode.Answer;import Linger.Import.CoreCode.Resurrect;import Linger.Session.CoreCode.Checkpoint;import Os.WorldCode;import Linger.Display.CoreCode.Listing;import Linger.Session.WorldCode.Paths;import Linger.Session.WorldCode.Resume;import Linger.Session.WorldCode.Inventory;import Os.WorldCode.Command;import Linger.Target.CoreCode.Remote;import Linger.Selector.WorldCode;import Linger.Selector.CoreCode.Picker;import Std.Async.System;'
+import_closure Linger/Import/WorldCode.lean 'public import Linger.Os.CoreSpec;import Linger.Os.CoreCode.Answer;import Linger.Import.CoreCode.Resurrect;import Linger.Session.CoreCode.Checkpoint;import Os.WorldCode;import Linger.Display.CoreCode.Listing;import Linger.Session.WorldCode.Paths;import Linger.Session.WorldCode.Resume;import Linger.Session.WorldCode.Inventory;import Os.WorldCode.Command;import Linger.Target.CoreCode.Remote;import Linger.Selector.WorldCode;import Linger.Selector.CoreCode.Picker;import Std.Async.System;import Linger.Os.CoreCode.Env;'
 import_closure Linger/Selector/WorldCode.lean \
-  'public import Linger.Selector.CoreSpec;public import Linger.Os.CoreSpec;import Linger.Os.CoreCode.Answer;import Linger.Selector.CoreCode.Picker;import Os.WorldCode;import Linger.Target.CoreCode.Remote;import Terminal.CoreCode.Title;import Os.WorldCode.Command;import Linger.Display.CoreCode.View;import Std.Data.HashMap.Basic;import Linger.Display.CoreCode.Status;import Linger.Selector.CoreCode.Key;import Linger.Selector.CoreCode.Fetch;import Input.CoreCode;'
+  'public import Linger.Selector.CoreSpec;public import Linger.Os.CoreSpec;import Linger.Os.CoreCode.Answer;import Linger.Selector.CoreCode.Picker;import Os.WorldCode;import Linger.Target.CoreCode.Remote;import Terminal.CoreCode.Title;import Os.WorldCode.Command;import Linger.Display.CoreCode.View;import Std.Data.HashMap.Basic;import Linger.Display.CoreCode.Status;import Linger.Selector.CoreCode.Key;import Linger.Selector.CoreCode.Fetch;import Input.CoreCode;import Linger.Os.CoreCode.Env;'
 import_closure Linger/App/WorldCode/Main.lean \
   'import Linger.Os.CoreCode.Answer;import Linger.App.WorldCode;import Linger.App.CoreCode.Entry;import Linger.Selector.WorldCode;import Linger.Import.WorldCode;'
 # `lean_lib Linger` builds the umbrella's closure, so this list is what `./lake build`
@@ -687,7 +687,6 @@ for tie in \
   'let fds := #[[]stdinFd[]]' \
   'let events := #[[]POLLIN[]]' \
   'let ready ← poll fds events 50' \
-  'let withColor := [(]← IO[.]getEnv "NO_COLOR"[)][.]isNone' \
   'writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Selector[.]Picker[.]enterAnsi[.]toArray[)]' \
   'writeAll stdoutFd [(]ByteArray[.]mk [(]Terminal[.]Title[.]ansi "linger"[)][.]toArray[)]' \
   'writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Selector[.]Picker[.]exitAnsi[.]toArray[)]' \
@@ -748,15 +747,15 @@ done
 
 # Pure rendering and summary claims cannot see CLI/terminal IO. Pin the actual
 # consumers: validated host order, one shared row, palette-only badge styling,
-# and plain redirected or NO_COLOR output. A host that does not answer in time is one `?` record,
-# its `host` with the status no answer gives. Prompt sampling shares one reply deadline; a busy
-# nonblocking connect remains unknown and cannot authorize stale-socket removal.
+# and color only where Env.withColor allows it. A host that does not answer in time is one `?`
+# record, its `host` with the status no answer gives. Prompt sampling shares one reply deadline; a
+# busy nonblocking connect remains unknown and cannot authorize stale-socket removal.
 cli_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/WorldCode.lean)"
 for tie in \
   'match Linger[.]Target[.]Remote[.]checkHosts hosts with [|] [.]ok l => return l[.]map fun host => [(]host, Linger[.]Target[.]Remote[.]transportFor config host[)] [|] [.]error e => throw [(]IO[.]userError e[)]' \
   'for [(][(]host, _[)], output[)] in remotes[.]zip remote[.]toList do match output with [|] none => rows := rows [+][+] [[][[][(]"host", host[)], [(]"status", Linger[.]Display[.]Status[.]name [.]unknown[)][]][]] [|] some output => for row in Linger[.]Target[.]Remote[.]parse output do' \
   '[|] some [(]porcelain, remoteFlag[)] => cmdList porcelain [(]← resolveRemotes remoteFlag[)]' \
-  'let withColor := [(]← [(]← IO[.]getStdout[)][.]isTty[)] && [(]← IO[.]getEnv "NO_COLOR"[)][.]isNone let named := rows[.]map fun info => match info[.]lookup "name", info[.]lookup "host" with [|] none, some host => [(]"name", "@" [+][+] host[)] :: info [|] _, _ => info let ordered := Linger[.]Display[.]View[.]sort [(]fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD ""[)][)] named let width ← humanWidth let home ← accountHome writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor width [(]ordered[.]map [(]Linger[.]Display[.]Listing[.]atHome home[)][)][)][.]toArray[)]' \
+  'let withColor := Linger[.]Os[.]Env[.]withColor [(]← [(]← IO[.]getStdout[)][.]isTty[)] [(]← IO[.]getEnv "NO_COLOR"[)] [(]← IO[.]getEnv "TERM"[)] let named := rows[.]map fun info => match info[.]lookup "name", info[.]lookup "host" with [|] none, some host => [(]"name", "@" [+][+] host[)] :: info [|] _, _ => info let ordered := Linger[.]Display[.]View[.]sort [(]fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD ""[)][)] named let width ← humanWidth let home ← accountHome writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor width [(]ordered[.]map [(]Linger[.]Display[.]Listing[.]atHome home[)][)][)][.]toArray[)]' \
   'def summaryText : IO String := do let rows ← localRows [(]some [(][(]← monotonicMs[)] [+] 250[)][)] [(]statusOnly := true[)] return Linger[.]Display[.]Status[.]summary [(]rows[.]map fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD "unknown"[)][)]' \
   'def cmdSummary : IO Answer := do let summary ← summaryText if !summary[.]isEmpty then IO[.]println summary return [.]done' \
   'match ← connectUpsert name cmd with [|] [.]ok fd => attachSpoken name fd false' \
@@ -806,6 +805,21 @@ printf '%s\n' "$cli_code" | CG_RE='(^|[[:space:]])else pure [[][]] match Linger[
 for var in SHELL LINGER_NO_DETACH_KEY; do
   [ "$(code_count "getEnv \"$var\"" 'Linger/*' 'packages/*')" -eq 1 ] \
     || fail "$var is read more than once or not at all; read it once, into its Env policy"
+done
+# Linger colors its own listings exactly where Env.withColor allows it (withColor_iff): `ls`,
+# `tmux ls` and the chooser each read whether standard output is a terminal, NO_COLOR and TERM
+# once, into it. A NO_COLOR of any nonempty value turns color off, as no-color.org says, and an
+# unset, empty or `dumb` TERM names no terminal that takes escape sequences.
+# Linger.App.Suites.Manager runs each with NO_COLOR unset, empty and set and with TERM unset,
+# empty and `dumb`, and `ls` and `tmux ls` redirected.
+color_read='let withColor := Linger[.]Os[.]Env[.]withColor [(]← [(]← IO[.]getStdout[)][.]isTty[)] [(]← IO[.]getEnv "NO_COLOR"[)] [(]← IO[.]getEnv "TERM"[)]'
+for code in "$cli_code" "$import_code" "$picker_code"; do
+  printf '%s\n' "$code" | CG_RE="(^|[[:space:]])$color_read([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "ls, tmux ls or the chooser colors its output outside Env.withColor: $color_read"
+done
+for var in NO_COLOR TERM; do
+  [ "$(code_count "getEnv \"$var\"" 'Linger/*' 'packages/*')" -eq 3 ] \
+    || fail "$var is read other than once for each of ls, tmux ls and the chooser, into Env.withColor"
 done
 # Discovery keeps bounded ownership until completion. Remote signal handlers
 # are installed before spawning the transports' isolated groups, so cancelling the chooser

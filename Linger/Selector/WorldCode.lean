@@ -14,6 +14,7 @@ import Linger.Display.CoreCode.Status
 import Linger.Selector.CoreCode.Key
 import Linger.Selector.CoreCode.Fetch
 import Input.CoreCode
+import Linger.Os.CoreCode.Env
 
 public section
 
@@ -81,7 +82,8 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
     if savedTmux then #["tmux", "ls", "--porcelain"] ++ save.toArray
     else #["ls", "-r", "--porcelain"]
   let pending ← IO.mkRef (none : Option Os.Shell.Command.Job)
-  let withColor := (← IO.getEnv "NO_COLOR").isNone
+  let withColor :=
+    Linger.Os.Env.withColor (← (← IO.getStdout).isTty) (← IO.getEnv "NO_COLOR") (← IO.getEnv "TERM")
   let home ← accountHome
   let saved ← termRaw stdinFd
   try
