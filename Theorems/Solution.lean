@@ -2713,6 +2713,84 @@ theorem step_asks_rejects_lumped :
     simp [Status.Is] at this
   exact never _ heard
 
+theorem step_commands (s : State) (ev : Event) :
+    (∀ chunk,
+        ev = .ptyOut chunk →
+          (Session.step s ev).1.commands.running =
+              ((Mediation.feed s.terminal s.scanner chunk).marks.foldl Commands.hear
+                  s.commands).running ∧
+            (Session.step s ev).1.commands.finished =
+              if seenBy s.roster then none
+              else
+                ((Mediation.feed s.terminal s.scanner chunk).marks.foldl Commands.hear
+                    s.commands).finished) ∧
+      (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
+        ev = .bytes id chunk →
+          s.client? id = some c →
+          c.attached = false →
+          c.decoder.feed chunk = (dec, [m]) →
+          dec.errored = false → m.Looks → (Session.step s ev).1.commands.finished = none) ∧
+      ((∀ chunk, ev ≠ .ptyOut chunk) →
+        (Session.step s ev).1.commands.running = s.commands.running) ∧
+      ((Session.step s ev).1.commands.finished ≠ s.commands.finished →
+        (∃ chunk, ev = .ptyOut chunk) ∨
+          (Session.step s ev).1.commands.finished = none ∧
+            ∃ id chunk c,
+              ev = .bytes id chunk ∧
+                s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks) := by
+  refine
+    ⟨fun chunk hev => ?_, fun id chunk c dec m hev hc fresh read healthy looks => ?_,
+      Session.step_running_kept s ev, Session.step_finished_changed s ev⟩
+  · subst hev
+    exact Session.step_ptyOut_commands s chunk
+  · subst hev
+    exact (Session.step_look_clears_finished s id chunk hc fresh read healthy looks).1
+
+theorem step_commands_rejects_deaf :
+    ¬∀ (s : State) (ev : Event),
+        (∀ chunk,
+            ev = .ptyOut chunk →
+              ((fun (_ : State) => ({} : Commands)) (Session.step s ev).1).running =
+                  ((Mediation.feed s.terminal s.scanner chunk).marks.foldl Commands.hear
+                      ((fun (_ : State) => ({} : Commands)) s)).running ∧
+                ((fun (_ : State) => ({} : Commands)) (Session.step s ev).1).finished =
+                  if seenBy s.roster then none
+                  else
+                    ((Mediation.feed s.terminal s.scanner chunk).marks.foldl Commands.hear
+                        ((fun (_ : State) => ({} : Commands)) s)).finished) ∧
+          (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
+            ev = .bytes id chunk →
+              s.client? id = some c →
+              c.attached = false →
+              c.decoder.feed chunk = (dec, [m]) →
+              dec.errored = false →
+              m.Looks →
+              ((fun (_ : State) => ({} : Commands)) (Session.step s ev).1).finished = none) ∧
+          ((∀ chunk, ev ≠ .ptyOut chunk) →
+            ((fun (_ : State) => ({} : Commands)) (Session.step s ev).1).running =
+              ((fun (_ : State) => ({} : Commands)) s).running) ∧
+          (((fun (_ : State) => ({} : Commands)) (Session.step s ev).1).finished ≠
+              ((fun (_ : State) => ({} : Commands)) s).finished →
+            (∃ chunk, ev = .ptyOut chunk) ∨
+              ((fun (_ : State) => ({} : Commands)) (Session.step s ev).1).finished = none ∧
+                ∃ id chunk c,
+                  ev = .bytes id chunk ∧
+                    s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks) := by
+  -- today's rule hears no mark, so the command a `C` starts never runs
+  intro h
+  have heard :=
+    ((h (State.boot (Vt.Vt.init 80 24) [] [])
+            (.ptyOut [0x1B, 0x5D, 0x31, 0x33, 0x33, 0x3B, 0x43, 0x07])).1
+        _ rfl).1
+  have marks :
+    (Mediation.feed (State.boot (Vt.Vt.init 80 24) [] []).terminal
+          (State.boot (Vt.Vt.init 80 24) [] []).scanner
+          [0x1B, 0x5D, 0x31, 0x33, 0x33, 0x3B, 0x43, 0x07]).marks =
+      [.runs {}] :=
+    Session.feed_mark_runs _
+  rw [marks] at heard
+  simp [Commands.hear] at heard
+
 theorem icon_glyphs :
     Status.icon .asks = '⚑' ∧
       Status.icon .working = '⣷' ∧

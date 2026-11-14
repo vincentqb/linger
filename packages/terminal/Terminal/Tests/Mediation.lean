@@ -272,4 +272,134 @@ example :
 
 example : passthroughWhole profileVt longNotice = true := by native_decide
 
+/-! ### A shell's marks
+
+What a chunk's marks are, split at every byte: each of `A`, `B`, `C` and `D`, ended by BEL or ST,
+with or without parameters; a `C`'s command line from `cmdline_url=`, %-decoded, and from
+`cmdline=`, unquoted as bash's and zsh's `printf %q` quote it, as each shell here wrote it; a `D`'s
+status when its first parameter is a number; nothing from another letter or another OSC. A value
+that stops decoding gives what was read before it, not whole, and a mark past the cap is heard as
+the scanner releases it, its command line cut to what the scanner held and not whole. A mark still
+passes through unchanged. -/
+
+/-- The marks the chunk split at `i` completes. -/
+def marksAtSplit (v : Vt) (seq : Bytes) (i : Nat) : List Mark :=
+  let a := feed v .ground (seq.take i)
+  a.marks ++ (feed a.vt a.scan (seq.drop i)).marks
+
+/-- Whether every split of the chunk completes `expected`. -/
+def marksAllSplits (v : Vt) (seq : Bytes) (expected : List Mark) : Bool :=
+  (List.range (seq.length + 1)).all fun i => marksAtSplit v seq i == expected
+
+/-- A command line from its text. -/
+def line (text : String) (whole : Bool := true) : Cmdline := { bytes := text.toUTF8.toList, whole }
+
+example : marksAllSplits profileVt (osc "133;A" false) [.prompt] = true := by native_decide
+
+example : marksAllSplits profileVt (osc "133;A;click_events=1" true) [.prompt] = true := by
+  native_decide
+
+example : marksAllSplits profileVt (osc "133;B" false) [.input] = true := by native_decide
+
+example : marksAllSplits profileVt (osc "133;C" true) [.runs {}] = true := by native_decide
+
+example :
+    marksAllSplits profileVt (osc "133;C;cmdline_url=true" false) [.runs (line "true")] = true := by
+  native_decide
+
+/-- fish 4.9's `string escape --style=url`, as it encodes a command line here. -/
+example :
+    marksAllSplits profileVt
+        (osc
+          "133;C;cmdline_url=make%20test%3B%20echo%20%24HOME%20%C3%A9%20~/x%20a%2Bb%20100%25%20%22q%22%20%28p%29"
+          true)
+        [.runs (line "make test; echo $HOME é ~/x a+b 100% \"q\" (p)")] =
+      true := by
+  native_decide
+
+/-- zsh 5.8's `printf %q` of the same line. -/
+example :
+    marksAllSplits profileVt
+        (osc
+          "133;C;cmdline=make\\ test\\;\\ echo\\ \\$HOME\\ é\\ ~/x\\ a+b\\ 100%\\ \\\"q\\\"\\ \\(p\\)"
+          false)
+        [.runs (line "make test; echo $HOME é ~/x a+b 100% \"q\" (p)")] =
+      true := by
+  native_decide
+
+/-- bash's `printf %q` of a line with controls, one `$'…'` word, and zsh's, one per character. -/
+example :
+    marksAllSplits profileVt (osc "133;C;cmdline=$'a\\tb\\nc\\Ed'" true)
+          [.runs (line "a\tb\nc\x1bd")] =
+        true ∧
+      marksAllSplits profileVt (osc "133;C;cmdline=a$'\\t'b$'\\n'c$'\\033'd" false)
+          [.runs (line "a\tb\nc\x1bd")] =
+        true := by
+  native_decide
+
+/-- An empty command line, as `%q` quotes it. -/
+example : marksAllSplits profileVt (osc "133;C;cmdline=''" false) [.runs (line "")] = true := by
+  native_decide
+
+/-- Parameters before and after the command line. -/
+example :
+    marksAllSplits profileVt (osc "133;C;cmdline_url=ls;aid=1" false) [.runs (line "ls")] = true ∧
+      marksAllSplits profileVt (osc "133;C;aid=1;cmdline=ls" true) [.runs (line "ls")] = true := by
+  native_decide
+
+/-- A value that stops decoding gives what was read before it, not whole. -/
+example :
+    marksAllSplits profileVt (osc "133;C;cmdline_url=make%2" false) [.runs (line "make" false)] =
+        true ∧
+      marksAllSplits profileVt (osc "133;C;cmdline=make test" false) [.runs (line "make" false)] =
+        true ∧
+      marksAllSplits profileVt (osc "133;C;cmdline='make" true) [.runs (line "make" false)] =
+        true := by
+  native_decide
+
+example :
+    marksAllSplits profileVt (osc "133;D;0" false) [.finished (some 0)] = true ∧
+      marksAllSplits profileVt (osc "133;D" true) [.finished none] = true ∧
+      marksAllSplits profileVt (osc "133;D;130;aid=7" false) [.finished (some 130)] = true ∧
+      marksAllSplits profileVt (osc "133;D;x" false) [.finished none] = true ∧
+      marksAllSplits profileVt (osc "133;D;" false) [.finished none] = true := by
+  native_decide
+
+/-- Another letter, a letter followed by more than parameters, another OSC and a notification
+are no mark. -/
+example :
+    marksAllSplits profileVt (osc "133;E" false) [] = true ∧
+      marksAllSplits profileVt (osc "133;AB" false) [] = true ∧
+      marksAllSplits profileVt (osc "1330;A" false) [] = true ∧
+      marksAllSplits profileVt (osc "2;133;A" true) [] = true ∧
+      marksAllSplits profileVt (osc "9;133;D;0" false) [] = true := by
+  native_decide
+
+/-- A command's marks in one chunk, around its output, in order. -/
+example :
+    marksAllSplits profileVt
+        (osc "133;C;cmdline_url=ls" false ++ "out\r\n".toUTF8.toList ++ osc "133;D;0" true ++
+          osc "133;A" false)
+        [.runs (line "ls"), .finished (some 0), .prompt] =
+      true := by
+  native_decide
+
+/-- A mark passes through to clients unchanged. -/
+example : passthroughAllSplits profileVt (osc "133;C;cmdline_url=true" false) = true := by
+  native_decide
+
+/-- A mark longer than the scanner holds: `ESC ] 133;C;cmdline_url=` and 300 letters. -/
+def longMark : Bytes := osc ("133;C;cmdline_url=" ++ String.ofList (List.replicate 300 'a')) false
+
+/-- It is still heard, as the scanner releases it, with the letters the scanner held, `oscCap`
+bytes less `ESC ]` and the 18 bytes before the line, plus the one byte it released them with, not
+whole; and passes through whole. -/
+example :
+    marksAllSplits profileVt longMark
+        [.runs { bytes := List.replicate (oscCap - 19) 0x61, whole := false }] =
+      true := by
+  native_decide
+
+example : passthroughWhole profileVt longMark = true := by native_decide
+
 end Terminal.Mediation.Tests

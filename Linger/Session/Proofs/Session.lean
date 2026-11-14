@@ -296,7 +296,9 @@ theorem step_ptyOut_no_clients (s : State) (chunk : List UInt8) (h : s.clients =
       let r := Terminal.Mediation.feed s.vt s.scan chunk
       ({ s with
           vt := r.vt, scan := r.scan, dirty := true, outSeq := s.outSeq + 1,
-          asking := s.asking || r.asks, notice := r.notice.or s.notice },
+          asking := s.asking || r.asks, notice := r.notice.or s.notice,
+          running := (r.marks.foldl hearMark (s.running, s.finished)).1,
+          finished := (r.marks.foldl hearMark (s.running, s.finished)).2 },
         if r.replies.isEmpty then [] else [Effect.writePty r.replies]) := by
   simp [step, broadcast, h]
 
@@ -1153,7 +1155,7 @@ touch, a label change) breaks it. -/
 theorem onMsg_screen (s : State) (c : Client) (ha : c.answered = false) :
     onMsg s c .screen =
       ({ s.setClient { c with answered := true } with
-          lookSeq := s.outSeq, asking := false, notice := none },
+          lookSeq := s.outSeq, asking := false, notice := none, finished := none },
         outputMsgs c.id (Render.screenText s.vt) ++ [.send c.id .done]) := by
   simp [onMsg, ha]
 
@@ -1779,7 +1781,8 @@ theorem onMsg_attach_focus (s : State) (c : Client) (cols rows : UInt32)
       attached := true, mode := .writable, seq := s.attachSeq, cols, rows }
   let s1 : State :=
     { s.setClient c' with
-      attachSeq := s.attachSeq + 1, lookSeq := s.outSeq, asking := false, notice := none }
+      attachSeq := s.attachSeq + 1, lookSeq := s.outSeq, asking := false, notice := none,
+      finished := none }
   have hfocused : (resizeOwned s1 c').1.focused = true := by
     have hf : s1.focused = true := focused_setClient (c := c') hc rfl rfl
     simp only [State.focused, (resizeOwned_frame s1 c').1]
@@ -2746,7 +2749,7 @@ theorem onMsg_attach_writePty (t : State) (c : Client) (mode : Mode) (cols rows 
                     { c with
                       attached := true, mode, seq := t.attachSeq, cols, rows } with
                   attachSeq := t.attachSeq + 1, lookSeq := t.outSeq, asking := false,
-                  notice := none }
+                  notice := none, finished := none }
                 { c with
                   attached := true, mode, seq := t.attachSeq, cols, rows }).1 := by
   let c' : Client :=
@@ -2754,7 +2757,8 @@ theorem onMsg_attach_writePty (t : State) (c : Client) (mode : Mode) (cols rows 
       attached := true, mode, seq := t.attachSeq, cols, rows }
   let t1 : State :=
     { t.setClient c' with
-      attachSeq := t.attachSeq + 1, lookSeq := t.outSeq, asking := false, notice := none }
+      attachSeq := t.attachSeq + 1, lookSeq := t.outSeq, asking := false, notice := none,
+      finished := none }
   have hro := resizeOwned_effects t1 c'
   unfold onMsg
   dsimp only
@@ -2805,7 +2809,8 @@ theorem step_attach_focus (s : State) (id : Nat) (chunk : List UInt8) {c : Clien
       attached := true, mode, seq := t.attachSeq, cols, rows }
   let t1 : State :=
     { t.setClient c' with
-      attachSeq := t.attachSeq + 1, lookSeq := t.outSeq, asking := false, notice := none }
+      attachSeq := t.attachSeq + 1, lookSeq := t.outSeq, asking := false, notice := none,
+      finished := none }
   show
     (c1.attached = false ∧
         Effect.writePty bytes ∈ focusEffects (mode == .writable) t.focused (resizeOwned t1 c').1) ↔
@@ -3501,7 +3506,8 @@ theorem onMsg_attach_repaint (t : State) (c : Client) (mode : Mode) (cols rows :
       attached := true, mode, seq := t.attachSeq, cols, rows }
   let t1 : State :=
     { t.setClient c' with
-      attachSeq := t.attachSeq + 1, lookSeq := t.outSeq, asking := false, notice := none }
+      attachSeq := t.attachSeq + 1, lookSeq := t.outSeq, asking := false, notice := none,
+      finished := none }
   have hro := resizeOwned_effects t1 c'
   unfold onMsg
   simp only [fresh, Bool.false_eq_true, ↓reduceIte]
@@ -3747,7 +3753,8 @@ theorem onMsg_resizePty_source (s : State) (c : Client) (m : Msg) (ec er : UInt3
         attached := true, mode, seq := s.attachSeq, cols, rows }
     let s1 : State :=
       { s.setClient c' with
-        attachSeq := s.attachSeq + 1, lookSeq := s.outSeq, asking := false, notice := none }
+        attachSeq := s.attachSeq + 1, lookSeq := s.outSeq, asking := false, notice := none,
+        finished := none }
     revert h
     unfold onMsg
     dsimp only
@@ -4473,5 +4480,309 @@ theorem step_notice_le (s : State) (ev : Event) (hs : s.scan.Bounded)
     split <;> exact hn
   | observed o => exact hn
   | checkpointFailed => exact hn
+
+/-! ## A shell's commands
+
+`running` and `finished` are what the session heard of its shell's commands, from the marks the
+mediator hears, each as `Commands.hear` says it tells. The ending is told until seen, as an ask
+is: output with nobody attached sets it as its marks tell, every look clears it, and no other
+event changes it; the running command changes only with output. Both command lines stay within
+the OSC buffer's cap. -/
+
+/-- A `C` mark alone, ended by BEL, from ground, is heard as a command that runs with no command
+line given, whatever the terminal: the fact a kill needs of the mediator. -/
+theorem feed_mark_runs (v : Terminal.Vt.Vt) :
+    (Terminal.Mediation.feed v .ground [0x1B, 0x5D, 0x31, 0x33, 0x33, 0x3B, 0x43, 0x07]).marks =
+      [.runs {}] :=
+  Terminal.Mediation.feed_osc_mark v [0x31, 0x33, 0x33, 0x3B, 0x43]
+    (by
+      unfold Terminal.Mediation.Plain; decide)
+    (by decide) [0x07] (.inl rfl)
+
+/-- What the session hears in a mark is what `Commands.hear` says the mark tells. -/
+theorem hearMark_hear (c : Commands) (m : Terminal.Mediation.Mark) :
+    hearMark (c.running, c.finished) m = ((c.hear m).running, (c.hear m).finished) := by
+  cases m with
+  | finished status => cases h : c.running <;> simp [hearMark, Commands.hear, h]
+  | _ => rfl
+
+/-- …and so in every mark of a chunk, in order. -/
+theorem foldl_hearMark (marks : List Terminal.Mediation.Mark) (c : Commands) :
+    marks.foldl hearMark (c.running, c.finished) =
+      ((marks.foldl Commands.hear c).running, (marks.foldl Commands.hear c).finished) := by
+  induction marks generalizing c with
+  | nil => rfl
+  | cons m ms ih => simp only [List.foldl_cons, hearMark_hear, ih]
+
+/-- **Output tells the commands as its marks do**: output hears each of its marks as
+`Commands.hear` says it tells, and an ending in output an attached client saw is seen as it
+arrives. -/
+theorem step_ptyOut_commands (s : State) (chunk : List UInt8) :
+    (step s (.ptyOut chunk)).1.commands.running =
+        ((Terminal.Mediation.feed s.terminal s.scanner chunk).marks.foldl Commands.hear
+            s.commands).running ∧
+      (step s (.ptyOut chunk)).1.commands.finished =
+        if seenBy s.roster then none
+        else
+          ((Terminal.Mediation.feed s.terminal s.scanner chunk).marks.foldl Commands.hear
+              s.commands).finished := by
+  have h := foldl_hearMark (Terminal.Mediation.feed s.vt s.scan chunk).marks s.commands
+  simp only [State.commands] at h
+  constructor
+  · simp only [step, State.commands, State.terminal, State.scanner, h]
+  · simp only [step, State.commands, seenBy, State.roster, State.terminal, State.scanner, h]
+    rfl
+
+/-- Resizing on behalf of the size owner leaves the commands alone. -/
+theorem resizeOwned_commands (s : State) (c : Client) :
+    (resizeOwned s c).1.running = s.running ∧ (resizeOwned s c).1.finished = s.finished := by
+  unfold resizeOwned resize
+  repeat' split
+  all_goals exact ⟨rfl, rfl⟩
+
+/-- **A look clears the ending**: an attach from a connection not yet attached, or a capture, read
+alone from a healthy decoder, leaves no ending to tell, and the running command as it was. -/
+theorem step_look_clears_finished (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
+    {dec : Wire.Decoder} {m : Msg} (hc : s.client? id = some c) (fresh : c.attached = false)
+    (read : c.decoder.feed chunk = (dec, [m])) (healthy : dec.errored = false) (looks : m.Looks) :
+    (step s (.bytes id chunk)).1.commands.finished = none ∧
+      (step s (.bytes id chunk)).1.commands.running = s.commands.running := by
+  rw [step_bytes_single hc read healthy]
+  cases m <;> simp only [Msg.Looks] at looks
+  · unfold onMsg
+    simp only [fresh, Bool.false_eq_true, ↓reduceIte, State.commands]
+    exact ⟨(resizeOwned_commands _ _).2, (resizeOwned_commands _ _).1⟩
+  · rw [onMsg_screen _ _ rfl]
+    exact ⟨rfl, rfl⟩
+
+/-- A message that is no look leaves the commands as they were. -/
+theorem onMsg_commands_kept (s : State) (c : Client) (m : Msg) (h : ¬m.Looks) :
+    (onMsg s c m).1.running = s.running ∧ (onMsg s c m).1.finished = s.finished := by
+  cases m
+  all_goals simp only [Msg.Looks, not_true_eq_false] at h
+  all_goals
+    unfold onMsg controlResize resizeOwned resize focusEffects infoMsgs outputMsgs
+    dsimp only
+    repeat' split
+  all_goals simp_all [State.setClient]
+
+/-- Every message leaves the running command as it was, and the ending as it was or cleared. -/
+theorem onMsg_commands (s : State) (c : Client) (m : Msg) :
+    (onMsg s c m).1.running = s.running ∧
+      ((onMsg s c m).1.finished = s.finished ∨ (onMsg s c m).1.finished = none) := by
+  cases m
+  all_goals
+    unfold onMsg controlResize resizeOwned resize focusEffects infoMsgs outputMsgs
+    dsimp only
+    repeat' split
+  all_goals simp_all [State.setClient]
+
+/-- No batch of messages changes the running command, nor tells an ending. -/
+theorem feedMsgs_commands (id : Nat) (msgs : List Msg) (acc : State × List (Effect Plan)) :
+    (feedMsgs id msgs acc).1.running = acc.1.running ∧
+      ((feedMsgs id msgs acc).1.finished = acc.1.finished ∨
+        (feedMsgs id msgs acc).1.finished = none) :=
+  feedMsgs_induct id msgs acc (P := fun r =>
+    r.1.running = acc.1.running ∧ (r.1.finished = acc.1.finished ∨ r.1.finished = none))
+    (fun current c m _ _ _ _ hs => by
+      obtain ⟨hr, hf⟩ := onMsg_commands current.1 c m
+      refine ⟨hr.trans hs.1, ?_⟩
+      rcases hf with hf | hf
+      · rw [hf]
+        exact hs.2
+      · exact .inr hf)
+    ⟨rfl, .inl rfl⟩
+
+/-- A batch with no look leaves the ending as it was. -/
+theorem feedMsgs_finished (id : Nat) (msgs : List Msg) (acc : State × List (Effect Plan))
+    (none : ∀ m ∈ msgs, ¬m.Looks) : (feedMsgs id msgs acc).1.finished = acc.1.finished :=
+  feedMsgs_induct id msgs acc (P := fun r => r.1.finished = acc.1.finished)
+    (fun current c m hm _ _ _ hs => (onMsg_commands_kept current.1 c m (none m hm)).2.trans hs) rfl
+
+/-- What a read changes of the commands through no message: closing an errored peer, or ignoring a
+peer the session no longer holds, keeps them. -/
+theorem step_bytes_commands_cases (s : State) (id : Nat) (chunk : List UInt8) :
+    ((step s (.bytes id chunk)).1.running = s.running ∧
+        (step s (.bytes id chunk)).1.finished = s.finished) ∨
+      ∃ c,
+        s.client? id = some c ∧
+          (c.decoder.feed chunk).1.errored = false ∧
+          (step s (.bytes id chunk)).1 =
+            (feedMsgs id (c.decoder.feed chunk).2
+                (s.setClient
+                    { c with
+                      decoder := (c.decoder.feed chunk).1, answered := false },
+                  [])).1 := by
+  unfold step
+  dsimp only
+  split
+  · exact .inl ⟨rfl, rfl⟩
+  · rename_i c hc
+    split
+    · left
+      unfold closeClient
+      dsimp only
+      split <;> exact ⟨rfl, rfl⟩
+    · rename_i hok
+      exact .inr ⟨c, hc, by simpa using hok, rfl⟩
+
+/-- **Only output changes the running command.** -/
+theorem step_running_kept (s : State) (ev : Event) (h : ∀ chunk, ev ≠ .ptyOut chunk) :
+    (step s ev).1.commands.running = s.commands.running := by
+  simp only [State.commands]
+  cases ev with
+  | ptyOut chunk => exact absurd rfl (h chunk)
+  | bytes id
+    chunk =>
+    rcases step_bytes_commands_cases s id chunk with ⟨hr, -⟩ | ⟨c, -, -, heq⟩
+    · exact hr
+    · rw [heq]
+      simpa [State.setClient] using (feedMsgs_commands id _ _).1
+  | closed id =>
+    unfold step closeClient
+    dsimp only
+    split <;> rfl
+  | connected id =>
+    dsimp only [step]
+    split <;> rfl
+  | childExited o => rfl
+  | stopped o => rfl
+  | signal n => rfl
+  | tick now =>
+    dsimp only [step]
+    split <;> rfl
+  | observed o => rfl
+  | checkpointFailed => rfl
+
+/-- **Only output and looks change the ending, and a look clears it**: an event after which the
+ending differs is output, or a read, from a connection the session holds, that holds an attach or
+a capture, after which no ending is told. -/
+theorem step_finished_changed (s : State) (ev : Event)
+    (changed : (step s ev).1.commands.finished ≠ s.commands.finished) :
+    (∃ chunk, ev = .ptyOut chunk) ∨
+      (step s ev).1.commands.finished = none ∧
+        ∃ id chunk c,
+          ev = .bytes id chunk ∧
+            s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks := by
+  simp only [State.commands] at changed ⊢
+  cases ev with
+  | ptyOut chunk => exact .inl ⟨chunk, rfl⟩
+  | bytes id chunk =>
+    right
+    rcases step_bytes_commands_cases s id chunk with ⟨-, hf⟩ | ⟨c, hc, -, heq⟩
+    · exact absurd hf changed
+    · rw [heq] at changed ⊢
+      refine ⟨?_, id, chunk, c, rfl, hc, ?_⟩
+      · rcases
+          (feedMsgs_commands id (c.decoder.feed chunk).2
+              (s.setClient
+                  { c with
+                    decoder := (c.decoder.feed chunk).1, answered := false },
+                [])).2 with
+          hf | hf
+        · exact absurd (by simpa [State.setClient] using hf) changed
+        · exact hf
+      · apply Classical.byContradiction
+        intro hnone
+        apply changed
+        simp only [not_exists, not_and] at hnone
+        rw [feedMsgs_finished]
+        · simp [State.setClient]
+        · exact fun m hm => hnone m hm
+  | closed id =>
+    refine absurd ?_ changed
+    unfold step closeClient
+    dsimp only
+    split <;> rfl
+  | connected id =>
+    refine absurd ?_ changed
+    dsimp only [step]
+    split <;> rfl
+  | childExited o => exact absurd rfl changed
+  | stopped o => exact absurd rfl changed
+  | signal n => exact absurd rfl changed
+  | tick now =>
+    refine absurd ?_ changed
+    dsimp only [step]
+    split <;> rfl
+  | observed o => exact absurd rfl changed
+  | checkpointFailed => exact absurd rfl changed
+
+/-- Hearing marks whose command lines fit the OSC buffer's cap, from commands whose command lines
+fit it, leaves command lines that fit it. -/
+theorem foldl_hearMark_le (marks : List Terminal.Mediation.Mark)
+    (heard : Option Terminal.Mediation.Cmdline × Option Finished)
+    (hm : ∀ c, .runs c ∈ marks → c.bytes.length ≤ Terminal.Mediation.oscCap)
+    (hr : ∀ c, heard.1 = some c → c.bytes.length ≤ Terminal.Mediation.oscCap)
+    (hf : ∀ f, heard.2 = some f → f.cmdline.bytes.length ≤ Terminal.Mediation.oscCap) :
+    (∀ c, (marks.foldl hearMark heard).1 = some c → c.bytes.length ≤ Terminal.Mediation.oscCap) ∧
+      ∀ f,
+        (marks.foldl hearMark heard).2 = some f →
+          f.cmdline.bytes.length ≤ Terminal.Mediation.oscCap := by
+  induction marks generalizing heard with
+  | nil => exact ⟨hr, hf⟩
+  | cons m ms ih =>
+    simp only [List.foldl_cons]
+    apply ih _ (fun c hc => hm c (List.mem_cons_of_mem m hc))
+    · cases m with
+      | prompt => simp [hearMark]
+      | input => exact hr
+      | runs cmdline =>
+        intro c hc
+        simp only [hearMark, Option.some.injEq] at hc
+        subst hc
+        exact hm cmdline List.mem_cons_self
+      | finished status =>
+        intro c hc
+        cases h : heard.1 with
+        | none =>
+          simp only [hearMark, h] at hc;
+          exact
+            hr c
+              (by
+                rw [h]; exact hc)
+        | some d => simp [hearMark, h] at hc
+    · cases m with
+      | prompt => exact hf
+      | input => exact hf
+      | runs cmdline => simp [hearMark]
+      | finished status =>
+        intro f hfin
+        cases h : heard.1 with
+        | none =>
+          simp only [hearMark, h] at hfin; exact hf f hfin
+        | some d =>
+          simp only [hearMark, h, Option.some.injEq] at hfin
+          subst hfin
+          exact hr d h
+
+/-- **A command line is bounded**: from a state whose scanner is within its caps and whose command
+lines fit the OSC buffer's cap, every event leaves command lines that fit it. -/
+theorem step_cmdline_le (s : State) (ev : Event) (hs : s.scan.Bounded)
+    (hr : ∀ c, s.running = some c → c.bytes.length ≤ Terminal.Mediation.oscCap)
+    (hf : ∀ f, s.finished = some f → f.cmdline.bytes.length ≤ Terminal.Mediation.oscCap) :
+    (∀ c, (step s ev).1.running = some c → c.bytes.length ≤ Terminal.Mediation.oscCap) ∧
+      ∀ f,
+        (step s ev).1.finished = some f → f.cmdline.bytes.length ≤ Terminal.Mediation.oscCap := by
+  by_cases hout : ∃ chunk, ev = .ptyOut chunk
+  · obtain ⟨chunk, rfl⟩ := hout
+    have bounded :=
+      foldl_hearMark_le (Terminal.Mediation.feed s.vt s.scan chunk).marks (s.running, s.finished)
+        (fun c hc => Terminal.Mediation.feed_cmdline_le s.vt s.scan chunk hs c hc) hr hf
+    refine ⟨fun c hc => bounded.1 c hc, fun f hfin => ?_⟩
+    simp only [step] at hfin
+    split at hfin
+    · cases hfin
+    · exact bounded.2 f hfin
+  · have kept := step_running_kept s ev fun chunk he => hout ⟨chunk, he⟩
+    simp only [State.commands] at kept
+    refine ⟨fun c hc => hr c (kept ▸ hc), fun f hfin => ?_⟩
+    by_cases same : (step s ev).1.finished = s.finished
+    · exact hf f (same ▸ hfin)
+    · rcases step_finished_changed s ev (by simpa [State.commands] using same) with hev | ⟨hnone, -⟩
+      · exact absurd hev hout
+      · simp only [State.commands] at hnone
+        rw [hnone] at hfin
+        cases hfin
 
 end Linger.Session

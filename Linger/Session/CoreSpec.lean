@@ -9,7 +9,8 @@ public section
 
 The values a session exchanges with its clients and its runtime (messages, client records,
 events and effects, and the end record a name keeps), what a command answers for each way a
-session ends, the caps its state keeps and how long its changes may go unsaved, the time its
+session ends, what a session hears of its shell's commands from the shell's marks, the caps its
+state keeps and how long its changes may go unsaved, the time its
 events tell it, and predicates over the session's operations, which they take as parameters:
 which messages fit a frame, change the labels or look at the session, and what a decoder reads from
 a chunked stream, the bounds a state
@@ -58,6 +59,40 @@ structure Seen where
   /-- A bell or a notification since the session was last looked at. -/
   asks : Bool
   deriving Repr, DecidableEq
+
+/-- A command's ending, as its shell reported it with its marks: the command line the `C` that
+started it gave, and the exit status its `D` gave, when that `D` gave one. -/
+structure Finished where
+  /-- The command line the `C` gave, as the mediator read it. -/
+  cmdline : Terminal.Mediation.Cmdline
+  /-- The exit status the `D` gave, as the shell reports it. -/
+  status : Option Nat
+  deriving Repr, DecidableEq
+
+/-- What a session heard of its shell's commands, from the shell's OSC 133 marks: the command
+line of the command that runs, while a `C` started one that no `D` or `A` has followed, and the
+ending of the last command that finished since the session was last looked at. -/
+structure Commands where
+  /-- The command a `C` started, with its command line, until a `D` or an `A` follows it. -/
+  running : Option Terminal.Mediation.Cmdline := none
+  /-- The ending of the last command that finished since the session was last looked at. -/
+  finished : Option Finished := none
+  deriving Repr, DecidableEq
+
+/-- What a mark tells a session of its shell's commands, as the marks' standard means it, from
+what the session heard before: `A`, a prompt, means no command runs, so a `D` after it is no
+ending; `B` tells nothing; `C` starts a command, which replaces an ending nobody saw; and `D` is
+the ending of the command a `C` started, with the status it gives, while with no command running
+it is no ending. -/
+@[expose]
+def Commands.hear (c : Commands) : Terminal.Mediation.Mark → Commands
+  | .prompt => { c with running := none }
+  | .input => c
+  | .runs cmdline => { running := some cmdline, finished := none }
+  | .finished status =>
+    match c.running with
+    | some cmdline => { running := none, finished := some ⟨cmdline, status⟩ }
+    | none => c
 
 /-- What a connection may do, as it asks when it attaches: type into the session, or only watch
 it. A connection that never attached, as `send`, `kill` and the label commands open, is

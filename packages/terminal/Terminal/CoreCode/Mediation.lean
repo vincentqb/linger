@@ -14,7 +14,9 @@ public section
 `Vt` remains the screen model. This module adds the other half of owning a
 PTY: recognizing the small documented query profile, replying to the child,
 and withholding only those owned requests from presentation clients.
-Everything else is emitted byte-for-byte. Title updates are `Terminal.Title`.
+Everything else is emitted byte-for-byte. Beside the scanner, it hears what
+the output tells of its program: a bell or a notification, and a shell's
+marks. Title updates are `Terminal.Title`.
 
 Potential CSI/OSC/DCS requests are bounded. Once a sequence is known to be
 unowned, passthrough states emit each subsequent byte immediately, so kitty
@@ -367,6 +369,189 @@ def Scan.hears (s : Scan) (b : UInt8) : Heard :=
     else if rev.length < oscCap then {} else heardOsc (heldPayload (b :: rev))
   | _ => {}
 
+/-! ## A shell's marks
+
+A shell marks its prompt and each command it runs with OSC 133, FinalTerm's semantic prompts, as
+iTerm2, kitty, WezTerm, Ghostty, Windows Terminal and VS Code read them: `A` as a prompt starts,
+`B` as the command's input starts, `C` as the command runs, its output following, and `D` as it
+finished, each possibly followed by `;` parameters, and ended by BEL or ST. A `C` may give the
+command line as kitty defines it, `cmdline_url=` and the line as UTF-8 %-escaped text, or
+`cmdline=` and the line quoted as `printf %q` quotes it, and a `D` gives the command's exit
+status as its first parameter, a decimal number. The mediator hears a mark as it scans the byte
+that completes it (`Scan.mark`), beside the scanner, whose decisions it leaves as they were: a
+mark still reaches every client unchanged.
+
+A mark longer than `oscCap`, which the scanner releases unclassified, is heard as the scanner
+releases it, from the bytes it held: the cap bounds the command line kept, never whether a mark
+is heard, and a command line it cuts is not whole. A value that stops decoding gives the bytes
+read before it, not whole either, so a command line tells less than the shell said, never
+something else. -/
+
+/-- How a parameter's value ends: at the `;` that begins the next parameter, with the payload,
+or where it stops decoding. -/
+private inductive Stop where
+  /-- At the `;` that begins the next parameter: the value is whole. -/
+  | semicolon
+  /-- With the payload: the value is whole when the payload is. -/
+  | payloadEnd
+  /-- Where it stops decoding: what was read before is not the whole value. -/
+  | broken
+
+/-- A hexadecimal digit's value. -/
+private def hexDigit (b : UInt8) : Option Nat :=
+  if 0x30 ≤ b && b ≤ 0x39 then some (b - 0x30).toNat
+  else
+    if 0x41 ≤ b && b ≤ 0x46 then some (b - 0x37).toNat
+    else if 0x61 ≤ b && b ≤ 0x66 then some (b - 0x57).toNat else none
+
+/-- What follows `cmdline_url=` in a `C` mark, up to the `;` that ends it, with each `%` and two
+hexadecimal digits decoded to the byte they stand for. A `%` without them stops it. -/
+private def urlValue : Bytes → Bytes × Stop
+  | [] => ([], .payloadEnd)
+  | 0x3B :: _ => ([], .semicolon)
+  | 0x25 :: high :: low :: rest =>
+    match hexDigit high, hexDigit low with
+    | some h, some l => ((UInt8.ofNat (16 * h + l)) :: (urlValue rest).1, (urlValue rest).2)
+    | _, _ => ([], .broken)
+  | 0x25 :: _ => ([], .broken)
+  | b :: rest => (b :: (urlValue rest).1, (urlValue rest).2)
+
+/-- Where a `printf %q` word is read: outside quotes, within single quotes, or within ANSI-C
+quotes, `$'…'`. -/
+private inductive Quoting where
+  /-- Outside quotes. -/
+  | bare
+  /-- Within single quotes, which quote every byte up to the next `'`. -/
+  | single
+  /-- Within `$'…'`, whose backslash escapes stand for bytes. -/
+  | ansi
+
+/-- The byte an ANSI-C escape stands for, from the letter after its backslash. -/
+private def ansiLetter : UInt8 → Option UInt8
+  | 0x61 => some 0x07
+  | 0x62 => some 0x08
+  | 0x65 => some 0x1B
+  | 0x45 => some 0x1B
+  | 0x66 => some 0x0C
+  | 0x6E => some 0x0A
+  | 0x72 => some 0x0D
+  | 0x74 => some 0x09
+  | 0x76 => some 0x0B
+  | 0x5C => some 0x5C
+  | 0x27 => some 0x27
+  | 0x22 => some 0x22
+  | 0x3F => some 0x3F
+  | _ => none
+
+/-- Whether a byte is an octal digit. -/
+private def octal (b : UInt8) : Bool := 0x30 ≤ b && b ≤ 0x37
+
+/-- Whether a byte outside quotes would end a shell word, quote or expand it, or is a control
+character: what `printf %q` never writes unquoted. -/
+private def unquotable (b : UInt8) : Bool :=
+  b < 0x20 || b == 0x7F || [0x20, 0x22, 0x24, 0x26, 0x28, 0x29, 0x3C, 0x3E, 0x60, 0x7C].contains b
+
+/-- What follows `cmdline=` in a `C` mark, read, from where its quoting starts, as the one shell
+word `printf %q` writes, in bash's style and in zsh's, up to the unquoted `;` that ends it: a
+backslash quotes the byte after it, single quotes quote what they hold, and `$'…'` holds escapes,
+a letter or three octal digits, each standing for one byte. A byte `%q` never writes unquoted
+(`unquotable`), another escape or a quote that does not end stops it. -/
+private def wordValue : Quoting → Bytes → Bytes × Stop
+  | .bare, [] => ([], .payloadEnd)
+  | .bare, 0x3B :: _ => ([], .semicolon)
+  | .bare, 0x5C :: b :: rest => (b :: (wordValue .bare rest).1, (wordValue .bare rest).2)
+  | .bare, 0x24 :: 0x27 :: rest => wordValue .ansi rest
+  | .bare, 0x27 :: rest => wordValue .single rest
+  | .bare, b :: rest =>
+    if b == 0x5C || unquotable b then ([], .broken)
+    else (b :: (wordValue .bare rest).1, (wordValue .bare rest).2)
+  | .single, [] => ([], .broken)
+  | .single, 0x27 :: rest => wordValue .bare rest
+  | .single, b :: rest => (b :: (wordValue .single rest).1, (wordValue .single rest).2)
+  | .ansi, [] => ([], .broken)
+  | .ansi, 0x27 :: rest => wordValue .bare rest
+  | .ansi, 0x5C :: e :: rest =>
+    match ansiLetter e with
+    | some b => (b :: (wordValue .ansi rest).1, (wordValue .ansi rest).2)
+    | none =>
+      match rest with
+      | d :: o :: tail =>
+        if octal e && octal d && octal o then
+          (UInt8.ofNat (64 * (e - 0x30).toNat + 8 * (d - 0x30).toNat + (o - 0x30).toNat) ::
+              (wordValue .ansi tail).1,
+            (wordValue .ansi tail).2)
+        else ([], .broken)
+      | _ => ([], .broken)
+  | .ansi, [0x5C] => ([], .broken)
+  | .ansi, b :: rest => (b :: (wordValue .ansi rest).1, (wordValue .ansi rest).2)
+
+/-- A parameter's value as a command line: its bytes, whole when the value ended at a `;`, or
+with a payload that is `whole`. -/
+private def cmdlineOfValue (whole : Bool) (value : Bytes × Stop) : Cmdline :=
+  { bytes := value.1,
+    whole :=
+      match value.2 with
+      | .semicolon => true
+      | .payloadEnd => whole
+      | .broken => false }
+
+/-- `cmdline_url=`, the parameter that gives a command line as UTF-8 %-escaped text. -/
+private def urlParam : Bytes :=
+  [0x63, 0x6D, 0x64, 0x6C, 0x69, 0x6E, 0x65, 0x5F, 0x75, 0x72, 0x6C, 0x3D]
+
+/-- `cmdline=`, the parameter that gives a command line quoted as `printf %q` quotes it. -/
+private def quotedParam : Bytes := [0x63, 0x6D, 0x64, 0x6C, 0x69, 0x6E, 0x65, 0x3D]
+
+/-- The command line a `C` mark's parameters give, each after a `;`: the first `cmdline_url=`
+parameter's value, %-decoded (`urlValue`), or `cmdline=` parameter's, unquoted (`wordValue`);
+empty and whole when no parameter gives one. `whole` says whether the payload ended before the
+scanner's cap. -/
+def cmdlineOf (whole : Bool) : Bytes → Cmdline
+  | [] => {}
+  | 0x3B :: rest =>
+    if urlParam.isPrefixOf rest then cmdlineOfValue whole (urlValue (rest.drop urlParam.length))
+    else
+      if quotedParam.isPrefixOf rest then
+        cmdlineOfValue whole (wordValue .bare (rest.drop quotedParam.length))
+      else cmdlineOf whole rest
+  | _ :: rest => cmdlineOf whole rest
+
+/-- A number's value from its decimal digits, most significant first. -/
+private def decimal (digits : Bytes) : Nat := digits.foldl (fun n d => 10 * n + (d - 0x30).toNat) 0
+
+/-- The exit status a `D` mark's parameters give: the first, when it is a decimal number. -/
+def statusOf : Bytes → Option Nat
+  | 0x3B :: rest =>
+    let field := rest.takeWhile (· != 0x3B)
+    if !field.isEmpty && field.all digit then some (decimal field) else none
+  | _ => none
+
+/-- The mark an OSC payload is: `133;`, a mark's letter, `A`, `B`, `C` or `D`, then nothing or `;`
+and its parameters, which a `C` reads its command line from (`cmdlineOf`) and a `D` its exit
+status (`statusOf`). `whole` says whether the payload ended before the scanner's cap. -/
+def markOf (payload : Bytes) (whole : Bool) : Option Mark :=
+  match payload with
+  | 0x31 :: 0x33 :: 0x33 :: 0x3B :: letter :: params =>
+    if params.head?.all (· == 0x3B) then
+      if letter == 0x41 then some .prompt
+      else
+        if letter == 0x42 then some .input
+        else
+          if letter == 0x43 then some (.runs (cmdlineOf whole params))
+          else if letter == 0x44 then some (.finished (statusOf params)) else none
+    else none
+  | _ => none
+
+/-- The mark scanning `b` from `s` completes: the mark an OSC string is, as BEL or ST completes
+it, or, past `oscCap`, as the scanner releases it unclassified, from the bytes it held, which are
+then not the whole payload. -/
+def Scan.mark (s : Scan) (b : UInt8) : Option Mark :=
+  match s with
+  | .osc rev escSeen =>
+    if b == BEL || (escSeen && b == STFinal) then markOf (heldPayload rev) true
+    else if rev.length < oscCap then none else markOf (heldPayload (b :: rev)) false
+  | _ => none
+
 /-- After feeding a chunk: the terminal, the scanner, client-visible bytes and child replies. -/
 structure Result where
   /-- The terminal after every byte of the chunk. -/
@@ -381,6 +566,8 @@ structure Result where
   asks : Bool := false
   /-- The text of the chunk's last notification, if it posted one. -/
   notice : Option Bytes := none
+  /-- The shell's marks the chunk completed (`Scan.mark`), in order. -/
+  marks : List Mark := []
 
 -- No `deriving Repr`: it would need `Repr Vt`, which the seal withholds because it would
 -- publicly read every private field of `VtRec`. Nothing used the instance.
@@ -396,6 +583,6 @@ def feed (v : Vt) (scan : Scan) : Bytes → Result
       let rest := feed v' out.scan bs
       { vt := rest.vt, scan := rest.scan, visible := out.visible ++ rest.visible,
         replies := out.replies ++ rest.replies, asks := heard.asks || rest.asks,
-        notice := rest.notice.or heard.notice }
+        notice := rest.notice.or heard.notice, marks := (scan.mark b).toList ++ rest.marks }
 
 end Terminal.Mediation

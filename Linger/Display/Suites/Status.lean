@@ -256,6 +256,74 @@ def checkAsks (e : Env) : IO Unit := do
       "a bell while a client is attached leaves no ask, and one after it leaves does"
   e.killAll #["a-out", "z-bell", "n9", "n777", "prog", "seen-bell"]
 
+/-- A `/bin/sh` command that prints the OSC 133 mark `body`, ended by BEL. -/
+private def mark (body : String) : String := s!"printf '\\033]133;{body}\\007'"
+
+/-- What `info` and the porcelain report of session `name`'s last command's ending since a look:
+its command line and its exit status, each in both. -/
+private def endingOf (e : Env) (name : String) :
+    IO (Option String × Option String × Option String × Option String) := do
+  return (← e.info name "lastcmd", ← e.info name "lastexit", ← e.field name "lastcmd",
+      ← e.field name "lastexit")
+
+/-- Nothing reported of a command's ending. -/
+private def untold : Option String × Option String × Option String × Option String :=
+  (none, none, none, none)
+
+/-- A shell that marks its commands with OSC 133 reports each command's ending: a `D` after a
+`C` with nobody attached is told in `info`, the porcelain and the row, with the command line the
+`C` gave, URL-encoded or quoted as `printf %q` quotes it, and the status the `D` gave, until
+someone looks; a later `C` replaces it, a `D` with no `C` since the last `D` or `A` tells
+nothing, and the session's status stays its own. The session's shell is `/bin/sh`, which prints
+the marks with `printf`; each marker a command prints is computed by the shell, so the echo of
+the typed command cannot show it. -/
+def checkEndings (e : Env) : IO Unit := do
+  let _ ←
+    e.typeIn "mk"
+        #[s!"{mark "A;click_events=1"}; {mark "B"}; {mark "C;cmdline_url=make%%20test"}; (exit 2); \
+            printf '\\033]133;D;%s\\007' $?; {mark "D;5"}; {mark "A"}; echo mk-$((1+1))"]
+  let ran ← printed e "mk" "mk-2"
+  let told ← endingOf e "mk"
+  expect (ran && told == (some "make test", some "2", some "make test", some "2"))
+      s!"a command that ends with 2 while nobody watches is in info and the porcelain, and a D \
+        with no C after it tells nothing: {told}"
+  let row ← rowOf e "mk"
+  expect (has row "make test: exit 2") s!"the row shows the command line and its exit status: {row}"
+  let status ← e.status "mk"
+  expect (status == Status.wantsYou || status == .working)
+      s!"a command's ending leaves the session's own status: {Linger.Display.Status.name status}"
+  let before ← endingOf e "mk"
+  let c ← e.spawn #["attach", "mk"] 80 24
+  let _ ← waitFor patienceMs (return (← e.info "mk" "clients") == some "1")
+  c.detach
+  let _ ← waitFor patienceMs (return (← e.info "mk" "clients") == some "0")
+  c.bye (sendDetach := false)
+  expect
+      (before.1 == some "make test" && (← endingOf e "mk") == untold &&
+        !has (← rowOf e "mk") "exit")
+      "attaching clears the ending"
+  let _ ←
+    e.cli
+        #["send", "mk",
+          s!"{mark "C;cmdline=make\\\\ check\\\\;\\\\ ls"}; (exit 1); \
+            printf '\\033]133;D;%s\\007' $?; echo mk-$((2+2))\n"]
+  let quoted ← printed e "mk" "mk-4"
+  let checked ← endingOf e "mk"
+  expect (quoted && checked == (some "make check; ls", some "1", some "make check; ls", some "1"))
+      s!"a command line quoted as printf %q quotes it is read unquoted: {checked}"
+  let _ ← e.cli #["send", "mk", s!"{mark "C;cmdline_url=sleep%%201"}; echo mk-$((3+3))\n"]
+  let replaced ← printed e "mk" "mk-6"
+  expect (replaced && checked.1.isSome && (← endingOf e "mk") == untold)
+      "a later C replaces an ending nobody saw"
+  let _ ← e.cli #["send", "mk", s!"{mark "A"}; {mark "D;0"}; echo mk-$((4+4))\n"]
+  let prompted ← printed e "mk" "mk-8"
+  expect (prompted && (← endingOf e "mk") == untold) "a D with no C since the last A tells nothing"
+  let _ ← e.typeIn "plain" #["(exit 3);", "echo", "plain-$((1+1))"]
+  let plain ← printed e "plain" "plain-2"
+  expect (plain && (← endingOf e "plain") == untold && !has (← rowOf e "plain") "exit")
+      "a shell that marks nothing reports no ending"
+  e.killAll #["mk", "plain"]
+
 /-- The status suite: attaching marks a session seen and detached output marks it unread. -/
 def run : IO UInt32 :=
   Env.suite "status" fun e => do
@@ -334,6 +402,7 @@ def run : IO UInt32 :=
         "a summary counts a killed daemon as not answering, not from what it last wrote"
     e.killAll #["st"]
     checkAsks e
+    checkEndings e
     checkDeadline e
     checkBacklog e
 

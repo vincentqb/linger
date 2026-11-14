@@ -22,7 +22,9 @@ session it saved; or version 2, 0 and one byte of what the daemon saw (1 for fre
 unseen output, 4 for a bell or a notification since the last look), for a running program whose
 daemon says so. A reader from before saved sessions reads one as no record, so it answers that
 the ending is unknown, and lists it resumable, and a reader from before asks reads a byte with 4
-as no record, so it asks the daemon. -/
+as no record, so it asks the daemon. The record says nothing of how the shell's last command
+ended: that is no status, and the summary that reads the record shows statuses alone, so what it
+reads is what asking would tell it (`rowStatus_published`). -/
 
 namespace Linger.Session
 

@@ -6,7 +6,8 @@ public section
 
 The values a terminal shows (colours, pens, cells, rows, modes and the screen settings a
 repaint keeps), the bytes it is fed, the rows a history keeps and the output that may ask to
-erase it, and predicates over the emulator's operations, which they take as parameters.
+erase it, the marks a shell sends around its prompt and its commands, and predicates over the
+emulator's operations, which they take as parameters.
 Bodies are exposed: each definition here is its own specification.
 
 `Live` is the least set of states containing a fresh emulator and closed under what a live
@@ -327,5 +328,30 @@ def Scan.Bounded : Scan → Prop
     ([ESC, 0x50, kind, 0x71] ++ payloadRev.reverse ++ (if escSeen then [ESC] else [])).length ≤
       dcsCap
   | _ => True
+
+/-- The command line a shell gives with a `C` mark, as the mediator read it: the bytes it
+decoded, and whether they are all of it. A mark longer than `oscCap`, which the scanner releases
+before it ends, or a value that stops decoding, gives the bytes read before that, not whole. -/
+structure Cmdline where
+  /-- The bytes of the command line, decoded, in order: empty when the mark gives none. -/
+  bytes : Bytes := []
+  /-- Whether `bytes` is the whole command line. -/
+  whole : Bool := true
+  deriving Repr, DecidableEq
+
+/-- A semantic prompt mark, OSC 133, as a shell sends one around its prompt and each command it
+runs, `ESC ] 133 ; <letter>`, possibly followed by `;` parameters, and ended by BEL or ST. -/
+inductive Mark where
+  /-- `A`: a prompt starts. -/
+  | prompt
+  /-- `B`: the prompt ends and the command's input starts. -/
+  | input
+  /-- `C`: the command runs and its output follows, with the command line its `cmdline_url=` or
+  `cmdline=` parameter gives. -/
+  | runs (cmdline : Cmdline)
+  /-- `D`: the command finished, with the exit status its first parameter gives, when that is a
+  decimal number. -/
+  | finished (status : Option Nat)
+  deriving Repr, DecidableEq
 
 end Terminal.Mediation

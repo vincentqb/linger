@@ -178,4 +178,21 @@ example :
         "⣀ agent fix parser  claude  ~/src  2m" := by
   native_decide
 
+/-- A shell at its prompt whose last command ended while nobody looked, as a daemon reports it. -/
+def ended : List (String × String) :=
+  [("name", "build"), ("pid", "10"), ("status", "wants-you"), ("login", "true"),
+    ("label.description", "fix parser"), ("lastcmd", "make test"), ("lastexit", "2"), ("fg", "zsh"),
+    ("fgpid", "10"), ("fgdir", "/home/u/src"), ("idle", "5")]
+
+-- The row shows how the command ended right after the caption, its line and its status, or the
+-- line alone when the shell gave no status, and the status alone when no line reads.
+example :
+    String.ofList (rowText none 5 (atHome "/home/u" ended)) =
+        "⣿ build fix parser  make test: exit 2  ~/src  5s" ∧
+      String.ofList (rowText none 5 (ended.filter (·.1 != "lastexit"))) =
+        "⣿ build fix parser  make test: ended  /home/u/src  5s" ∧
+      String.ofList (rowText none 5 (ended.filter (·.1 != "lastcmd"))) =
+        "⣿ build fix parser  exit 2  /home/u/src  5s" := by
+  native_decide
+
 end Linger.Display.Listing.Tests

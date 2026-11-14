@@ -124,6 +124,13 @@ structure StateRec where
   /-- The text of the program's last notification since the last look, as the mediator heard
   it, which `info` reports as `notice`. Every look clears it with `asking`. -/
   private notice : Option (List UInt8) := none
+  /-- The command the shell's last `C` mark started, with its command line, while no `D` or `A`
+  has followed it, as the mediator heard the marks. -/
+  private running : Option Mediation.Cmdline := none
+  /-- The ending of the shell's last command that finished since the last look, which `info`
+  reports as `lastcmd` and `lastexit`: output with nobody attached sets it as the shell's marks
+  tell it, a later `C` replaces it, and every look clears it, as it catches `lookSeq` up. -/
+  private finished : Option Finished := none
   /-- `outSeq` as of the previous `.tick`. Output since then is what the next tick records as
   the time of the last output (`lastOutMs`), so the output event itself needs no clock. -/
   private tickOutSeq : Nat := 0
@@ -151,6 +158,10 @@ def State.labelList (s : State) : List (String × String) := s.labels
 
 /-- The pty scanner's state, as the headline theorems observe it. -/
 def State.scanner (s : State) : Mediation.Scan := s.scan
+
+/-- What the session heard of its shell's commands, as the headline theorems observe it: the
+command that runs and the ending of the last one that finished since the last look. -/
+def State.commands (s : State) : Commands := { running := s.running, finished := s.finished }
 
 -- No `deriving` clause at all. `Inhabited` would need `Inhabited Vt`, a public door out of
 -- the `Vt` seal admitting a zero-column screen, and `Repr` would need `Repr Vt`, whose
@@ -248,6 +259,20 @@ private def unseen (s : State) : Bool := s.lookSeq < s.outSeq
 have thrown it away. -/
 private def behind (s : State) : Nat := s.outSeq - s.lookSeq
 
+/-- What a session hears of its shell's commands in one mark, from what it heard before, the
+command that runs and the last ending nobody saw: a prompt ends what ran, a `C` starts a command
+and replaces that ending, and a `D` ends the command a `C` started, with its status, and is no
+ending with none running. `Commands.hear` is what each mark means. -/
+private def hearMark (heard : Option Mediation.Cmdline × Option Finished) :
+    Mediation.Mark → Option Mediation.Cmdline × Option Finished
+  | .prompt => (none, heard.2)
+  | .input => heard
+  | .runs cmdline => (some cmdline, none)
+  | .finished status =>
+    match heard.1 with
+    | some cmdline => (none, some ⟨cmdline, status⟩)
+    | none => heard
+
 /-- What a tick at `now` observes: output since the previous tick makes `now` the time of the
 last output, which stays fresh for `freshMs`. -/
 private def State.ticked (s : State) (now : Nat) : State :=
@@ -307,6 +332,28 @@ def noticeFields (notice : Option (List UInt8)) : List (String × String) :=
   | some text => if text.isEmpty then [] else [("notice", text)]
   | none => []
 
+/-- A command line as text, as a window title is read: the longest of its bytes and the bytes
+less one, two or three at the end that is UTF-8, since a cap may cut a character short, followed
+by `…` when that is not the whole command line; `none` when no text of it reads. -/
+def cmdlineText (cmdline : Mediation.Cmdline) : Option String :=
+  match
+    [0, 1, 2, 3].findSome? fun cut =>
+      (String.fromUTF8?
+            (ByteArray.mk (cmdline.bytes.take (cmdline.bytes.length - cut)).toArray)).map
+        fun text => (text, cut == 0) with
+  | some (text, all) =>
+    if text.isEmpty then none else some (if cmdline.whole && all then text else text ++ "…")
+  | none => none
+
+/-- How `info` reports the ending of the shell's last command since the session was last looked
+at: `lastcmd`, its command line (`cmdlineText`), when one reads, and `lastexit`, the exit status
+its `D` gave, when it gave one. -/
+def finishedFields : Option Finished → List (String × String)
+  | none => []
+  | some f =>
+    ((cmdlineText f.cmdline).map (("lastcmd", ·))).toList ++
+      (f.status.map (("lastexit", toString ·))).toList
+
 /-- How `info` reports the session's present, as the daemon last read it before it answered:
 `idle`, the whole seconds since the program last wrote, and `lastout`, that time on the real-time
 clock in seconds, once it wrote at all; `login` when the session's program is its login shell;
@@ -353,6 +400,7 @@ def infoFields (s : State) : List (String × String) :=
     | none => []) ++
     titleFields s.vt.windowTitle ++
     noticeFields s.notice ++
+    finishedFields s.commands.finished ++
     presentFields s.observed s.lastOutMs ++
     s.labels.map (fun (k, v) => (s!"label.{k}", v))
 
@@ -482,7 +530,8 @@ private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Pla
           attached := true, mode, seq := s.attachSeq, cols, rows }
       let s :=
         { s.setClient c with
-          attachSeq := s.attachSeq + 1, lookSeq := s.outSeq, asking := false, notice := none }
+          attachSeq := s.attachSeq + 1, lookSeq := s.outSeq, asking := false, notice := none,
+          finished := none }
       let (s, effs) := resizeOwned s c
       -- Capture here: feedMsgs can change the VT again before effects run.
       (s,
@@ -527,7 +576,8 @@ private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Pla
         outputMsgs c.id (Render.history s.vt) ++ [.send c.id .done])
   | .screen =>
     -- `linger capture`: the grid only, plain text. Delivering the current
-    -- screen IS a look, so it catches the read mark up and clears an ask — after a capture,
+    -- screen IS a look, so it catches the read mark up and clears an ask and an
+    -- ending — after a capture,
     -- "output arrived while nobody was watching" is false and `behind` counts
     -- from this moment. `.info` must never do this
     -- (`ls` polls every daemon; a listing that marks everything read destroys
@@ -535,7 +585,7 @@ private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Pla
     if c.answered then (s, [.send c.id (.err "one request per read".toUTF8.toList)])
     else
       ({ s.setClient { c with answered := true } with
-          lookSeq := s.outSeq, asking := false, notice := none },
+          lookSeq := s.outSeq, asking := false, notice := none, finished := none },
         outputMsgs c.id (Render.screenText s.vt) ++ [.send c.id .done])
   | .wait =>
     match s.ended with
@@ -679,14 +729,18 @@ def step (s : State) (ev : Event) : State × List (Effect Plan) :=
             [])
   | .closed id => closeClient s id
   | .ptyOut chunk =>
-    -- output while a client is attached is a look: it is seen as it arrives, and a bell or a
-    -- notification in it leaves no ask
+    -- output while a client is attached is a look: it is seen as it arrives, and a bell, a
+    -- notification or a command's ending in it leaves nothing to tell
     let r := Terminal.Mediation.feed s.vt s.scan chunk
     ({ s with
         vt := r.vt, scan := r.scan, dirty := true, outSeq := s.outSeq + 1,
         lookSeq := if s.clients.any (·.attached) then s.outSeq + 1 else s.lookSeq,
         asking := !s.clients.any (·.attached) && (s.asking || r.asks),
-        notice := if s.clients.any (·.attached) then none else r.notice.or s.notice },
+        notice := if s.clients.any (·.attached) then none else r.notice.or s.notice,
+        running := (r.marks.foldl hearMark (s.running, s.finished)).1,
+        finished :=
+          if s.clients.any (·.attached) then none
+          else (r.marks.foldl hearMark (s.running, s.finished)).2 },
       (if r.replies.isEmpty then [] else [.writePty r.replies]) ++ broadcast s r.visible)
   | .childExited outcome =>
     -- an ended session is a result until someone sees it: told to an attached client, it is

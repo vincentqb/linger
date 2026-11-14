@@ -118,14 +118,16 @@ inductive Row where
 name; the status and how a saved session ended, from the caller and the name's end record;
 `pid` and `cmd`, which tell a busy daemon or a peer's row; the description, which only the user
 sets, as the label `description`; the title, which the session's program gave its window, and the
-text of its last notification since the session was last looked at; the login shell and the
-foreground program, its process and its directory, which the operating system reports; the
-seconds since the program last wrote; and the watchers. No other field, and no other label,
-changes what a human row shows. -/
+text of its last notification since the session was last looked at; the command line and exit
+status of the last command that finished since then, as its shell's marks reported them; the
+login shell and the foreground program, its process and its directory, which the operating system
+reports; the seconds since the program last wrote; and the watchers. No other field, and no
+other label, changes what a human row shows. -/
 @[expose]
 def sources : List String :=
   ["name", "status", "state", "saved", "signal", "outcome", "exit", "pid", "cmd",
-    "label.description", "title", "notice", "login", "fg", "fgpid", "fgdir", "idle", "clients"]
+    "label.description", "title", "notice", "lastcmd", "lastexit", "login", "fg", "fgpid", "fgdir",
+    "idle", "clients"]
 
 /-- The name of the program a command line runs: its first word, after the word's last `/`. -/
 @[expose]

@@ -920,4 +920,65 @@ example :
       true := by
   native_decide
 
+/-- A shell's mark: `ESC ] 133 ;`, the mark, and BEL. -/
+def mark (text : String) : List UInt8 :=
+  [0x1B, 0x5D, 0x31, 0x33, 0x33, 0x3B] ++ text.toUTF8.toList ++ [0x07]
+
+/-- Whether `info` reports no ending. -/
+def untold (s : State) : Bool :=
+  !(infoFields s).any fun kv => kv.1 == "lastcmd" || kv.1 == "lastexit"
+
+/-- A `D` after a `C` with nobody attached is a command's ending, told in `info` with the command
+line its `C` gave and the status its `D` gave, across chunks, and a `D` after it, with no `C`
+since, tells nothing; the session's status is unchanged, unseen output, which a summary that reads
+the end record sees too; an attach clears the ending, and an ending while a client is attached is
+seen as it arrives. -/
+example :
+    (let (ended, _) :=
+        run
+          [.ptyOut (mark "A;click_events=1" ++ mark "B" ++ mark "C;cmdline_url=make%20test"),
+            .ptyOut ("out".toUTF8.toList ++ mark "D;2" ++ mark "D;5" ++ mark "A")]
+      let (looked, _) := run [.connected 1, .bytes 1 (encode (.attach .writable 80 24))] ended
+      let (seen, _) := run [.ptyOut (mark "C;cmdline_url=ls" ++ mark "D;1")] looked
+      (infoFields ended).contains ("lastcmd", "make test") &&
+        (infoFields ended).contains ("lastexit", "2") &&
+        ended.seen == ⟨false, true, false⟩ &&
+        Record.published (Record.encode (.running (some ended.seen))) == some ended.seen &&
+        untold looked &&
+        untold seen) =
+      true := by
+  native_decide
+
+/-- A capture is a look: it clears an ending. A later `C` replaces an ending nobody saw, and a `D`
+after an `A`, with no `C` since, is no ending. -/
+example :
+    (let (ended, _) := run [.ptyOut (mark "C;cmdline=make\\ check" ++ mark "D;1")]
+      let (captured, _) := run [.connected 9, .bytes 9 (encode .screen)] ended
+      let (replaced, _) := step ended (.ptyOut (mark "C;cmdline_url=sleep%201"))
+      let (prompted, _) := run [.ptyOut (mark "A"), .ptyOut (mark "D;0")] replaced
+      (infoFields ended).contains ("lastcmd", "make check") &&
+        (infoFields ended).contains ("lastexit", "1") &&
+        untold captured &&
+        untold replaced &&
+        untold prompted) =
+      true := by
+  native_decide
+
+/-- A `D` with no status reports the command line alone, a `C` with no command line the status
+alone, and a command line linger read only in part ends with `…`; output with no marks tells
+nothing. -/
+example :
+    (let (silent, _) := run [.ptyOut (mark "C;cmdline_url=true" ++ mark "D")]
+      let (unnamed, _) := run [.ptyOut (mark "C" ++ mark "D;3")]
+      let (cut, _) := run [.ptyOut (mark "C;cmdline_url=make%2" ++ mark "D;4")]
+      let (plain, _) := run [.ptyOut "$ make\r\nok\r\n".toUTF8.toList]
+      (infoFields silent).contains ("lastcmd", "true") &&
+        !(infoFields silent).any (·.1 == "lastexit") &&
+        (infoFields unnamed).contains ("lastexit", "3") &&
+        !(infoFields unnamed).any (·.1 == "lastcmd") &&
+        (infoFields cut).contains ("lastcmd", "make…") &&
+        untold plain) =
+      true := by
+  native_decide
+
 end Linger.Session.Tests

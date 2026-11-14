@@ -328,15 +328,15 @@ theorem feed_replies_noNl (v : Vt) (s : Scan) (bs : Bytes) : NoNl (feed v s bs).
 /-! ## Stream laws -/
 
 /-- The full chunk law: re-chunking preserves the final VT and scanner, concatenates visible
-bytes and child replies in order, asks when either part asks, and keeps the later part's last
-notification, else the earlier one's. -/
+bytes, child replies and marks in order, asks when either part asks, and keeps the later part's
+last notification, else the earlier one's. -/
 theorem feed_append (v : Vt) (s : Scan) (a b : Bytes) :
     feed v s (a ++ b) =
       let first := feed v s a
       let second := feed first.vt first.scan b
       { vt := second.vt, scan := second.scan, visible := first.visible ++ second.visible,
         replies := first.replies ++ second.replies, asks := first.asks || second.asks,
-        notice := second.notice.or first.notice } := by
+        notice := second.notice.or first.notice, marks := first.marks ++ second.marks } := by
   induction a generalizing v s with
   | nil => simp [feed, Option.or_none]
   | cons x xs ih =>
@@ -776,5 +776,176 @@ theorem feed_notice_le (v : Vt) (s : Scan) (bs : Bytes) (hs : s.Bounded) (text :
     | none =>
       rw [hrest, Option.none_or] at h
       exact hears_notice_le hs b text h
+
+/-! ## A shell's marks
+
+What `Scan.mark` hears, byte by byte: a mark only where the scanner lets go of an OSC, as BEL or
+ST completes it or as the scanner releases one past its cap. Over a whole stream: an OSC within
+the cap, with a plain payload and ended by BEL or ST, completes exactly the mark its payload is,
+whatever the chunks; and the command line a mark gives is never longer than the OSC buffer's
+cap. -/
+
+/-- Feeding a byte, then the rest, completes the byte's mark, then the rest's. -/
+theorem marks_feed_cons (v : Vt) (s : Scan) (b : UInt8) (bs : Bytes) :
+    (feed v s (b :: bs)).marks =
+      (s.mark b).toList ++ (feed (v.step b) (s.step (v.step b) b).scan bs).marks := rfl
+
+/-- `feed_append`, read through the marks. -/
+theorem feed_append_marks (v : Vt) (s : Scan) (a b : Bytes) :
+    (feed v s (a ++ b)).marks =
+      (feed v s a).marks ++ (feed (feed v s a).vt (feed v s a).scan b).marks := by
+  rw [feed_append]
+
+/-- One byte completes the mark `Scan.mark` hears. -/
+theorem feed_single_mark (v : Vt) (s : Scan) (b : UInt8) :
+    (feed v s [b]).marks = (s.mark b).toList := by simp [feed]
+
+/-- A byte completes a mark only where the scanner lets go of an OSC: as BEL or ST completes it,
+or as the scanner releases one past its cap unclassified. -/
+theorem mark_releases (s : Scan) (v : Vt) (b : UInt8) (h : (s.mark b).isSome) :
+    ∃ rev escSeen,
+      s = .osc rev escSeen ∧
+        ((s.step v b).scan = .ground ∨ (s.step v b).scan = .oscPass (b == ESC)) := by
+  cases s with
+  | osc rev escSeen =>
+    refine ⟨rev, escSeen, rfl, ?_⟩
+    simp only [Scan.mark] at h
+    simp only [Scan.step]
+    split
+    · exact .inl (complete_scan _ _)
+    · rename_i hend
+      simp only [hend] at h
+      split
+      · rename_i hfit
+        simp [hfit] at h
+      · exact .inr rfl
+  | _ => simp [Scan.mark] at h
+
+/-- `ESC ]` from ground opens an OSC and completes no mark. -/
+theorem feed_osc_open_marks (v : Vt) : (feed v .ground [ESC, 0x5D]).marks = [] := by
+  simp [feed, Scan.step, Scan.mark, ESC]
+
+/-- An OSC within its cap reads plain payload bytes and completes no mark yet. -/
+theorem feed_osc_plain_marks (v : Vt) (rev payload : Bytes) (h : Plain payload)
+    (fits : rev.length + payload.length ≤ oscCap) :
+    (feed v (.osc rev false) payload).marks = [] := by
+  induction payload generalizing v rev with
+  | nil => rfl
+  | cons b bs ih =>
+    obtain ⟨hbel, hesc⟩ := h b List.mem_cons_self
+    simp only [List.length_cons] at fits
+    have hfit : rev.length < oscCap := by omega
+    have hstep : ((Scan.osc rev false).step (v.step b) b).scan = .osc (b :: rev) false := by
+      simp [Scan.step, hbel, hfit, hesc]
+    have hmark : (Scan.osc rev false).mark b = none := by simp [Scan.mark, hbel, hfit]
+    rw [marks_feed_cons, hstep, hmark,
+      ih (v.step b) (b :: rev) (fun c hc => h c (List.mem_cons_of_mem b hc))
+        (by
+          simp only [List.length_cons]; omega)]
+    rfl
+
+/-- **A mark is heard as its string ends**: an OSC with a plain payload, within its cap and ended
+by BEL or by ST, completes exactly the mark its payload is, read as a whole payload. ST needs one
+byte of the buffer more, for its ESC. -/
+theorem feed_osc_mark (v : Vt) (payload : Bytes) (h : Plain payload)
+    (fits : payload.length + 3 ≤ oscCap) (ending : Bytes)
+    (ends : ending = [BEL] ∨ ending = [ESC, STFinal]) :
+    (feed v .ground ([ESC, 0x5D] ++ payload ++ ending)).marks = (markOf payload true).toList := by
+  rw [List.append_assoc, feed_append_marks, feed_osc_open_marks, List.nil_append,
+    (feed_osc_open v).1]
+  generalize (feed v .ground [ESC, 0x5D]).vt = w
+  rw [feed_append_marks,
+    feed_osc_plain_marks w [0x5D, ESC] payload h
+      (by
+        simp only [List.length_cons, List.length_nil]; omega),
+    List.nil_append,
+    (feed_osc_plain w [0x5D, ESC] payload h
+        (by
+          simp only [List.length_cons, List.length_nil]; omega)).1]
+  generalize (feed w (.osc [0x5D, ESC] false) payload).vt = u
+  have hfit : payload.length + 2 < oscCap := by omega
+  rcases ends with rfl | rfl
+  · rw [feed_single_mark]
+    simp [Scan.mark, (heldPayload_plain payload h).1]
+  · have hne : ESC ≠ BEL := by decide
+    have hesc : (Scan.osc (payload.reverse ++ [0x5D, ESC]) false).mark ESC = none := by
+      simp [Scan.mark, hfit, hne]
+    have hstep :
+      ((Scan.osc (payload.reverse ++ [0x5D, ESC]) false).step (u.step ESC) ESC).scan =
+        .osc (ESC :: (payload.reverse ++ [0x5D, ESC])) true := by
+      simp [Scan.step, hfit, hne]
+    rw [marks_feed_cons, hesc, hstep, feed_single_mark]
+    simp [Scan.mark, (heldPayload_plain payload h).2]
+
+/-- A %-decoded value is no longer than the bytes it is read from. -/
+theorem urlValue_length (bs : Bytes) : (urlValue bs).1.length ≤ bs.length := by
+  fun_induction urlValue bs <;> simp_all
+  omega
+
+/-- …nor is a `printf %q` word. -/
+theorem wordValue_length (q : Quoting) (bs : Bytes) : (wordValue q bs).1.length ≤ bs.length := by
+  fun_induction wordValue q bs <;> simp_all <;> omega
+
+/-- A command line is no longer than the parameters it is read from. -/
+theorem cmdlineOf_length (whole : Bool) (params : Bytes) :
+    (cmdlineOf whole params).bytes.length ≤ params.length := by
+  fun_induction cmdlineOf whole params
+  · simp
+  · exact
+      Nat.le_trans (urlValue_length _)
+        (by
+          simp only [List.length_drop, List.length_cons]; omega)
+  · exact
+      Nat.le_trans (wordValue_length .bare _)
+        (by
+          simp only [List.length_drop, List.length_cons]; omega)
+  all_goals
+    simp only [List.length_cons]
+    omega
+
+/-- The command line a mark gives is no longer than its payload. -/
+theorem markOf_cmdline_le (payload : Bytes) (whole : Bool) (cmdline : Cmdline)
+    (h : markOf payload whole = some (.runs cmdline)) : cmdline.bytes.length ≤ payload.length := by
+  unfold markOf at h
+  split at h
+  · rename_i letter params
+    repeat' split at h
+    all_goals simp only [Option.some.injEq, reduceCtorEq, Mark.runs.injEq] at h
+    subst h
+    have := cmdlineOf_length whole params
+    simp only [List.length_cons]
+    omega
+  · simp at h
+
+/-- **A command line fits the OSC buffer's cap**: from a scanner within its caps, the command
+line any byte's mark gives is at most `oscCap` bytes. -/
+theorem mark_cmdline_le {s : Scan} (hs : s.Bounded) (b : UInt8) (cmdline : Cmdline)
+    (h : s.mark b = some (.runs cmdline)) : cmdline.bytes.length ≤ oscCap := by
+  cases s with
+  | osc rev escSeen =>
+    simp only [Scan.Bounded] at hs
+    simp only [Scan.mark] at h
+    split at h
+    · have := markOf_cmdline_le _ _ _ h
+      have := heldPayload_length rev
+      omega
+    · split at h
+      · simp at h
+      · have := markOf_cmdline_le _ _ _ h
+        have := heldPayload_length (b :: rev)
+        simp only [List.length_cons] at this
+        omega
+  | _ => simp [Scan.mark] at h
+
+/-- …over any stream from a scanner within its caps. -/
+theorem feed_cmdline_le (v : Vt) (s : Scan) (bs : Bytes) (hs : s.Bounded) (cmdline : Cmdline)
+    (h : .runs cmdline ∈ (feed v s bs).marks) : cmdline.bytes.length ≤ oscCap := by
+  induction bs generalizing v s with
+  | nil => simp [feed] at h
+  | cons b bs ih =>
+    rw [marks_feed_cons, List.mem_append] at h
+    rcases h with h | h
+    · exact mark_cmdline_le hs b cmdline (Option.mem_toList.mp h)
+    · exact ih (v.step b) _ hs.step h
 
 end Terminal.Mediation

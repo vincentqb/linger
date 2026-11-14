@@ -17,6 +17,22 @@ Press **Ctrl-\\** to detach; run the same command to reattach.
 `linger help` lists commands, the statuses a session shows and the exit codes.
 [Configuration recipes](recipes/README.md).
 
+## Command endings
+
+A shell that marks its prompts and commands with OSC 133 reports each command's ending: until
+you look, `linger ls` shows the command and its status, as `make test: exit 2`, and `linger info`
+reports them as `lastcmd` and `lastexit`. fish marks them by itself; for zsh, add to `~/.zshrc`:
+
+```zsh
+autoload -Uz add-zsh-hook
+_linger_precmd() { print -n "\e]133;D;$?\a\e]133;A\a" }
+_linger_preexec() { print -nf '\e]133;C;cmdline=%q\a' -- "$1" }
+add-zsh-hook precmd _linger_precmd
+add-zsh-hook preexec _linger_preexec
+```
+
+A command's ending is no session status: `✓` and `✗` stay for the session's own program.
+
 ## Remote hosts
 
 Every command takes a `name@host` target, and `linger ls -r` and the chooser also list the

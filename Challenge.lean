@@ -63,7 +63,13 @@ the titles, listings and selector views that show statuses: a view lists `⚑`, 
 asks exactly while its program has rung the bell or posted a notification since the session was
 last looked at: output with nobody attached asks as the terminal package's mediator hears it, a
 look, an attach, a capture or output while a client is attached, clears the ask, and nothing else
-changes it (`step_asks`).
+changes it (`step_asks`). A session tells how its shell's last command ended until someone sees
+it: output hears the shell's OSC 133 marks as the mediator hears them, each as `Commands.hear`
+says the marks' standard means it, so a `D` after a `C` is that command's ending, with the
+command line the `C` gave and the status the `D` gave, a later `C` replaces it, and a `D` with no
+`C` since the last `D` or `A` is no ending; output while a client is attached is seen as it
+arrives, a look clears the ending, and nothing else changes it (`step_commands`). An ending is
+no status: `✓` and `✗` stay the endings of the session's own program.
 
 Each theorem below is stated over definitions in the components' `CoreSpec` modules and the world
 claims in their `WorldSpec` modules, over the terminal package's parts, which its own challenge
@@ -211,6 +217,8 @@ def Linger.Session.State.labelList : State → List (String × String) := sorry
 def Linger.Session.State.scanner : State → Mediation.Scan := sorry
 
 def Linger.Session.State.seen : State → Seen := sorry
+
+def Linger.Session.State.commands : State → Commands := sorry
 
 def Linger.Session.State.nextTick : State → Option Nat := sorry
 
@@ -559,8 +567,9 @@ that caption does not name it (`caption_precedence`); its glyph and name are nev
 fits a width (`rowText_fits`), and each character is printable (`rowText_clean`). Not claimed:
 that the daemon reports the title, foreground and idle time it read, which the overview suite
 checks, what the operating system reports of the foreground, which `Pty.Foreground` assumes
-and its check tests, and that a row shows the text of a notification right after its caption
-while its session asks, and only then, which the listing tests and the status suite check. -/
+and its check tests, that a row shows the text of a notification right after its caption
+while its session asks, and only then, and how the last command that finished unseen ended right
+after that, which the listing tests and the status suite check. -/
 
 theorem one_owner (grant : Claim.State → Nat → Nat → Bool) (exclusive : Claim.Exclusive grant)
     {s : Claim.State} (reached : Claim.Reachable grant Claim.enters s) {a b resource : Nat}
@@ -2592,12 +2601,17 @@ theorem capture_waits_unlocked_rejects_inside :
 
 /-! ## The status rule
 
-And the titles, listings and selector views that show statuses, and what makes a session ask.
+And the titles, listings and selector views that show statuses, what makes a session ask, and
+what it tells of its shell's commands.
 Not claimed: which bytes ask, which `Terminal.Mediation` decides: a BEL a terminal executes as a
 control, and an OSC 9 or OSC 777 notification, which the status suite checks; that `info`, the
 porcelain and a row report the text of the last notification since the last look, which the status
-suite checks too; and that the daemon publishes what it sees to its name's end record, which the
-quiet and status suites check. -/
+suite checks too; which bytes are a shell's marks and what a mark's parameters say, which
+`Terminal.Mediation` decides too and its fixtures pin, and that `info`, the porcelain and a row
+report an ending's command line and status, which the status suite checks; repainting the marks
+after a reattach, which a repaint does not carry, and marks inside a full-screen program, which the
+session hears as its shell's; and that the daemon publishes what it sees to its name's end record,
+which the quiet and status suites check. -/
 
 theorem classify_iff (o : Status.Obs) (s : Status.Status) :
     Status.classify o = s ↔ Status.Is s o := by sorry
@@ -2659,6 +2673,66 @@ theorem step_asks_rejects_lumped :
               ∃ id chunk c,
                 ev = .bytes id chunk ∧
                   s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks) := by
+  sorry
+
+theorem step_commands (s : State) (ev : Event) :
+    (∀ chunk,
+        ev = .ptyOut chunk →
+          (Session.step s ev).1.commands.running =
+              ((Mediation.feed s.terminal s.scanner chunk).marks.foldl Commands.hear
+                  s.commands).running ∧
+            (Session.step s ev).1.commands.finished =
+              if seenBy s.roster then none
+              else
+                ((Mediation.feed s.terminal s.scanner chunk).marks.foldl Commands.hear
+                    s.commands).finished) ∧
+      (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
+        ev = .bytes id chunk →
+          s.client? id = some c →
+          c.attached = false →
+          c.decoder.feed chunk = (dec, [m]) →
+          dec.errored = false → m.Looks → (Session.step s ev).1.commands.finished = none) ∧
+      ((∀ chunk, ev ≠ .ptyOut chunk) →
+        (Session.step s ev).1.commands.running = s.commands.running) ∧
+      ((Session.step s ev).1.commands.finished ≠ s.commands.finished →
+        (∃ chunk, ev = .ptyOut chunk) ∨
+          (Session.step s ev).1.commands.finished = none ∧
+            ∃ id chunk c,
+              ev = .bytes id chunk ∧
+                s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks) := by
+  sorry
+
+@[kills step_commands]
+theorem step_commands_rejects_deaf :
+    ¬∀ (s : State) (ev : Event),
+        (∀ chunk,
+            ev = .ptyOut chunk →
+              ((fun (_ : State) => ({} : Commands)) (Session.step s ev).1).running =
+                  ((Mediation.feed s.terminal s.scanner chunk).marks.foldl Commands.hear
+                      ((fun (_ : State) => ({} : Commands)) s)).running ∧
+                ((fun (_ : State) => ({} : Commands)) (Session.step s ev).1).finished =
+                  if seenBy s.roster then none
+                  else
+                    ((Mediation.feed s.terminal s.scanner chunk).marks.foldl Commands.hear
+                        ((fun (_ : State) => ({} : Commands)) s)).finished) ∧
+          (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
+            ev = .bytes id chunk →
+              s.client? id = some c →
+              c.attached = false →
+              c.decoder.feed chunk = (dec, [m]) →
+              dec.errored = false →
+              m.Looks →
+              ((fun (_ : State) => ({} : Commands)) (Session.step s ev).1).finished = none) ∧
+          ((∀ chunk, ev ≠ .ptyOut chunk) →
+            ((fun (_ : State) => ({} : Commands)) (Session.step s ev).1).running =
+              ((fun (_ : State) => ({} : Commands)) s).running) ∧
+          (((fun (_ : State) => ({} : Commands)) (Session.step s ev).1).finished ≠
+              ((fun (_ : State) => ({} : Commands)) s).finished →
+            (∃ chunk, ev = .ptyOut chunk) ∨
+              ((fun (_ : State) => ({} : Commands)) (Session.step s ev).1).finished = none ∧
+                ∃ id chunk c,
+                  ev = .bytes id chunk ∧
+                    s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks) := by
   sorry
 
 theorem icon_glyphs :

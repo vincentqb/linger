@@ -107,7 +107,8 @@ structure RowPiece where
 A row shows the session's present after its status and name, each field from its one source
 (`sources`): the user's description, else the program's own title (`caption`); while the session
 asks (`⚑`), the text of its program's last notification since the session was last looked at
-(`notice`); the program in the terminal's foreground, unless it is the session's login shell at
+(`notice`); how the last command that finished since then ended, as its shell's marks reported it
+(`lastText`); the program in the terminal's foreground, unless it is the session's login shell at
 its prompt (`program`); that program's directory; how long ago the session last printed; and its
 watchers. A field appears only when it adds something: the program when the caption does not
 already name it, the directory when the caption does not already hold it, and no text twice. The
@@ -125,6 +126,17 @@ def caption (info : List (String × String)) : String :=
 session asks; nothing for any other status. -/
 def notice (info : List (String × String)) : String :=
   if Status.ofName (look info "status") == .asks then look info "notice" else ""
+
+/-- How the last command that finished since the session was last looked at ended, as its
+shell's marks reported it: its command line and `exit` with its status, as `make test: exit 2`,
+or `ended` when its shell gave no status; the status alone when no command line reads; nothing
+when no command finished unseen. -/
+def lastText (info : List (String × String)) : String :=
+  match info.lookup "lastcmd", info.lookup "lastexit" with
+  | some line, some code => s!"{line}: exit {code}"
+  | some line, none => s!"{line}: ended"
+  | none, some code => s!"exit {code}"
+  | none, none => ""
 
 /-- The foreground program's command line, from the operating system's report: nothing while
 that is the session's login shell itself, as at its prompt. A row whose daemon reports no
@@ -177,9 +189,9 @@ def stateText (info : List (String × String)) : String :=
     else ""
 
 /-- The fields after the name, in order, each shown once: how a session that is not running
-stands, the caption, the text of a notification while the session asks, the program, its directory
-unless the caption holds it, how long ago the session last printed unless it prints now, and `+N`
-watchers. -/
+stands, the caption, the text of a notification while the session asks, how the last command
+that finished unseen ended, the program, its directory unless the caption holds it, how long ago
+the session last printed unless it prints now, and `+N` watchers. -/
 def details (info : List (String × String)) : List String :=
   let dir := look info "fgdir"
   let idle :=
@@ -189,7 +201,7 @@ def details (info : List (String × String)) : List String :=
     if (look info "clients").isEmpty || look info "clients" == "0" then ""
     else s!"+{look info "clients"}"
   let fields :=
-    [stateText info, caption info, notice info, program info,
+    [stateText info, caption info, notice info, lastText info, program info,
       if decide (dir.toList <:+: (caption info).toList) then "" else dir, idle, watch]
   (fields.filter (!·.isEmpty)).eraseDups
 
