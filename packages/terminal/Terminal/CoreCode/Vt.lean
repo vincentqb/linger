@@ -1533,6 +1533,10 @@ def Vt.quiesce (v : Vt) :
     Vt := { v with
     pstate := .ground, u8need := 0, u8acc := 0 }
 
+/-- Whether the parser holds no partial sequence and no partial character, so that `quiesce`
+changes nothing (`quiesce_of_quiet`): a checkpoint then keeps all of the terminal. -/
+def Vt.quiet (v : Vt) : Bool := v.pstate == .ground && v.u8need == 0 && v.u8acc == 0
+
 /-- Feed a `ByteArray` by converting at the call site.
 
 **Test-facing, and named as such**: the daemon's pty path is

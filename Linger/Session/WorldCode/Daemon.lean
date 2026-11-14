@@ -7,6 +7,7 @@ import Linger.Session.CoreCode.Driver
 public import Linger.Session.CoreCode
 public import Linger.Session.CoreCode.Record
 public import Linger.Session.CoreCode.Start
+import Linger.Session.CoreCode.Handoff
 import Linger.Os.CoreCode.Env
 import Linger.Os.CoreCode.Answer
 import Linger.Session.WorldCode.Paths
@@ -186,6 +187,16 @@ structure Rt where
   be made: every poll round then asks whether the program has ended, and a stop signal has its
   default action. -/
   signals : Option UInt32 := none
+  /-- The write end of the signal pipe, which a daemon that upgrades keeps open for the image
+  that replaces it, with the read end. -/
+  signalWrite : Option UInt32 := none
+  /-- The descriptors that hold the session's locks, which a daemon that upgrades keeps open for
+  the image that replaces it, so the name stays this session's across the exec. -/
+  locks : List UInt32 := []
+  /-- The upgrades connections asked for since the last round, in order, each with the path of
+  the binary it names (`Effect.upgrade`). The daemon carries the first out after the round, and
+  refuses the others. -/
+  upgrades : List (Nat × List UInt8) := []
   /-- How the program ended, once a wait has said. The program stays unreaped until `serve` has
   ended the rest of its terminal session, so its pid stays its own until then. -/
   ending : Option Outcome := none
@@ -466,10 +477,7 @@ it and to the rest of its terminal session, until it ends, SIGHUP first and then
 program that became another user, is reported, and the next one is sent all the same; a stop that
 cannot even look whether the program ended is reported and answers `unknown`. The program stays
 unreaped (`programEnd`). -/
-private def stopProgram (rt : Rt) : IO Outcome := do
-  if let some outcome := rt.ending then
-    return outcome
-  let pid := rt.childPid
+private def stopChild (pid : UInt32) : IO Outcome := do
   let ending ← IO.mkRef (none : Option Outcome)
   let ended : IO Bool := do
     if (← ending.get).isNone then
@@ -492,6 +500,12 @@ private def stopProgram (rt : Rt) : IO Outcome := do
   catch err =>
     report s!"linger: stopping the program failed: {err}"
   return (← ending.get).getD .unknown
+
+/-- `stopChild` of the session's program, unless a wait already said how it ended. -/
+private def stopProgram (rt : Rt) : IO Outcome := do
+  if let some outcome := rt.ending then
+    return outcome
+  stopChild rt.childPid
 
 /-- Execute one effect against the world. Its result type admits only the
 feedback that the total driver has proved will terminate. Session state is
@@ -580,6 +594,9 @@ private def perform (st : State) (rt : Rt) : (eff : Effect Plan) → IO (Rt × D
     return ({ rt with final := some r }, ())
   | .exit => do
     return (rt, ())
+  -- the image is replaced after the round, once every effect of it has run (`upgradeAsked`)
+  | .upgrade id exe => do
+    return ({ rt with upgrades := rt.upgrades ++ [(id, exe)] }, ())
 
 /-- An effect's failure, as its reply says it: its client gone, its transport closed if the daemon
 still owns it; its checkpoint unsaved; its program's ending unknown. -/
@@ -595,7 +612,7 @@ private def failed (rt : Rt) : (eff : Effect Plan) → BaseIO (Rt × Driver.Repl
     return (rt, true)
   | .stopProgram => do
     return ({ rt with ending := some .unknown }, .unknown)
-  | .writePty _ | .resizePty .. | .dropCheckpoint | .record _ | .exit => do
+  | .writePty _ | .resizePty .. | .dropCheckpoint | .record _ | .exit | .upgrade .. => do
     return (rt, ())
 
 /-- The executor the driver runs, which answers every effect and raises nothing
@@ -894,6 +911,209 @@ structure RecordFile where
   /-- Put back the bytes `load` gave, or remove the record when it gave none. -/
   restore : Option (List UInt8) → IO Unit
 
+/-- Answer connection `id` that its request is refused, saying `why`, through the session's
+driver, so a connection that is gone is the session's event as for any reply. -/
+private def refuse (rt : Rt) (id : Nat) (why : String) : IO Rt := do
+  let (rt, events) ← runEffect rt (.send id (.err why.toUTF8.toList))
+  pump rt events
+
+/-- How long a probe of the binary an upgrade names may take to answer. -/
+def probeMs : Nat := 10000
+
+/-- The handoff formats the binary at `exe` reads, as it prints them when run as
+`exe __handoff-formats` (`Upgrade.readFormats`) within `probeMs`, or why it named none: it cannot
+be run, it did not answer in time, which ends it, it failed, or it printed no list of formats. -/
+private def probe (exe : String) : IO (Except String (List Nat)) := do
+  let child ←
+    try
+      IO.Process.spawn
+          { cmd := exe, args := #["__handoff-formats"], stdin := .null, stdout := .piped,
+            stderr := .null }
+    catch err =>
+      return .error s!"cannot be run: {err}"
+  let printed ← IO.asTask child.stdout.readToEnd Task.Priority.dedicated
+  let deadline := (← monotonicMs) + probeMs
+  let mut status : Option UInt32 := none
+  repeat
+    status ← child.tryWait
+    if status.isSome then
+      break
+    unless ← nap deadline 10 do
+      break
+  let some code := status |
+    do
+      try
+        child.kill
+        discard child.wait
+      catch _ =>
+        pure ()
+      return .error s!"did not answer within {probeMs} ms"
+  let text :=
+    match ← IO.wait printed with
+    | .ok text => text
+    | .error _ => ""
+  if code != 0 then
+    return .error s!"answered with status {code}"
+  match Linger.Session.Upgrade.readFormats text with
+  | some formats =>
+    return .ok formats
+  | none =>
+    return .error "names no handoff format"
+
+/-- Every byte the daemon still owes connection `c`, in order and framed as it would send them:
+its backlog, the rest of its repaint, then what follows the repaint. -/
+private def owedOf (c : Conn) : IO (List UInt8) := do
+  let mut chunks : Array (List UInt8) := #[(Linger.Session.Buf.writeFrom c.out).toList]
+  let mut rest := c.replay
+  repeat
+    let some plan := rest | break
+    match Replay.next Linger.Session.outputChunk plan with
+    | none =>
+      rest := none
+    | some (bytes, plan) =>
+      rest := some plan
+      unless bytes.isEmpty do
+        chunks := chunks.push (Wire.encode (.output bytes))
+  chunks := chunks.push (Linger.Session.Buf.writeFrom c.after).toList
+  return chunks.toList.flatten
+
+/-- Why the daemon cannot hand its session over now, if it cannot: the session is ending, its
+program's terminal has closed, or the program is partway through a control sequence or a
+character, which the handoff's terminal codec would forget (`Vt.quiet`). -/
+private def upgradeBlocked (rt : Rt) : Option String :=
+  if rt.exiting || rt.ending.isSome then some "the session is ending"
+  else
+    if !rt.ptyOpen then some "the program's terminal has closed"
+    else
+      if !rt.st.terminal.quiet then
+        some "the program is partway through a control sequence; try again"
+      else none
+
+/-- Replace this daemon's image with the binary at `exe`, which carries the session over, for
+connection `asker`, as `Effect.upgrade` asks. The binary must name the handoff format this one
+writes when probed (`Upgrade.proceeds`). The daemon then waits for its saves and its record
+write, saves its checkpoint, which a new image that cannot take the handoff leaves to resume,
+writes the handoff (`Handoff.encode`) and execs the binary as `__upgraded name handoff pid`,
+keeping its listener, its pty, its signal pipe, its locks and every connection open
+(`Os.Shell.execImage`). It closes nothing first. It returns only when it does not replace its
+image, with why, and the daemon carries on from the state it kept. -/
+private def upgradeTo (name : String) (login : Bool) (rt : Rt) (asker : Nat) (exe : List UInt8) :
+    IO (Rt × String) := do
+  let some exe :=
+    String.fromUTF8? (ByteArray.mk exe.toArray) | return (rt, "the binary's path is not text")
+  unless exe.startsWith "/" do
+    return (rt, s!"the binary's path {exe} is not absolute")
+  if let some why := upgradeBlocked rt then
+    return (rt, why)
+  let (some sigRead, some sigWrite) :=
+    (rt.signals,
+      rt.signalWrite) | return (rt, "the daemon hears its program's end on a timer, and cannot hand that over")
+  let formats ←
+    match ← probe exe with
+    | .error why =>
+      return (rt, s!"{exe} {why}, so the session keeps running")
+    | .ok formats =>
+      pure formats
+  unless Linger.Session.Upgrade.proceeds (some formats) do
+    let why :=
+      s!"{exe} reads handoff formats {formats}, not format {Linger.Session.Handoff.version}, so \
+        the session keeps running"
+    return (rt, why)
+  let rt ← finishSaves rt
+  let rt ← settleRecord rt
+  try
+    rt.saveCkpt rt.st
+  catch err =>
+    report s!"linger: saving the checkpoint before an upgrade failed: {err}"
+  let mut conns : List Linger.Session.Handoff.Conn := []
+  for c in rt.conns do
+    conns := conns ++ [{ fd := c.fd.toNat, owed := ← owedOf c, closeBy := c.closeBy }]
+  let world : Linger.Session.Handoff.World :=
+    { listenFd := rt.listenFd.toNat, ptyFd := rt.ptyFd.toNat, childPid := rt.childPid.toNat,
+      signals := (sigRead.toNat, sigWrite.toNat), locks := rt.locks.map (·.toNat), conns,
+      ptyIn := (Linger.Session.Buf.writeFrom rt.ptyIn).toList, login, asker }
+  let path ← Paths.handoffPath name
+  try
+    IO.FS.writeBinFile path (ByteArray.mk (Linger.Session.Handoff.encode rt.st world).toArray)
+  catch err =>
+    return (rt, s!"writing the handoff failed: {err}, so the session keeps running")
+  let keep :=
+    #[rt.listenFd, rt.ptyFd, sigRead, sigWrite] ++ rt.locks.toArray ++ (rt.conns.map (·.fd)).toArray
+  try
+    execImage exe #["__upgraded", name, path, toString rt.childPid] keep
+    return (rt, s!"{exe} returned from its exec, so the session keeps running")
+  catch err =>
+    try
+      IO.FS.removeFile path
+    catch _ =>
+      pure ()
+    return (rt, s!"{exe} could not replace the daemon: {err}, so the session keeps running")
+
+/-- Carry out the first upgrade the round asked for, and refuse the others it asked for; the
+daemon carries on when it does not replace its image, and the connection that asked hears why. -/
+private def upgradeAsked (name : String) (login : Bool) (rt : Rt) : IO Rt := do
+  let (asker, exe) :: others := rt.upgrades | return rt
+  let mut rt := { rt with upgrades := [] }
+  for (other, _) in others do
+    rt ← refuse rt other "another upgrade is under way"
+  let (rt', why) ← upgradeTo name login rt asker exe
+  report s!"linger: session '{name}' did not upgrade: {why}"
+  refuse rt' asker why
+
+/-- Serve the session from `latest` until it ends, then end it: what `serve` does once its program
+runs, and what an upgraded image does once it has taken the handoff. Each round polls, feeds the
+round's events and a tick through the session, carries out an upgrade the round asked for, writes
+to the program, and asks the name's end record to say what the daemon sees. Once the session
+exits it drains the connections; however the loop ends, it closes every connection, stops the
+program if it still runs, writes the end record, waits for the saves, ends what of the program's
+terminal session outlives it, reaps the program, and closes the pty and the signal pipe. -/
+private def run (name : String) (login : Bool) (record : RecordFile) (latest : IO.Ref Rt) :
+    IO Unit := do
+  try
+    let mut rt ← latest.get
+    setNonblock rt.ptyFd
+    -- what the record says this daemon sees, before it first sleeps: a summary then reads it
+    -- instead of waking the daemon to ask
+    rt ← publish rt
+    latest.set rt
+    while !rt.exiting do
+      let (rt', events) ← pollRound rt
+      latest.set rt'
+      let now ← monotonicMs
+      let events ← observing rt' login events
+      rt ← pump rt' (events ++ [.tick now])
+      rt ← upgradeAsked name login rt
+      rt ← flushPty rt
+      if !rt.exiting then
+        rt ← publish rt
+      latest.set rt
+    rt ← drainConns rt
+    latest.set rt
+  finally
+    let rt ← latest.get
+    for c in rt.conns do
+      close c.fd
+    let outcome ← stopProgram rt
+    let rt ← settleRecord rt
+    try
+      record.save (rt.final.getD (.ended outcome))
+    catch err =>
+      report s!"linger: recording how the session ended failed: {err}"
+    -- the session's last screen reaches the disk while the name is still this session's
+    discard <| finishSaves rt
+    -- the program is reaped last: until then its zombie keeps its pid, which is its
+    -- session's id, so ending the session's other processes reaches no one else
+    try
+      endSession rt.childPid
+    catch err =>
+      report s!"linger: ending the session's processes failed: {err}"
+    discard <| reapNohang rt.childPid
+    close rt.ptyFd
+    if let some fd := rt.signals then
+      close fd
+    if let some fd := rt.signalWrite then
+      close fd
+
 /-- The request of the command that began this daemon, as `start` and `resume` do: the command
 waits a bounded time for the answer, and when that wait runs out it races this daemon for the
 request's ticket. -/
@@ -928,6 +1148,89 @@ private def failureText (failure : Linger.Session.Spawn.Failure) (prog cwd : Str
   | .notFound _ => s!"{prog}: not found"
   | .notRunnable why => s!"{prog}: cannot be run: {why}"
 
+/-- Take over the session the image this one replaced handed over at `path`, as `__upgraded`
+asks, and serve it as `serve` does: the session's whole state, and the listener, the pty, the
+signal pipe, the locks and every connection, open at the numbers the handoff names
+(`Handoff.decode`), with what the old image still owed the program and each connection. The
+handoff is read and removed, and the connection that asked hears `done`. A connection whose debt
+no longer fits `outbufCap`, as one whose repaint was under way can, is cut, as a slow client is.
+
+A handoff that does not decode, which a probe that named its format makes unlikely but cannot
+exclude, leaves no half-session: the session ends as a kill ends it, its program `pid`, which
+`__upgraded` names, stopped, the name's end record saying how it ended, and the checkpoint the
+replaced image saved just before its exec kept, for the first attach to show; every descriptor
+the handoff named closes as the process ends. -/
+def adopt (name path : String) (pid : UInt32) (saveCkpt : State → IO Unit) (dropCkpt : IO Unit)
+    (record : RecordFile) : IO Unit := do
+  ignoreSighup
+  let sockPath ← Paths.socketPath name
+  let bytes ←
+    try
+      pure (some (← IO.FS.readBinFile path))
+    catch err =>
+      report s!"linger: reading the handoff failed: {err}"
+      pure none
+  try
+    IO.FS.removeFile path
+  catch _ =>
+    pure ()
+  let some (st, w) := bytes.bind (Linger.Session.Handoff.decode ·.toList) |
+    do
+      report
+          s!"linger: session '{name}': the handoff from the image this one replaced does not \
+            decode; ending the session, whose checkpoint stays"
+      let outcome ← stopChild pid
+      try
+        record.save (.ended outcome)
+      catch err =>
+        report s!"linger: recording how the session ended failed: {err}"
+      try
+        endSession pid
+      catch err =>
+        report s!"linger: ending the session's processes failed: {err}"
+      discard <| reapNohang pid
+      try
+        IO.FS.removeFile sockPath
+      catch _ =>
+        pure ()
+  let listenFd := UInt32.ofNat w.listenFd
+  let sigRead := UInt32.ofNat w.signals.1
+  let sigWrite := UInt32.ofNat w.signals.2
+  let signals ←
+    try
+      adoptSignalPipe sigRead sigWrite
+      pure (some sigRead)
+    catch err =>
+      report s!"linger: waiting for the program's end on a timer: {err}"
+      pure none
+  let mut conns : List Conn := []
+  let mut cut : List Event := []
+  for c in w.conns do
+    let (out, over) := bufEnqueue outbufCap .empty (ByteArray.mk c.owed.toArray)
+    if over then
+      close (UInt32.ofNat c.fd)
+      if c.closeBy.isNone then
+        cut := cut ++ [.closed c.fd]
+    else
+      conns := conns ++ [{ fd := UInt32.ofNat c.fd, out, closeBy := c.closeBy }]
+  let rt : Rt :=
+    { st, listenFd, ptyFd := UInt32.ofNat w.ptyFd, childPid := UInt32.ofNat w.childPid, conns,
+      ptyIn := (bufOffer ptyInCap .empty (ByteArray.mk w.ptyIn.toArray)).1, signals,
+      signalWrite := signals.map fun _ => sigWrite, locks := w.locks.map UInt32.ofNat, saveCkpt,
+      dropCkpt, saveRecord := record.save }
+  let (rt, answered) ← runEffect rt (.send w.asker .done)
+  let latest ← IO.mkRef (← pump rt (cut ++ answered))
+  try
+    run name w.login record latest
+  finally
+    close listenFd
+    try
+      IO.FS.removeFile sockPath
+    catch _ =>
+      pure ()
+    for fd in (← latest.get).locks do
+      close fd
+
 /-- Hold both ownership locks from before recovery through final cleanup.
 Loading under the locks prevents a second runtime namespace from reading or
 overwriting a checkpoint that another daemon is still using. The claim waits
@@ -950,7 +1253,7 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
   let deadline := (← monotonicMs) + claimWaitMs
   let reported ← IO.mkRef false
   let retry := claimRetry name (← Paths.socketPath name) deadline reported
-  Paths.withSessionLockRetrying name retry do
+  Paths.withSessionLockHeld name retry fun locks => do
       ignoreSighup
       let sockPath ← Paths.socketPath name
       let r ← unixConnect sockPath
@@ -1038,8 +1341,8 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
         -- round asks whether the program has ended, and a stop signal has its default action
         let signals ←
           match ← signalPipe.toBaseIO with
-          | .ok fd =>
-            pure (some fd)
+          | .ok fds =>
+            pure (some fds)
           | .error err =>
             report
                 s!"linger: waiting for the program's end on a timer, and a stop signal ends the \
@@ -1081,50 +1384,11 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
         -- whatever fails after that round.
         let latest ←
           IO.mkRef
-              ({ st, listenFd, ptyFd, childPid := pid, signals, saveCkpt, dropCkpt,
+              ({ st, listenFd, ptyFd, childPid := pid, signals := signals.map (·.1),
+                 signalWrite := signals.map (·.2), locks, saveCkpt, dropCkpt,
                  saveRecord := record.save } :
                 Rt)
-        try
-          setNonblock ptyFd
-          let mut rt ← latest.get
-          -- what the record says this daemon sees, before it first sleeps: a summary then reads it
-          -- instead of waking the daemon to ask
-          rt ← publish rt
-          latest.set rt
-          while !rt.exiting do
-            let (rt', events) ← pollRound rt
-            latest.set rt'
-            let now ← monotonicMs
-            let events ← observing rt' argv.isEmpty events
-            rt ← pump rt' (events ++ [.tick now])
-            rt ← flushPty rt
-            if !rt.exiting then
-              rt ← publish rt
-            latest.set rt
-          rt ← drainConns rt
-          latest.set rt
-        finally
-          let rt ← latest.get
-          for c in rt.conns do
-            close c.fd
-          let outcome ← stopProgram rt
-          let rt ← settleRecord rt
-          try
-            record.save (rt.final.getD (.ended outcome))
-          catch err =>
-            report s!"linger: recording how the session ended failed: {err}"
-          -- the session's last screen reaches the disk while the name is still this session's
-          discard <| finishSaves rt
-          -- the program is reaped last: until then its zombie keeps its pid, which is its
-          -- session's id, so ending the session's other processes reaches no one else
-          try
-            endSession rt.childPid
-          catch err =>
-            report s!"linger: ending the session's processes failed: {err}"
-          discard <| reapNohang rt.childPid
-          close rt.ptyFd
-          if let some fd := rt.signals then
-            close fd
+        run name argv.isEmpty record latest
       finally
         close listenFd
         try

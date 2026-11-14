@@ -992,7 +992,7 @@ code_grep "$VT_ALL_RE" '*.lean' \
 # need a syscall wrapper, or does Lean core already have it?". 26: a pty's
 # foreground group (tcgetpgrp) and a process's words, which macOS keeps only
 # behind sysctl, as a row shows what runs in a session; Lean core has neither.
-SHIM_CAP=26
+SHIM_CAP=27
 shim_n="$(code_count 'LEAN_EXPORT' 'packages/os/c/shim.c')"
 [ "$shim_n" -le "$SHIM_CAP" ] \
   || fail "shim grew to $shim_n wrappers (cap $SHIM_CAP); justify the new syscall and bump the cap"
@@ -1296,9 +1296,10 @@ for tie in \
   'def logPath [(]name : String[)] : IO String := do namedPath [(][(]← stateDir[)] [+][+] "/logs"[)] name "[.]log"' \
   'def acquire [(]path : String[)] [(]retry : IO Bool[)] [(]listed : Bool[)] : IO [(]Option UInt32[)] := do let mut fd ← Os[.]Shell[.]flock path while fd < 0 do unless ← retry do break fd ← Os[.]Shell[.]flock path if fd < 0 then return none let held := fd[.]toUInt64[.]toUInt32 unless listed do try checkSpelling path catch err => Os[.]Shell[.]close held throw err return some held' \
   'def withLockRetrying [{]α : Type[}] [(]path : String[)] [(]retry : IO Bool[)] [(]action : IO α[)] [(]listed : Bool := false[)] : IO α := do let some fd ← acquire path retry listed [|] throw [(]IO[.]userError s!"session is owned by another process [(][{]path[}][)]"[)] try action finally Os[.]Shell[.]close fd' \
-  'def withOwnership [{]α : Type[}] [(]socket : String[)] [(]checkpoint : IO String[)] [(]retry : IO Bool[)] [(]listed : Bool[)] [(]action : IO α[)] : IO α := do let held ← acquire socket retry listed try let [(]state, refused[)] ← match held with [|] none => pure [(]none, socket[)] [|] some _ => do let path ← checkpoint pure [(]← acquire path retry listed, path[)] try unless Claim[.]enters held[.]isSome state[.]isSome do throw [(]IO[.]userError s!"session is owned by another process [(][{]refused[}][)]"[)] action finally if let some fd := state then Os[.]Shell[.]close fd finally if let some fd := held then Os[.]Shell[.]close fd' \  'def Listed[.]withLock [{]α : Type[}] [(]n : Listed[)] [(]action : IO α[)] : IO α := do withLockRetrying [(]← pathIn [(]← socketDir[)] n[.]name "[.]lock" true[)] [(]pure false[)] action [(]listed := true[)]' \  'def Listed[.]withSessionLock [{]α : Type[}] [(]n : Listed[)] [(]action : IO α[)] : IO α := do withOwnership [(]← pathIn [(]← socketDir[)] n[.]name "[.]lock" true[)] [(]do let locks := [(]← stateDir[)] [+][+] "/[.]locks" ensureDir locks pathIn locks n[.]name "[.]lock" true[)] [(]pure false[)] true action' \
+  'def withOwnership [{]α : Type[}] [(]socket : String[)] [(]checkpoint : IO String[)] [(]retry : IO Bool[)] [(]listed : Bool[)] [(]action : List UInt32 → IO α[)] : IO α := do let held ← acquire socket retry listed try let [(]state, refused[)] ← match held with [|] none => pure [(]none, socket[)] [|] some _ => do let path ← checkpoint pure [(]← acquire path retry listed, path[)] try unless Claim[.]enters held[.]isSome state[.]isSome do throw [(]IO[.]userError s!"session is owned by another process [(][{]refused[}][)]"[)] action [(]held[.]toList [+][+] state[.]toList[)] finally if let some fd := state then Os[.]Shell[.]close fd finally if let some fd := held then Os[.]Shell[.]close fd' \  'def Listed[.]withLock [{]α : Type[}] [(]n : Listed[)] [(]action : IO α[)] : IO α := do withLockRetrying [(]← pathIn [(]← socketDir[)] n[.]name "[.]lock" true[)] [(]pure false[)] action [(]listed := true[)]' \  'def Listed[.]withSessionLock [{]α : Type[}] [(]n : Listed[)] [(]action : IO α[)] : IO α := do withOwnership [(]← pathIn [(]← socketDir[)] n[.]name "[.]lock" true[)] [(]do let locks := [(]← stateDir[)] [+][+] "/[.]locks" ensureDir locks pathIn locks n[.]name "[.]lock" true[)] [(]pure false[)] true fun _ => action' \
   'def withLock [{]α : Type[}] [(]path : String[)] [(]action : IO α[)] : IO α := withLockRetrying path [(]pure false[)] action' \
-  'def withSessionLockRetrying [{]α : Type[}] [(]name : String[)] [(]retry : IO Bool[)] [(]action : IO α[)] : IO α := do withOwnership [(]← lockPath name[)] [(]stateLockPath name[)] retry false action' \
+  'def withSessionLockRetrying [{]α : Type[}] [(]name : String[)] [(]retry : IO Bool[)] [(]action : IO α[)] : IO α := do withOwnership [(]← lockPath name[)] [(]stateLockPath name[)] retry false fun _ => action' \
+  'def withSessionLockHeld [{]α : Type[}] [(]name : String[)] [(]retry : IO Bool[)] [(]action : List UInt32 → IO α[)] : IO α := do withOwnership [(]← lockPath name[)] [(]stateLockPath name[)] retry false action' \
   'def withSessionLock [{]α : Type[}] [(]name : String[)] [(]action : IO α[)] : IO α := withSessionLockRetrying name [(]pure false[)] action'; do
   printf '%s\n' "$paths_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "session paths or lifetime locking bypassed their contract: $tie"
@@ -1316,7 +1317,7 @@ done
   || fail "lock path construction and acquisition must never unlink or replace a lock inode"
 printf '%s\n' "$client_code" | CG_RE='(^|[[:space:]])try Paths[.]checkSpelling path return some fd catch err => close fd throw err([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "successful connects must reject case-folded aliases and close on failure"
-printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])IO Unit := do let deadline := [(]← monotonicMs[)] [+] claimWaitMs let reported ← IO[.]mkRef false let retry := claimRetry name [(]← Paths[.]socketPath name[)] deadline reported Paths[.]withSessionLockRetrying name retry do ignoreSighup let sockPath ← Paths[.]socketPath name([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])IO Unit := do let deadline := [(]← monotonicMs[)] [+] claimWaitMs let reported ← IO[.]mkRef false let retry := claimRetry name [(]← Paths[.]socketPath name[)] deadline reported Paths[.]withSessionLockHeld name retry fun locks => do ignoreSighup let sockPath ← Paths[.]socketPath name([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "daemon recovery and lifetime must execute inside both ownership locks"
 # A start takes a name only by Start.plan, decided holding the name, and never loads a checkpoint;
 # a resume runs only a saved session's program, by Start.resumePlan, or nothing. Every other
@@ -1380,7 +1381,7 @@ code_grep '^private def claimWaitMs : Nat := [1-9][0-9]*$' 'Linger/Session/World
   || fail "the startup claim must wait a positive, fixed time"
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])if [(]← monotonicMs[)] ≥ deadline then return false let live ← unixConnect sockPath if live ≥ 0 then close live[.]toUInt64[.]toUInt32 return false([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "the startup claim must stop at its deadline and when a live daemon answers"
-retrying="$(code_grep '(^|[^[:alnum:]_])with(Session)?LockRetrying([^[:alnum:]_]|$)' 'Linger/*' \
+retrying="$(code_grep '(^|[^[:alnum:]_])with(Session)?Lock(Retrying|Held)([^[:alnum:]_]|$)' 'Linger/*' \
   | awk -F: '$1 != "Linger/Session/WorldCode/Paths.lean" { print $1 }')"
 [ "$retrying" = 'Linger/Session/WorldCode/Daemon.lean' ] \
   || fail "only the daemon's startup claim may retry a held lock: ${retrying:-no retrying claim}"
@@ -1900,7 +1901,8 @@ ed_n="$(code_count '(^|[^[:alnum:]_.])drain(Str)?[[:space:]]+[^[:space:]]+[[:spa
 #   Session/WorldCode/Daemon: a write waiting on the disk says so after a second, looking every
 #     10 ms; the loop, until an event or a deadline; the final drain, at most drainTimeoutMs
 #     (3 s); stopping a program, in 10 ms steps for at most 2 s, and the rest of its session, in
-#     50 ms steps for at most 2 s; a held startup claim, every 10 ms for at most claimWaitMs (1 s).
+#     50 ms steps for at most 2 s; a held startup claim, every 10 ms for at most claimWaitMs (1 s);
+#     the probe of the binary an upgrade names, every 10 ms for at most probeMs (10 s).
 #   Session/WorldCode/Inventory: an info reply, until the request's deadline: replySilenceMs (10 s)
 #     for the one an attach asks for its daemon's protocol level.
 timers="$(code_grep '(IO[.]sleep [^[:space:]]|← poll [^[:space:]]|(^|[[:space:].])nap [^[:space:]]|(^|[[:space:]])pause [0-9])' 'Linger/*.lean' \
@@ -1926,6 +1928,7 @@ Linger/Session/WorldCode/Daemon.lean: unless ← nap deadline step do
 Linger/Session/WorldCode/Daemon.lean: let revs ← poll fds evts timeout
 Linger/Session/WorldCode/Daemon.lean: let revs ← poll fds (Array.replicate fds.size POLLOUT) (Int32.ofNat (min 100 (deadline - now)))
 Linger/Session/WorldCode/Daemon.lean: nap deadline 10
+Linger/Session/WorldCode/Daemon.lean: unless ← nap deadline 10 do
 Linger/Session/WorldCode/Inventory.lean: let revs ← poll #[fd] #[POLLIN] (Int32.ofNat (min 100 remaining))
 packages/os/Os/WorldCode.lean: let _ ← poll #[fd] #[POLLOUT] (-1)
 packages/os/Os/WorldCode.lean: def nap (deadline step : Nat) : IO Bool := do
@@ -1999,12 +2002,14 @@ printf '%s\n' "$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/WorldCode.lean)"
     awk "$CODE_AWK" >/dev/null \
   || fail "help no longer prints the command table"
 # Every one-shot request is given up after replySilenceMs of silence; only `wait` passes its own
-# budget, its deadline's, or none when it has none, since it waits for a program to end.
+# budget, its deadline's, or none when it has none, since it waits for a program to end, and
+# `upgrade` its own, `upgradeWaitMs`, since the new image answers only once it serves.
 printf '%s\n' "$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/WorldCode/Client.lean)" \
   | CG_RE='(^|[[:space:]])def oneShot [(]name : String[)] [(]m : Msg[)] [(]untilDone : Bool := true[)] [(]silenceMs : Int32 := replySilenceMs[)] : IO [(]Option Drained[)] := do([[:space:]]|$)' \
     awk "$CODE_AWK" >/dev/null \
   || fail "a one-shot request must default to the reply silence budget"
-[ "$(code_count 'silenceMs := ' 'Linger/App/*.lean' 'Linger/Session/WorldCode/*.lean')" -eq 1 ] \
-  || fail "only wait may choose a one-shot request's silence budget"
+[ "$(code_count 'silenceMs := ' 'Linger/App/*.lean' 'Linger/Session/WorldCode/*.lean')" -eq 2 ] \
+  && code_grep '[(]silenceMs := upgradeWaitMs[)]' Linger/App/WorldCode.lean >/dev/null \
+  || fail "only wait and upgrade may choose a one-shot request's silence budget"
 
 printf 'gates OK — purity, the OS and unsafe surfaces, the Vt friend set, the runtime ties, declaration citations, and the ratchets\n'

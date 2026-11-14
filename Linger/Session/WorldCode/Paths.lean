@@ -147,6 +147,11 @@ def logPath (name : String) : IO String := do
 def startReportPath (name nonce : String) : IO String := do
   namedPath ((← stateDir) ++ "/logs") name s!".start-{nonce}"
 
+/-- Where a daemon that upgrades leaves its handoff for the image that replaces it,
+`logs/<name>.handoff` in `stateDir`; the new image reads it and removes it. -/
+def handoffPath (name : String) : IO String := do
+  namedPath ((← stateDir) ++ "/logs") name ".handoff"
+
 /-- The socket of a session a listing named. -/
 def Listed.socketPath (n : Listed) : IO String := do
   pathIn (← socketDir) n.name ".sock" true
@@ -189,10 +194,11 @@ private def withLockRetrying {α : Type} (path : String) (retry : IO Bool) (acti
 
 /-- Act as the session's owner: take the socket lock at `socket`, then the checkpoint lock at
 the path `checkpoint` gives, and run `action` only when `Claim.enters` says a process holding
-them may, which `Claim.Reachable` models. Both locks are let go after the action, in reverse
-order, whatever it does; the checkpoint lock is tried only once the socket lock is taken. -/
+them may, which `Claim.Reachable` models, with the descriptors that hold them. Both locks are let
+go after the action, in reverse order, whatever it does; the checkpoint lock is tried only once
+the socket lock is taken. -/
 private def withOwnership {α : Type} (socket : String) (checkpoint : IO String) (retry : IO Bool)
-    (listed : Bool) (action : IO α) : IO α := do
+    (listed : Bool) (action : List UInt32 → IO α) : IO α := do
   let held ← acquire socket retry listed
   try
     let (state, refused) ←
@@ -206,7 +212,7 @@ private def withOwnership {α : Type} (socket : String) (checkpoint : IO String)
     try
       unless Claim.enters held.isSome state.isSome do
         throw (IO.userError s!"session is owned by another process ({refused})")
-      action
+      action (held.toList ++ state.toList)
     finally
       if let some fd := state then
         Os.Shell.close fd
@@ -223,6 +229,12 @@ Either shared socket storage or shared checkpoint storage excludes another owner
 `retry` applies to both acquisitions. -/
 def withSessionLockRetrying {α : Type} (name : String) (retry : IO Bool) (action : IO α) : IO α :=
   do
+  withOwnership (← lockPath name) (stateLockPath name) retry false fun _ => action
+
+/-- `withSessionLockRetrying`, giving the action the descriptors that hold the two locks, as a
+daemon that upgrades keeps them open for the image that replaces it. -/
+def withSessionLockHeld {α : Type} (name : String) (retry : IO Bool) (action : List UInt32 → IO α) :
+    IO α := do
   withOwnership (← lockPath name) (stateLockPath name) retry false action
 
 /-- Both locks, one attempt each: every offline reader. -/
@@ -241,7 +253,7 @@ def Listed.withSessionLock {α : Type} (n : Listed) (action : IO α) : IO α := 
         let locks := (← stateDir) ++ "/.locks"
         ensureDir locks
         pathIn locks n.name ".lock" true)
-      (pure false) true action
+      (pure false) true fun _ => action
 
 /-- Valid session names among `dir`'s entries ending in `suffix`, as the directory spells them. -/
 private def listNames (dir suffix : String) : IO (List Listed) := do

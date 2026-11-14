@@ -63,8 +63,9 @@ or `WorldCode`, as the Lean Software Challenge reads it, and any other module is
 - `Linger/Display/`: session status, titles and listings.
 - `Linger/Terminal/Suites/`: live suites of the VT toolkit as linger runs it.
 - `Linger/Session/`: the session machine (`CoreCode.lean`), its effect `Driver`, `Wire` format,
-  `Buf` queues and `Checkpoint`s (`CoreCode/`); `WorldCode/` holds the daemon, the attach
-  client, checkpoint files and state paths.
+  `Buf` queues, `Checkpoint`s and the `Handoff` an upgrade carries to the daemon's new image
+  (`CoreCode/`); `WorldCode/` holds the daemon, the attach client, checkpoint files and state
+  paths.
 - `Linger/Selector/`: interactive selection: `Key` bindings of the `input` package's keys and
   the `Picker`, which ranks names with the `fuzzy` package; `WorldCode.lean` runs the picker on
   a terminal.
@@ -85,7 +86,8 @@ or `WorldCode`, as the Lean Software Challenge reads it, and any other module is
   matcher (namespace `Fuzzy`), `input`, the bounded terminal key decoder (`Input`), `terminal`,
   the VT toolkit (`Terminal`): the emulator `Vt`, `Render`, streaming `Replay`, child-facing
   `Mediation` and safe `Title` updates, and `os`, the operating system (`Os`): `WorldSpec.lean`
-  holds the foreign declarations and the world claim the bounded waits rest on, `c/shim.c` the
+  holds the foreign declarations and the world claims the bounded waits and an upgrade's exec
+  rest on, `c/shim.c` the
   C they bind, `WorldCode.lean` the checked surface callers use, `CoreCode/Wait.lean` the
   bounded wait and `CoreCode/Write.lean` what a full write does after each attempt. The `os`
   library compiles each module to a shared library too, so a check can reach the shim. Linger's
@@ -165,7 +167,8 @@ size: Lean erases proofs regardless of file placement.
   variable the program reads unset and empty in a suite.
 - Raw OS access belongs in the `os` package: `packages/os/Os/` and `packages/os/c/shim.c`.
   Every `@[extern]` declaration stays private in `packages/os/Os/WorldSpec.lean`, which declares
-  nothing else but the world claim the waits rest on, and `packages/os/Os/WorldCode.lean`, the one
+  nothing else but the world claims the waits and the exec rest on, and
+  `packages/os/Os/WorldCode.lean`, the one
   module that imports all of it, wraps each one in `Os.Shell`: it is the surface callers use.
   Keep the shim to syscalls and errno.
   Return `-errno` and avoid numeric errno values in Lean. A binding that takes a pid also
@@ -201,7 +204,8 @@ size: Lean erases proofs regardless of file placement.
 ## Scope and maintenance
 
 One daemon per session. No windows, tabs, splits, shared server, process-tree
-restoration, retained images or terminfo negotiation. Creation in a selector
+restoration, retained images or terminfo negotiation. An upgrade replaces a daemon's image in
+place and restores nothing. Creation in a selector
 must be an explicit highlighted choice. Attaching inside a session may nest;
 never silently switch sessions. Terminal handback clears the title; do not
 introduce a title stack. Keep documentation factual and concise.

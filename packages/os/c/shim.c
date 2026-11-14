@@ -19,6 +19,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <poll.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -950,27 +951,48 @@ static void on_signal(int sig) {
     errno = saved;
 }
 
-/* linger_signal_pipe : IO UInt32
- * The read end of a pipe this process's handlers for SIGCHLD and for SIGHUP, SIGINT, SIGQUIT and
- * SIGTERM write one byte to per signal: 0 when a child ends, else the signal's number. Both ends
- * are nonblocking and close on exec, so a program the daemon starts inherits neither, and a
- * handler ends at exec. poll() cannot wait for a process or a signal and Lean core has no pipe,
- * so a daemon that sleeps until something happens needs this to hear its program end and the
- * system stop it. Call it once, before starting the program: it installs the process's handlers
- * for these five signals. SA_NOCLDSTOP: a stop is no end; SA_RESTART: read and write resume after
- * a signal (poll still returns EINTR, which linger_poll reports as no event, and the next poll
- * sees the byte). When a handler cannot be installed, the ones already installed are put back
- * as they were, the pipe is closed, and it fails. */
-LEAN_EXPORT lean_obj_res linger_signal_pipe(void) {
+/* Block or unblock, in the calling thread, the signals the pipe carries. */
+static void mask_piped(int how) {
+    sigset_t set;
+    sigemptyset(&set);
+    for (size_t i = 0; i < sizeof piped_signals / sizeof piped_signals[0]; i++)
+        sigaddset(&set, piped_signals[i]);
+    pthread_sigmask(how, &set, NULL);
+}
+
+/* linger_signal_pipe : UInt32 -> UInt32 -> IO UInt64
+ * A pipe this process's handlers for SIGCHLD and for SIGHUP, SIGINT, SIGQUIT and SIGTERM write
+ * one byte to per signal: 0 when a child ends, else the signal's number. Returns write<<32 | read.
+ * With `adopt_read` and `adopt_write` both 0xFFFFFFFF it makes the pipe, both ends nonblocking
+ * and close on exec, so a program the daemon starts inherits neither, and a handler ends at exec;
+ * otherwise it adopts the pipe whose ends those are, as an image linger_exec_image started
+ * inherits it, with the bytes the previous image's handlers wrote and nobody read. poll() cannot
+ * wait for a process or a signal and Lean core has no pipe, so a daemon that sleeps until
+ * something happens needs this to hear its program end and the system stop it. Call it once,
+ * before starting the program: it installs the process's handlers for these five signals, then
+ * unblocks them in the calling thread, where linger_exec_image blocked them, so one that came
+ * meanwhile is delivered now. SA_NOCLDSTOP: a stop is no end; SA_RESTART: read and write resume
+ * after a signal (poll still returns EINTR, which linger_poll reports as no event, and the next
+ * poll sees the byte). When a handler cannot be installed, the ones already installed are put
+ * back as they were, a pipe it made is closed, and it fails. */
+LEAN_EXPORT lean_obj_res linger_signal_pipe(uint32_t adopt_read, uint32_t adopt_write) {
     int fds[2];
-    if (pipe(fds) < 0) return io_err("pipe");
-    for (int i = 0; i < 2; i++) {
-        if (fcntl(fds[i], F_SETFD, FD_CLOEXEC) < 0 || set_nonblock(fds[i]) < 0) {
-            int e = errno;
-            close(fds[0]);
-            close(fds[1]);
-            return io_err_code("fcntl", e);
+    int made = adopt_read == 0xFFFFFFFFu && adopt_write == 0xFFFFFFFFu;
+    if (made) {
+        if (pipe(fds) < 0) return io_err("pipe");
+        for (int i = 0; i < 2; i++) {
+            if (fcntl(fds[i], F_SETFD, FD_CLOEXEC) < 0 || set_nonblock(fds[i]) < 0) {
+                int e = errno;
+                close(fds[0]);
+                close(fds[1]);
+                return io_err_code("fcntl", e);
+            }
         }
+    } else {
+        fds[0] = (int)adopt_read;
+        fds[1] = (int)adopt_write;
+        if (fcntl(fds[0], F_SETFD, FD_CLOEXEC) < 0 || fcntl(fds[1], F_SETFD, FD_CLOEXEC) < 0)
+            return io_err("fcntl(adopted signal pipe)");
     }
     signal_write = fds[1];
     enum { count = sizeof piped_signals / sizeof piped_signals[0] };
@@ -988,12 +1010,65 @@ LEAN_EXPORT lean_obj_res linger_signal_pipe(void) {
              * descriptor number the process reuses */
             while (i-- > 0) sigaction(piped_signals[i], &before[i], NULL);
             signal_write = -1;
-            close(fds[0]);
-            close(fds[1]);
+            if (made) {
+                close(fds[0]);
+                close(fds[1]);
+            }
             return io_err_code("sigaction", e);
         }
     }
-    return lean_io_result_mk_ok(lean_box_uint32((uint32_t)fds[0]));
+    mask_piped(SIG_UNBLOCK);
+    return lean_io_result_mk_ok(
+        lean_box_uint64(((uint64_t)(uint32_t)fds[1] << 32) | (uint64_t)(uint32_t)fds[0]));
+}
+
+/* linger_exec_image : @& String -> @& Array String -> @& Array UInt32 -> IO Unit
+ * Replace this process's image with the program at `prog`, by execve, with `args` after it as
+ * its words and this process's environment. execve keeps the process's id, its children and
+ * every descriptor not marked close-on-exec: each of `keep` is unmarked first, so it stays open
+ * at its number. The signals the signal pipe carries are blocked in the calling thread first, so
+ * one that comes before the new image installs its handlers waits for them, blocked, instead of
+ * taking its default action (linger_signal_pipe unblocks them). Returns only when the exec
+ * fails: it then marks close-on-exec again on each of `keep` it unmarked, unblocks the signals
+ * if they were not blocked before, and fails with execve's errno, so the image carries on as it
+ * was. */
+LEAN_EXPORT lean_obj_res linger_exec_image(b_lean_obj_arg prog, b_lean_obj_arg args,
+                                         b_lean_obj_arg keep) {
+    char **argv = exec_argv(prog, args);
+    if (!argv) return io_msg("exec: out of memory");
+    size_t n = lean_array_size(keep);
+    int *cleared = calloc(n + 1, sizeof(int));
+    if (!cleared) {
+        free(argv);
+        return io_msg("exec: out of memory");
+    }
+    sigset_t before;
+    pthread_sigmask(SIG_SETMASK, NULL, &before);
+    mask_piped(SIG_BLOCK);
+    int e = 0;
+    size_t done = 0;
+    for (; done < n; done++) {
+        int fd = (int)lean_unbox_uint32(lean_array_get_core(keep, done));
+        int flags = fcntl(fd, F_GETFD);
+        if (flags < 0 || fcntl(fd, F_SETFD, flags & ~FD_CLOEXEC) < 0) {
+            e = errno;
+            break;
+        }
+        cleared[done] = flags & FD_CLOEXEC;
+    }
+    extern char **environ;
+    if (!e) {
+        execve(lean_string_cstr(prog), argv, environ);
+        e = errno;
+    }
+    for (size_t i = 0; i < done; i++) {
+        int fd = (int)lean_unbox_uint32(lean_array_get_core(keep, i));
+        if (cleared[i]) fcntl(fd, F_SETFD, FD_CLOEXEC);
+    }
+    pthread_sigmask(SIG_SETMASK, &before, NULL);
+    free(cleared);
+    free(argv);
+    return io_err_code("execve", e);
 }
 
 /* linger_signal_session : UInt32 -> UInt32 -> IO UInt32

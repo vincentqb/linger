@@ -33,6 +33,14 @@ add-zsh-hook preexec _linger_preexec
 
 A command's ending is no session status: `✓` and `✗` stay for the session's own program.
 
+## Upgrades
+
+`linger upgrade [name...]`, run by a newer linger, moves each named live session, or every one,
+onto it: its daemon replaces its own image with that binary, keeping its process, its program,
+its terminal and every connection, so the program and attached clients see nothing happen. A
+daemon an older linger started cannot do this; it keeps running, as does one whose new binary
+cannot take the session over, and `upgrade` says why.
+
 ## Remote hosts
 
 Every command takes a `name@host` target, and `linger ls -r` and the chooser also list the

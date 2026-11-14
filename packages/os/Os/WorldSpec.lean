@@ -15,7 +15,8 @@ A binding that signals or waits for a process takes a proof that its pid is a re
 the C call never sees. `Linger.Os.Suites.Shim` and the live suites exercise those contracts.
 
 The world claim `Wait.Lasts` says that a sleep lasts at least as long as it was asked to, which
-the bounded waits of `Os.Shell.nap` rest on. -/
+the bounded waits of `Os.Shell.nap` rest on, and `Exec.Keeps` that an exec keeps the process, its
+children and the descriptors it does not close, which an upgrade of a session's daemon rests on. -/
 
 namespace Os.Boundary
 
@@ -85,7 +86,11 @@ private opaque waitpidNohang (pid : UInt32) (keep : Bool) (valid : 0 < pid ∧ p
     IO Int64
 
 @[extern "linger_signal_pipe"]
-private opaque signalPipe : IO UInt32
+private opaque signalPipe (adoptRead adoptWrite : UInt32) : IO UInt64
+
+@[extern "linger_exec_image"]
+private opaque execImage (prog : @& String) (args : @& Array String) (keep : @& Array UInt32) :
+    IO Unit
 
 @[extern "linger_signal_session"]
 private opaque signalSession (sid sig : UInt32) (valid : 0 < sid ∧ sid ≤ 0x7FFFFFFF) : IO UInt32
@@ -113,3 +118,16 @@ returns. -/
 WorldClaim Lasts (after : Nat → Nat → Nat) := ∀ now ms, now + ms ≤ after now ms
 
 end Os.Wait
+
+namespace Os.Exec
+
+/-- An `execve` that succeeds replaces the program a process runs and nothing else of what the
+process is: a process with id `pid`, children `children` and the descriptors `kept` open without
+close-on-exec, by number, is, after the exec, `exec pid children kept`, with the same id, the
+same children and the same descriptors open at the same numbers. A new image that reads another
+id, misses a child of the old one, or finds a kept descriptor closed or holding something else
+falsifies it. -/
+WorldClaim Keeps (exec : Nat → List Nat → List Nat → Nat × List Nat × List Nat) :=
+  ∀ pid children kept, exec pid children kept = (pid, children, kept)
+
+end Os.Exec

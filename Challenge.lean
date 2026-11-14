@@ -40,7 +40,8 @@ each with a kill, and says what it does not claim yet:
    session's terminal session that linger's signals reach outlives it.
 7. Recovery: resuming from a checkpoint gives back the saved session, less any half-parsed
    control sequence, and a crash costs at most the changes of the last interval, never the
-   session: a checkpoint that does not decode is kept and refused, not replaced.
+   session: a checkpoint that does not decode is kept and refused, not replaced. An upgrade
+   carries a running session to a newer binary whole, or leaves it running as it was.
 8. Clean terminal: what linger writes to a terminal on its own account is safe text or one of
    its fixed sequences, in color only where the caller's environment allows it, and handing a
    terminal back leaves it canonical.
@@ -258,6 +259,12 @@ def Linger.Session.Driver.run :
 def Linger.Session.Checkpoint.saveBytes : Checkpoint.Ckpt Vt.Vt → ByteArray := sorry
 
 def Linger.Session.Checkpoint.loadBytes : ByteArray → Option (Checkpoint.Ckpt Vt.Vt) := sorry
+
+def Linger.Session.Handoff.encode : State → Handoff.World → List UInt8 := sorry
+
+def Linger.Session.Handoff.decode : List UInt8 → Option (State × Handoff.World) := sorry
+
+def Linger.Session.Upgrade.proceeds : Option (List Nat) → Bool := sorry
 
 def Linger.Session.Start.plan : (live saved : Bool) → Start.Plan := sorry
 
@@ -2150,7 +2157,76 @@ record of an earlier format stays cleared, since those formats do not tell it fr
 given; a bound in bytes or rows on what a crash loses, since the bound is
 in time, the interval and the saves then running, whatever the program wrote in it, and a bound in
 rows waits for an append-only store of the history; and that power loss keeps what the flushes
-returned for, which rests on `Disk.Durable` and which no check or suite causes. -/
+returned for, which rests on `Disk.Durable` and which no check or suite causes.
+
+An upgrade replaces a daemon's image with a newer binary's, by an exec, which keeps the daemon's
+process, its program, which stays its child on the same terminal, and the descriptors it keeps
+(`Os.Exec.Keeps`): the listening socket, the pty, every connection and the locks. The new image
+resumes from the handoff, which carries the session's whole state and what the daemon still owed
+its program and its connections, so the session is carried, not rebuilt: the handoff of a session
+whose terminal's parser is quiet decodes as exactly that session (`handoff_carries`, whose kill
+rebuilds it as a resume does). A handoff names its format, and a binary decodes the formats it
+lists and no other (`handoff_versioned`); a daemon hands its session only to a binary whose probe
+lists the format it writes (`upgrade_probes`), and keeps serving otherwise, as it does when the
+exec fails. Not claimed: that the binary the exec starts is the one the probe ran, since the file
+may be replaced between them, nor that it has the resources to decode the handoff; such an image
+ends, and the session's program loses its daemon, with the checkpoint the old image saved just
+before the exec left to resume. -/
+
+theorem handoff_carries (s : State) (w : Handoff.World)
+    (h :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) s.terminal)
+    (quiet : s.terminal.quiesce = s.terminal) :
+    Handoff.decode (Handoff.encode s w) = some (s, w) := by sorry
+
+@[kills handoff_carries]
+theorem handoff_carries_rejects_rebuilt :
+    ¬∀ (s : State) (w : Handoff.World),
+        Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+            (Checkpoint.Decoded Checkpoint.loadBytes) s.terminal →
+          s.terminal.quiesce = s.terminal →
+          Handoff.decode
+              ((fun (s : State) (w : Handoff.World) =>
+                  Handoff.encode (State.boot s.terminal s.labelList []) w)
+                s w) =
+            some (s, w) := by
+  sorry
+
+theorem handoff_versioned (s : State) (w : Handoff.World) (v : Nat) (rest : List UInt8) :
+    Handoff.version ∈ Handoff.formats ∧
+      (Handoff.encode s w).take (Handoff.header Handoff.version).length =
+        Handoff.header Handoff.version ∧
+      (v ∉ Handoff.formats → v < 256 → Handoff.decode (Handoff.header v ++ rest) = none) := by
+  sorry
+
+@[kills handoff_versioned]
+theorem handoff_versioned_rejects_unread :
+    ¬∀ (s : State) (w : Handoff.World) (v : Nat) (rest : List UInt8),
+        Handoff.version ∈ Handoff.formats ∧
+          (Handoff.encode s w).take (Handoff.header Handoff.version).length =
+            Handoff.header Handoff.version ∧
+          (v ∉ Handoff.formats →
+            v < 256 →
+            (fun (bytes : List UInt8) =>
+                  Handoff.decode
+                    (Handoff.header Handoff.version ++
+                      bytes.drop (Handoff.header Handoff.version).length))
+                (Handoff.header v ++ rest) =
+              none) := by
+  sorry
+
+theorem upgrade_probes (reported : Option (List Nat)) :
+    Upgrade.proceeds reported = true ↔
+      ∃ formats, reported = some formats ∧ Handoff.version ∈ formats := by
+  sorry
+
+@[kills upgrade_probes]
+theorem upgrade_probes_rejects_unprobed :
+    ¬∀ (reported : Option (List Nat)),
+        (fun (_ : Option (List Nat)) => true) reported = true ↔
+          ∃ formats, reported = some formats ∧ Handoff.version ∈ formats := by
+  sorry
 
 theorem loadBytes_saveBytes_live (c : Checkpoint.Ckpt Vt.Vt)
     (h :

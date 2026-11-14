@@ -278,8 +278,8 @@ shim_out="$logs/shim.out"
   || { tail -25 "$shim_out"; fail "lingertest"; }
 tail -1 "$shim_out" | grep -q '^ALL PASS$' || fail "lingertest"
 shim_n="$(grep -c '^PASS ' "$shim_out")"
-[ "$shim_n" -eq 81 ] \
-  || fail "lingertest ran $shim_n checks (expected exactly 81)"
+[ "$shim_n" -eq 83 ] \
+  || fail "lingertest ran $shim_n checks (expected exactly 83)"
 
 # Keep one real session in another state directory through every suite. A suite
 # may clean up its own Env, never the user's process namespace. State directories hold
@@ -333,16 +333,16 @@ say "4. live suites (separate processes, at most four at once)"
 # Ordinary child spawning preserves SIGINT, unlike a shell's asynchronous list.
 # No suite shares an Env directory, and the runner waits for all of them on failure.
 if [ -d /proc/self ]; then
-  agent_skips=0 resume_skips=0 robust_skips=0 title_skips=0 quiet_skips=0
+  agent_skips=0 resume_skips=0 robust_skips=0 title_skips=0 quiet_skips=0 upgrade_skips=0
 else
-  agent_skips=2 resume_skips=1 robust_skips=3 title_skips=1 quiet_skips=4
+  agent_skips=2 resume_skips=1 robust_skips=3 title_skips=1 quiet_skips=4 upgrade_skips=1
 fi
 # shellcheck disable=SC2086  # each skip count is a number
 ./.lake/build/bin/suites --suites \
   manager:159 delivery:38 attach:83 agent:70:$agent_skips \
   resume:44:$resume_skips watch:52 title:18:$title_skips graphics:9 robust:35:$robust_skips \
   interop:73 recipes:56 status:35 terminal:14 overview:21 remote:79 shells:5 identity:25 \
-  quiet:7:$quiet_skips \
+  quiet:7:$quiet_skips upgrade:13:$upgrade_skips \
   || fail "live suites (see $logs/linger-*.out)"
 defaults_after="$(default_listing)"
 if [ "$defaults_after" != "$defaults_before" ]; then

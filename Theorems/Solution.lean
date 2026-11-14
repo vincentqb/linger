@@ -17,6 +17,7 @@ public import Linger.Os.CoreCode.Env
 public import Linger.Session.CoreCode
 public import Linger.Session.CoreCode.Buf
 public import Linger.Session.CoreCode.Checkpoint
+public import Linger.Session.CoreCode.Handoff
 public import Linger.Session.CoreCode.Claim
 public import Linger.Session.CoreCode.Driver
 public import Linger.Session.CoreSpec
@@ -52,6 +53,7 @@ import Linger.Target.Proofs.Name
 import Linger.Target.Proofs.Remote
 import all Linger.Session.Proofs.Buf
 import all Linger.Session.Proofs.Checkpoint
+import all Linger.Session.Proofs.Handoff
 import all Linger.Session.Proofs.Claim
 import all Linger.Session.Proofs.Driver
 import all Linger.Session.Proofs.Record
@@ -2095,6 +2097,81 @@ theorem ending_clean_rejects_hangup :
   have ends : Signal.Ends fun sig _ _ => sig == 9 := fun _ _ _ => rfl
   have survives := (h _ ends [1]).2
   exact absurd survives (by decide)
+
+theorem handoff_carries (s : State) (w : Handoff.World)
+    (h :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) s.terminal)
+    (quiet : s.terminal.quiesce = s.terminal) : Handoff.decode (Handoff.encode s w) = some (s, w) :=
+  Handoff.decode_encode s w (Checkpoint.live_of_decoded h) quiet
+
+/-- A world a daemon could hand over, for the kills. -/
+private def someWorld : Handoff.World :=
+  { listenFd := 0, ptyFd := 0, childPid := 0, signals := (0, 0), locks := [], conns := [],
+    ptyIn := [], login := false, asker := 0 }
+
+private theorem init_quiet : (Vt.Vt.init 1 1).quiesce = Vt.Vt.init 1 1 := Vt.quiesce_of_quiet rfl
+
+theorem handoff_carries_rejects_rebuilt :
+    ¬∀ (s : State) (w : Handoff.World),
+        Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+            (Checkpoint.Decoded Checkpoint.loadBytes) s.terminal →
+          s.terminal.quiesce = s.terminal →
+          Handoff.decode
+              ((fun (s : State) (w : Handoff.World) =>
+                  Handoff.encode (State.boot s.terminal s.labelList []) w)
+                s w) =
+            some (s, w) := by
+  intro h
+  have carried := h (State.boot (Vt.Vt.init 1 1) [] [("k", "v")]) someWorld (.init 1 1) init_quiet
+  rw [Handoff.decode_encode _ _ (.init 1 1) init_quiet] at carried
+  simp [State.boot, State.terminal, State.labelList] at carried
+
+theorem handoff_versioned (s : State) (w : Handoff.World) (v : Nat) (rest : List UInt8) :
+    Handoff.version ∈ Handoff.formats ∧
+      (Handoff.encode s w).take (Handoff.header Handoff.version).length =
+        Handoff.header Handoff.version ∧
+      (v ∉ Handoff.formats → v < 256 → Handoff.decode (Handoff.header v ++ rest) = none) :=
+  ⟨by decide, Handoff.encode_header s w, Handoff.decode_unknown v rest⟩
+
+theorem handoff_versioned_rejects_unread :
+    ¬∀ (s : State) (w : Handoff.World) (v : Nat) (rest : List UInt8),
+        Handoff.version ∈ Handoff.formats ∧
+          (Handoff.encode s w).take (Handoff.header Handoff.version).length =
+            Handoff.header Handoff.version ∧
+          (v ∉ Handoff.formats →
+            v < 256 →
+            (fun (bytes : List UInt8) =>
+                  Handoff.decode
+                    (Handoff.header Handoff.version ++
+                      bytes.drop (Handoff.header Handoff.version).length))
+                (Handoff.header v ++ rest) =
+              none) := by
+  intro h
+  let s := State.boot (Vt.Vt.init 1 1) [] []
+  let rest := (Handoff.encode s someWorld).drop (Handoff.header Handoff.version).length
+  have refused := (h s someWorld 2 rest).2.2 (by decide) (by decide)
+  have dropped :
+    (Handoff.header 2 ++ rest).drop (Handoff.header Handoff.version).length = rest := by
+    simp [Handoff.header]
+  have whole : Handoff.header Handoff.version ++ rest = Handoff.encode s someWorld := by
+    simp [rest, Handoff.encode]
+  dsimp only at refused
+  rw [dropped, whole, Handoff.decode_encode _ _ (.init 1 1) init_quiet] at refused
+  cases refused
+
+theorem upgrade_probes (reported : Option (List Nat)) :
+    Upgrade.proceeds reported = true ↔
+      ∃ formats, reported = some formats ∧ Handoff.version ∈ formats :=
+  Upgrade.proceeds_iff reported
+
+theorem upgrade_probes_rejects_unprobed :
+    ¬∀ (reported : Option (List Nat)),
+        (fun (_ : Option (List Nat)) => true) reported = true ↔
+          ∃ formats, reported = some formats ∧ Handoff.version ∈ formats := by
+  intro h
+  obtain ⟨_, none_some, _⟩ := (h none).1 rfl
+  cases none_some
 
 theorem loadBytes_saveBytes_live (c : Checkpoint.Ckpt Vt.Vt)
     (h :

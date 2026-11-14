@@ -303,6 +303,9 @@ inductive Msg where
   /-- daemon → client: this signal stopped the daemon, which saved the session before its
   program ended; no status follows, since the program has none to report. -/
   | saved (signal : UInt8)
+  /-- client → daemon: replace your image with the program at this path, which carries the
+  session over without ending it (`linger upgrade`). -/
+  | upgrade (exe : List UInt8)
   /-- any tag this version does not know: skipped, never fatal. -/
   | unknown (tag : UInt8) (payload : List UInt8)
   deriving Repr, DecidableEq, Inhabited
@@ -317,13 +320,13 @@ structure Decoder where
   deriving Repr, DecidableEq, Inhabited
 
 /-- A message the encoder may send: its bytes fit one frame's payload, and an `unknown` message
-carries a tag this version leaves unassigned, 3, the attach of levels 1 and 2, or one above 19,
+carries a tag this version leaves unassigned, 3, the attach of levels 1 and 2, or one above 20,
 so that it cannot read back as a known one. -/
 @[expose]
 def Msg.Fits : Msg → Prop
   | .input bytes | .output bytes | .infoReply bytes | .labelSet bytes | .labelUnset bytes |
-    .err bytes => bytes.length ≤ maxPayload
-  | .unknown tag payload => payload.length ≤ maxPayload ∧ (tag = 3 ∨ 19 < tag.toNat)
+    .err bytes | .upgrade bytes => bytes.length ≤ maxPayload
+  | .unknown tag payload => payload.length ≤ maxPayload ∧ (tag = 3 ∨ 20 < tag.toNat)
   | _ => True
 
 /-- A request to change a session's labels: set one, remove one, or remove them all. -/
@@ -497,6 +500,9 @@ inductive Effect (Plan : Type) where
   | record (record : Record)
   /-- Stop the daemon; no later event is handled. -/
   | exit
+  /-- Replace the daemon's image with the program at `exe`, which carries the session over, and
+  answer connection `id`: once the new image serves, or with why the old one keeps serving. -/
+  | upgrade (id : Nat) (exe : List UInt8)
   deriving Repr, DecidableEq
 
 /-- Whether a session's ending is seen as it happens, among these connections: one of them is
@@ -673,7 +679,7 @@ target stayed connected, its checkpoint was saved, or its program ended that way
 def success {Plan : Type} (ending : Outcome) : (eff : Effect Plan) → Reply eff
   | .send .. | .replay .. | .close .. | .checkpoint => false
   | .stopProgram => ending
-  | .writePty .. | .resizePty .. | .dropCheckpoint | .record _ | .exit => ()
+  | .writePty .. | .resizePty .. | .dropCheckpoint | .record _ | .exit | .upgrade .. => ()
 
 /-- What an effect that succeeded feeds back to the session: a stop's reply, how its program
 ended, as the event `stopped ending`, and nothing for any other effect, since its target stayed
@@ -764,6 +770,65 @@ def Decoded {V : Type} (load : ByteArray → Option (Ckpt V)) (v : V) : Prop :=
   ∃ bytes c, load bytes = some c ∧ c.vt = v
 
 end Linger.Session.Checkpoint
+
+namespace Linger.Session.Handoff
+
+/-- One connection a daemon hands its new image, by descriptor number: the bytes it still owes
+the connection, its framing included, and, for one the session already closed, the time by the
+monotonic clock until which it may still finish them. -/
+structure Conn where
+  /-- The connection's descriptor, which is its identifier in the session. -/
+  fd : Nat
+  /-- The bytes the daemon still owes it, in order. -/
+  owed : List UInt8
+  /-- When it must have finished them, for a connection the session closed; `none` for one it
+  still serves. -/
+  closeBy : Option Nat
+  deriving DecidableEq, Repr
+
+/-- What a daemon hands its new image beside the session's state: the descriptors it keeps open
+across the exec, by number, its program's id, what it still owes its program and its
+connections, and who asked. -/
+structure World where
+  /-- The listening socket at the session's path. -/
+  listenFd : Nat
+  /-- The pty master of the session's terminal. -/
+  ptyFd : Nat
+  /-- The session's program, the daemon's child. -/
+  childPid : Nat
+  /-- The signal pipe's read end and write end. -/
+  signals : Nat × Nat
+  /-- The descriptors that hold the session's locks. -/
+  locks : List Nat
+  /-- Every connection the daemon owns, in admission order. -/
+  conns : List Conn
+  /-- The bytes the daemon still owes its program, in order. -/
+  ptyIn : List UInt8
+  /-- Whether the session's program is its login shell: it started with no command. -/
+  login : Bool
+  /-- The connection that asked for the upgrade, which the new image answers. -/
+  asker : Nat
+  deriving DecidableEq, Repr
+
+/-- What begins every handoff: `"LNGH"`, then its format's number, one byte. -/
+@[expose]
+def magic : List UInt8 := [0x4C, 0x4E, 0x47, 0x48]
+
+/-- The format of the handoffs this version writes. -/
+@[expose]
+def version : Nat := 1
+
+/-- The formats of the handoffs this version reads, the one it writes among them: a newer
+version reads every older format it lists here, and a daemon hands its session only to a
+binary that lists the format it writes. -/
+@[expose]
+def formats : List Nat := [1]
+
+/-- The first bytes of a handoff of format `v`. -/
+@[expose]
+def header (v : Nat) : List UInt8 := magic ++ [UInt8.ofNat v]
+
+end Linger.Session.Handoff
 
 /-! ## Reachable queue states
 

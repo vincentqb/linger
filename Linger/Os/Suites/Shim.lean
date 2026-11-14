@@ -645,7 +645,7 @@ def testDeepCwd : IO Unit := do
 signal's own number, which then ends nothing. It installs this process's handlers for good, so it
 runs last. -/
 def testSignalPipe : IO Unit := do
-  let fd ← signalPipe
+  let (fd, _) ← signalPipe
   let child ← IO.Process.spawn { cmd := "true" }
   discard <| child.wait
   kill (← getpid) 15
@@ -658,6 +658,25 @@ def testSignalPipe : IO Unit := do
         heard := heard ++ bytes.toList
   check "the signal pipe carries a child's end as 0 and SIGTERM as 15, which ends nothing"
       (heard.contains 0 && heard.count 15 == 1 && heard.all (fun b => b == 0 || b == 15))
+
+/-- An exec that fails returns: the process carries on as it was, and a descriptor it was asked to
+keep, which it unmarked for the exec, closes on exec again, so a program the process starts next
+does not inherit it. -/
+def testExecFails : IO Unit := do
+  IO.FS.withTempDir fun dir => do
+      let held ← flock (dir / "kept.lock").toString
+      let fd := held.toUInt64.toUInt32
+      try
+        let failed ← throws (execImage (dir / "missing").toString #["probe"] #[fd])
+        check "an exec that fails throws, and the process carries on" (failed && held ≥ 0)
+        let probe ←
+          IO.Process.output
+              { cmd := "/bin/sh",
+                args := #["-c", s!"if [ -e /dev/fd/{fd} ]; then echo open; else echo closed; fi"] }
+        check "an exec that fails marks the descriptors it kept close-on-exec again"
+            (probe.stdout.trimAscii.toString == "closed")
+      finally
+        close fd
 
 /-- A sleep lasts at least as long as asked (`Os.Wait.Lasts`), and a wait naps only until
 its deadline and then gives up: with the deadline ahead each nap sleeps and none goes past it,
@@ -712,6 +731,7 @@ public def main (args : List String) : IO UInt32 := do
   testDeepCwd
   testDurable
   testWaits
+  testExecFails
   testSignalPipe
   let n ← failed.get
   IO.println (if n == 0 then "ALL PASS" else s!"{n} FAILURES")

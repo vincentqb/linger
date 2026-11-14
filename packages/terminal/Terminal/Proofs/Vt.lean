@@ -1651,4 +1651,12 @@ theorem controls_observed :
       ((Vt.init 2 1).feed [0x1B]).atBoundary = false :=
   ⟨by decide +kernel, by decide +kernel, rfl, rfl, rfl, by decide +kernel⟩
 
+/-- A quiet parser is what `quiesce` leaves: forgetting the partial parser state of a terminal
+whose parser holds none changes nothing. -/
+theorem quiesce_of_quiet {v : Vt} (h : v.quiet = true) : v.quiesce = v := by
+  simp only [Vt.quiet, Bool.and_eq_true, beq_iff_eq] at h
+  obtain ⟨⟨hp, hn⟩, ha⟩ := h
+  cases v
+  simp_all [Vt.quiesce]
+
 end Terminal.Vt

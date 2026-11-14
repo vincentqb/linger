@@ -19,6 +19,7 @@ import Linger.App.CoreCode.Wait
 import Os.WorldCode.Command
 import Linger.Session.WorldCode.Resume
 import Linger.Session.WorldCode.Record
+import Linger.Session.CoreCode.Handoff
 import Terminal.CoreCode.Mediation
 import Std.Async.Signal
 import Linger.Display.CoreCode.Status
@@ -1377,6 +1378,48 @@ private def captureArgs (args : List String) : IO Answer := do
 with the higher code. -/
 private def worse (a b : Answer) : Answer := if a.code < b.code then b else a
 
+/-- How long `upgrade` waits for a daemon's answer: its probe of this binary, its saves and the
+new image's start, which a loaded host slows. -/
+private def upgradeWaitMs : Int32 := 60000
+
+/-- `upgrade` of one live session: ask its daemon to replace its image with this binary, which
+carries the session over, its program running on (`Msg.upgrade`). A daemon whose `info` names no
+handoff format was started by an older linger, which cannot hand its session over, so it is not
+asked, and keeps running; a daemon that refuses keeps running and says why. -/
+private def upgradeOne (name : String) : IO Answer := do
+  match ← queryInfo name with
+  | none =>
+    noSession name
+  | some (.error err) =>
+    IO.eprintln s!"linger: {err} for '{name}'"
+    return .notDone
+  | some (.ok info) =>
+    if (info.lookup "handoff").isNone then
+      IO.eprintln s!"linger: session '{name}' was started by an older linger; it keeps running"
+      return .notDone
+    let exe := (← IO.appPath).toString
+    match ← Client.oneShot name (.upgrade exe.toUTF8.toList) (silenceMs := upgradeWaitMs) with
+    | none =>
+      noSession name
+    | some result =>
+      let answer ← requestStatus name result
+      if answer == .done then
+        IO.println s!"upgraded {name}"
+      return answer
+
+/-- `upgrade [name...]`: `upgradeOne` of each named session, `name@host` on its host, or of every
+local live one when none is named, answering the worst of their answers. -/
+private def cmdUpgrade (names : List String) : IO Answer := do
+  let names ←
+    if names.isEmpty then
+      pure ((← Paths.listSocketNames).map (·.name))
+    else
+      pure names
+  let mut answer : Answer := .done
+  for name in names do
+    answer := worse answer (← withTarget "upgrade" name [] upgradeOne)
+  return answer
+
 /-- Run one session command and give its answer, whose code is its exit status: `usage` for a
 usage error or invalid target, otherwise the verb's own. `main` routes interactive selection and
 tmux interchange elsewhere; `__daemon` runs a session's daemon in this process. -/
@@ -1392,6 +1435,19 @@ def main (args : List String) : IO Answer := do
   | ["__resume", report, name, cwd] =>
     serveResume report name cwd
     return .done
+  | ["__upgraded", name, path, pid] =>
+    match pid.toNat? with
+    | some pid =>
+      Daemon.adopt name path (UInt32.ofNat pid) (← Resume.saver name) (Resume.dropCkpt name)
+          (recordFile name)
+      return .done
+    | none =>
+      return .usage
+  | ["__handoff-formats"] =>
+    IO.println Linger.Session.Upgrade.formatsText
+    return .done
+  | "upgrade" :: names =>
+    cmdUpgrade names
   | ["resume", name] =>
     withTarget "resume" name [] cmdResume
   | "resume" :: _ =>

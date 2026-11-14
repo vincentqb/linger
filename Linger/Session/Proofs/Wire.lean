@@ -348,7 +348,7 @@ theorem fits_wf (m : Msg) (h : m.Fits) : m.WF := by
     refine ⟨short, ?_⟩
     rcases unassigned with rfl | above
     · exact (by decide : knownTag 3 = false)
-    · have high : ¬t ≤ 19 := by
+    · have high : ¬t ≤ 20 := by
         simp only [UInt8.le_iff_toNat_le, UInt8.reduceToNat]
         omega
       simp [knownTag, high]
@@ -357,7 +357,8 @@ theorem fits_wf (m : Msg) (h : m.Fits) : m.WF := by
   | infoReply
   | labelSet
   | labelUnset
-  | err => exact ⟨h, trivial⟩
+  | err
+  | upgrade => exact ⟨h, trivial⟩
   | resize
   | attach
   | exited => exact ⟨by simp [Msg.payload, writeU32, maxPayload], trivial⟩

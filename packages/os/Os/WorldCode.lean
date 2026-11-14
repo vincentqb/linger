@@ -333,13 +333,37 @@ def reapNohang (pid : UInt32) : IO Reaped := waitNohang "reapNohang" pid false
 the id of the session it leads, from every other process until a reap. -/
 def peekNohang (pid : UInt32) : IO Reaped := waitNohang "peekNohang" pid true
 
-/-- A descriptor that becomes readable whenever a child of this process ends or the process hears
+/-- A pipe that becomes readable whenever a child of this process ends or the process hears
 SIGHUP, SIGINT, SIGQUIT or SIGTERM, so a poll loop can wait for its program's end, and hear the
-system stop it, instead of asking on a timer. It carries one byte per signal, in the order they
-came, while it has room: 0 for a child's end, else the signal's number; read it all before the
-next wait. Call it once per process, before starting the program: it installs the process's
-handlers for those five signals, so the four stop signals no longer end the process. -/
-def signalPipe : IO UInt32 := Boundary.signalPipe
+system stop it, instead of asking on a timer: its read end, then its write end. It carries one
+byte per signal, in the order they came, while it has room: 0 for a child's end, else the signal's
+number; read it all before the next wait. Call it, or `adoptSignalPipe`, once per process, before
+starting the program: it installs the process's handlers for those five signals, so the four stop
+signals no longer end the process, and unblocks them. Both ends close on exec. -/
+def signalPipe : IO (UInt32 × UInt32) := do
+  let packed ← Boundary.signalPipe 0xFFFFFFFF 0xFFFFFFFF
+  return (packed.toUInt32, (packed >>> 32).toUInt32)
+
+/-- `signalPipe` for the pipe whose ends are `read` and `write`, as an image `execImage` started
+inherits them: the bytes the previous image's handlers wrote that nobody read are still in it,
+and a signal the exec held blocked is delivered once the handlers are installed. Both ends close
+on exec again. -/
+def adoptSignalPipe (read write : UInt32) : IO Unit := do
+  if read == 0xFFFFFFFF || write == 0xFFFFFFFF then
+    throw (IO.userError "adoptSignalPipe: not a descriptor")
+  discard <| Boundary.signalPipe read write
+
+/-- Replace this process's program with the one at `prog`, run with `args` as its words after its
+name and with this process's environment, by `execve`, which keeps the process's id, its children
+and every descriptor not marked close-on-exec (the world claim `Os.Exec.Keeps`): each of `keep`
+is unmarked first, so it stays open at its number in the new image. SIGCHLD and the four stop
+signals are blocked in the calling thread first, so one that comes before the new image calls
+`signalPipe` or `adoptSignalPipe` waits for it. Returns only when the exec fails: each descriptor
+of `keep` is then marked close-on-exec again, as it was, and the mask is put back, and it throws
+with the reason, so the process carries on as it was. -/
+def execImage (prog : String) (args : Array String) (keep : Array UInt32) : IO Unit := do
+  checkCommand "execImage" prog args
+  Boundary.execImage prog args keep
 
 /-- Send `sig` to every process whose session id is `sid`, other than `sid` itself, and return
 how many it reached; signal 0 only counts them. The caller keeps the session's leader, its

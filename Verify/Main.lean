@@ -21,6 +21,7 @@ import Verify.Ci
 import Verify.Hygiene
 import Linger.Session.Suites.Identity
 import Linger.Session.Suites.Quiet
+import Linger.Session.Suites.Upgrade
 import Linger.Session.Suites.Perf
 import Verify.Runner
 
@@ -54,7 +55,8 @@ def suites : List (String × IO UInt32) :=
     ("perf", Linger.Session.Suites.Perf.run false),
     -- Verifier regression checks, separate from the live product suites.
     ("ci", Verify.Ci.run), ("hygiene", Verify.Hygiene.run),
-    ("identity", Linger.Session.Suites.Identity.run), ("quiet", Linger.Session.Suites.Quiet.run)]
+    ("identity", Linger.Session.Suites.Identity.run), ("quiet", Linger.Session.Suites.Quiet.run),
+    ("upgrade", Linger.Session.Suites.Upgrade.run)]
 
 def main (args : List String) : IO UInt32 := do
   match args with

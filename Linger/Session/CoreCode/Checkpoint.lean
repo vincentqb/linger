@@ -74,20 +74,20 @@ boundary or the compiler cannot agree on the compiled representation of anything
 typed by it ("locally inferred compilation type differs…"). A `def` with
 `@[expose]` would say the same thing in two more lines — an alias has no
 implementation to hide, so reducible-and-exposed is simply what it is. -/
-abbrev R (α : Type) : Type := List UInt8 → Option (α × List UInt8)
+public abbrev R (α : Type) : Type := List UInt8 → Option (α × List UInt8)
 
 /-! ## Primitive writers/readers -/
 
 /-- Arbitrary-precision Nat, LEB128: 7 bits per byte, high bit =
 "more follows". Total in both directions and round-trips with no
 side conditions — no "fits in u32" caveat anywhere in the format. -/
-def wNat (n : Nat) : List UInt8 :=
+public def wNat (n : Nat) : List UInt8 :=
   if h : n < 128 then [UInt8.ofNat n] else UInt8.ofNat (128 + n % 128) :: wNat (n / 128)
 decreasing_by exact Nat.div_lt_self (by omega) (by omega)
 
 /-- Inverse of `wNat` (`rt_nat`): reads bytes up to the first one below 128, and fails
 if the input ends before it. -/
-def rNat : R Nat := fun l =>
+public def rNat : R Nat := fun l =>
   match l with
   | [] => none
   | b :: rest =>
@@ -98,19 +98,19 @@ def rNat : R Nat := fun l =>
       | some (hi, rest') => some ((b.toNat - 128) + 128 * hi, rest')
 
 /-- One byte: 1 for true, 0 for false. -/
-def wBool (b : Bool) : List UInt8 := [if b then 1 else 0]
+public def wBool (b : Bool) : List UInt8 := [if b then 1 else 0]
 
 /-- Inverse of `wBool` (`rt_bool`): one byte, where any nonzero value reads as true. -/
-def rBool : R Bool := fun l =>
+public def rBool : R Bool := fun l =>
   match l with
   | [] => none
   | b :: rest => some (b != 0, rest)
 
 /-- A character as its codepoint, through `wNat`. -/
-def wChar (c : Char) : List UInt8 := wNat c.toNat
+public def wChar (c : Char) : List UInt8 := wNat c.toNat
 
 /-- Inverse of `wChar` (`rt_char`); a number that is not a Unicode scalar value fails. -/
-def rChar : R Char := fun l => do
+public def rChar : R Char := fun l => do
   let (n, rest) ← rNat l
   if h : n.isValidChar then
     some (Char.ofNatAux n h, rest)
@@ -118,10 +118,11 @@ def rChar : R Char := fun l => do
     none
 
 /-- A list as its length, then each element through `w`. -/
-def wList {α : Type} (w : α → List UInt8) (l : List α) : List UInt8 := wNat l.length ++ l.flatMap w
+public def wList {α : Type} (w : α → List UInt8) (l : List α) : List UInt8 :=
+  wNat l.length ++ l.flatMap w
 
 /-- Read exactly the given number of elements with `r`, in order (`rt_listAux`). -/
-def rListAux {α : Type} (r : R α) : Nat → R (List α)
+public def rListAux {α : Type} (r : R α) : Nat → R (List α)
   | 0 => fun l => some ([], l)
   | k + 1 => fun l => do
     let (x, rest) ← r l
@@ -130,7 +131,7 @@ def rListAux {α : Type} (r : R α) : Nat → R (List α)
 
 /-- Check an optional element-count limit before invoking the element reader.
 The unbounded default keeps the format's general list roundtrip. -/
-def rList {α : Type} (r : R α) (l : List UInt8) (maxCount : Option Nat := none) :
+public def rList {α : Type} (r : R α) (l : List UInt8) (maxCount : Option Nat := none) :
     Option (List α × List UInt8) := do
   let (n, rest) ← rNat l
   if maxCount.all (fun limit => n ≤ limit) then
@@ -139,30 +140,30 @@ def rList {α : Type} (r : R α) (l : List UInt8) (maxCount : Option Nat := none
     none
 
 /-- A string as its character count, then each character through `wChar`. -/
-def wStr (s : String) : List UInt8 := wList wChar s.toList
+public def wStr (s : String) : List UInt8 := wList wChar s.toList
 
 /-- Inverse of `wStr` (`rt_str`). The character count is not bounded. -/
-def rStr : R String := fun l => do
+public def rStr : R String := fun l => do
   let (cs, rest) ← rList rChar l
   some (String.ofList cs, rest)
 
 /-- The first component's bytes, then the second's. -/
-def wPair {α β : Type} (wa : α → List UInt8) (wb : β → List UInt8) (p : α × β) :
+public def wPair {α β : Type} (wa : α → List UInt8) (wb : β → List UInt8) (p : α × β) :
     List UInt8 := wa p.1 ++ wb p.2
 
 /-- Inverse of `wPair` when each component reader inverts its writer (`rt_pair`). -/
-def rPair {α β : Type} (ra : R α) (rb : R β) : R (α × β) := fun l => do
+public def rPair {α β : Type} (ra : R α) (rb : R β) : R (α × β) := fun l => do
   let (a, rest) ← ra l
   let (b, rest') ← rb rest
   some ((a, b), rest')
 
 /-- Tag 0 for `none`; tag 1, then the value. -/
-def wOpt {α : Type} (w : α → List UInt8) : Option α → List UInt8
+public def wOpt {α : Type} (w : α → List UInt8) : Option α → List UInt8
   | none => [0]
   | some a => 1 :: w a
 
 /-- Inverse of `wOpt` (`rt_opt`); any other tag byte fails. -/
-def rOpt {α : Type} (r : R α) : R (Option α) := fun l =>
+public def rOpt {α : Type} (r : R α) : R (Option α) := fun l =>
   match l with
   | [] => none
   | 0 :: rest => some (none, rest)

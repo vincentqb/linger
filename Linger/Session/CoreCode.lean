@@ -381,7 +381,9 @@ framing byte, and that is a claim about *these* — see `infoText_framing`. -/
 def infoFields (s : State) : List (String × String) :=
   s.metaKv ++ [("clients", toString (s.roster.filter (·.attached)).length)]
     -- what a client needs before sending a request this daemon may not serve
-    ++ [("protocol", toString Wire.protocol), ("version", Terminal.Mediation.versionNumber)]
+    ++
+    [("protocol", toString Wire.protocol), ("version", Terminal.Mediation.versionNumber),
+      ("handoff", toString Handoff.version)]
     -- the observations `Status.classify` needs from the daemon; the rest
     -- (reachability, checkpoint loadability) only the caller can know
     ++
@@ -618,6 +620,13 @@ private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Pla
       ({ s with
           labels := [], dirty := true },
         [.send c.id .done])
+  | .upgrade exe =>
+    -- a watcher may not replace the daemon, nor may a client that streams the session; the
+    -- runtime carries one upgrade out at a time and refuses the others it is asked for meanwhile
+    if c.mode == .readOnly then (s, [.send c.id (.err "read-only".toUTF8.toList)])
+    else
+      if c.attached then (s, [.send c.id (.err "attached".toUTF8.toList)])
+      else (s, [.upgrade c.id exe])
   -- daemon-to-client vocabulary arriving at the daemon is no request and is dropped;
   -- a tag this version does not know is a request it cannot serve, and is refused
   | .output _ | .exited _ | .ended _ | .saved _ | .infoReply _ | .done | .err _ => (s, [])

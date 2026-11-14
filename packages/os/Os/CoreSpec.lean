@@ -7,8 +7,10 @@ public section
 How a polling wait runs against the monotonic clock, and what one write attempt reports and what a
 full write does after it. Bodies are exposed: each definition here is its own specification. The
 world claim the waits rest on, that a sleep lasts at least as long as it was asked to, is
-`Os.Wait.Lasts`, beside the foreign declarations in `Os.WorldSpec`; the claims about a session's
-processes and descriptors are the session's, in `Linger.Session.WorldSpec`. -/
+`Os.Wait.Lasts`, and the one an upgrade's exec rests on, that it keeps the process, its children
+and the descriptors it does not close, is `Os.Exec.Keeps`, both beside the foreign declarations in
+`Os.WorldSpec`; the other claims about a session's processes and descriptors are the session's,
+in `Linger.Session.WorldSpec`. -/
 
 namespace Os.Wait
 
