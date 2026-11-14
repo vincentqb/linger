@@ -183,11 +183,11 @@ theorem title_update_clean (v : Terminal.Vt.Vt) (title : String) :
   · exact title_ansi_clean title
   · exact clean_nil
 
-/-- The handback is clean: the pieces that reset what an application may have left on, then
-an empty title. -/
+/-- The handback is clean: the pieces that reset what an application may have left on, the
+terminal's own cursor shape among them, then an empty title. -/
 theorem leaveAnsi_clean : Clean Terminal.Render.leaveAnsi := by
   refine
-    ⟨[.esc 0x5C, .csi true [1049] 0x6C, .csi false [4] 0x6C, .csi true [25] 0x68,
+    ⟨[.esc 0x5C, .csi true [1049] 0x6C, .csi false [4] 0x6C, .csi true [25] 0x68, .shapeDefault,
         .csi true [2004] 0x6C, .csi true [1000] 0x6C, .csi true [1002] 0x6C, .csi true [1003] 0x6C,
         .csi true [1006] 0x6C, .csi true [1004] 0x6C, .csi true [1] 0x6C, .esc 0x3E,
         .csi true [6] 0x6C, .csi true [7] 0x68, .csi false [] 0x72, .ascii false, .ascii true,
@@ -196,7 +196,7 @@ theorem leaveAnsi_clean : Clean Terminal.Render.leaveAnsi := by
   simp only [Terminal.Render.leaveAnsi, Terminal.Render.modeSet, Terminal.Render.csiPriv,
     Terminal.Render.csiNum, Terminal.Render.csiNum2, Terminal.Render.csiPlain,
     Terminal.Render.escSeq, Terminal.Render.escCharset, Terminal.Render.csiB, Terminal.Render.escB,
-    Terminal.Render.defaultTitleAnsi, render_digits]
+    Terminal.Render.defaultTitleAnsi, Terminal.Render.shapeAnsi, render_digits]
   simp [Piece.bytes, digits]
 
 /-- The screen `capture` prints is clean: printable characters and line feeds. -/
@@ -242,5 +242,6 @@ theorem not_clean_reset : ¬Clean [0x1B, 0x63] := by
       rcases first with rfl | rfl <;> simp at eq
     | ascii g1 => cases g1 <;> simp [Piece.bytes] at eq
     | shiftIn => simp [Piece.bytes] at eq
+    | shapeDefault => simp [Piece.bytes] at eq
 
 end Linger.Display

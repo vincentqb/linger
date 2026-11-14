@@ -1537,7 +1537,7 @@ for bound in \
   'let [(]rows, j[)] ← rListB [(]fun bytes j => rRowB bytes j maxCols[)] bytes j maxRows' \
   'let [(]tabs, i[)] ← rListB rBoolB b i [(]some cols[)]' \
   'let [(]sb, i[)] ← rRingB b i [(]some sbCap[)]' \
-  'let [(]altGrid, i[)] ← rAltB b i [(]some cols[)] [(]some rows[)] legacy'; do
+  'let [(]altGrid, i[)] ← rAltB b i [(]some cols[)] [(]some rows[)] [(]version == 1[)]'; do
   code_grep "^[[:space:]]+$bound\$" 'Linger/Session/CoreCode/Checkpoint.lean' > /dev/null \
     || fail "a byte-array checkpoint reader stopped forwarding its bound: $bound"
 done

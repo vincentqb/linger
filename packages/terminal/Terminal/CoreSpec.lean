@@ -77,8 +77,8 @@ structure Cell where
 /-- One screen row of cells. -/
 abbrev Row := Array Cell
 
-/-- Modes we track. Stored-but-uninterpreted ones exist so a restore
-can replay them (`Render.modesAnsi`). -/
+/-- Modes we track: the settings a program makes on its terminal, the cursor's shape among
+them. Stored-but-uninterpreted ones exist so a restore can replay them (`Render.modesAnsi`). -/
 structure Modes where
   /-- Autowrap at the right margin (DECAWM, private mode 7). -/
   wrap : Bool := true
@@ -101,6 +101,9 @@ structure Modes where
   mouseSgr : Bool := false
   /-- Focus reporting (private mode 1004). -/
   focusEvents : Bool := false
+  /-- The cursor's shape, as DECSCUSR (`CSI Ps SP q`) sets it: 0 for the terminal's own
+  default, then a blinking or steady block (1, 2), underline (3, 4) or bar (5, 6). -/
+  cursorShape : Fin 7 := 0
   deriving Repr, DecidableEq, Inhabited
 
 /-- Clamp a requested dimension to [1, 1000]. -/
@@ -197,15 +200,15 @@ def Shows {S : Type} (colCount rowCount : S → Nat) (getRow : S → Nat → Row
 
 /-- `u`, what a receiver `w` holds once it has parsed a repaint of the terminal `v`, restores `v`
 as far as `w` can show it. Whatever `w` is, `u` has `v`'s pen and every mode of `v`'s but the
-mouse mode, has the mouse mode too when that is off or one a program enables (1000, 1002 or 1003),
-and sits between control sequences and characters. When `w` is as tall as `v` and `v`'s scroll
-region is one DECSTBM sets, two rows or more on a screen under 65535 rows, `u` has `v`'s `Sticky`
-fields. When `v` and `w` are `live` and of one size, `u` shows the screen `v` shows (`Shows`),
-and, when `v` sits between control sequences and characters too, no output fed to both tells the
-two apart by the screens they show, their pens, their modes but the mouse mode or whether they
-sit between them. A terminal inside a sequence or a character holds a partial one its receiver
-does not. The history and the window title are not compared, nor the mouse mode once output
-follows. -/
+mouse mode, the cursor's shape among them, has the mouse mode too when that is off or one a
+program enables (1000, 1002 or 1003), and sits between control sequences and characters. When
+`w` is as tall as `v` and `v`'s scroll region is one DECSTBM sets, two rows or more on a screen
+under 65535 rows, `u` has `v`'s `Sticky` fields. When `v` and `w` are `live` and of one size, `u`
+shows the screen `v` shows (`Shows`), and, when `v` sits between control sequences and characters
+too, no output fed to both tells the two apart by the screens they show, their pens, their modes
+but the mouse mode or whether they sit between them. A terminal inside a sequence or a character
+holds a partial one its receiver does not. The history and the window title are not compared,
+nor the mouse mode once output follows. -/
 @[expose]
 def Restores {S : Type} (live : S → Prop) (feed : S → List UInt8 → S) (colCount rowCount : S → Nat)
     (getRow : S → Nat → Row) (cursorPos : S → Nat × Nat) (getPen : S → Pen) (getModes : S → Modes)

@@ -33,7 +33,8 @@ namespace Linger.Session.Suites.Attach
 
 open Terminal
 open Verify.Harness
-open Terminal.Render (leaveAnsi modeSet csiNum csiNum2 csiPlain escSeq escCharset titleAnsi)
+open Terminal.Render (leaveAnsi modeSet csiNum csiNum2 csiPlain escSeq escCharset titleAnsi
+  shapeAnsi)
 open Terminal.Vt (Vt)
 open Linger.Session (outputChunk)
 open Linger.Session.Shell.Daemon (outbufCap)
@@ -91,15 +92,17 @@ copy of the emitter. Every group must appear in the epilogue.
 From `Render.leaveAnsi`'s docstring, which is where the *reasons* live: a shell
 that inserts instead of overwriting, addresses relative to a stale region, does
 not wrap or scrolls inside six lines (`4l`, `?6l`, `?7h`, `CSI r`); a cursor you
-cannot see, pastes arriving wrapped in `ESC [ 200 ~`, clicks or focus changes
-arriving as garbage on the command line (`?25h`, `?2004l`, the mouse modes,
-`?1004l`); arrow and keypad keys sending application forms the line editor does
-not bind (`?1l`, `ESC >`); line-drawing ASCII (`( B`, `) B`, `SI`); a coloured
-prompt (`SGR 0`); the session's window title (empty `OSC 2 BEL`). termios restores
+cannot see or that keeps the program's shape, pastes arriving wrapped in `ESC [ 200 ~`,
+clicks or focus changes arriving as garbage on the command line (`?25h`, `CSI 0 SP q`,
+`?2004l`, the mouse modes, `?1004l`); arrow and keypad keys sending application forms the
+line editor does not bind (`?1l`, `ESC >`); line-drawing ASCII (`( B`, `) B`, `SI`); a
+coloured prompt (`SGR 0`); the session's window title (empty `OSC 2 BEL`). termios restores
 none of it — that is the kernel's line discipline, not the terminal's state. -/
 def leaveCases : List (List (List UInt8) × String) :=
   [([modeSet 1049 false], "leaves the alt screen"), ([csiNum 4 0x6C], "clears insert mode"),
-    ([modeSet 25 true], "shows the cursor"), ([modeSet 2004 false], "clears bracketed paste"),
+    ([modeSet 25 true], "shows the cursor"),
+    ([shapeAnsi 0], "restores the terminal's own cursor shape"),
+    ([modeSet 2004 false], "clears bracketed paste"),
     ([modeSet 1000 false, modeSet 1002 false, modeSet 1003 false, modeSet 1006 false],
       "clears mouse reporting"),
     ([modeSet 1004 false], "clears focus events"),
@@ -110,13 +113,14 @@ def leaveCases : List (List (List UInt8) × String) :=
     ([csiNum 0 0x6D], "resets the pen"), ([titleAnsi (Vt.init 1 1)], "clears the window title")]
 
 /-- A full-screen application's opening sequences, as the shell's `printf` writes
-them: alt screen, mouse reporting (1000 + SGR 1006), cursor hidden, bracketed
+them: alt screen, mouse reporting (1000 + SGR 1006), cursor hidden, an editor's
+insert-mode bar cursor (`CSI 6 SP q`, as leanvim writes it), bracketed
 paste, autowrap off, a six-line scroll region, DEC line drawing, a bold red pen,
 application cursor keys, application keypad, a nonempty title followed by a
 truncated title. The unfinished title exceeds the mediator's candidate cap so
 it reaches the client before detach. Literal `\033` for `printf` to interpret. -/
 def appStateCmd : String :=
-  "printf '\\033[?1049h\\033[?1000h\\033[?1006h\\033[?25l\\033[?2004h" ++
+  "printf '\\033[?1049h\\033[?1000h\\033[?1006h\\033[?25l\\033[6 q\\033[?2004h" ++
     "\\033[?7l\\033[5;10r\\033(0\\033[1;31;4m\\033[?1h\\033=X" ++
     "\\033]2;hostile-detach\\007\\033]2;truncated-detach" ++
     String.ofList (List.replicate Terminal.Mediation.oscCap 'x') ++
@@ -159,6 +163,28 @@ private def unseenChecks (e : Env) : IO Unit := do
 
 /-- A `find` result in a failure label: `-1` for absent. -/
 private def idxStr (o : Option Nat) : String := (o.map toString).getD "-1"
+
+/-- What a program sets on its terminal, the session's terminal keeps: an editor's insert-mode
+bar cursor, as leanvim writes it (`CSI 6 SP q`, the application's bytes, spelled as such),
+reaches the client live, and a reattach's repaint sets it again. -/
+private def shapeChecks (e : Env) (cols rows : UInt32) : IO Unit := do
+  let bar : List UInt8 := [0x1B, 0x5B, 0x36, 0x20, 0x71]
+  let s1 ← e.spawn #["attach", "shape"] cols rows
+  let _ ← waitFor 4000 (return (← e.info "shape" "clients") == some "1")
+  s1.type "printf '\\033[6 q'; echo bar-$((40+2))\r"
+  let live ← IO.mkRef ByteArray.empty
+  let barred ← s1.awaitText live (hasText · "bar-42")
+  s1.detach
+  let _ ← s1.awaitText live (hasBytes · Terminal.Render.leaveAnsi)
+  let _ ← s1.reap 2000
+  s1.bye (sendDetach := false)
+  let s2 ← e.spawn #["attach", "shape"] cols rows
+  let burst ← IO.mkRef ByteArray.empty
+  let shaped ← s2.awaitText burst (hasBytes · bar)
+  expect (barred && hasBytes (← live.get) bar && shaped)
+      "reattach: a program's bar cursor comes back with the repaint"
+  s2.bye
+  e.killAll #["shape"]
 
 /-- Whether the job whose pid a shell wrote to `path` ends within `patienceMs`: the jobs these
 checks start sleep far longer, so one that was left running cannot pass, however fast the host.
@@ -440,6 +466,7 @@ def run : IO UInt32 :=
     let out2 ← drain c2.fd 1500
     expect (hasText out2 "marker-42" && hasText out2 "while-detached-42")
         "reattach: restore replays prior screen"
+    shapeChecks e cols rows
     -- 5. two clients mirror output
     let c3 ← e.spawn #["attach", "demo"] cols rows
     let out3 ← drain c3.fd 1000

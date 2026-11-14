@@ -552,9 +552,33 @@ theorem smap_id_savedAnsi (v : Vt) : SMap id (savedAnsi v) :=
   SMap.streamPred.savedAnsi smap_id_parkAnsi (smap_id_escSeq 0x37 (by decide)) smap_id_originOffAnsi
     v
 
+/-- Feeding `ESC` is the same as discarding a half-decoded character first: `step`
+aborts before it dispatches, and a second abort at `0x1B` is the identity. -/
+theorem step_esc_of_abort (u : Vt) : u.step 0x1B = (u.abortUtf8 0x1B).step 0x1B := by
+  unfold Vt.step
+  rw [abortUtf8_of_uz 0x1B (un_abortUtf8_esc u)]
+
+/-- …so a stream that opens with `ESC` may as well be fed to the aborted state. -/
+theorem feed_esc_of_abort (u : Vt) (rest : Bytes) :
+    u.feed (0x1B :: rest) = (u.abortUtf8 0x1B).feed (0x1B :: rest) := by
+  simp only [feed_cons]
+  rw [step_esc_of_abort u]
+
+/-- DECSCUSR sets the cursor's shape and no sticky field, whatever the decoder holds: its leading
+`ESC` aborts a partial character first. -/
+theorem smap_id_shapeAnsi (k : Fin 7) : SMap id (shapeAnsi k.val) := by
+  intro v hg
+  have hs : shapeAnsi k.val = 0x1B :: (shapeAnsi k.val).tail := by simp [shapeAnsi, csiB]
+  rw [hs, feed_esc_of_abort, ← hs,
+    shape_feed_eq k ((ps_abortUtf8 _ _).trans hg) (un_abortUtf8_esc v)]
+  exact ⟨(ps_abortUtf8 _ _).trans hg, stick_abortUtf8 v 0x1B⟩
+
+/-- …the hand-back's `CSI 0 SP q` among them. -/
+theorem smap_id_shapeAnsi_zero : SMap id (shapeAnsi 0) := smap_id_shapeAnsi 0
+
 /-- Every mode `modesAnsi` replays is one `setMode` cannot turn into a screen
 switch — including the mouse field, whose *guard* is what rules 47/1047/1049 out
-(the same allowlist that `restore_modes_any` needs). -/
+(the same allowlist that `restore_modes_any` needs) — and the cursor's shape is none. -/
 theorem smap_id_modesAnsi (v : Vt) : SMap id (modesAnsi v) :=
   SMap.streamPred.modesAnsi v
     (fun n on h => smap_id_modeSet_safe n on (by omega) (by omega) (by omega) (by omega) (by omega))
@@ -563,6 +587,7 @@ theorem smap_id_modesAnsi (v : Vt) : SMap id (modesAnsi v) :=
       exact smap_id_modeSet_safe _ _ (by omega) (by omega) (by omega) (by omega) (by omega))
     (smap_id_modeSet_safe 6 _ (by omega) (by omega) (by omega) (by omega) (by omega))
     (smap_id_escSeq 0x3D (by decide)) (smap_id_escSeq 0x3E (by decide)) smap_id_irm
+    (smap_id_shapeAnsi _)
 
 /-- **`charsetAnsi` sets both designations absolutely and the shift state
 set-only.** The `so` component of the transform reads `s.so`, and that is not an
@@ -976,18 +1001,6 @@ theorem smap_id_defaultTitleAnsi : SMap id defaultTitleAnsi := by
   change stick (v.abortUtf8 0x1B) = stick v
   exact stick_abortUtf8 v 0x1B
 
-/-- Feeding `ESC` is the same as discarding a half-decoded character first: `step`
-aborts before it dispatches, and a second abort at `0x1B` is the identity. -/
-theorem step_esc_of_abort (u : Vt) : u.step 0x1B = (u.abortUtf8 0x1B).step 0x1B := by
-  unfold Vt.step
-  rw [abortUtf8_of_uz 0x1B (un_abortUtf8_esc u)]
-
-/-- …so a stream that opens with `ESC` may as well be fed to the aborted state. -/
-theorem feed_esc_of_abort (u : Vt) (rest : Bytes) :
-    u.feed (0x1B :: rest) = (u.abortUtf8 0x1B).feed (0x1B :: rest) := by
-  simp only [feed_cons]
-  rw [step_esc_of_abort u]
-
 /-- From ground, `penSgr p` installs `p` whatever the decoder holds: its leading `ESC`
 aborts a partial UTF-8 sequence first. -/
 theorem pen_penSgr_of_ground {v : Vt} (p : Pen) (hg : v.pstate = .ground) :
@@ -1027,8 +1040,9 @@ theorem leave_canonical_all (w : Vt) (h2 : 2 ≤ w.rows) :
   have l3 :=
     sput_congr (sput_step l2 (smap_modeSet 25 true (by decide) (by decide)))
       (stSetMode_of_not_screen true _)
+  have l3s := sput_congr (sput_step l3 smap_id_shapeAnsi_zero) (id_eq _)
   have l4 :=
-    sput_congr (sput_step l3 (smap_modeSet 2004 false (by decide) (by decide)))
+    sput_congr (sput_step l3s (smap_modeSet 2004 false (by decide) (by decide)))
       (stSetMode_of_not_screen false _)
   have l5 :=
     sput_congr (sput_step l4 (smap_modeSet 1000 false (by decide) (by decide)))
@@ -1097,7 +1111,7 @@ theorem leave_canonical_all (w : Vt) (h2 : 2 ≤ w.rows) :
   have hpen : (w.feed leaveAnsi).pen = ({} : Pen) := by
     rw [show
         leaveAnsi =
-          (escSeq 0x5C ++ modeSet 1049 false ++ csiNum 4 0x6C ++ modeSet 25 true ++
+          (escSeq 0x5C ++ modeSet 1049 false ++ csiNum 4 0x6C ++ modeSet 25 true ++ shapeAnsi 0 ++
               modeSet 2004 false ++
               modeSet 1000 false ++
               modeSet 1002 false ++

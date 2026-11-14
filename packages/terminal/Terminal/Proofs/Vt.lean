@@ -355,7 +355,7 @@ theorem csiOk_stepCsi {v : Vt} {s : CsiState} (h : CsiOk v) (hs : CsiValuesOk s)
   · exact csiOk_set (csiValuesOk_push hs true)
   · exact csiOk_set ⟨hs.curLe, hs.paramsLe, hs.emptyCur⟩
   · exact csiOk_set ⟨hs.curLe, hs.paramsLe, hs.emptyCur⟩
-  · simp [CsiOk]
+  · simp [CsiOk, Vt.csiInterEnd]
   · simp [CsiOk, Vt.csiFinish]
   · simp [CsiOk]
   · exact h

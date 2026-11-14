@@ -445,7 +445,7 @@ theorem fixes_sb_irm (on : Bool) :
 theorem fixes_sb_modesAnsi (v : Vt) : Fixes (fun v : Vt => v.sb) (modesAnsi v) :=
   (Fixes.streamPred _).modesAnsi v (fun n on _ => fixes_sb_modeSet n on)
     (fun _ => fixes_sb_modeSet _ _) (fixes_sb_modeSet 6 _) (fixes_sb_escSeq 0x3D (by decide))
-    (fixes_sb_escSeq 0x3E (by decide)) fixes_sb_irm
+    (fixes_sb_escSeq 0x3E (by decide)) fixes_sb_irm (fixes_shapeAnsi (fun _ _ => rfl) _)
 
 theorem fixes_sb_titleAnsi (v : Vt) : Fixes (fun v : Vt => v.sb) (titleAnsi v) := by
   unfold titleAnsi

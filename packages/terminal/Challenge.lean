@@ -8,16 +8,17 @@ meta import SoftwareChallenge
 What the VT toolkit must do for the program that keeps a terminal: a live terminal keeps its
 shape and its history, feeding inert bytes changes nothing, a control sequence's count is capped,
 a repaint streams in bounded chunks and restores its terminal on the receiver, screen text has no
-control characters, and the handback sequence leaves a terminal canonical. The theorems are
-stated over the toolkit's parts, declared below as holes: `sorry` here, which the package's code
-supplies, and `Terminal.Solution` proves the same statements of them.
+control characters, and the handback sequence leaves a terminal canonical: its modes the
+default record, the terminal's own cursor shape among them (`leave_canonical_all`). The theorems
+are stated over the toolkit's parts, declared below as holes: `sorry` here, which the package's
+code supplies, and `Terminal.Solution` proves the same statements of them.
 
 A repaint, streamed at any positive budget, restores its terminal on the receiver as far as the
 receiver can show it (`replay_restores`, as `Vt.Restores` says). Any receiver, such as a watcher
-of another size, gets the terminal's pen and every mode, the mouse mode when it is one a program
-sets, and is left between control sequences and characters; one as tall as the terminal also
-gets the scroll region, the character sets, the shift state and which screen is current, when
-DECSTBM could have set that region. A live receiver of a live terminal's size shows each row and
+of another size, gets the terminal's pen and every mode, the cursor's shape among them, the mouse
+mode when it is one a program sets, and is left between control sequences and characters; one as
+tall as the terminal also gets the scroll region, the character sets, the shift state and which
+screen is current, when DECSTBM could have set that region. A live receiver of a live terminal's size shows each row and
 the cursor too, and, when the terminal sits between control sequences and characters as well,
 no later output tells the two apart, so the receiver also holds what the emulator reads and no
 accessor shows, such as the deferred wrap, the tab ruler, the cursor DECSC saved and the main

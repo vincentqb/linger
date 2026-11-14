@@ -635,6 +635,25 @@ theorem quiet_titleAnsi (v : Vt) : Quiet (titleAnsi v) := by
 theorem quiet_irm (on : Bool) : Quiet (csiNum 4 (if on then 0x68 else 0x6C)) :=
   Quiet.streamPred.irm (fun _ hf => quiet_csiNum 4 _ (by grind) (by grind) (by grind)) on
 
+/-- DECSCUSR sets at most the cursor's shape, never origin mode. -/
+theorem quiet_shapeAnsi (n : Nat) : Quiet (shapeAnsi n) := by
+  intro v hg ho
+  refine ⟨ends_shapeAnsi n v hg, ?_⟩
+  rw [show shapeAnsi n = 0x1B :: 0x5B :: (digits n ++ [0x20] ++ [0x71]) from by
+    simp [shapeAnsi, csiB]]
+  rw [feed_cons, feed_cons]
+  have he := esc_step hg
+  have hb := csi_open_step he
+  have hob : ((v.step 0x1B).step 0x5B).modes.origin = false :=
+    org_step_of_esc 0x5B he (by decide) (by rw [org_step_of_ground 0x1B hg]; exact ho)
+  rw [feed_append, feed_append]
+  obtain ⟨s', hs', hpv', hor'⟩ := csi_plain_feed (digits n) hb (by decide) (paramBytes_digits n)
+  rw [show ∀ (w : Vt), w.feed [0x71] = w.step 0x71 from fun _ => rfl,
+    show ∀ (w : Vt), w.feed [0x20] = w.step 0x20 from fun _ => rfl]
+  rw [org_step_of_csi 0x71 (csi_space_step hs') (by decide) hpv',
+    org_step_of_csi 0x20 hs' (by decide) hpv', hor']
+  exact hob
+
 /-- The mode replay is where the DECOM hypothesis lands: with the session's origin
 off the emit at mode 6 is a *reset*, discharged outright by
 `quiet_modeSet_decom_off`. Every other private mode the emitter names is a literal
@@ -646,6 +665,6 @@ theorem quiet_modesAnsi (v : Vt) (ho : v.modes.origin = false) : Quiet (modesAns
       quiet_modeSet _ _ (by simp only [Bool.or_eq_true, beq_iff_eq] at h; omega)
         (fun hf => absurd hf (by decide)))
     (ho ▸ quiet_modeSet_decom_off) (quiet_escSeq 0x3D (by decide)) (quiet_escSeq 0x3E (by decide))
-    quiet_irm
+    quiet_irm (quiet_shapeAnsi _)
 
 end Terminal.Render

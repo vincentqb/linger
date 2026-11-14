@@ -559,6 +559,47 @@ theorem csi_digits_tail_eq (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
       rfl hu hi h1 h2]
   simp [Vt.csiFinish, Nat.not_le.mpr hsize, Nat.min_assoc]
 
+/-- `SP q` ends a collected CSI as DECSCUSR: the intermediate, then `csiInterEnd`. -/
+theorem space_q_feed_eq {w : Vt} {s : CsiState} (hg : w.pstate = .csi s) (hu : w.u8need = 0) :
+    w.feed [0x20, 0x71] =
+      Vt.csiInterEnd { w with pstate := .csi (s.withInter 0x20) } (s.withInter 0x20) 0x71 := by
+  show (w.step 0x20).step 0x71 = _
+  rw [step_of_csi_quiet 0x20 hg hu]
+  have h1 : w.stepCsi s 0x20 = { w with pstate := .csi (s.withInter 0x20) } := by
+    unfold Vt.stepCsi
+    rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide),
+      ite_eq_right (by decide), ite_eq_left (by decide)]
+  have hi : ((s.withInter 0x20).inter != 0) = true := by
+    unfold CsiState.withInter
+    split <;> rfl
+  rw [h1, step_of_csi_quiet 0x71 rfl (by simpa using hu)]
+  unfold Vt.stepCsi
+  rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide),
+    ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_left (by decide), ite_eq_left hi]
+
+/-- **DECSCUSR, as a state equation.** From ground with nothing half-decoded, `CSI k SP q` for
+a shape `k` sets the cursor's shape and nothing else. -/
+theorem shape_feed_eq (k : Fin 7) {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
+    v.feed (shapeAnsi k.val) = { v with modes := { v.modes with cursorShape := k } } := by
+  have hk : min k.val 65535 = k.val := Nat.min_eq_left (by omega)
+  rw [show shapeAnsi k.val = [0x1B, 0x5B] ++ (digits k.val ++ [0x20, 0x71]) from by
+      simp [shapeAnsi, csiB],
+    feed_append, keeps_csi_open hg hu, feed_append,
+    csi_digits_feed_eq k.val (v := { v with pstate := .csi {} }) (s := ({} : CsiState)) rfl
+      (by simpa using hu) rfl,
+    space_q_feed_eq rfl (by simpa using hu)]
+  simp [Vt.csiInterEnd, CsiState.shape, CsiState.first, CsiState.withInter, hk, ← hg]
+
+/-- DECSCUSR leaves alone every projection blind to the modes: it returns to ground, decodes
+nothing and writes only the cursor's shape. -/
+theorem fixes_shapeAnsi {α : Type} {π : Vt → α} (hπ : ∀ (v : Vt) (m : Modes), π { v with modes := m } = π v)
+    (k : Fin 7) : Fixes π (shapeAnsi k.val) := by
+  intro v hg hu
+  rw [shape_feed_eq k hg hu]
+  exact ⟨hg, hu, hπ v _⟩
+
+theorem keeps_shapeAnsi (k : Fin 7) : Keeps (shapeAnsi k.val) := fixes_shapeAnsi (fun _ _ => rfl) k
+
 theorem grid_csiDispatch_sm (v : Vt) (s : CsiState)
     (h : ∀ p ∈ s.params.toList, p.1 ≠ 47 ∧ p.1 ≠ 1047 ∧ p.1 ≠ 1049) :
     (v.csiDispatch s 0x68).grid = v.grid := by
@@ -660,6 +701,7 @@ theorem keeps_modesAnsi (v : Vt) : Keeps (modesAnsi v) :=
       exact keeps_modeSet _ _ (by omega) (by omega) (by omega) (by omega))
     (keeps_modeSet 6 _ (by omega) (by omega) (by omega) (by omega))
     (keeps_escSeq 0x3D (by decide)) (keeps_escSeq 0x3E (by decide)) keeps_irm
+    (keeps_shapeAnsi _)
 
 /-- **Park the pen and the cursor**: the alt-stash parking inside `screensAnsi`
 writes no cell. Stated on bare naturals so the stashed cursor instantiates it. -/

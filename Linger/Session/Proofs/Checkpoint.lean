@@ -296,10 +296,18 @@ theorem rt_cursor : RT wCursor rCursor := by
   unfold wCursor rCursor
   simp only [List.append_assoc, rt_nat, rt_bool, Option.bind_eq_bind, Option.bind_some]
 
-theorem rt_modes : RT wModes rModes := by
+theorem rt_modes : RT (fun m => wModes m) (rModes true) := by
   intro m rest
   unfold wModes rModes
-  simp only [List.append_assoc, rt_bool, rt_nat, Option.bind_eq_bind, Option.bind_some]
+  simp only [List.append_assoc, rt_bool, rt_nat, Option.bind_eq_bind, Option.bind_some, ↓reduceIte,
+    Fin.is_lt, ↓reduceDIte, Fin.eta]
+
+/-- Format versions 1 and 2's modes read back with the terminal's own cursor shape. -/
+theorem rt_modesV2 (m : Modes) (rest : List UInt8) :
+    rModes false (wModes m false ++ rest) = some ({ m with cursorShape := 0 }, rest) := by
+  unfold wModes rModes
+  simp only [List.append_assoc, rt_bool, rt_nat, Option.bind_eq_bind, Option.bind_some,
+    Bool.false_eq_true, ↓reduceIte, List.append_nil]
 
 theorem rt_saved : RT wSaved (rSaved false) := by
   intro s rest
@@ -428,21 +436,21 @@ theorem ofDecoded_bounds {cols rows : Nat} {grid : Array Row} {cursor : Cursor} 
 /-- Moving the existing shape and count rejection before allocation preserves
 the result on every byte string, including accepted noncanonical encodings.
 The right-hand side is the original unrestricted reader chain. -/
-theorem rVt_unbounded (legacy : Bool) (bytes : List UInt8) :
-    rVt legacy bytes =
+theorem rVt_unbounded (version : Nat) (bytes : List UInt8) :
+    rVt version bytes =
       (do
         let (cols, l) ← rNat bytes
         let (rows, l) ← rNat l
         let (grid, l) ← rList rRow l
         let (cursor, l) ← rCursor l
         let (pen, l) ← rPen l
-        let (modes, l) ← rModes l
+        let (modes, l) ← rModes (version == 3) l
         let (top, l) ← rNat l
         let (bot, l) ← rNat l
         let (tabs, l) ← rList rBool l
         let (sb, l) ← rRing l
-        let (alt, l) ← rAlt l none none legacy
-        let (saved, l) ← rSaved legacy l
+        let (alt, l) ← rAlt l none none (version == 1)
+        let (saved, l) ← rSaved (version == 1) l
         let (title, l) ← rStr l
         let (g0, l) ← rBool l
         let (g1, l) ← rBool l
@@ -493,30 +501,44 @@ constructor's decision.** The earlier resource guards preserve that decision by
 Both of the claims above it read off this one: `rt_vt` by `ofDecoded_of_good`, and
 `load_save_none_of_cols_zero` by `ofDecoded_none_of_cols_zero`. -/
 theorem rVt_fields (v : Vt) (rest : List UInt8) :
-    rVt false (wVt v ++ rest) =
+    rVt 3 (wVt v ++ rest) =
       (Vt.ofDecoded v.cols v.rows v.grid v.cursor v.pen v.modes v.top v.bot v.tabs v.sb v.altGrid
             v.saved v.title v.g0Line v.g1Line v.shiftOut v.bell).map
         (fun w => (w, rest)) := by
   rw [rVt_unbounded]
   unfold wVt
-  simp only [Bool.false_eq_true, ↓reduceIte, List.append_assoc, rt_nat, rt_list rt_row, rt_cursor,
-    rt_pen, rt_modes, rt_list rt_bool, rt_ring, rt_alt, rt_saved, rt_str, rt_bool,
-    Option.bind_eq_bind, Option.bind_some, Array.toArray_toList]
+  simp only [Nat.reduceBEq, Bool.false_eq_true, ↓reduceIte, List.append_assoc, rt_nat,
+    rt_list rt_row, rt_cursor, rt_pen, rt_modes, rt_list rt_bool, rt_ring, rt_alt, rt_saved, rt_str,
+    rt_bool, Option.bind_eq_bind, Option.bind_some, Array.toArray_toList]
   exact Option.map_eq_bind.symm
 
-/-- **A format version 1 record decodes to the same fields with both saved origin modes off**:
-the one difference between the two layouts. -/
+/-- **A format version 2 record decodes to the same fields with the terminal's own cursor
+shape**: the one difference between versions 2 and 3. -/
+theorem rVt_fieldsV2 (v : Vt) (rest : List UInt8) :
+    rVt 2 (wVt v 2 ++ rest) =
+      (Vt.ofDecoded v.cols v.rows v.grid v.cursor v.pen { v.modes with cursorShape := 0 } v.top
+            v.bot v.tabs v.sb v.altGrid v.saved v.title v.g0Line v.g1Line v.shiftOut v.bell).map
+        (fun w => (w, rest)) := by
+  rw [rVt_unbounded]
+  unfold wVt
+  simp only [Nat.reduceBEq, Bool.false_eq_true, ↓reduceIte, List.append_assoc, rt_nat,
+    rt_list rt_row, rt_cursor, rt_pen, rt_modesV2, rt_list rt_bool, rt_ring, rt_alt, rt_saved,
+    rt_str, rt_bool, Option.bind_eq_bind, Option.bind_some, Array.toArray_toList]
+  exact Option.map_eq_bind.symm
+
+/-- **A format version 1 record decodes to the same fields with both saved origin modes off and
+the terminal's own cursor shape**: the differences between the layouts. -/
 theorem rVt_fieldsV1 (v : Vt) (rest : List UInt8) :
-    rVt true (wVt v true ++ rest) =
-      (Vt.ofDecoded v.cols v.rows v.grid v.cursor v.pen v.modes v.top v.bot v.tabs v.sb
-            (v.altGrid.map (fun (g, sv) => (g, { sv with origin := false })))
+    rVt 1 (wVt v 1 ++ rest) =
+      (Vt.ofDecoded v.cols v.rows v.grid v.cursor v.pen { v.modes with cursorShape := 0 } v.top
+            v.bot v.tabs v.sb (v.altGrid.map (fun (g, sv) => (g, { sv with origin := false })))
             { v.saved with origin := false } v.title v.g0Line v.g1Line v.shiftOut v.bell).map
         (fun w => (w, rest)) := by
   rw [rVt_unbounded]
   unfold wVt
-  simp only [↓reduceIte, List.append_assoc, rt_nat, rt_list rt_row, rt_cursor, rt_pen, rt_modes,
-    rt_list rt_bool, rt_ring, rt_altV1, rt_savedV1, rt_str, rt_bool, Option.bind_eq_bind,
-    Option.bind_some, Array.toArray_toList]
+  simp only [Nat.reduceBEq, ↓reduceIte, List.append_assoc, rt_nat, rt_list rt_row, rt_cursor,
+    rt_pen, rt_modesV2, rt_list rt_bool, rt_ring, rt_altV1, rt_savedV1, rt_str, rt_bool,
+    Option.bind_eq_bind, Option.bind_some, Array.toArray_toList]
   exact Option.map_eq_bind.symm
 
 /-- The Vt round trip: exact modulo the deliberately-forgotten parser
@@ -535,8 +557,16 @@ answer to "is this a weakening" — an unconditional statement would cover a scr
 session satisfies all three (`good_of_liveReachable`, `renderable_of_liveReachable`,
 `tabsOk_of_liveReachable`), so `load_save_live` below is the honest reading of the cost. -/
 theorem rt_vt (v : Vt) (h : Good v) (hren : Renderable v) (htabs : TabsOk v) (rest : List UInt8) :
-    rVt false (wVt v ++ rest) = some (v.quiesce, rest) := by
+    rVt 3 (wVt v ++ rest) = some (v.quiesce, rest) := by
   rw [rVt_fields, ofDecoded_of_good h hren htabs, Option.map_some]
+
+/-- What a record of format version 1 or 2 restores keeps all `Good` watches: the terminal's own
+cursor shape in place of the program's, which neither version recorded. -/
+theorem good_withShape {v : Vt} (h : Good v) (k : Fin 7) :
+    Good { v with modes := { v.modes with cursorShape := k } } := { h with }
+
+theorem renderable_withShape {v : Vt} (h : Renderable v) (k : Fin 7) :
+    Renderable { v with modes := { v.modes with cursorShape := k } } := ⟨h.main, h.alt⟩
 
 /-- What a format version 1 record of a state restores: the state with neither saved cursor
 keeping origin mode, which version 1 did not record. -/
@@ -588,28 +618,40 @@ theorem renderable_withoutSavedOrigin {v : Vt} (h : Renderable v) :
 /-- The format version 1 round trip, for any state a live session can hold: the state with its
 parser quiesced and both saved origin modes off. -/
 theorem rVtV1_live (v : Vt) (h : LiveReachableVt v) (rest : List UInt8) :
-    rVt true (wVt v true ++ rest) =
+    rVt 1 (wVt v 1 ++ rest) =
       some
         ({ v.quiesce with
-            saved := { v.saved with origin := false },
+            modes := { v.modes with cursorShape := 0 }, saved := { v.saved with origin := false },
             altGrid := v.altGrid.map (fun (g, sv) => (g, { sv with origin := false })) },
           rest) := by
   rw [rVt_fieldsV1,
     ofDecoded_of_good (v :=
       { v with
-        saved := { v.saved with origin := false },
+        modes := { v.modes with cursorShape := 0 }, saved := { v.saved with origin := false },
         altGrid := v.altGrid.map (fun (g, sv) => (g, { sv with origin := false })) })
-      (good_withoutSavedOrigin (good_of_liveReachable h))
-      (renderable_withoutSavedOrigin (renderable_of_liveReachable h))
+      (good_withoutSavedOrigin (good_withShape (good_of_liveReachable h) 0))
+      (renderable_withoutSavedOrigin (renderable_withShape (renderable_of_liveReachable h) 0))
       (tabsOk_of_liveReachable (v := v) h),
+    Option.map_some]
+  rfl
+
+/-- The format version 2 round trip, for any state a live session can hold: the state with its
+parser quiesced and the terminal's own cursor shape. -/
+theorem rVtV2_live (v : Vt) (h : LiveReachableVt v) (rest : List UInt8) :
+    rVt 2 (wVt v 2 ++ rest) =
+      some ({ v.quiesce with modes := { v.modes with cursorShape := 0 } }, rest) := by
+  rw [rVt_fieldsV2,
+    ofDecoded_of_good (v := { v with modes := { v.modes with cursorShape := 0 } })
+      (good_withShape (good_of_liveReachable h) 0)
+      (renderable_withShape (renderable_of_liveReachable h) 0) (tabsOk_of_liveReachable (v := v) h),
     Option.map_some]
   rfl
 
 /-- Every accepted byte string reaches the checked constructor and starts with
 an empty parser. The reader chain is destructured once here; safety, shape and
 reachability below are projections of this acceptance result. -/
-theorem rVt_accepted {legacy : Bool} {l : List UInt8} {v : Vt} {rest : List UInt8}
-    (h : rVt legacy l = some (v, rest)) : LiveReachableVt v ∧ v.quiesce = v := by
+theorem rVt_accepted {version : Nat} {l : List UInt8} {v : Vt} {rest : List UInt8}
+    (h : rVt version l = some (v, rest)) : LiveReachableVt v ∧ v.quiesce = v := by
   simp only [rVt, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
   obtain ⟨_, -, _, -, h⟩ := h
   split at h
@@ -636,8 +678,8 @@ attacker-controlled input the `Vt` seal could not reach. If `rVt` yields a `Vt`,
 This is the theorem that makes every
 `Good`-hypothesised claim in `packages/terminal/Terminal/Proofs/Render/*` and `Linger/Session/Proofs/Resume.lean` reachable
 from the resume path rather than merely stated. -/
-theorem rVt_good {legacy : Bool} {l : List UInt8} {v : Vt} {rest : List UInt8}
-    (h : rVt legacy l = some (v, rest)) : Good v := good_of_liveReachable (rVt_accepted h).1
+theorem rVt_good {version : Nat} {l : List UInt8} {v : Vt} {rest : List UInt8}
+    (h : rVt version l = some (v, rest)) : Good v := good_of_liveReachable (rVt_accepted h).1
 
 /-- **…and nothing the emitter cannot repaint, either.** The other half of
 "nothing bad is ever decoded", from an arbitrary `List UInt8`: if `rVt` yields a `Vt`, that
@@ -649,8 +691,8 @@ the same shape, and the tab ruler is the width of the screen.
 observable: checked for `Good` alone, a real checkpoint with its `rows` byte flipped decodes to
 a screen whose replay is not the screen it came from. Both properties follow from the accepted
 state in `rVt_accepted`, and are projected by `load_renderable` and `load_tabsOk` below. -/
-theorem rVt_shape {legacy : Bool} {l : List UInt8} {v : Vt} {rest : List UInt8}
-    (h : rVt legacy l = some (v, rest)) : Renderable v ∧ TabsOk v := by
+theorem rVt_shape {version : Nat} {l : List UInt8} {v : Vt} {rest : List UInt8}
+    (h : rVt version l = some (v, rest)) : Renderable v ∧ TabsOk v := by
   have hlive := (rVt_accepted h).1
   exact ⟨renderable_of_liveReachable hlive, tabsOk_of_liveReachable hlive⟩
 
@@ -669,8 +711,8 @@ The rung is sound only because the *door* establishes every component the relati
 a rung premised on `Good v` instead would be unsound, since `Good` implies neither the grid's
 shape nor a zeroed UTF-8 accumulator (the section "The states a running session can actually
 hold" of `packages/terminal/Terminal/Proofs/Vt.lean`). -/
-theorem rVt_live {legacy : Bool} {l : List UInt8} {v : Vt} {rest : List UInt8}
-    (h : rVt legacy l = some (v, rest)) : LiveReachableVt v := (rVt_accepted h).1
+theorem rVt_live {version : Nat} {l : List UInt8} {v : Vt} {rest : List UInt8}
+    (h : rVt version l = some (v, rest)) : LiveReachableVt v := (rVt_accepted h).1
 
 /-! ### The format tag, as a named stage
 
@@ -678,10 +720,13 @@ theorem rVt_live {legacy : Bool} {l : List UInt8} {v : Vt} {rest : List UInt8}
 `load_save_none_of_cols_zero` go through it instead of unfolding the decision into the
 parser chain. -/
 
-theorem stripMagic_magic (p : List UInt8) : stripMagic (magic ++ p) = some (false, p) := rfl
+theorem stripMagic_magic (p : List UInt8) : stripMagic (magic ++ p) = some (3, p) := rfl
+
+/-- Format version 2's tag. -/
+theorem stripMagic_v2 (p : List UInt8) : stripMagic (magicV2 ++ p) = some (2, p) := rfl
 
 /-- Format version 1's tag is the legacy one. -/
-theorem stripMagic_legacy (p : List UInt8) : stripMagic (legacyMagic ++ p) = some (true, p) := rfl
+theorem stripMagic_legacy (p : List UInt8) : stripMagic (legacyMagic ++ p) = some (1, p) := rfl
 
 /-- Acceptance at the file boundary preserves the checked state and parser
 reset established by `rVt`. This applies to any bytes, including encodings that
@@ -784,15 +829,33 @@ theorem load_save_live (c : Ckpt Vt.Vt) (h : LiveReachableVt c.vt) :
     load (save c) = some { c with vt := c.vt.quiesce } :=
   load_save c (good_of_liveReachable h) (renderable_of_liveReachable h) (tabsOk_of_liveReachable h)
 
+/-- **A format version 2 checkpoint still loads.** The record version 2 wrote of a state a live
+session can hold loads to that state with its parser quiesced and the terminal's own cursor
+shape, which version 2 did not record. -/
+theorem load_saveV2_live (c : Ckpt Vt.Vt) (h : LiveReachableVt c.vt) :
+    load (saveV2 c) =
+      some
+        { c with vt := { c.vt.quiesce with modes := { c.vt.modes with cursorShape := 0 } } } := by
+  rw [show saveV2 c = saveV2 c ++ [] from (List.append_nil _).symm]
+  unfold load saveV2
+  simp only [List.append_assoc]
+  rw [stripMagic_v2]
+  simp only [Option.bind_eq_bind, Option.bind_some]
+  rw [rVtV2_live c.vt h]
+  simp only [rt_str, rt_list (rt_pair rt_str rt_str), Option.bind_some]
+  rfl
+
 /-- **A format version 1 checkpoint still loads.** The record version 1 wrote of a state a live
-session can hold loads to that state with its parser quiesced and both saved origin modes off,
-the DECSC slot's and the stashed screen's, which version 1 did not record. -/
+session can hold loads to that state with its parser quiesced, both saved origin modes off, the
+DECSC slot's and the stashed screen's, and the terminal's own cursor shape, none of which
+version 1 recorded. -/
 theorem load_saveV1_live (c : Ckpt Vt.Vt) (h : LiveReachableVt c.vt) :
     load (saveV1 c) =
       some
         { c with
           vt :=
             { c.vt.quiesce with
+              modes := { c.vt.modes with cursorShape := 0 },
               saved := { c.vt.saved with origin := false },
               altGrid :=
                 c.vt.altGrid.map (fun (g, sv) => (g, { sv with origin := false })) } } := by
@@ -1097,10 +1160,15 @@ theorem rCursorB_mirrors : Mirrors rCursorB rCursor := by
   simp only [rCursorB, rCursor, Option.bind_eq_bind, ← rNatB_mirrors, ← rBoolB_mirrors,
     Option.bind_map, Option.map_bind, Function.comp_def, Option.map_some]
 
-theorem rModesB_mirrors : Mirrors rModesB rModes := by
+theorem rModesB_mirrors (shape : Bool) : Mirrors (rModesB shape) (rModes shape) := by
   intro b i
-  simp only [rModesB, rModes, Option.bind_eq_bind, ← rNatB_mirrors, ← rBoolB_mirrors,
-    Option.bind_map, Option.map_bind, Function.comp_def, Option.map_some]
+  cases shape
+  · simp only [rModesB, rModes, Bool.false_eq_true, ↓reduceIte, Option.bind_eq_bind,
+      ← rNatB_mirrors, ← rBoolB_mirrors, Option.bind_map, Option.map_bind, Function.comp_def,
+      Option.map_some]
+  · simp only [rModesB, rModes, ↓reduceIte, Option.bind_eq_bind, ← rNatB_mirrors, ← rBoolB_mirrors,
+      Option.bind_map, Option.map_bind, Function.comp_def, Option.map_some,
+      apply_dite (Option.map _), Option.map_none]
 
 theorem rSavedB_mirrors (legacy : Bool) : Mirrors (rSavedB legacy) (rSaved legacy) := by
   intro b i
@@ -1125,7 +1193,7 @@ theorem rAltB_mirrors (maxCols maxRows : Option Nat) (legacy : Bool) :
   simp only [← rListB_mirrors (rRowB_mirrors maxCols), ← rSavedB_mirrors legacy,
     Option.bind_eq_bind, Option.bind_map, Option.map_bind, Function.comp_def, Option.map_some]
 
-theorem rVtB_mirrors (legacy : Bool) : Mirrors (rVtB legacy) (rVt legacy) := by
+theorem rVtB_mirrors (version : Nat) : Mirrors (rVtB version) (rVt version) := by
   intro b i
   simp only [rVtB, rVt, Option.bind_eq_bind, ← rNatB_mirrors, Option.bind_map, Option.map_bind,
     Function.comp_def]
@@ -1136,9 +1204,10 @@ theorem rVtB_mirrors (legacy : Bool) : Mirrors (rVtB legacy) (rVt legacy) := by
   split
   · rfl
   · simp only [← rListB_mirrors (rRowB_mirrors (some c.1)), ← rCursorB_mirrors, ← rPenB_mirrors,
-      ← rModesB_mirrors, ← rNatB_mirrors, ← rListB_mirrors rBoolB_mirrors, ← rRingB_mirrors,
-      ← rAltB_mirrors _ _ legacy, ← rSavedB_mirrors legacy, ← rStrB_mirrors, ← rBoolB_mirrors,
-      Option.bind_map, Option.map_bind, Function.comp_def, Option.map_some]
+      ← rModesB_mirrors (version == 3), ← rNatB_mirrors, ← rListB_mirrors rBoolB_mirrors,
+      ← rRingB_mirrors, ← rAltB_mirrors _ _ (version == 1), ← rSavedB_mirrors (version == 1),
+      ← rStrB_mirrors, ← rBoolB_mirrors, Option.bind_map, Option.map_bind, Function.comp_def,
+      Option.map_some]
 
 theorem prefixB_mirrors (p : List UInt8) (b : ByteArray) (i : Nat) :
     (prefixB p b i).map (b.data.toList.drop ·) = p.isPrefixOf? (b.data.toList.drop i) := by
@@ -1155,11 +1224,12 @@ position where it starts. -/
 theorem stripMagicB_mirrors (b : ByteArray) :
     (stripMagicB b).map (fun p => (p.1, b.data.toList.drop p.2)) = stripMagic b.data.toList := by
   have hp := prefixB_mirrors magic b 0
+  have h2 := prefixB_mirrors magicV2 b 0
   have hl := prefixB_mirrors legacyMagic b 0
-  rw [List.drop_zero] at hp hl
+  rw [List.drop_zero] at hp h2 hl
   unfold stripMagicB stripMagic
-  rw [← hp, ← hl]
-  cases prefixB magic b 0 <;> cases prefixB legacyMagic b 0 <;> rfl
+  rw [← hp, ← h2, ← hl]
+  cases prefixB magic b 0 <;> cases prefixB magicV2 b 0 <;> cases prefixB legacyMagic b 0 <;> rfl
 
 /-- **The runtime decoder is `load`**: on any byte array, `loadBytes` returns what `load`
 returns on the array's bytes, so `load_good`, `load_live`, `load_save_live` and every other

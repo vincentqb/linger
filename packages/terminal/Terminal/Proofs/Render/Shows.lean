@@ -430,6 +430,7 @@ theorem stays_modesAnsi (v : Vt) : Stays (modesAnsi v) :=
       exact stays_modeSet _ _ (by omega) (by omega) (by omega) (by omega) (by omega))
     (stays_modeSet 6 _ (by omega) (by omega) (by omega) (by omega) (by omega))
     (stays_escSeq 0x3D (by decide)) (stays_escSeq 0x3E (by decide)) stays_irm
+    (fixes_shapeAnsi (fun _ _ => rfl) _)
 
 theorem stays_utf8_safe (ch : Char) : Stays (utf8 (safeChar ch)) := by
   intro w hg hu

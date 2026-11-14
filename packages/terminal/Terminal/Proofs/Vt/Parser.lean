@@ -156,9 +156,12 @@ theorem un_csiFinish (v : Vt) (s : CsiState) (final : UInt8) :
   dsimp only
   split <;> exact un_csiDispatch _ _ _
 
+theorem un_csiInterEnd (v : Vt) (s : CsiState) (final : UInt8) :
+    (v.csiInterEnd s final).u8need = v.u8need := rfl
+
 theorem un_stepCsi (v : Vt) (s : CsiState) (b : UInt8) : (v.stepCsi s b).u8need = v.u8need := by
   unfold Vt.stepCsi
-  simp only [apply_ite VtRec.u8need, un_csiFinish, un_ctl, ite_self]
+  simp only [apply_ite VtRec.u8need, un_csiFinish, un_csiInterEnd, un_ctl, ite_self]
 
 theorem un_stepEscInter (v : Vt) (i b : UInt8) : (v.stepEscInter i b).u8need = v.u8need := by
   rw [frame_stepEscInter]
@@ -327,9 +330,12 @@ theorem ua_csiFinish (v : Vt) (s : CsiState) (final : UInt8) :
   dsimp only
   split <;> exact ua_csiDispatch _ _ _
 
+theorem ua_csiInterEnd (v : Vt) (s : CsiState) (final : UInt8) :
+    (v.csiInterEnd s final).u8acc = v.u8acc := rfl
+
 theorem ua_stepCsi (v : Vt) (s : CsiState) (b : UInt8) : (v.stepCsi s b).u8acc = v.u8acc := by
   unfold Vt.stepCsi
-  simp only [apply_ite VtRec.u8acc, ua_csiFinish, ua_ctl, ite_self]
+  simp only [apply_ite VtRec.u8acc, ua_csiFinish, ua_csiInterEnd, ua_ctl, ite_self]
 
 theorem ua_stepEscInter (v : Vt) (i b : UInt8) : (v.stepEscInter i b).u8acc = v.u8acc := by
   rw [frame_stepEscInter]
@@ -630,9 +636,12 @@ theorem dims_csiFinish (v : Vt) (s : CsiState) (final : UInt8) :
   dsimp only
   split <;> exact dims_csiDispatch _ _ _
 
+theorem dims_csiInterEnd (v : Vt) (s : CsiState) (final : UInt8) :
+    dims (v.csiInterEnd s final) = dims v := rfl
+
 theorem dims_stepCsi (v : Vt) (s : CsiState) (b : UInt8) : dims (v.stepCsi s b) = dims v := by
   unfold Vt.stepCsi
-  simp only [apply_ite dims, dims_csiFinish, dims_ctl]
+  simp only [apply_ite dims, dims_csiFinish, dims_csiInterEnd, dims_ctl]
   simp only [dims, ite_self]
 
 theorem dims_stepEscInter (v : Vt) (i b : UInt8) : dims (v.stepEscInter i b) = dims v := by
@@ -1279,12 +1288,18 @@ theorem org_ctl (v : Vt) (b : UInt8) : (v.ctl b).modes.origin = v.modes.origin :
       | exact org_carriageReturn v
       | rfl
 
+/-- A sequence with an intermediate byte leaves origin mode alone: it sets at most the cursor's
+shape. -/
+theorem org_csiInterEnd (v : Vt) (s : CsiState) (final : UInt8) :
+    (v.csiInterEnd s final).modes.origin = v.modes.origin := rfl
+
 /-- Inside a CSI, `origin` survives unless the sequence is a private
 mode-6 set/reset or a cursor restore — and a private-marker byte only *records* the marker. -/
 theorem org_stepCsi (v : Vt) (s : CsiState) (b : UInt8) (hu : b ≠ 0x75)
     (hp : (s.priv == 0x3F) = false) : (v.stepCsi s b).modes.origin = v.modes.origin := by
   unfold Vt.stepCsi
-  simp only [apply_ite (fun w : Vt => w.modes.origin), org_csiFinish _ _ _ hu hp, org_ctl, ite_self]
+  simp only [apply_ite (fun w : Vt => w.modes.origin), org_csiFinish _ _ _ hu hp, org_csiInterEnd,
+    org_ctl, ite_self]
 
 theorem org_print (v : Vt) (c : Char) : (v.print c).modes.origin = v.modes.origin :=
   congrArg (fun s => s.modes.origin) (off_print v c)
@@ -1372,7 +1387,7 @@ theorem org_stepCsi_pending (v : Vt) (s : CsiState) (b : UInt8) (hu : b ≠ 0x75
     (v.stepCsi s b).modes.origin = v.modes.origin := by
   unfold Vt.stepCsi
   simp only [apply_ite (fun w : Vt => w.modes.origin),
-    org_csiFinish_pending _ _ _ hu hparams hhave hne h48 h49, org_ctl, ite_self]
+    org_csiFinish_pending _ _ _ hu hparams hhave hne h48 h49, org_csiInterEnd, org_ctl, ite_self]
 
 /-! ### The dispatcher: `origin` across one whole `Vt.step`
 

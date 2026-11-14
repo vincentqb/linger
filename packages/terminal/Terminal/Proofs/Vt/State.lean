@@ -365,6 +365,13 @@ theorem set_ground {v : Vt} (h : Good v) : Good { v with pstate := .ground } :=
   { h with
     csiLe := fun _ hp => (nomatch hp), oscLe := fun _ _ hp => (nomatch hp) }
 
+/-- A sequence with an intermediate byte ends: back in ground, with at most a new cursor shape,
+which nothing Good watches. -/
+theorem csiInterEnd {v : Vt} (s : CsiState) (final : UInt8) (h : Good v) :
+    Good (v.csiInterEnd s final) :=
+  { h with
+    csiLe := fun _ hp => (nomatch hp), oscLe := fun _ _ hp => (nomatch hp) }
+
 theorem set_tabs {v : Vt} (t : Array Bool) (h : Good v) : Good { v with tabs := t } := { h with }
 
 /-! ## Cursor-writing primitives -/
@@ -955,15 +962,19 @@ theorem stepCsi {v : Vt} (s : CsiState) (b : UInt8) (hs : s.params.size ≤ 16) 
     Good (v.stepCsi s b) := by
   fun_cases Vt.stepCsi v s b
   all_goals
-    with_reducible
-      first
-      | exact h
-      | exact set_pstate_csi _ hs h
-      | exact set_pstate_csi _ (csiPush_le s _ hs) h
-      | exact csiFinish _ _ h
-      | exact set_pstate_esc h
-      | exact ctl _ h
-      | exact set_ground h
+    first
+    |
+      with_reducible
+        first
+        | exact h
+        | exact set_pstate_csi _ hs h
+        | exact set_pstate_csi _ (csiPush_le s _ hs) h
+        | exact csiFinish _ _ h
+        | exact set_pstate_esc h
+        | exact ctl _ h
+        | exact set_ground h
+        | exact csiInterEnd _ _ h
+    | exact set_pstate_csi (s.withInter b) hs h
 
 theorem stepOsc {v : Vt} (acc : Array UInt8) (e : Bool) (b : UInt8) (hacc : acc.size ≤ 2048)
     (h : Good v) : Good (v.stepOsc acc e b) := by

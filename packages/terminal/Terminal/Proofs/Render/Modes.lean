@@ -284,10 +284,11 @@ theorem leave_boundary_title (w : Vt) :
                                 (ends_modeSet 1002 false _
                                   (ends_modeSet 1000 false _
                                     (ends_modeSet 2004 false _
-                                      (ends_modeSet 25 true _
-                                        (ends_csiNum 4 0x6C (by decide) (by decide) _
-                                          (ends_modeSet 1049 false _
-                                            (st_grounds w).1)))))))))))))))))))]
+                                      (ends_shapeAnsi 0 _
+                                        (ends_modeSet 25 true _
+                                          (ends_csiNum 4 0x6C (by decide) (by decide) _
+                                            (ends_modeSet 1049 false _
+                                              (st_grounds w).1))))))))))))))))))))]
   exact ⟨rfl, un_abortUtf8_esc _, rfl⟩
 
 /-- **The hand-back grounds any receiver.** No hypothesis on its parser,
@@ -590,6 +591,15 @@ theorem mmap_id_defaultTitleAnsi : MMap id defaultTitleAnsi := by
   rw [ite_eq_right (by simp [hu])]
   exact ⟨rfl, hu, rfl⟩
 
+/-- DECSCUSR sets the cursor's shape, from ground with nothing half-decoded. -/
+theorem mmap_shape (k : Fin 7) : MMap (fun m => { m with cursorShape := k }) (shapeAnsi k.val) := by
+  intro v hg hu
+  rw [shape_feed_eq k hg hu]
+  exact ⟨hg, hu, rfl⟩
+
+/-- …and `CSI 0 SP q`, the hand-back's, the terminal's own shape. -/
+theorem mmap_shape_zero : MMap (fun m => { m with cursorShape := 0 }) (shapeAnsi 0) := mmap_shape 0
+
 /-- **The hand-back leaves the modes canonical, for any receiver.** `leaveAnsi`'s
 lead-in grounds `w`, then each mode chunk sets its field absolutely and the non-mode
 chunks leave modes alone, so the composite is the default record regardless of what
@@ -604,25 +614,26 @@ theorem leave_modes (w : Vt) : (w.feed leaveAnsi).modes = ({} : Modes) := by
   exact
     (((mmap_irm false).comp
           ((mmap_modeSet 25 true (by decide) (by decide) (by simp)).comp
-            ((mmap_modeSet 2004 false (by decide) (by decide) (by simp)).comp
-              ((mmap_modeSet 1000 false (by decide) (by decide) (by simp)).comp
-                ((mmap_modeSet 1002 false (by decide) (by decide) (by simp)).comp
-                  ((mmap_modeSet 1003 false (by decide) (by decide) (by simp)).comp
-                    ((mmap_modeSet 1006 false (by decide) (by decide) (by simp)).comp
-                      ((mmap_modeSet 1004 false (by decide) (by decide) (by simp)).comp
-                        ((mmap_modeSet 1 false (by decide) (by decide) (by simp)).comp
-                          ((mmap_keypad false).comp
-                            ((mmap_modeSet 6 false (by decide) (by decide) (by simp)).comp
-                              ((mmap_modeSet 7 true (by decide) (by decide) (by simp)).comp
-                                (mmap_id_stbm.comp
-                                  ((mmap_id_charset 0x28 0x42 (Or.inl rfl) (by decide)
-                                        (by decide)).comp
-                                    ((mmap_id_charset 0x29 0x42 (Or.inr rfl) (by decide)
+            (mmap_shape_zero.comp
+              ((mmap_modeSet 2004 false (by decide) (by decide) (by simp)).comp
+                ((mmap_modeSet 1000 false (by decide) (by decide) (by simp)).comp
+                  ((mmap_modeSet 1002 false (by decide) (by decide) (by simp)).comp
+                    ((mmap_modeSet 1003 false (by decide) (by decide) (by simp)).comp
+                      ((mmap_modeSet 1006 false (by decide) (by decide) (by simp)).comp
+                        ((mmap_modeSet 1004 false (by decide) (by decide) (by simp)).comp
+                          ((mmap_modeSet 1 false (by decide) (by decide) (by simp)).comp
+                            ((mmap_keypad false).comp
+                              ((mmap_modeSet 6 false (by decide) (by decide) (by simp)).comp
+                                ((mmap_modeSet 7 true (by decide) (by decide) (by simp)).comp
+                                  (mmap_id_stbm.comp
+                                    ((mmap_id_charset 0x28 0x42 (Or.inl rfl) (by decide)
                                           (by decide)).comp
-                                      (mmap_id_si.comp
-                                        ((mmap_id_cup 999 1).comp
-                                          (mmap_id_sgr.comp
-                                            mmap_id_defaultTitleAnsi))))))))))))))))))
+                                      ((mmap_id_charset 0x29 0x42 (Or.inr rfl) (by decide)
+                                            (by decide)).comp
+                                        (mmap_id_si.comp
+                                          ((mmap_id_cup 999 1).comp
+                                            (mmap_id_sgr.comp
+                                              mmap_id_defaultTitleAnsi)))))))))))))))))))
         _ hlg hlu).2.2
 
 /-- **The hand-back, parser and modes.** The hand-back returns the parser to ground
@@ -919,7 +930,8 @@ theorem mmap_modesAnsi (v : Vt)
   have h1 := (mmap_wrap v.modes.wrap).comp (mmap_appCursor v.modes.appCursor)
   have h2 := h1.comp (mmap_keypad v.modes.appKeypad)
   have h3 := h2.comp (mmap_cursorVis v.modes.cursorVisible)
-  have h4 := h3.comp (mmap_bracketed v.modes.bracketedPaste)
+  have h3' := h3.comp (mmap_shape v.modes.cursorShape)
+  have h4 := h3'.comp (mmap_bracketed v.modes.bracketedPaste)
   have h5 := h4.comp (mmap_mouse0 1000 (Or.inl rfl))
   have h6 := h5.comp (mmap_mouse0 1002 (Or.inr (Or.inl rfl)))
   have h7 := h6.comp (mmap_mouse0 1003 (Or.inr (Or.inr rfl)))
@@ -930,7 +942,8 @@ theorem mmap_modesAnsi (v : Vt)
   have h12 := h11.comp (mmap_irm v.modes.insert)
   refine h12.congr ?_
   intro m
-  refine Modes.ext ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ <;> (rcases hmouse with h | h | h | h <;> simp [h])
+  refine Modes.ext ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ <;>
+    (rcases hmouse with h | h | h | h <;> simp [h])
 
 /-! ### The value claim for the modes -/
 

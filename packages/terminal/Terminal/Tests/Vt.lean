@@ -435,6 +435,22 @@ example : (let v := (screen 10 4 "hello\x1b[4;9H").resize 6 2
            v.cols == 6 && v.rows == 2
              && v.cursor.x == 5 && v.cursor.y == 1) = true := by native_decide
 
+/-- DECSCUSR keeps the cursor's shape, as xterm reads it: `CSI 6 SP q` sets a steady bar, an
+omitted parameter the terminal's own shape, a number past 6 nothing; a private marker, a second
+intermediate and `CSI 6 q` without one are other sequences and leave it. Nothing else moves. -/
+example :
+          (let bar := screen 10 2 "ab\x1b[6 q"
+           bar.modes.cursorShape == 6 && bar.cursor == (screen 10 2 "ab").cursor &&
+             rowStr bar 0 == "ab" && bar.atBoundary &&
+             (feedStr bar "\x1b[ q").modes.cursorShape == 0 &&
+             (feedStr bar "\x1b[7 q").modes.cursorShape == 6 &&
+             (feedStr bar "\x1b[?2 q").modes.cursorShape == 6 &&
+             (feedStr bar "\x1b[2 !q").modes.cursorShape == 6 &&
+             (feedStr bar "\x1b[2q").modes.cursorShape == 6 &&
+             (feedStr bar "\x1b[1;5 q").modes.cursorShape == 1) =
+      true := by
+  native_decide
+
 /-- DEC line-drawing charset maps q to ─. -/
 example :
           (let v := screen 10 2 "\x1b(0qx\x1b(B"

@@ -419,7 +419,7 @@ private def signalChecks (e : Env) : IO Unit := do
   let name := "stopped"
   let _ ← e.typeIn name #["true"]
   let first ← waitFor patienceMs (System.FilePath.pathExists s!"{e.dir}/{name}.ckpt")
-  let _ ← e.typeIn name #["echo SIGTERM-$((40+2))"]
+  let _ ← e.typeIn name #["printf '\\033[6 q'; echo SIGTERM-$((40+2))"]
   let shown ← waitFor patienceMs (return has (← e.out #["capture", name]) "SIGTERM-42")
   let daemon ← e.daemonPid name
   if let some pid := daemon then
@@ -455,6 +455,13 @@ private def signalChecks (e : Env) : IO Unit := do
     waitFor patienceMs do
         return (← e.info name "pid").isSome && has (← e.out #["capture", name]) "SIGTERM-42"
   expect (resumedRc == 0 && restored) "resume restores the screen a signal saved"
+  -- the checkpoint keeps what the program set on its terminal: the bar cursor it chose comes
+  -- back with an attach's repaint after the resume (`CSI 6 SP q`, the program's bytes)
+  let viewer ← e.spawn #["attach", name] 80 24
+  let burst ← IO.mkRef ByteArray.empty
+  let shaped ← viewer.awaitText burst (hasBytes · [0x1B, 0x5B, 0x36, 0x20, 0x71])
+  expect shaped "resume restores the cursor shape a signal saved"
+  viewer.bye
   e.killAll #[name]
 
 /-- The resume suite: checkpoint, crash and restore, and where a resume runs. -/

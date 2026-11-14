@@ -1,7 +1,7 @@
 # Contributing to linger
 
 Terminal session attachment, recovery and selection in Lean 4. The executable,
-namespaces and source tree use `linger` / `Linger`; checkpoints use `LNGR` v2, and v1 still loads.
+namespaces and source tree use `linger` / `Linger`; checkpoints use `LNGR` v3, and v1 and v2 still load.
 
 ## Build and verify
 

@@ -344,6 +344,9 @@ theorem respects_stepEscInter (i b : UInt8) : Respects (·.stepEscInter i b) := 
   repeat' split
   all_goals rfl
 
+theorem respects_csiInterEnd (s : CsiState) (final : UInt8) :
+    Respects (·.csiInterEnd s final) := fun _ => rfl
+
 theorem respects_stepCsi (s : CsiState) (b : UInt8) : Respects (·.stepCsi s b) := by
   intro v
   unfold Vt.stepCsi
@@ -354,6 +357,7 @@ theorem respects_stepCsi (s : CsiState) (b : UInt8) : Respects (·.stepCsi s b) 
       first
       | rfl
       | exact respects_csiFinish _ _ v
+      | exact respects_csiInterEnd _ _ v
       | exact respects_ctl _ v
 
 theorem respects_stepOsc (acc : Array UInt8) (e : Bool) (b : UInt8) :

@@ -383,7 +383,7 @@ mouse reporting, bracketed paste, hidden cursor, application cursor and keypad, 
 alt screen, line-drawing G0 with shift-out, and a scroll region. -/
 def dirty (cols rows : Nat) : Vt :=
   feedStr (Vt.init cols rows)
-    "\x1b[4h\x1b[?6h\x1b[?1000h\x1b[?1006h\x1b[?1004h\x1b[?2004h\x1b[?25l\x1b[?1h\x1b=\x1b[?1049h\x1b(0\x0e\x1b[2;3r"
+    "\x1b[4h\x1b[?6h\x1b[?1000h\x1b[?1006h\x1b[?1004h\x1b[?2004h\x1b[?25l\x1b[2 q\x1b[?1h\x1b=\x1b[?1049h\x1b(0\x0e\x1b[2;3r"
 
 /-- The round trip, from an arbitrary receiver rather than a fresh one. -/
 def roundtripsFrom (start v : Vt) : Bool := replayEq (start.feed (restore v)) v
@@ -415,6 +415,17 @@ example : roundtripsFrom (dirty 6 3) (screen 6 3 "\u6f22e\u0301") = true := by n
 
 /-- And a session that *is* on the alt screen still restores into a dirty client. -/
 example : roundtripsFrom (dirty 6 3) (screen 6 3 "ab\x1b[?1049hcd") = true := by native_decide
+
+/-- The cursor's shape is the session's, whatever the client's was: an editor's bar comes back
+over the dirty client's block, the terminal's own shape over it too, and the hand-back gives
+the terminal its own shape again. -/
+example :
+    ((dirty 6 3).modes.cursorShape == 2 &&
+        ((dirty 6 3).feed (restore (screen 6 3 "hi\x1b[6 q"))).modes.cursorShape == 6 &&
+        ((dirty 6 3).feed (restore (screen 6 3 "hi"))).modes.cursorShape == 0 &&
+        ((screen 6 3 "hi\x1b[6 q").feed leaveAnsi).modes.cursorShape == 0) =
+      true := by
+  native_decide
 
 /-! ### The tab ruler — the set-only field the `dirty` receiver missed
 
@@ -798,7 +809,7 @@ number is here rather than `sbReplayBytes` because the emitted stage is **not**
 bounded by the budget — only by the budget plus `2 * rows + 19`. -/
 example :
     (costSum heavyRing == 260844 && (scrollbackAnsi heavyRing).length == 260219 &&
-        (restore heavyRing).length == 261417 &&
+        (restore heavyRing).length == 261422 &&
         stageInBudget heavyRing) =
       true := by
   native_decide

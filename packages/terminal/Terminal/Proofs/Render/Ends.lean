@@ -355,9 +355,9 @@ theorem savedAnsi {P : Bytes → Prop} (hP : StreamPred P)
   hP.append3 (hpark _ _ _) hsc (hoff _)
 
 /-- The mode replay, from the modes it names: the fixed set, the guarded mouse mode, the
-session's DECOM, both keypad escapes and IRM either way. The chain is **right**-associated
-to match `++`; left-associating it makes the elaborator reconcile the two shapes by
-unfolding `List.append`, which at a dozen chunks exhausts the heartbeat budget. -/
+session's DECOM, both keypad escapes, IRM either way and the cursor's shape. The chain is
+**right**-associated to match `++`; left-associating it makes the elaborator reconcile the two
+shapes by unfolding `List.append`, which at a dozen chunks exhausts the heartbeat budget. -/
 theorem modesAnsi {P : Bytes → Prop} (hP : StreamPred P) (v : Vt)
     (hset :
       ∀ n on,
@@ -369,7 +369,8 @@ theorem modesAnsi {P : Bytes → Prop} (hP : StreamPred P) (v : Vt)
         P (Terminal.Render.modeSet v.modes.mouse true))
     (hdecom : P (Terminal.Render.modeSet 6 v.modes.origin)) (hkpam : P (escSeq 0x3D))
     (hkpnm : P (escSeq 0x3E))
-    (hirm : ∀ on : Bool, P (csiNum 4 (if on then 0x68 else 0x6C))) :
+    (hirm : ∀ on : Bool, P (csiNum 4 (if on then 0x68 else 0x6C)))
+    (hshape : P (shapeAnsi v.modes.cursorShape.val)) :
     P (Terminal.Render.modesAnsi v) := by
   unfold Terminal.Render.modesAnsi
   refine hP.append ?_ (hirm _)
@@ -381,6 +382,7 @@ theorem modesAnsi {P : Bytes → Prop} (hP : StreamPred P) (v : Vt)
   refine hP.append ?_ (hset 1002 _ (by decide))
   refine hP.append ?_ (hset 1000 _ (by decide))
   refine hP.append ?_ (hset 2004 _ (by decide))
+  refine hP.append ?_ hshape
   refine hP.append ?_ (hset 25 _ (by decide))
   refine hP.append ?_ (hP.ite (fun _ => hkpam) fun _ => hkpnm)
   exact hP.append (hset 7 _ (by decide)) (hset 1 _ (by decide))
@@ -590,6 +592,26 @@ theorem ends_csiPriv (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
     simp [csiPriv]
   rw [this]
   exact ends_csi_priv_seq _ final (paramBytes_digits n) h1 h2
+
+/-- The intermediate `SP` keeps a CSI open, its marker and parameters as they were. -/
+theorem csi_space_step {v : Vt} {s : CsiState} (hg : v.pstate = .csi s) :
+    (v.step 0x20).pstate = .csi (s.withInter 0x20) := by
+  rw [Terminal.Vt.step_of_csi 0x20 hg]
+  unfold Vt.stepCsi
+  rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide),
+    ite_eq_right (by decide), ite_eq_left (by decide)]
+
+/-- **DECSCUSR returns the parser to ground**: `CSI <n> SP q`, whatever its number. -/
+theorem ends_shapeAnsi (n : Nat) : Ends (shapeAnsi n) := by
+  intro v hg
+  show (v.feed ([0x1B, 0x5B] ++ digits n ++ [0x20, 0x71])).pstate = .ground
+  rw [show ([0x1B, 0x5B] ++ digits n ++ [0x20, 0x71] : Bytes)
+        = 0x1B :: 0x5B :: (digits n ++ [0x20] ++ [0x71]) from by simp]
+  rw [feed_cons, feed_cons, feed_append, feed_append]
+  obtain ⟨s', hs'⟩ :=
+    csi_param_feed (digits n) (csi_open_step (esc_step hg))
+      (paramBytes_le_3F (paramBytes_digits n))
+  exact csi_final_step 0x71 (csi_space_step hs') (by decide) (by decide)
 
 /-! ### SGR pens
 
@@ -895,6 +917,7 @@ theorem ends_irm (on : Bool) : Ends (csiNum 4 (if on then 0x68 else 0x6C)) :=
 theorem ends_modesAnsi (v : Vt) : Ends (modesAnsi v) :=
   Ends.streamPred.modesAnsi v (fun n on _ => ends_modeSet n on) (fun _ => ends_modeSet _ _)
     (ends_modeSet 6 _) (ends_escSeq 0x3D (by decide)) (ends_escSeq 0x3E (by decide)) ends_irm
+    (ends_shapeAnsi _)
 
 theorem ends_cursorAnsi (v : Vt) : Ends (cursorAnsi v) :=
   Ends.streamPred.cursorAnsi (fun _ _ => ends_csiNum2 _ _ 0x48 (by decide) (by decide)) v

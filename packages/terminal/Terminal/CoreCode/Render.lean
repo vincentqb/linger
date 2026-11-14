@@ -105,6 +105,9 @@ def escSeq (final : UInt8) : Bytes := escB ++ [final]
 /-- A charset designation, `ESC ( x` / `ESC ) x`. -/
 def escCharset (i x : UInt8) : Bytes := escB ++ [i, x]
 
+/-- DECSCUSR, `CSI <n> SP q`: set the cursor's shape, the receiver's own default for 0. -/
+def shapeAnsi (n : Nat) : Bytes := csiB ++ digits n ++ [0x20, 0x71]
+
 /-! ## Pen -/
 
 /-- One colour as SGR parameter *numbers* (16-colour, 256-colour and
@@ -484,6 +487,8 @@ Every mode is emitted **both ways**. A mode that is only ever *set* leaks the
 client's previous state: attaching a session with the mouse off to a terminal that
 a crashed program left reporting leaves the mouse on, and the same held for IRM,
 DECOM, bracketed paste, focus events, SGR mouse, application cursor and keypad.
+The cursor's shape is emitted always, the default included, for the same reason: an
+editor's bar left on a client by another session would otherwise stay.
 The three mouse modes are mutually exclusive, so all three are cleared before the
 live one is set.
 `prologueAnsi` already neutralizes the subset that would corrupt the *paint*; this
@@ -506,6 +511,7 @@ def modesAnsi (v : Vt) : Bytes :=
   modeSet 7 v.modes.wrap ++ modeSet 1 v.modes.appCursor ++
     (if v.modes.appKeypad then escSeq 0x3D else escSeq 0x3E) ++
     modeSet 25 v.modes.cursorVisible ++
+    shapeAnsi v.modes.cursorShape.val ++
     modeSet 2004 v.modes.bracketedPaste ++
     modeSet 1000 false ++
     modeSet 1002 false ++
@@ -725,6 +731,8 @@ doing. Each line is a hazard for the next program to use the terminal:
 * `?25h`, `?2004l`, the three mouse modes, `?1006l`, `?1004l` — a cursor you
   cannot see, pastes arriving wrapped in `ESC [ 200 ~`, and clicks or window
   focus changes arriving as garbage on the shell's command line;
+* `CSI 0 SP q` — the program's cursor shape, such as an editor's insert-mode bar,
+  left on the shell's prompt instead of the terminal's own;
 * `?1l` (DECCKM), `ESC >` (DECKPNM) — arrow and keypad keys sending application
   forms the shell's line editor does not bind;
 * `( B`, `) B`, `SI` — line-drawing ASCII;
@@ -744,7 +752,8 @@ guarantees, and the next shell prompt can supply its usual title.
 Not `DECSTR` (`CSI ! p`): its reset list varies by terminal, and we would be
 trusting bytes we do not parse. -/
 def leaveAnsi : Bytes :=
-  escSeq 0x5C ++ modeSet 1049 false ++ csiNum 4 0x6C ++ modeSet 25 true ++ modeSet 2004 false ++
+  escSeq 0x5C ++ modeSet 1049 false ++ csiNum 4 0x6C ++ modeSet 25 true ++ shapeAnsi 0 ++
+    modeSet 2004 false ++
     modeSet 1000 false ++
     modeSet 1002 false ++
     modeSet 1003 false ++

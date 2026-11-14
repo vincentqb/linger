@@ -169,6 +169,8 @@ inductive Piece where
   | ascii (g1 : Bool)
   /-- Shift in (`SI`): select G0. -/
   | shiftIn
+  /-- `ESC [ 0 SP q` (DECSCUSR 0): the terminal's own cursor shape. -/
+  | shapeDefault
   deriving DecidableEq, Repr
 
 /-- A piece's bytes. -/
@@ -186,14 +188,16 @@ def Piece.bytes : Piece → List UInt8
   | .esc final => [0x1B, final]
   | .ascii g1 => [0x1B, if g1 then 0x29 else 0x28, 0x42]
   | .shiftIn => [0x0F]
+  | .shapeDefault => [0x1B, 0x5B, 0x30, 0x20, 0x71]
 
 /-- The pieces linger may write. Text and titles are printable. A control sequence selects
 graphic rendition (`m`), moves the cursor (`H`), sets the scroll region (`r`), erases the screen
 but not its scrollback (`J` with parameters at most 2), resets a mode (`l`), or sets DEC private
 mode 7 (autowrap), 25 (cursor shown), 1049 (alternate screen) or 2004 (bracketed paste) (`h`).
-An escape ends a string (`\`) or selects the keypad's numeric mode (`>`). No piece asks the
-terminal for a reply, resets it or erases its scrollback, and bracketed paste is the one mode a
-piece sets that changes what the terminal sends. -/
+An escape ends a string (`\`) or selects the keypad's numeric mode (`>`), and the cursor's shape
+goes back to the terminal's own. No piece asks the terminal for a reply, resets it or erases its
+scrollback, and bracketed paste is the one mode a piece sets that changes what the terminal
+sends. -/
 @[expose]
 def Piece.Ok : Piece → Prop
   | .text c => Printable c
@@ -203,7 +207,7 @@ def Piece.Ok : Piece → Prop
       final = 0x6C ∨ (final = 0x68 ∧ priv = true ∧ ∀ n ∈ params, n ∈ [7, 25, 1049, 2004])
   | .title cs => ∀ c ∈ cs, Printable c
   | .esc final => final = 0x5C ∨ final = 0x3E
-  | .lf | .cr | .tab | .ascii _ | .shiftIn => True
+  | .lf | .cr | .tab | .ascii _ | .shiftIn | .shapeDefault => True
 
 /-- Bytes made only of pieces linger may write. -/
 @[expose]

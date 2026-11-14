@@ -664,7 +664,7 @@ theorem csi_of_stepCsi {v : Vt} {s s' : CsiState} (hp : v.pstate = .csi s) {b : 
     exact ⟨Or.inl hlt, hne, fun hd => Or.inl hd⟩
   split at h
   · split at h
-    · simp at h
+    · simp [Vt.csiInterEnd] at h
     · simp [Vt.csiFinish] at h
   split at h
   · simp at h

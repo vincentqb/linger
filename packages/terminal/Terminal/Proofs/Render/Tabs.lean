@@ -139,7 +139,7 @@ one-liner. -/
 theorem fixes_tabs_modesAnsi (v : Vt) : Fixes (fun v : Vt => v.tabs) (modesAnsi v) :=
   (Fixes.streamPred _).modesAnsi v (fun n on _ => fixes_tabs_modeSet n on)
     (fun _ => fixes_tabs_modeSet _ _) (fixes_tabs_modeSet 6 _) (fixes_tabs_escSeq 0x3D (by decide))
-    (fixes_tabs_escSeq 0x3E (by decide)) fixes_tabs_irm
+    (fixes_tabs_escSeq 0x3E (by decide)) fixes_tabs_irm (fixes_shapeAnsi (fun _ _ => rfl) _)
 
 theorem fixes_tabs_titleAnsi (v : Vt) : Fixes (fun v : Vt => v.tabs) (titleAnsi v) := by
   unfold titleAnsi

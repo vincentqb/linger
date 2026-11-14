@@ -30,7 +30,7 @@ chosen because linger delegates live rendering to the real terminal:
 * OSC 8 hyperlinks, sixel, kitty graphics: skipped as strings, not
   stored.
 * modes stored but not interpreted beyond the emulator's needs
-  (bracketed paste, mouse, focus events) — the runtime replays
+  (bracketed paste, mouse, focus events, the cursor's shape) — the runtime replays
   them to a re-attaching client so applications keep working.
 -/
 
@@ -284,7 +284,8 @@ structure CsiState where
   curSub : Bool := false
   /-- A digit was read since the last separator. -/
   haveCur : Bool := false
-  /-- The latest intermediate byte, or 0; a sequence with one has no effect. -/
+  /-- The intermediate byte, 0 for none and 0xFF for more than one. Of the sequences with one,
+  only DECSCUSR (`CSI Ps SP q`) has an effect. -/
   inter : UInt8 := 0
   /-- More than 16 parameters arrived; the sequence has no effect. -/
   ignore : Bool := false
@@ -1284,7 +1285,7 @@ private def Vt.csiDispatch (v : Vt) (s : CsiState) (final : UInt8) : Vt :=
         else v
     | 0x73 => v.saveCursor -- s DECSC (ANSI)
     | 0x75 => if s.priv == 0 then v.restoreCursor else v -- u DECRC (ANSI)
-    | _ => v -- DA/DSR/CPR/DECSCUSR/… : queries and styling we don't act on
+    | _ => v -- DA/DSR/CPR/… : queries we don't act on
 
 /-! ## Byte-at-a-time parser -/
 
@@ -1428,6 +1429,32 @@ private def Vt.stepEscInter (v : Vt) (i b : UInt8) : Vt :=
       if b ≥ 0x20 && b ≤ 0x2F then { v with pstate := .escInter 0 }
       else { v with pstate := .escInter i }
 
+/-- A sequence's first parameter, as `csiFinish` would close it at its final byte: the first
+closed parameter, or else the one being read, or 0 when there is none. -/
+private def CsiState.first (s : CsiState) : Nat :=
+  match s.params.toList with
+  | p :: _ => p.1
+  | [] => if s.haveCur then min s.cur 65535 else 0
+
+/-- The cursor's shape after a sequence with an intermediate byte ends with `final`: DECSCUSR
+(`CSI Ps SP q`, no private marker and one intermediate) sets it to `Ps` when that is 0 to 6, as
+xterm does, and leaves it otherwise; every other such sequence leaves it. -/
+private def CsiState.shape (s : CsiState) (final : UInt8) (old : Fin 7) : Fin 7 :=
+  if final == 0x71 && s.inter == 0x20 && s.priv == 0 && !s.ignore then
+    if h : s.first < 7 then ⟨s.first, h⟩ else old
+  else old
+
+/-- The collector after an intermediate byte: the byte itself when it is the first, else 0xFF,
+which no sequence with an effect has. -/
+private def CsiState.withInter (s : CsiState) (b : UInt8) : CsiState :=
+  { s with inter := if s.inter == 0 then b else 0xFF }
+
+/-- A sequence with an intermediate byte ends with `final`, back in ground: DECSCUSR sets the
+cursor's shape (`CsiState.shape`), and no other such sequence has an effect. -/
+private def Vt.csiInterEnd (v : Vt) (s : CsiState) (final : UInt8) : Vt :=
+  { v with
+    pstate := .ground, modes := { v.modes with cursorShape := s.shape final v.modes.cursorShape } }
+
 /-- Inside CSI. -/
 private def Vt.stepCsi (v : Vt) (s : CsiState) (b : UInt8) : Vt :=
   if b ≥ 0x30 && b ≤ 0x39 then
@@ -1443,11 +1470,9 @@ private def Vt.stepCsi (v : Vt) (s : CsiState) (b : UInt8) : Vt :=
       else
         if b ≥ 0x3C && b ≤ 0x3F then { v with pstate := .csi { s with priv := b } }
         else
-          if b ≥ 0x20 && b ≤ 0x2F then { v with pstate := .csi { s with inter := b } }
+          if b ≥ 0x20 && b ≤ 0x2F then { v with pstate := .csi (s.withInter b) }
           else
-            if b ≥ 0x40 && b ≤ 0x7E then
-              if s.inter != 0 then { v with pstate := .ground } -- e.g. DECSCUSR: ignore
-              else v.csiFinish s b
+            if b ≥ 0x40 && b ≤ 0x7E then if s.inter != 0 then v.csiInterEnd s b else v.csiFinish s b
             else
               if b == 0x1B then { v with pstate := .esc }
               else
