@@ -2139,7 +2139,15 @@ and replaces the checkpoint whole and durably, as the tmux import writes one, so
 the file at the path is the last save whose flushes returned, or the one then running, whole
 (`Disk.Durable`, which the resume suite tests by killing a daemon while it saves, and its check once
 both flushes returned); and resuming then gives back that save, never a fresh session
-(`crash_resumes`). Not claimed: a bound in bytes or rows on what a crash loses, since the bound is
+(`crash_resumes`). A record an older linger wrote reads as it meant then: a tmux import from before
+a row had a description recorded the pane's labels and none, and its record in format 3, the
+layout of today's under the tag 3, reads as the checkpoint today's import writes of the pane, the
+description it gives, the window's name, included (`older_import_described`); a record of today's
+format reads as written (`loadBytes_saveBytes_live`), so a description its user cleared stays
+cleared. Not claimed: that records of formats 1 and 2 read the same way, which the checkpoint
+proofs state (`load_saveV2_live`, `load_saveV1_live`); that a description a user cleared in a
+record of an earlier format stays cleared, since those formats do not tell it from one never
+given; a bound in bytes or rows on what a crash loses, since the bound is
 in time, the interval and the saves then running, whatever the program wrote in it, and a bound in
 rows waits for an append-only store of the history; and that power loss keeps what the flushes
 returned for, which rests on `Disk.Durable` and which no check or suite causes. -/
@@ -2354,6 +2362,32 @@ theorem checkpoint_metadata_rejects_blank :
                   pane contents).labels.lookup
               "tmux.capture" =
             some (if contents.isSome then "saved" else "none") := by
+  sorry
+
+theorem older_import_described (pane : Import.Resurrect.Pane) (contents : Option String) :
+    Checkpoint.loadBytes
+        ((Checkpoint.saveBytes
+              ⟨(Import.Resurrect.checkpoint pane contents).vt,
+                (Import.Resurrect.checkpoint pane contents).cwd,
+                (Import.Resurrect.checkpoint pane contents).labels.filter
+                  (·.1 != "description")⟩).set!
+          (4 : Nat) 3) =
+      some (Import.Resurrect.checkpoint pane contents) := by
+  sorry
+
+@[kills older_import_described]
+theorem older_import_described_rejects_stored :
+    ¬∀ (pane : Import.Resurrect.Pane) (contents : Option String),
+        (fun (b : ByteArray) =>
+              (Checkpoint.loadBytes b).map fun (c : Checkpoint.Ckpt Vt.Vt) =>
+                (⟨c.vt, c.cwd, c.labels.filter (·.1 != "description")⟩ : Checkpoint.Ckpt Vt.Vt))
+            ((Checkpoint.saveBytes
+                  ⟨(Import.Resurrect.checkpoint pane contents).vt,
+                    (Import.Resurrect.checkpoint pane contents).cwd,
+                    (Import.Resurrect.checkpoint pane contents).labels.filter
+                      (·.1 != "description")⟩).set!
+              (4 : Nat) 3) =
+          some (Import.Resurrect.checkpoint pane contents) := by
   sorry
 
 /-! ## 8. Clean terminal

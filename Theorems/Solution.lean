@@ -2367,6 +2367,41 @@ theorem checkpoint_metadata_rejects_blank :
   intro h
   exact absurd (h { name := "a", dir := "x", line := 0 } none).1 (by decide)
 
+theorem older_import_described (pane : Import.Resurrect.Pane) (contents : Option String) :
+    Checkpoint.loadBytes
+        ((Checkpoint.saveBytes
+              ⟨(Import.Resurrect.checkpoint pane contents).vt,
+                (Import.Resurrect.checkpoint pane contents).cwd,
+                (Import.Resurrect.checkpoint pane contents).labels.filter
+                  (·.1 != "description")⟩).set!
+          (4 : Nat) 3) =
+      some (Import.Resurrect.checkpoint pane contents) :=
+  Import.Resurrect.older_checkpoint pane contents
+
+theorem older_import_described_rejects_stored :
+    ¬∀ (pane : Import.Resurrect.Pane) (contents : Option String),
+        (fun (b : ByteArray) =>
+              (Checkpoint.loadBytes b).map fun (c : Checkpoint.Ckpt Vt.Vt) =>
+                (⟨c.vt, c.cwd, c.labels.filter (·.1 != "description")⟩ : Checkpoint.Ckpt Vt.Vt))
+            ((Checkpoint.saveBytes
+                  ⟨(Import.Resurrect.checkpoint pane contents).vt,
+                    (Import.Resurrect.checkpoint pane contents).cwd,
+                    (Import.Resurrect.checkpoint pane contents).labels.filter
+                      (·.1 != "description")⟩).set!
+              (4 : Nat) 3) =
+          some (Import.Resurrect.checkpoint pane contents) := by
+  intro h
+  have named := h { name := "a", dir := "x", line := 0, details := { windowTitle := "w" } } none
+  dsimp only at named
+  rw [Import.Resurrect.older_checkpoint] at named
+  have described :=
+    congrArg (Option.map fun (c : Checkpoint.Ckpt Vt.Vt) => c.labels.lookup "description") named
+  simp only [Option.map_some, Import.Resurrect.lookup_filter_key,
+    Import.Resurrect.checkpoint_described
+        { name := "a", dir := "x", line := 0, details := { windowTitle := "w" } } none (by decide),
+    Option.some.injEq] at described
+  cases described
+
 theorem infoText_text (s : State) :
     ∃ cs : List Char,
       Session.infoText s = cs.flatMap String.utf8EncodeChar ∧

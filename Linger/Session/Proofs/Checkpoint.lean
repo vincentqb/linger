@@ -444,7 +444,7 @@ theorem rVt_unbounded (version : Nat) (bytes : List UInt8) :
         let (grid, l) ← rList rRow l
         let (cursor, l) ← rCursor l
         let (pen, l) ← rPen l
-        let (modes, l) ← rModes (version == 3) l
+        let (modes, l) ← rModes (2 < version) l
         let (top, l) ← rNat l
         let (bot, l) ← rNat l
         let (tabs, l) ← rList rBool l
@@ -501,15 +501,16 @@ constructor's decision.** The earlier resource guards preserve that decision by
 Both of the claims above it read off this one: `rt_vt` by `ofDecoded_of_good`, and
 `load_save_none_of_cols_zero` by `ofDecoded_none_of_cols_zero`. -/
 theorem rVt_fields (v : Vt) (rest : List UInt8) :
-    rVt 3 (wVt v ++ rest) =
+    rVt 4 (wVt v ++ rest) =
       (Vt.ofDecoded v.cols v.rows v.grid v.cursor v.pen v.modes v.top v.bot v.tabs v.sb v.altGrid
             v.saved v.title v.g0Line v.g1Line v.shiftOut v.bell).map
         (fun w => (w, rest)) := by
   rw [rVt_unbounded]
   unfold wVt
-  simp only [Nat.reduceBEq, Bool.false_eq_true, ↓reduceIte, List.append_assoc, rt_nat,
-    rt_list rt_row, rt_cursor, rt_pen, rt_modes, rt_list rt_bool, rt_ring, rt_alt, rt_saved, rt_str,
-    rt_bool, Option.bind_eq_bind, Option.bind_some, Array.toArray_toList]
+  simp only [Nat.reduceBEq, Nat.reduceLT, decide_true, Bool.false_eq_true, ↓reduceIte,
+    List.append_assoc, rt_nat, rt_list rt_row, rt_cursor, rt_pen, rt_modes, rt_list rt_bool,
+    rt_ring, rt_alt, rt_saved, rt_str, rt_bool, Option.bind_eq_bind, Option.bind_some,
+    Array.toArray_toList]
   exact Option.map_eq_bind.symm
 
 /-- **A format version 2 record decodes to the same fields with the terminal's own cursor
@@ -521,9 +522,10 @@ theorem rVt_fieldsV2 (v : Vt) (rest : List UInt8) :
         (fun w => (w, rest)) := by
   rw [rVt_unbounded]
   unfold wVt
-  simp only [Nat.reduceBEq, Bool.false_eq_true, ↓reduceIte, List.append_assoc, rt_nat,
-    rt_list rt_row, rt_cursor, rt_pen, rt_modesV2, rt_list rt_bool, rt_ring, rt_alt, rt_saved,
-    rt_str, rt_bool, Option.bind_eq_bind, Option.bind_some, Array.toArray_toList]
+  simp only [Nat.reduceBEq, Nat.reduceLT, decide_false, Bool.false_eq_true, ↓reduceIte,
+    List.append_assoc, rt_nat, rt_list rt_row, rt_cursor, rt_pen, rt_modesV2, rt_list rt_bool,
+    rt_ring, rt_alt, rt_saved, rt_str, rt_bool, Option.bind_eq_bind, Option.bind_some,
+    Array.toArray_toList]
   exact Option.map_eq_bind.symm
 
 /-- **A format version 1 record decodes to the same fields with both saved origin modes off and
@@ -536,9 +538,9 @@ theorem rVt_fieldsV1 (v : Vt) (rest : List UInt8) :
         (fun w => (w, rest)) := by
   rw [rVt_unbounded]
   unfold wVt
-  simp only [Nat.reduceBEq, ↓reduceIte, List.append_assoc, rt_nat, rt_list rt_row, rt_cursor,
-    rt_pen, rt_modesV2, rt_list rt_bool, rt_ring, rt_altV1, rt_savedV1, rt_str, rt_bool,
-    Option.bind_eq_bind, Option.bind_some, Array.toArray_toList]
+  simp only [Nat.reduceBEq, Nat.reduceLT, decide_false, ↓reduceIte, List.append_assoc, rt_nat,
+    rt_list rt_row, rt_cursor, rt_pen, rt_modesV2, rt_list rt_bool, rt_ring, rt_altV1, rt_savedV1,
+    rt_str, rt_bool, Option.bind_eq_bind, Option.bind_some, Array.toArray_toList]
   exact Option.map_eq_bind.symm
 
 /-- The Vt round trip: exact modulo the deliberately-forgotten parser
@@ -557,7 +559,7 @@ answer to "is this a weakening" — an unconditional statement would cover a scr
 session satisfies all three (`good_of_liveReachable`, `renderable_of_liveReachable`,
 `tabsOk_of_liveReachable`), so `load_save_live` below is the honest reading of the cost. -/
 theorem rt_vt (v : Vt) (h : Good v) (hren : Renderable v) (htabs : TabsOk v) (rest : List UInt8) :
-    rVt 3 (wVt v ++ rest) = some (v.quiesce, rest) := by
+    rVt 4 (wVt v ++ rest) = some (v.quiesce, rest) := by
   rw [rVt_fields, ofDecoded_of_good h hren htabs, Option.map_some]
 
 /-- What a record of format version 1 or 2 restores keeps all `Good` watches: the terminal's own
@@ -720,7 +722,10 @@ theorem rVt_live {version : Nat} {l : List UInt8} {v : Vt} {rest : List UInt8}
 `load_save_none_of_cols_zero` go through it instead of unfolding the decision into the
 parser chain. -/
 
-theorem stripMagic_magic (p : List UInt8) : stripMagic (magic ++ p) = some (3, p) := rfl
+theorem stripMagic_magic (p : List UInt8) : stripMagic (magic ++ p) = some (4, p) := rfl
+
+/-- Format version 3's tag. -/
+theorem stripMagic_v3 (p : List UInt8) : stripMagic (magicV3 ++ p) = some (3, p) := rfl
 
 /-- Format version 2's tag. -/
 theorem stripMagic_v2 (p : List UInt8) : stripMagic (magicV2 ++ p) = some (2, p) := rfl
@@ -829,13 +834,34 @@ theorem load_save_live (c : Ckpt Vt.Vt) (h : LiveReachableVt c.vt) :
     load (save c) = some { c with vt := c.vt.quiesce } :=
   load_save c (good_of_liveReachable h) (renderable_of_liveReachable h) (tabsOk_of_liveReachable h)
 
+/-- **A format version 3 checkpoint still loads.** The record version 3 wrote of a state a live
+session can hold, version 4's layout under its own tag, loads to that state with its parser
+quiesced and its labels as they meant then (`readLabels`). -/
+theorem load_saveV3_live (c : Ckpt Vt.Vt) (h : LiveReachableVt c.vt) :
+    load (saveV3 c) =
+      some
+        { c with
+          vt := c.vt.quiesce, labels := readLabels 3 c.labels } := by
+  rw [show saveV3 c = saveV3 c ++ [] from (List.append_nil _).symm]
+  unfold load saveV3
+  simp only [List.append_assoc]
+  rw [stripMagic_v3, show wVt c.vt 3 = wVt c.vt from rfl]
+  simp only [Option.bind_eq_bind, Option.bind_some]
+  rw [show rVt 3 = rVt 4 from rfl,
+    rt_vt c.vt (good_of_liveReachable h) (renderable_of_liveReachable h)
+      (tabsOk_of_liveReachable h)]
+  simp only [rt_str, rt_list (rt_pair rt_str rt_str), Option.bind_some]
+  rfl
+
 /-- **A format version 2 checkpoint still loads.** The record version 2 wrote of a state a live
-session can hold loads to that state with its parser quiesced and the terminal's own cursor
-shape, which version 2 did not record. -/
+session can hold loads to that state with its parser quiesced, the terminal's own cursor
+shape, which version 2 did not record, and its labels as they meant then (`readLabels`). -/
 theorem load_saveV2_live (c : Ckpt Vt.Vt) (h : LiveReachableVt c.vt) :
     load (saveV2 c) =
       some
-        { c with vt := { c.vt.quiesce with modes := { c.vt.modes with cursorShape := 0 } } } := by
+        { c with
+          vt := { c.vt.quiesce with modes := { c.vt.modes with cursorShape := 0 } },
+          labels := readLabels 2 c.labels } := by
   rw [show saveV2 c = saveV2 c ++ [] from (List.append_nil _).symm]
   unfold load saveV2
   simp only [List.append_assoc]
@@ -848,11 +874,12 @@ theorem load_saveV2_live (c : Ckpt Vt.Vt) (h : LiveReachableVt c.vt) :
 /-- **A format version 1 checkpoint still loads.** The record version 1 wrote of a state a live
 session can hold loads to that state with its parser quiesced, both saved origin modes off, the
 DECSC slot's and the stashed screen's, and the terminal's own cursor shape, none of which
-version 1 recorded. -/
+version 1 recorded, and its labels as they meant then (`readLabels`). -/
 theorem load_saveV1_live (c : Ckpt Vt.Vt) (h : LiveReachableVt c.vt) :
     load (saveV1 c) =
       some
         { c with
+          labels := readLabels 1 c.labels
           vt :=
             { c.vt.quiesce with
               modes := { c.vt.modes with cursorShape := 0 },
@@ -1204,7 +1231,7 @@ theorem rVtB_mirrors (version : Nat) : Mirrors (rVtB version) (rVt version) := b
   split
   · rfl
   · simp only [← rListB_mirrors (rRowB_mirrors (some c.1)), ← rCursorB_mirrors, ← rPenB_mirrors,
-      ← rModesB_mirrors (version == 3), ← rNatB_mirrors, ← rListB_mirrors rBoolB_mirrors,
+      ← rModesB_mirrors (2 < version), ← rNatB_mirrors, ← rListB_mirrors rBoolB_mirrors,
       ← rRingB_mirrors, ← rAltB_mirrors _ _ (version == 1), ← rSavedB_mirrors (version == 1),
       ← rStrB_mirrors, ← rBoolB_mirrors, Option.bind_map, Option.map_bind, Function.comp_def,
       Option.map_some]
@@ -1224,12 +1251,15 @@ position where it starts. -/
 theorem stripMagicB_mirrors (b : ByteArray) :
     (stripMagicB b).map (fun p => (p.1, b.data.toList.drop p.2)) = stripMagic b.data.toList := by
   have hp := prefixB_mirrors magic b 0
+  have h3 := prefixB_mirrors magicV3 b 0
   have h2 := prefixB_mirrors magicV2 b 0
   have hl := prefixB_mirrors legacyMagic b 0
-  rw [List.drop_zero] at hp h2 hl
+  rw [List.drop_zero] at hp h3 h2 hl
   unfold stripMagicB stripMagic
-  rw [← hp, ← h2, ← hl]
-  cases prefixB magic b 0 <;> cases prefixB magicV2 b 0 <;> cases prefixB legacyMagic b 0 <;> rfl
+  rw [← hp, ← h3, ← h2, ← hl]
+  cases prefixB magic b 0 <;> cases prefixB magicV3 b 0 <;> cases prefixB magicV2 b 0 <;>
+    cases prefixB legacyMagic b 0 <;>
+    rfl
 
 /-- **The runtime decoder is `load`**: on any byte array, `loadBytes` returns what `load`
 returns on the array's bytes, so `load_good`, `load_live`, `load_save_live` and every other
@@ -1252,6 +1282,24 @@ theorem loadBytes_saveBytes_live (c : Ckpt Vt.Vt) (h : LiveReachableVt c.vt) :
     loadBytes (saveBytes c) = some { c with vt := c.vt.quiesce } := by
   rw [loadBytes_eq, saveBytes_eq]
   exact load_save_live c h
+
+/-- **What a linger of format 3 wrote of a checkpoint**: what `saveBytes` writes, with the tag's
+version byte 3, since version 4 keeps version 3's layout. -/
+theorem saveBytes_tagV3 (c : Ckpt Vt.Vt) : (saveBytes c).set! 4 3 = ⟨(saveV3 c).toArray⟩ := by
+  rw [saveBytes_eq]
+  show (⟨((save c).toArray).set! 4 3⟩ : ByteArray) = _
+  simp only [Array.set!_eq_setIfInBounds, List.setIfInBounds_toArray]
+  rfl
+
+/-- A format 3 record `loadBytes` reads as `load_saveV3_live` says: the state, its parser
+quiesced, with its labels as they meant then. -/
+theorem loadBytes_saveV3_live (c : Ckpt Vt.Vt) (h : LiveReachableVt c.vt) :
+    loadBytes ⟨(saveV3 c).toArray⟩ =
+      some
+        { c with
+          vt := c.vt.quiesce, labels := readLabels 3 c.labels } := by
+  rw [loadBytes_eq]
+  exact load_saveV3_live c h
 
 /-- A file `loadBytes` accepts saves and loads again exactly. -/
 theorem loadBytes_resave {b : ByteArray} {c : Ckpt Vt.Vt} (h : loadBytes b = some c) :

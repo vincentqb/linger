@@ -3,6 +3,7 @@ module
 public import Linger.Import.CoreSpec
 import Linger.Target.CoreCode.Name
 import Linger.Display.CoreCode.Status
+import Linger.Session.CoreCode.Checkpoint
 public import Terminal.CoreCode.Vt
 public import Linger.Session.CoreSpec
 
@@ -165,10 +166,19 @@ private def commandNotice (details : Details) : String :=
   if command.isEmpty then ""
   else "\x1b[0m\x1b(B\x0f\x1b[?7h\r\nSaved foreground command: " ++ diagnostic command ++ "\r\n"
 
+/-- The labels that record the pane: its source identity, title and exact commands, and whether
+its contents were captured. -/
+def paneLabels (pane : Pane) (contents : Option String) : List (String × String) :=
+  [("tmux.session", pane.details.session), ("tmux.window", pane.details.window),
+    ("tmux.pane", pane.details.index), ("tmux.title", pane.details.title),
+    ("tmux.command", pane.details.command), ("tmux.saved-command", pane.details.savedCommand),
+    ("tmux.window-title", pane.details.windowTitle),
+    ("tmux.capture", if contents.isSome then "saved" else "none")]
+
 /-- Seed screen and scrollback through the terminal's public parser, and retain
-exact commands and source identity in labels, with the window's name as the session's
-description. Quiesce captured controls before
-appending the informational command notice. -/
+exact commands and source identity in labels, with the description the import gives them, the
+window's name (`Checkpoint.importDescription`), which an older import's record also reads with.
+Quiesce captured controls before appending the informational command notice. -/
 def checkpoint (pane : Pane) (contents : Option String) :
     Linger.Session.Checkpoint.Ckpt Terminal.Vt.Vt :=
   {
@@ -178,14 +188,8 @@ def checkpoint (pane : Pane) (contents : Option String) :
           (commandNotice pane.details).toUTF8.toList).quiesce,
     cwd := pane.dir,
     labels :=
-      [("tmux.session", pane.details.session), ("tmux.window", pane.details.window),
-          ("tmux.pane", pane.details.index), ("tmux.title", pane.details.title),
-          ("tmux.command", pane.details.command), ("tmux.saved-command", pane.details.savedCommand),
-          ("tmux.window-title", pane.details.windowTitle),
-          ("tmux.capture", if contents.isSome then "saved" else "none")] ++
-        -- the window's name, which tmux shows, is what the row shows of the session
-        if pane.details.windowTitle.isEmpty then []
-        else [("description", pane.details.windowTitle)] }
+      paneLabels pane contents ++
+        Linger.Session.Checkpoint.importDescription (paneLabels pane contents) }
 
 /-- One ordered catalog for human listing and the selector. Display the saved
 foreground command line, falling back to its name. Display text is printable;

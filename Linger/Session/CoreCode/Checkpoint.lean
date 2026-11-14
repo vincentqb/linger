@@ -44,15 +44,22 @@ The checkpoint round trip, which recovery rests on (`loadBytes_saveBytes_live`,
   expansion using validated dimensions. History row widths remain unrestricted:
   a resize legitimately preserves rows wider than the current screen.
 
-Format: `magic "LNGR" ++ version 3 ++ payload`. Bump the version on
-any layout change; old daemons refuse newer files (load = none), and a
-command then starts nothing over the file and keeps it
+Format: `magic "LNGR" ++ version 4 ++ payload`. Bump the version on
+any layout change, and on any change in what a record's fields mean; old daemons refuse newer
+files (load = none), and a command then starts nothing over the file and keeps it
 (`Linger.App.Recovery.decide`), so a session is never lost to a format. A checkpoint is the
 terminal it saves: every field the emulator keeps round-trips but the partial parser state, so a
 field the emulator gains is one the format gains, under a new version. Version 3 added the
 cursor's shape after the modes, and version 2 the origin mode saved with the DECSC slot and with
 the stashed main screen; version 2 records still load with the terminal's own shape
 (`load_saveV2_live`), and version 1 records with the origin modes off too (`load_saveV1_live`).
+
+Version 4 keeps version 3's layout and changes what the labels mean: a version 4 record holds
+the labels as the session last had them, so a description it lacks is one nobody gave or one
+its user cleared. A record of an earlier version reads as it meant when it was written
+(`readLabels`): one a tmux import made before a row had a description holds the import's labels
+and none, and it reads with the description today's import gives those labels
+(`importDescription`). A daemon that resumes it saves version 4, so a later clear lasts.
 -/
 
 namespace Linger.Session.Checkpoint
@@ -363,9 +370,9 @@ state while retaining the screen and modes. This is a format choice, separate
 from the runtime's atomic file replacement. With `version` 1 or 2 it writes what those format
 versions wrote: neither saved the cursor's shape, and version 1 saved no origin mode with a
 saved cursor. -/
-def wVt (v : Vt) (version : Nat := 3) : List UInt8 :=
+def wVt (v : Vt) (version : Nat := 4) : List UInt8 :=
   wNat v.cols ++ wNat v.rows ++ wList wRow v.grid.toList ++ wCursor v.cursor ++ wPen v.pen ++
-    wModes v.modes (version == 3) ++
+    wModes v.modes (2 < version) ++
     wNat v.top ++
     wNat v.bot ++
     wList wBool v.tabs.toList ++
@@ -409,7 +416,7 @@ def rVt (version : Nat) : R Vt := fun l => do
       let (grid, l) ← rList (fun bytes => rRow bytes (some cols)) l (some rows)
       let (cursor, l) ← rCursor l
       let (pen, l) ← rPen l
-      let (modes, l) ← rModes (version == 3) l
+      let (modes, l) ← rModes (2 < version) l
       let (top, l) ← rNat l
       let (bot, l) ← rNat l
       let (tabs, l) ← rList rBool l (some cols)
@@ -429,7 +436,10 @@ def rVt (version : Nat) : R Vt := fun l => do
 /-! ## The checkpoint record -/
 
 /-- On-disk magic: `"LNGR"` and the format version. What `save` writes. -/
-public def magic : List UInt8 := [0x4C, 0x4E, 0x47, 0x52, 3] -- "LNGR" v3
+public def magic : List UInt8 := [0x4C, 0x4E, 0x47, 0x52, 4] -- "LNGR" v4
+
+/-- Format version 3's tag, which `load` still reads and `save` never writes. -/
+def magicV3 : List UInt8 := [0x4C, 0x4E, 0x47, 0x52, 3] -- "LNGR" v3
 
 /-- Format version 2's tag, which `load` still reads and `save` never writes. -/
 def magicV2 : List UInt8 := [0x4C, 0x4E, 0x47, 0x52, 2] -- "LNGR" v2
@@ -442,6 +452,11 @@ Loading the record of a live state returns it with its parser quiesced (`load_sa
 def save (c : Ckpt Vt.Vt) : List UInt8 :=
   magic ++ wVt c.vt ++ wStr c.cwd ++ wList (wPair wStr wStr) c.labels
 
+/-- The record format version 3 wrote: version 4's layout under its own tag. Never written; it
+states what an old checkpoint is (`load_saveV3_live`). -/
+def saveV3 (c : Ckpt Vt.Vt) : List UInt8 :=
+  magicV3 ++ wVt c.vt 3 ++ wStr c.cwd ++ wList (wPair wStr wStr) c.labels
+
 /-- The record format version 2 wrote: no cursor shape. Never written; it states what an old
 checkpoint is (`load_saveV2_live`). -/
 def saveV2 (c : Ckpt Vt.Vt) : List UInt8 :=
@@ -452,7 +467,7 @@ the stashed screen. Never written; it states what an old checkpoint is (`load_sa
 def saveV1 (c : Ckpt Vt.Vt) : List UInt8 :=
   legacyMagic ++ wVt c.vt 1 ++ wStr c.cwd ++ wList (wPair wStr wStr) c.labels
 
-/-- Strip the format tag, and say which format version it is: 3, 2 or 1. A **named stage**
+/-- Strip the format tag, and say which format version it is: 4, 3, 2 or 1. A **named stage**
 rather than the check inlined in `load`: with the decision inline, `load_save`'s round-trip
 proof carries it through the whole parser chain and times out at two million heartbeats,
 where naming it gives the round trip one rewrite (`stripMagic_magic`) and needs no raise at
@@ -460,11 +475,30 @@ all. Measured both ways — the AGENTS.md rule to design code for provability, o
 possible thing. -/
 def stripMagic (l : List UInt8) : Option (Nat × List UInt8) :=
   match magic.isPrefixOf? l with
-  | some rest => some (3, rest)
+  | some rest => some (4, rest)
   | none =>
-    match magicV2.isPrefixOf? l with
-    | some rest => some (2, rest)
-    | none => (legacyMagic.isPrefixOf? l).map (1, ·)
+    match magicV3.isPrefixOf? l with
+    | some rest => some (3, rest)
+    | none =>
+      match magicV2.isPrefixOf? l with
+      | some rest => some (2, rest)
+      | none => (legacyMagic.isPrefixOf? l).map (1, ·)
+
+/-- The description a tmux import gives a session whose labels are `labels`: the window's name,
+which tmux shows, from the label `tmux.window-title` when it is not empty, and none otherwise. -/
+public def importDescription (labels : List (String × String)) : List (String × String) :=
+  match labels.lookup "tmux.window-title" with
+  | some title => if title.isEmpty then [] else [("description", title)]
+  | none => []
+
+/-- The labels a record of format `version` holds, as they meant when it was written. Version 4
+records them as the session last had them. An earlier record that has no description reads with
+the description the import gives its labels, none for a session no import made: an import before
+a row had a description gave none, and no earlier format tells a cleared description from one
+never given. -/
+def readLabels (version : Nat) (labels : List (String × String)) : List (String × String) :=
+  if version < 4 && (labels.lookup "description").isNone then labels ++ importDescription labels
+  else labels
 
 /-- Total: any byte list either parses fully or is `none`. Trailing
 garbage is rejected (a torn write is not a checkpoint). -/
@@ -474,7 +508,7 @@ def load (l : List UInt8) : Option (Ckpt Vt.Vt) := do
   let (cwd, rest) ← rStr rest
   let (labels, rest) ← rList (rPair rStr rStr) rest
   if rest.isEmpty then
-    some { vt, cwd, labels }
+    some { vt, cwd, labels := readLabels version labels }
   else
     none
 
@@ -778,7 +812,7 @@ def rVtB (version : Nat) : RB Vt := fun b i => do
       let (grid, i) ← rListB (fun bytes j => rRowB bytes j (some cols)) b i (some rows)
       let (cursor, i) ← rCursorB b i
       let (pen, i) ← rPenB b i
-      let (modes, i) ← rModesB (version == 3) b i
+      let (modes, i) ← rModesB (2 < version) b i
       let (top, i) ← rNatB b i
       let (bot, i) ← rNatB b i
       let (tabs, i) ← rListB rBoolB b i (some cols)
@@ -804,11 +838,14 @@ def prefixB : List UInt8 → ByteArray → Nat → Option Nat
 /-- `stripMagic` on a byte array: the position after the tag, and which format version it is. -/
 def stripMagicB (b : ByteArray) : Option (Nat × Nat) :=
   match prefixB magic b 0 with
-  | some i => some (3, i)
+  | some i => some (4, i)
   | none =>
-    match prefixB magicV2 b 0 with
-    | some i => some (2, i)
-    | none => (prefixB legacyMagic b 0).map (1, ·)
+    match prefixB magicV3 b 0 with
+    | some i => some (3, i)
+    | none =>
+      match prefixB magicV2 b 0 with
+      | some i => some (2, i)
+      | none => (prefixB legacyMagic b 0).map (1, ·)
 
 /-- `load` on a byte array (`loadBytes_eq`): the same tag check, the same reader chain, and
 the same refusal of unread trailing bytes. -/
@@ -818,7 +855,7 @@ public def loadBytes (b : ByteArray) : Option (Ckpt Vt.Vt) := do
   let (cwd, i) ← rStrB b i
   let (labels, i) ← rListB (rPairB rStrB rStrB) b i
   if b.size ≤ i then
-    some { vt, cwd, labels }
+    some { vt, cwd, labels := readLabels version labels }
   else
     none
 

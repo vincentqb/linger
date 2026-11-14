@@ -138,13 +138,14 @@ example :
 
 /-! ### The format tag
 
-`save` writes `"LNGR"` v3, and `load` reads it, `"LNGR"` v2 and `"LNGR"` v1 and nothing else.
+`save` writes `"LNGR"` v4, and `load` reads it, `"LNGR"` v3, v2 and v1 and nothing else.
 The theorems are about the *constants*, so these pin the bytes — which is what catches someone
 editing four hex literals to the wrong value, a change no round-trip theorem can see. -/
 
 /-- The bytes themselves, spelled out. -/
 example :
-    (magic == [0x4C, 0x4E, 0x47, 0x52, 3] && magicV2 == [0x4C, 0x4E, 0x47, 0x52, 2] &&
+    (magic == [0x4C, 0x4E, 0x47, 0x52, 4] && magicV3 == [0x4C, 0x4E, 0x47, 0x52, 3] &&
+        magicV2 == [0x4C, 0x4E, 0x47, 0x52, 2] &&
         legacyMagic == [0x4C, 0x4E, 0x47, 0x52, 1]) =
       true := by
   native_decide
@@ -156,20 +157,21 @@ example :
     (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "", labels := [] }
      let body := (save c).drop 5
      (load ([0x4C, 0x5A, 0x4D, 0x58, 1] ++ body)).isNone      -- "LZMX" v1
-       && (load ([0x4C, 0x4E, 0x47, 0x52, 4] ++ body)).isNone  -- "LNGR" v4
+       && (load ([0x4C, 0x4E, 0x47, 0x52, 5] ++ body)).isNone  -- "LNGR" v5
        && (load ([0x00, 0x00, 0x00, 0x00, 0] ++ body)).isNone) = true := by
   native_decide
 
-/-- Each tag needs its own layout: a version 3 body under an older tag, and the reverse, are
-refused, since version 2 adds a byte after each saved cursor and version 3 one after the
-modes. -/
+/-- Each tag needs its own layout: a version 4 body under a tag older than 3, and the reverse,
+are refused, since version 2 adds a byte after each saved cursor and version 3 one after the
+modes; version 3's tag takes version 4's layout. -/
 example :
     (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "", labels := [] }
      (load (legacyMagic ++ (save c).drop 5)).isNone
        && (load (magicV2 ++ (save c).drop 5)).isNone
        && (load (magic ++ (saveV1 c).drop 5)).isNone
        && (load (magic ++ (saveV2 c).drop 5)).isNone
-       && (load (saveV1 c)).isSome && (load (saveV2 c)).isSome) = true := by
+       && (load (saveV1 c)).isSome && (load (saveV2 c)).isSome
+       && saveV3 c == magicV3 ++ (save c).drop 5 && (load (saveV3 c)).isSome) = true := by
   native_decide
 
 /-! ### The corrupt record
@@ -401,9 +403,9 @@ swapping two fields that hold the same value, such as two false modes, still pas
 
 Format version 2 adds one byte to version 1: the origin mode after each saved cursor's pen, in
 the DECSC slot and in the stashed main screen. Format version 3 adds one more: the cursor's shape
-after the modes. The version 1 and 2 bytes below are what those writers wrote, so they pin that
-`saveV1` and `saveV2`, which `load_saveV1_live` and `load_saveV2_live` are about, are those
-formats. -/
+after the modes, and format version 4 keeps that layout under its own tag. The version 1, 2 and 3
+bytes below are what those writers wrote, so they pin that `saveV1`, `saveV2` and `saveV3`, which
+`load_saveV1_live`, `load_saveV2_live` and `load_saveV3_live` are about, are those formats. -/
 
 /-- A record with indexed and RGB colours, nondefault modes, a blinking bar cursor, both cursors,
 a title, a line drawing set, a cwd and a label. -/
@@ -419,10 +421,10 @@ def golden : Ckpt Vt.Vt :=
 since neither format saved a shape. -/
 def goldenOwnShape : Ckpt Vt.Vt := { golden with vt.modes.cursorShape := 0 }
 
-/-- Its bytes in format version 3, the shape 5 after the modes. Change them only together with
+/-- Its bytes in format version 4, the shape 5 after the modes. Change them only together with
 the version byte in `magic`. -/
 def goldenBytes : List UInt8 :=
-  [76, 78, 71, 82, 3, 3, 2, 2, 3, 1, 65, 0, 1, 1, 3, 2, 1, 2, 3, 1, 0, 1, 0, 1, 0, 1, 1, 66, 0, 1,
+  [76, 78, 71, 82, 4, 3, 2, 2, 3, 1, 65, 0, 1, 1, 3, 2, 1, 2, 3, 1, 0, 1, 0, 1, 0, 1, 1, 66, 0, 1,
     0, 0, 0, 1, 1, 0, 0, 1, 1, 1, 67, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 3, 32, 0, 1, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 234, 7, 1, 1, 5, 0, 1,
     3, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 116, 1, 0, 0, 0, 2, 47, 99, 1, 1,
@@ -433,6 +435,41 @@ example : ((saveBytes golden).toList == goldenBytes) = true := by native_decide
 
 /-- The reader decodes those bytes to the record, with its parser quiesced. -/
 example : ((loadBytes ⟨goldenBytes.toArray⟩).map saveBytes == some (saveBytes golden)) = true := by
+  native_decide
+
+/-- Its bytes in format version 3, as the version 3 writer wrote them. Never change them: they
+are the checkpoints version 3 left on disk. -/
+def goldenV3Bytes : List UInt8 :=
+  [76, 78, 71, 82, 3, 3, 2, 2, 3, 1, 65, 0, 1, 1, 3, 2, 1, 2, 3, 1, 0, 1, 0, 1, 0, 1, 1, 66, 0, 1,
+    0, 0, 0, 1, 1, 0, 0, 1, 1, 1, 67, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 3, 32, 0, 1, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 234, 7, 1, 1, 5, 0, 1,
+    3, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 116, 1, 0, 0, 0, 2, 47, 99, 1, 1,
+    107, 1, 118]
+
+/-- `saveV3` writes those bytes, and a version 3 checkpoint loads to the record, whose labels no
+import made. -/
+example :
+    (saveV3 golden == goldenV3Bytes &&
+        (loadBytes ⟨goldenV3Bytes.toArray⟩).map saveBytes == some (saveBytes golden)) =
+      true := by
+  native_decide
+
+/-- A record an import made before a row had a description, in each earlier format: its labels
+read with the description the import gives them, the window's name, after the import's labels.
+A version 4 record without one reads without one, as does an earlier record with one, an empty
+one included, and an earlier record of a session no import made or of a window with no name. -/
+example :
+    (let tmux := [("tmux.session", "s"), ("tmux.window", "1"), ("tmux.window-title", "w")]
+     let read (bytes : List UInt8) := (loadBytes ⟨bytes.toArray⟩).map (·.labels)
+      let old : Ckpt Vt.Vt := { golden with labels := tmux }
+      let mine : Ckpt Vt.Vt := { golden with labels := tmux ++ [("description", "")] }
+      let blank : Ckpt Vt.Vt := { golden with labels := [("tmux.window-title", "")] }
+      [saveV1 old, saveV2 old, saveV3 old].all (read · == some (tmux ++ [("description", "w")])) &&
+        read (save old) == some tmux &&
+        read (saveV3 mine) == some mine.labels &&
+        read (saveV3 golden) == some golden.labels &&
+        read (saveV3 blank) == some blank.labels) =
+      true := by
   native_decide
 
 /-- Its bytes in format version 2, as the version 2 writer wrote them. Never change them: they
@@ -476,7 +513,7 @@ def originGolden : Ckpt Vt.Vt :=
 
 /-- Its bytes. -/
 def originBytes : List UInt8 :=
-  [76, 78, 71, 82, 3, 3, 2, 2, 1, 3, 32, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 3, 32, 0, 1, 0, 0, 0,
+  [76, 78, 71, 82, 4, 3, 2, 2, 1, 3, 32, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 3, 32, 0, 1, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 3,
     0, 0, 0, 0, 0, 1, 2, 1, 3, 32, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 3, 32, 0, 1, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0,

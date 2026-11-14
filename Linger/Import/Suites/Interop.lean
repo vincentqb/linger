@@ -623,6 +623,78 @@ private def resumableCwd (f : Fixture) : IO Bool := do
     if ← Os.Shell.alive shellPid then
       Os.Shell.kill shellPid 9
 
+/-- The row of session `name` in `ls`, empty when none lists it. -/
+private def Fixture.row (f : Fixture) (name : String) : IO String := do
+  let (_, out, _) ← f.cli #["ls"]
+  return ((out.splitOn "\n").find? fun line => (line.splitOn " ")[1]? == some name).getD ""
+
+/-- A session an import made before a row had a description: its checkpoint, in the format a
+linger of then wrote, holds the import's labels and no description. Resumed, its row shows the
+description today's import gives, the window's name; `describe` with no text clears it, and a
+crash and a resume keep it cleared. -/
+private def olderImport (f : Fixture) : IO Bool := do
+  let dir := f.root / "home"
+  let pane : Linger.Import.Resurrect.Pane :=
+    { name := "older-w4-p0", dir := dir.toString, line := 1,
+      details :=
+        { session := "older", window := "4", index := "0", title := "pane title", command := "sh",
+          windowTitle := "Old window" } }
+  let today := Linger.Import.Resurrect.checkpoint pane none
+  -- the record of a linger older than descriptions: the same layout under the tag 3
+  let old : Ckpt Terminal.Vt.Vt :=
+    { today with labels := today.labels.filter (·.1 != "description") }
+  f.own pane.name
+  let checkpoint := System.FilePath.mk f.env.dir / s!"{pane.name}.ckpt"
+  IO.FS.writeBinFile checkpoint ((saveBytes old).set! 4 3)
+  unless ← f.resume pane.name do
+    throw (IO.userError "older import did not resume")
+  let described ← f.info pane.name "label.description"
+  let row ← f.row pane.name
+  let (cleared, _, _) ← f.cli #["describe", pane.name]
+  let after ← f.info pane.name "label.description"
+  let some shellPid ← f.pid pane.name | throw (IO.userError "fixture shell pid is missing")
+  let (psCode, parent, _) ←
+    process { cmd := "ps", args := #["-o", "ppid=", "-p", toString shellPid] }
+  let some daemon :=
+    parent.trimAscii.toString.toNat? | throw (IO.userError "fixture daemon pid is missing")
+  unless psCode == 0 && 1 < daemon && daemon < UInt32.size do
+    throw (IO.userError "invalid fixture daemon pid")
+  let client ← f.env.spawnEnv #[s!"HOME={dir}"] #["attach", pane.name]
+  try
+    unless
+      ←
+        waitFor 5000
+            (do
+              return (← f.info pane.name "clients") == some "1") do
+      throw (IO.userError "older import client did not attach")
+    client.detach
+    let _ ← client.reap
+  finally
+    client.bye (sendDetach := false)
+  -- the last detach saves the cleared description
+  let saved ←
+    waitFor 5000 do
+        let some bytes ← readBytes checkpoint | return false
+        return (loadBytes bytes).any fun ck =>
+            ck.labels.lookup "description" == none && ck.labels.lookup "tmux.window" == some "4"
+  Os.Shell.kill daemon.toUInt32 9
+  unless
+    ←
+      waitFor 5000
+          (do
+            return !(← Os.Shell.alive daemon.toUInt32)) do
+    throw (IO.userError "older import daemon did not stop")
+  if ← Os.Shell.alive shellPid then
+    Os.Shell.kill shellPid 9
+  let resumed ← f.resume pane.name
+  let again ← f.info pane.name "label.description"
+  let window ← f.info pane.name "label.tmux.window-title"
+  return described == some "Old window" && has row "Old window" && cleared == 0 && after.isNone &&
+      saved &&
+      resumed &&
+      again.isNone &&
+      window == some "Old window"
+
 private def publication (f : Fixture) (kind : String) : IO Bool := do
   f.seed "native" (f.root / "home").toString
   let target := f.root / "out" / "kept"
@@ -1117,6 +1189,8 @@ def runWith (binary : String) : IO UInt32 := do
         ("export observes a live cwd change instead of its startup directory", liveCwd),
         ("native identities remain exact and preserve dot, plus and UTF8 cwd in a second state dir",
           nativeRoundtrip),
+        ("a session an older import saved without a description reads with the import's, and a clear of it lasts",
+          olderImport),
         ("export reads the changed checkpoint cwd after last detach and daemon crash",
           resumableCwd),
         ("export preserves an existing destination with no temporary leak", fun f =>
