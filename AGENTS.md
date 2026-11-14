@@ -150,6 +150,15 @@ size: Lean erases proofs regardless of file placement.
   alternative private enforces it. IO behavior is tested, not proved. Start behavioral
   fixes with a failing check and verify that new assertions detect a deliberate break;
   a check of a failure or cleanup path also asserts that the path was reached.
+- One signal, one meaning: every signal that crosses linger's boundary means what its standard
+  says, and linger gives none a meaning of its own. That covers a sequence a program writes
+  (ECMA-48 and the xterm, OSC 9, 52, 133 and 777 conventions), a key a person presses (readline
+  and fzf), a variable (no-color.org's NO_COLOR, `TERM=dumb`) and an exit status (128 + N for
+  signal N; 124 to 127 as `timeout` and `env` use them; 130 for a cancelled chooser, as fzf
+  uses it). A standard signal that reports something linger tells, such as an ending or a
+  request for attention, is told as its standard means it. Where no standard covers what linger
+  must say, linger's own word keeps one meaning: a status glyph or a porcelain name never takes
+  a second subject.
 - Read SHELL, HOME for remote hosts and for a resume, and LINGER_NO_DETACH_KEY once, and
   NO_COLOR and TERM once for each of `ls`, `tmux ls` and the chooser, into the pure policies of
   `Linger/Os/CoreCode/Env.lean`, which `scripts/gates.sh` ties to each read, and run every
