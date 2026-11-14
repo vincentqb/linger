@@ -23,7 +23,7 @@ as `input` frames (watching for the detach key), write `output` frames
 to stdout, resize on terminal size change (checked each poll round), and
 report detach, child exit, a saved session, daemon refusal, transport loss, or a signal that
 ended it distinctly. SIGTERM, SIGHUP and SIGINT (`Os.Shell.handbackSignals`) end it as a detach
-does, handing the terminal back first.
+does, handing the terminal back first, and it reports which of them came.
 
 Detach key: `ctrl-\` (0x1C); set `LINGER_NO_DETACH_KEY` to disable it for writable attach.
 -/
@@ -201,176 +201,178 @@ inductive Outcome where
   | refused (msg : String)
   /-- The socket closed or its framing became invalid before an outcome. -/
   | lost (why : String)
-  /-- A signal ended the client, which handed the terminal back first. -/
-  | interrupted
+  /-- The signal with this number ended the client, which handed the terminal back first. -/
+  | stopped (signal : UInt8)
   deriving Repr, Inhabited
 
 /-- A fixed checkpoint view. Redraw from the original snapshot on resize;
 discard input except the detach key. The title shows `status`, the saved session's.
 Ownership was released after loading, so this viewer cannot block another process from
-resuming the session. A signal of `handbackSignals` ends it as the detach key does. -/
+resuming the session. A signal of `handbackSignals` ends it as the detach key does, and it answers
+`stopped` with the first that came, even during the handback (`watching`). -/
 def viewSaved (name : String) (snapshot : Terminal.Vt.Vt) (status : Linger.Display.Status.Status) :
-    IO Outcome := do
-  let stops ← watch handbackSignals
-  let saved ← termRaw stdinFd
-  try
-    let fds := #[stdinFd]
-    let events := #[POLLIN]
-    let mut lastSize : Option (UInt32 × UInt32) := none
-    while true do
-      let size ← winsizeGet stdinFd
-      if lastSize != some size then
-        let cols := if size.1 == 0 then snapshot.colCount else size.1.toNat
-        let rows := if size.2 == 0 then snapshot.rowCount else size.2.toNat
-        let view :=
-          if snapshot.colCount == cols && snapshot.rowCount == rows then snapshot
-          else snapshot.resize cols rows
-        let mut repaint := Terminal.Replay.start view
-        repeat
-          match Terminal.Replay.next 65536 repaint with
-          | none =>
-            break
-          | some (bytes, next) =>
-            if !bytes.isEmpty then
-              writeAll stdoutFd (ByteArray.mk bytes.toArray)
-            repaint := next
-        let title :=
-          Linger.Display.Title.compose name view.windowTitle
-            (String.singleton (Linger.Display.Status.icon status)) Terminal.Title.maxChars
-        writeAll stdoutFd (ByteArray.mk (Terminal.Title.update view title).toArray)
-        lastSize := some size
-      let ready ← poll fds events 200
-      if ← stops.heard then
-        return .interrupted
-      if ready[0]! &&& POLLNVAL != 0 then
-        throw (IO.userError "viewer input descriptor became invalid")
-      if ready[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
-        match ← read stdinFd 65536 with
-        | none =>
-          return .detached
-        | some bytes =>
-          if (splitDetach bytes true).2 then
-            return .detached
-    return .detached
-  finally
-    try
-      writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
-    finally
-      termRestore stdinFd saved
-      stops.stop
-
-/-- One attach conversation; it owns the socket. `sample` computes the title's
-attention summary on its own task, one second after the previous sample completed;
-a failed sample shows the unknown icon. A signal of `handbackSignals` ends it as a detach does,
-the terminal handed back on the same path, and it answers `interrupted`. -/
-private def converse (name : String) (fd : UInt32) (sample : IO String) (readOnly : Bool)
-    (pending : IO.Ref (Option (Task (Except IO.Error String)))) : IO Outcome := do
-  let stops ← watch handbackSignals
-  try
-    let detachEnabled := Linger.Os.Env.detachEnabled readOnly (← IO.getEnv "LINGER_NO_DETACH_KEY")
-    -- the rights travel as the mode, and the size, 0×0 for a terminal that has none yet, as
-    -- itself: a writable client types whatever its size
-    let mode : Linger.Session.Mode := if readOnly then .readOnly else .writable
-    let (cols, rows) ← winsizeGet stdinFd
-    sendMsg fd (.attach mode cols rows)
+    IO Outcome :=
+  watching handbackSignals Outcome.stopped fun stops => do
     let saved ← termRaw stdinFd
-    let mut lastSize := (cols, rows)
-    let mut dec : Decoder := {}
-    let mut result : Outcome := .detached
-    let mut leaving := false
-    let mut nextSummary : Nat := 0
-    let mut summary := ""
-    let mut observer := Terminal.Vt.Vt.init 1 1
-    let mut receivedOutput := false
-    let mut titleDirty := false
     try
-      while !leaving do
-        if let some task← pending.get then
-          if ← IO.hasFinished task then
-            pending.set none
-            let fresh :=
-              match ← IO.wait task with
-              | .ok text => text
-              | .error _ => String.singleton (Linger.Display.Status.icon .unknown)
-            titleDirty := titleDirty || fresh != summary
-            summary := fresh
-            nextSummary := (← monotonicMs) + 1000
-        if (← pending.get).isNone && (← monotonicMs) ≥ nextSummary then
-          pending.set (some (← IO.asTask sample Task.Priority.dedicated))
-        let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] 200
-        if ← stops.heard then
-          result := .interrupted
-          leaving := true
-          continue
+      let fds := #[stdinFd]
+      let events := #[POLLIN]
+      let mut lastSize : Option (UInt32 × UInt32) := none
+      while true do
         let size ← winsizeGet stdinFd
-        if size != lastSize && !readOnly then
-          lastSize := size
-          sendMsg fd (.resize size.1 size.2)
-        if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
+        if lastSize != some size then
+          let cols := if size.1 == 0 then snapshot.colCount else size.1.toNat
+          let rows := if size.2 == 0 then snapshot.rowCount else size.2.toNat
+          let view :=
+            if snapshot.colCount == cols && snapshot.rowCount == rows then snapshot
+            else snapshot.resize cols rows
+          let mut repaint := Terminal.Replay.start view
+          repeat
+            match Terminal.Replay.next 65536 repaint with
+            | none =>
+              break
+            | some (bytes, next) =>
+              if !bytes.isEmpty then
+                writeAll stdoutFd (ByteArray.mk bytes.toArray)
+              repaint := next
+          let title :=
+            Linger.Display.Title.compose name view.windowTitle
+              (String.singleton (Linger.Display.Status.icon status)) Terminal.Title.maxChars
+          writeAll stdoutFd (ByteArray.mk (Terminal.Title.update view title).toArray)
+          lastSize := some size
+        let ready ← poll fds events 200
+        if let some signal← stops.came then
+          return .stopped signal
+        if ready[0]! &&& POLLNVAL != 0 then
+          throw (IO.userError "viewer input descriptor became invalid")
+        if ready[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
           match ← read stdinFd 65536 with
           | none =>
-            leaving := true
-          | some bs =>
-            if !bs.isEmpty then
-              let (out, detach) := splitDetach bs detachEnabled
-              if !out.isEmpty && !readOnly then
-                sendMsg fd (.input out.toList)
-              if detach then
-                leaving := true
-        if revs[1]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
-          match ← read fd 65536 with
-          | none =>
-            result := .lost "connection lost"
-            leaving := true
-          | some bs =>
-            if !bs.isEmpty then
-              let (dec', msgs) := dec.feed bs.toList
-              dec := dec'
-              if dec.errored then
-                result := .lost "invalid response from daemon"
-                leaving := true
-              else
-                for m in msgs do
-                  if leaving then
-                    continue
-                  match m with
-                  | .output payload =>
-                    writeAll stdoutFd (ByteArray.mk payload.toArray)
-                    observer := observer.observe payload
-                    receivedOutput := true
-                    -- Reassert even if the application repeats the same OSC title.
-                    titleDirty := true
-                  | .ended outcome =>
-                    result := .ended (.outcome outcome)
-                    leaving := true
-                  | .exited status =>
-                    result := .ended (.status status)
-                    leaving := true
-                  | .saved signal =>
-                    result := .ended (.saved signal)
-                    leaving := true
-                  | .err msg =>
-                    result := .refused (replyText "attach refused" msg)
-                    leaving := true
-                  | _ =>
-                    pure ()
-        if receivedOutput && titleDirty && !leaving then
-          let title :=
-            Linger.Display.Title.compose name observer.windowTitle summary Terminal.Title.maxChars
-          let bytes := Terminal.Title.update observer title
-          if !bytes.isEmpty then
-            writeAll stdoutFd (ByteArray.mk bytes.toArray)
-            titleDirty := false
+            return .detached
+          | some bytes =>
+            if (splitDetach bytes true).2 then
+              return .detached
+      return .detached
     finally
-      -- These cleanups are nested, not sequential: a broken stdout must not
-      -- prevent termios restoration, and neither failure may leak the socket.
       try
         writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
       finally
         termRestore stdinFd saved
-    return result
+
+/-- One attach conversation; it owns the socket. `sample` computes the title's
+attention summary on its own task, one second after the previous sample completed;
+a failed sample shows the unknown icon. A signal of `handbackSignals` ends it as a detach does,
+the terminal handed back on the same path, and it answers `stopped` with the first that came,
+even during the handback (`watching`). -/
+private def converse (name : String) (fd : UInt32) (sample : IO String) (readOnly : Bool)
+    (pending : IO.Ref (Option (Task (Except IO.Error String)))) : IO Outcome := do
+  try
+    watching handbackSignals Outcome.stopped fun stops => do
+        let detachEnabled :=
+          Linger.Os.Env.detachEnabled readOnly (← IO.getEnv "LINGER_NO_DETACH_KEY")
+        -- the rights travel as the mode, and the size, 0×0 for a terminal that has none yet, as
+        -- itself: a writable client types whatever its size
+        let mode : Linger.Session.Mode := if readOnly then .readOnly else .writable
+        let (cols, rows) ← winsizeGet stdinFd
+        sendMsg fd (.attach mode cols rows)
+        let saved ← termRaw stdinFd
+        let mut lastSize := (cols, rows)
+        let mut dec : Decoder := {}
+        let mut result : Outcome := .detached
+        let mut leaving := false
+        let mut nextSummary : Nat := 0
+        let mut summary := ""
+        let mut observer := Terminal.Vt.Vt.init 1 1
+        let mut receivedOutput := false
+        let mut titleDirty := false
+        try
+          while !leaving do
+            if let some task← pending.get then
+              if ← IO.hasFinished task then
+                pending.set none
+                let fresh :=
+                  match ← IO.wait task with
+                  | .ok text => text
+                  | .error _ => String.singleton (Linger.Display.Status.icon .unknown)
+                titleDirty := titleDirty || fresh != summary
+                summary := fresh
+                nextSummary := (← monotonicMs) + 1000
+            if (← pending.get).isNone && (← monotonicMs) ≥ nextSummary then
+              pending.set (some (← IO.asTask sample Task.Priority.dedicated))
+            let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] 200
+            if let some signal← stops.came then
+              result := .stopped signal
+              leaving := true
+              continue
+            let size ← winsizeGet stdinFd
+            if size != lastSize && !readOnly then
+              lastSize := size
+              sendMsg fd (.resize size.1 size.2)
+            if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
+              match ← read stdinFd 65536 with
+              | none =>
+                leaving := true
+              | some bs =>
+                if !bs.isEmpty then
+                  let (out, detach) := splitDetach bs detachEnabled
+                  if !out.isEmpty && !readOnly then
+                    sendMsg fd (.input out.toList)
+                  if detach then
+                    leaving := true
+            if revs[1]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
+              match ← read fd 65536 with
+              | none =>
+                result := .lost "connection lost"
+                leaving := true
+              | some bs =>
+                if !bs.isEmpty then
+                  let (dec', msgs) := dec.feed bs.toList
+                  dec := dec'
+                  if dec.errored then
+                    result := .lost "invalid response from daemon"
+                    leaving := true
+                  else
+                    for m in msgs do
+                      if leaving then
+                        continue
+                      match m with
+                      | .output payload =>
+                        writeAll stdoutFd (ByteArray.mk payload.toArray)
+                        observer := observer.observe payload
+                        receivedOutput := true
+                        -- Reassert even if the application repeats the same OSC title.
+                        titleDirty := true
+                      | .ended outcome =>
+                        result := .ended (.outcome outcome)
+                        leaving := true
+                      | .exited status =>
+                        result := .ended (.status status)
+                        leaving := true
+                      | .saved signal =>
+                        result := .ended (.saved signal)
+                        leaving := true
+                      | .err msg =>
+                        result := .refused (replyText "attach refused" msg)
+                        leaving := true
+                      | _ =>
+                        pure ()
+            if receivedOutput && titleDirty && !leaving then
+              let title :=
+                Linger.Display.Title.compose name observer.windowTitle summary
+                  Terminal.Title.maxChars
+              let bytes := Terminal.Title.update observer title
+              if !bytes.isEmpty then
+                writeAll stdoutFd (ByteArray.mk bytes.toArray)
+                titleDirty := false
+        finally
+          -- These cleanups are nested, not sequential: a broken stdout must not
+          -- prevent termios restoration, and neither failure may leak the socket.
+          try
+            writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
+          finally
+            termRestore stdinFd saved
+        return result
   finally
-    stops.stop
     close fd
 
 /-- Interactive attach. `readOnly` attaches read-only: output mirrors, keyboard is not

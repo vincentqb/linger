@@ -6,24 +6,29 @@ import all Linger.Os.CoreCode.Answer
 
 /-! # The exit statuses
 
-Each of linger's answers has its documented code, a program's status passes through, help lists
-each of linger's answers once, and an exit status read back gives an answer with that status. -/
+Each of linger's answers has its documented code, a signal's status says which signal, a
+program's status passes through, help lists each of linger's answers once, and an exit status
+read back gives an answer with that status. -/
 
 namespace Linger.Os.Answer
 
-/-- **Each answer has its documented code**: a shell's conventions for linger's own, and the
-status itself for a program's. -/
-theorem code_documented (status : UInt32) :
+/-- **Each answer has its documented code**: a shell's conventions for linger's own, 128 plus the
+signal's number for a signal's, as a shell reports a program that signal ended, and the status
+itself for a program's. -/
+theorem code_documented (status : UInt32) (signal : UInt8) :
     code .done = 0 ∧
       code .notDone = 1 ∧
       code .usage = 2 ∧
       code .timedOut = 124 ∧
       code .failed = 125 ∧
       code .cannotRun = 126 ∧
-      code .notFound = 127 ∧ code .interrupted = 130 ∧ code (.program status) = status := by
+      code .notFound = 127 ∧
+      code .cancelled = 130 ∧
+      code (.stopped signal) = 128 + signal.toUInt32 ∧
+      code (.saved signal) = 128 + signal.toUInt32 ∧ code (.program status) = status := by
   simp [code]
 
-/-- **Help lists each of linger's answers once**, and no program's status. -/
+/-- **Help lists each of linger's answers once**, and no status a signal or a program gives. -/
 theorem listed_once : listed.Nodup ∧ ∀ a, a ∈ listed ↔ a.Own := by
   refine ⟨by decide, fun a => ?_⟩
   cases a <;> simp [listed, Answer.Own]

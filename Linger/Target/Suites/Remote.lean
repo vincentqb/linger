@@ -304,6 +304,25 @@ private def discoveryChecks (e : Env) : IO Unit := do
   finally
     cleanupDiscovery root
     chooser.bye (sendDetach := false)
+  -- A signal that stops `ls -r` while a host stalls retires its transports' groups, and then the
+  -- signal ends the listing, as it ends a program that does not catch it, so its caller sees the
+  -- signal itself.
+  let (state, root, path) ← discoverySetup e "signal"
+  let listing ←
+    IO.Process.spawn
+        { cmd := e.bin, args := #["ls", "--porcelain", "-r", "stall-signal"],
+          env := state.procEnv ++ #[("PATH", some path)], stdin := .null, stdout := .null,
+          stderr := .null }
+  try
+    let ready ← waitFor patienceMs (System.FilePath.pathExists s!"{root}/stall-signal.leaf")
+    Os.Shell.kill listing.pid 15
+    let ended ← endingOf listing.pid patienceMs
+    let stopped ← waitFor patienceMs (discoveryGone root "stall-signal")
+    expect (ready && ended == some (.signaled 15) && stopped)
+        s!"SIGTERM to ls -r retires its SSH descendants and then ends it ({repr ended})"
+  finally
+    cleanupDiscovery root
+    reapOrKill listing 0
 
 /-- The discovery checks alone, as `suites remote discovery` runs them. -/
 def runDiscovery : IO UInt32 := Env.suite "discovery" discoveryChecks

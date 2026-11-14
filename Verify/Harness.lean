@@ -374,6 +374,27 @@ def Client.reap (c : Client) (ms : Nat := 5000) : IO Int64 := do
       IO.sleep 20
   return status
 
+/-- How `pid`, a child of this process, ended, once it has within `ms`: its exit code, or the
+signal that killed it, which the status a shell reports, as `Client.reap` gives it, cannot tell
+from an exit with 128 plus the signal's number. `none` when it still runs at the deadline or is
+not ours to reap. It reaps the child. -/
+def endingOf (pid : UInt32) (ms : Nat := 5000) : IO (Option Reaped) := do
+  let ended ← IO.mkRef (none : Option Reaped)
+  let _ ←
+    waitFor ms do
+        match ← reapNohang pid with
+        | .running =>
+          return false
+        | .unreapable =>
+          return true
+        | how =>
+          ended.set (some how)
+          return true
+  ended.get
+
+/-- `endingOf` the client's process. -/
+def Client.ending (c : Client) (ms : Nat := 5000) : IO (Option Reaped) := endingOf c.pid ms
+
 /-- Retire a client: detach (unless it is already gone), close, reap. Never
 raises — a suite's cleanup must not mask the failure that got it here. -/
 def Client.bye (c : Client) (sendDetach : Bool := true) : IO Unit := do

@@ -7,10 +7,11 @@ import all Linger.Session.CoreCode
 
 /-! # What `wait` answers
 
-An ending the daemon or the end record tells is the answer, `interrupted` for a session a signal
-to its daemon saved; `wait` could not find out only when the program's ending is unknown or the
-name stays held, with no daemon answering, for `heldNameMs` from the look that first found it so;
-until then it looks again, keeping when that was; and its patience covers a daemon's ending. -/
+An ending the daemon or the end record tells is the answer, `saved` with its signal for a session
+a signal to its daemon saved; `wait` could not find out only when the program's ending is unknown
+or the name stays held, with no daemon answering, for `heldNameMs` from the look that first found
+it so; until then it looks again, keeping when that was; and its patience covers a daemon's
+ending. -/
 
 namespace Linger.App.Wait
 
@@ -19,9 +20,10 @@ theorem wait_ending (deadline heldSince : Option Nat) (now : Nat) (e : Linger.Se
     decide deadline heldSince now (.ended e) = .answer e.answer ∧
       decide deadline heldSince now (.recorded (some e)) = .answer e.answer := ⟨rfl, rfl⟩
 
-/-- A session a signal to its daemon saved answers `interrupted`, never a status of its program. -/
-theorem saved_interrupted (signal : UInt8) :
-    (Linger.Session.Ending.saved signal).answer = .interrupted := rfl
+/-- A session a signal to its daemon saved answers `saved` with that signal, never a status of its
+program. -/
+theorem saved_answer (signal : UInt8) :
+    (Linger.Session.Ending.saved signal).answer = .saved signal := rfl
 
 /-- How long `wait`'s patience for a held name is. -/
 theorem heldNameMs_eq : heldNameMs = 8000 := rfl

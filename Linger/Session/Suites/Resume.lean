@@ -446,10 +446,11 @@ private def signalChecks (e : Env) : IO Unit := do
       (record == some (Linger.Session.Record.encode (.saved 15)) && status == Status.resumable &&
         says &&
         savedBy == some "15" &&
-        waitRc == 130)
+        waitRc == 143)
       s!"a session a signal saved says so in its end record, lists as resumable, saved by the \
-        signal, and info and wait say so ({Linger.Display.Status.name status}, saved={savedBy}, \
-        rc={waitRc}, {waitErr.trimAscii.toString})"
+        signal, and info says so, and wait answers that signal's status, 143 for SIGTERM \
+        ({Linger.Display.Status.name status}, saved={savedBy}, rc={waitRc}, \
+        {waitErr.trimAscii.toString})"
   let (resumedRc, _, _) ← e.cli #["resume", name]
   let restored ←
     waitFor patienceMs do
@@ -463,6 +464,32 @@ private def signalChecks (e : Env) : IO Unit := do
   expect shaped "resume restores the cursor shape a signal saved"
   viewer.bye
   e.killAll #[name]
+  -- a client attached when a signal stops the daemon tells that signal as its session's ending:
+  -- it hands its terminal back and exits with the signal's status, as `wait` answers, and the
+  -- signal, which never reached the client, does not end it
+  let attached := "stopped-attached"
+  let _ ← e.typeIn attached #["echo attached-$((40+2))"]
+  let client ← e.spawn #["attach", attached] 80 24
+  let seen ← IO.mkRef ByteArray.empty
+  let up ← client.awaitText seen (hasText · "attached-42")
+  let stopped ← e.daemonPid attached
+  if let some pid := stopped then
+    Os.Shell.kill pid 15
+  let ended ← client.ending patienceMs
+  expect (up && stopped.isSome && ended == some (.exited 143))
+      s!"a client attached when SIGTERM saves its session exits 143, that signal's status \
+        ({repr ended})"
+  client.bye (sendDetach := false)
+  -- the daemon tells its clients before it saves and gives the name up, and `kill` discards the
+  -- saved session only once it has
+  let _ ←
+    waitFor patienceMs do
+        match stopped with
+        | some pid =>
+          return !(← Os.Shell.alive pid)
+        | none =>
+          return true
+  e.killAll #[attached]
 
 /-- The resume suite: checkpoint, crash and restore, and where a resume runs. -/
 def run : IO UInt32 :=

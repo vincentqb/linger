@@ -8,13 +8,15 @@ public section
 
 **One vocabulary.** Every command answers with an `Answer` and exits with its code (`code`), the
 session commands, the selector and the tmux interchange alike: each of linger's own answers has
-one code, the one `linger help` lists for it (`legend`), and a program's status passes through.
-Help lists each of linger's answers once (`listed`). -/
+one code, the one `linger help` lists for it (`legend`), a signal's status says which signal, as
+a shell reports it, and a program's status passes through. Help lists each of linger's answers
+once (`listed`). -/
 
 namespace Linger.Os.Answer
 
 /-- The exit status that gives an answer: a shell's conventions, as `timeout(1)` and `env`
-follow them, for linger's own answers, and the program's status for a program's. -/
+follow them, for linger's own answers, 128 plus the signal's number, as a shell reports a program
+that signal ended, for a signal's, and the program's status for a program's. -/
 def code : Answer → UInt32
   | .done => 0
   | .notDone => 1
@@ -23,12 +25,14 @@ def code : Answer → UInt32
   | .failed => 125
   | .cannotRun => 126
   | .notFound => 127
-  | .interrupted => 130
+  | .cancelled => 130
+  | .stopped signal => 128 + signal.toUInt32
+  | .saved signal => 128 + signal.toUInt32
   | .program status => status
 
 /-- linger's own answers, in the order `linger help` lists them. -/
 def listed : List Answer :=
-  [.done, .notDone, .usage, .timedOut, .failed, .cannotRun, .notFound, .interrupted]
+  [.done, .notDone, .usage, .timedOut, .failed, .cannotRun, .notFound, .cancelled]
 
 /-- What an answer means, in the words `linger help` gives it. -/
 def meaning : Answer → String
@@ -39,7 +43,9 @@ def meaning : Answer → String
   | .failed => "linger failed"
   | .cannotRun => "cannot run"
   | .notFound => "not found"
-  | .interrupted => "interrupted"
+  | .cancelled => "cancelled"
+  | .stopped _ => "stopped by its signal"
+  | .saved _ => "saved by its daemon's signal"
   | .program _ => "the program's own"
 
 /-- The lines `linger help` prints for linger's own answers: one per answer, its code and then

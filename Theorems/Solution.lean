@@ -1656,7 +1656,7 @@ theorem held_covers_ending :
 theorem held_covers_ending_rejects_drain :
     ¬Session.drainTimeoutMs + (Session.ending.map (·.2)).sum ≤ Session.drainTimeoutMs := by decide
 
-theorem code_documented (status : UInt32) :
+theorem code_documented (status : UInt32) (signal : UInt8) :
     Os.Answer.code .done = 0 ∧
       Os.Answer.code .notDone = 1 ∧
       Os.Answer.code .usage = 2 ∧
@@ -1664,11 +1664,13 @@ theorem code_documented (status : UInt32) :
       Os.Answer.code .failed = 125 ∧
       Os.Answer.code .cannotRun = 126 ∧
       Os.Answer.code .notFound = 127 ∧
-      Os.Answer.code .interrupted = 130 ∧ Os.Answer.code (.program status) = status :=
-  Os.Answer.code_documented status
+      Os.Answer.code .cancelled = 130 ∧
+      Os.Answer.code (.stopped signal) = 128 + signal.toUInt32 ∧
+      Os.Answer.code (.saved signal) = 128 + signal.toUInt32 ∧
+      Os.Answer.code (.program status) = status := Os.Answer.code_documented status signal
 
 theorem code_documented_rejects_zero :
-    ¬∀ (status : UInt32),
+    ¬∀ (status : UInt32) (signal : UInt8),
         (fun (_ : Os.Answer) => (0 : UInt32)) .done = 0 ∧
           (fun (_ : Os.Answer) => (0 : UInt32)) .notDone = 1 ∧
           (fun (_ : Os.Answer) => (0 : UInt32)) .usage = 2 ∧
@@ -1676,10 +1678,29 @@ theorem code_documented_rejects_zero :
           (fun (_ : Os.Answer) => (0 : UInt32)) .failed = 125 ∧
           (fun (_ : Os.Answer) => (0 : UInt32)) .cannotRun = 126 ∧
           (fun (_ : Os.Answer) => (0 : UInt32)) .notFound = 127 ∧
-          (fun (_ : Os.Answer) => (0 : UInt32)) .interrupted = 130 ∧
+          (fun (_ : Os.Answer) => (0 : UInt32)) .cancelled = 130 ∧
+          (fun (_ : Os.Answer) => (0 : UInt32)) (.stopped signal) = 128 + signal.toUInt32 ∧
+          (fun (_ : Os.Answer) => (0 : UInt32)) (.saved signal) = 128 + signal.toUInt32 ∧
           (fun (_ : Os.Answer) => (0 : UInt32)) (.program status) = status := by
   intro h
-  exact absurd (h 0).2.1 (by decide)
+  exact absurd (h 0 0).2.1 (by decide)
+
+theorem code_documented_rejects_lumped :
+    ¬∀ (status : UInt32) (signal : UInt8),
+        Os.Answer.lumped .done = 0 ∧
+          Os.Answer.lumped .notDone = 1 ∧
+          Os.Answer.lumped .usage = 2 ∧
+          Os.Answer.lumped .timedOut = 124 ∧
+          Os.Answer.lumped .failed = 125 ∧
+          Os.Answer.lumped .cannotRun = 126 ∧
+          Os.Answer.lumped .notFound = 127 ∧
+          Os.Answer.lumped .cancelled = 130 ∧
+          Os.Answer.lumped (.stopped signal) = 128 + signal.toUInt32 ∧
+          Os.Answer.lumped (.saved signal) = 128 + signal.toUInt32 ∧
+          Os.Answer.lumped (.program status) = status := by
+  intro h
+  -- SIGTERM's status is 143, which the rule that answered 130 for every signal does not give
+  exact absurd (h 0 15).2.2.2.2.2.2.2.2.1 (by decide)
 
 theorem listed_once : Os.Answer.listed.Nodup ∧ ∀ a, a ∈ Os.Answer.listed ↔ a.Own :=
   Os.Answer.listed_once
@@ -1688,6 +1709,31 @@ theorem listed_once_rejects_empty :
     ¬(([] : List Os.Answer).Nodup ∧ ∀ a, a ∈ ([] : List Os.Answer) ↔ a.Own) := by
   intro h
   exact absurd ((h.2 .done).mpr trivial) List.not_mem_nil
+
+theorem listed_once_rejects_signal :
+    ¬(([.done, .notDone, .usage, .timedOut, .failed, .cannotRun, .notFound, .stopped 2] :
+            List Os.Answer).Nodup ∧
+        ∀ a,
+          a ∈
+              ([.done, .notDone, .usage, .timedOut, .failed, .cannotRun, .notFound, .stopped 2] :
+                List Os.Answer) ↔
+            a.Own) := by
+  intro h
+  -- the list gives SIGINT's status as one of linger's own answers, which no signal's is
+  exact (h.2 (.stopped 2)).mp (by decide)
+
+theorem signal_status (signal : UInt8) :
+    Os.Answer.code (.stopped signal) = (Outcome.signaled signal).status ∧
+      Os.Answer.code (Ending.saved signal).answer = (Outcome.signaled signal).status :=
+  ⟨(Os.Answer.code_documented 0 signal).2.2.2.2.2.2.2.2.1,
+    (Os.Answer.code_documented 0 signal).2.2.2.2.2.2.2.2.2.1⟩
+
+theorem signal_status_rejects_lumped :
+    ¬∀ (signal : UInt8),
+        Os.Answer.lumped (.stopped signal) = (Outcome.signaled signal).status ∧
+          Os.Answer.lumped (Ending.saved signal).answer = (Outcome.signaled signal).status := by
+  intro h
+  exact absurd (h 15).1 (by decide)
 
 theorem outcomeFields_injective (o₁ o₂ : Outcome)
     (h : Session.outcomeFields o₁ = Session.outcomeFields o₂) : o₁ = o₂ :=

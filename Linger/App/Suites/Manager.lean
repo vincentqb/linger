@@ -2,6 +2,7 @@ module
 
 import Linger.Os.CoreCode.Answer
 import Linger.Selector.WorldCode
+import Linger.Selector.CoreCode.Picker
 import Linger.Import.WorldCode
 import Linger.Display.CoreCode.Listing
 import Linger.Display.CoreCode.View
@@ -1136,17 +1137,19 @@ private def inputChecks (e : Env) : IO Unit := do
           return quiet && waiting && has screen "  › B 2" && has screen "  ▸ ? Bravo" &&
               (← restored s 130) &&
               (← f.visits) == listed
-  -- a signal that ends the picker leaves it as a cancellation does
+  -- a signal that ends the picker leaves it as a cancellation does, and its answer says which
+  -- signal: 128 plus its number, the status a shell reports for a program that signal ended
   for (slug, sig) in [("sigterm", (15 : UInt32)), ("sighup", 1), ("sigint", 2)] do
     check e slug
-        s!"a signal to the picker restores termios and display modes and exits 130 ({slug})"
+        s!"a signal to the picker restores termios and display modes and answers {128 + sig} \
+          ({slug})"
         fun f =>
         withPrompt f.picker #[] fun s => do
           let pid ← numberFile (f.root / "manager-pid")
           if pid == 0 then
             return false
           kill (UInt32.ofNat pid) sig
-          return ← restored s 130
+          return ← restored s (128 + sig.toNat)
   check e "split-arrow" "picker probe decodes an arrow split between reads" fun f =>
       withPrompt f.picker #[] fun s => do
         s.text "\x1b["
@@ -2543,6 +2546,52 @@ private def savedChecks (e : Env) : IO Unit := do
               s!"repointed-catalog={changed}\nrefreshed={refreshed}\nterminal-restored={clean}\nnames={repr names}\n"
           return changed && refreshed && clean && names.isEmpty
 
+/-- Run `linger` itself, `f.manager`, with `args` on a terminal of its own, and once it shows
+`ready` send it `sig`: whether it showed `ready`, whether it then handed the terminal back with
+the picker's exit sequence, and how it ended, as `Client.ending` tells the signal itself from an
+exit with 128 plus its number, which the launcher's status cannot. -/
+private def stoppedBy (f : Fixture) (args : Array String) (ready : String) (sig : UInt32) :
+    IO (Bool × Bool × Option Reaped) := do
+  let env := f.env.map fun (key, value) => s!"{key}={value.getD ""}"
+  let (pid, fd) ← withLaunchLock <| spawnPty 80 12 "" f.manager args env
+  let c : Client := { pid, fd }
+  try
+    let shown ← IO.mkRef ByteArray.empty
+    let up ← c.awaitText shown (hasText · ready)
+    let mark := (← shown.get).size
+    kill pid sig
+    let handed ← c.awaitText shown (hasBytes · Linger.Selector.Picker.exitAnsi) (start := mark)
+    let ended ← c.ending patienceMs
+    IO.FS.writeFile (f.root / "signal-observation")
+        s!"ready={up}\nhanded-back={handed}\nended={repr ended}\n"
+    return (up, handed, ended)
+  finally
+    c.bye (sendDetach := false)
+
+/-- A signal that stops the chooser, `linger attach` alone, or the tmux browser, `linger tmux
+select`, ends it as a cancellation does, handing its terminal back, and then the signal ends the
+process, as it ends a program that does not catch it, so its caller sees the signal itself, which
+a shell reports as 128 plus its number: SIGTERM, as a logout sends, SIGHUP, as a closed window
+sends, and SIGINT. The tmux browser imports nothing. -/
+private def signalChecks (e : Env) : IO Unit := do
+  for (slug, sig) in [("sigterm", (15 : UInt32)), ("sighup", 1), ("sigint", 2)] do
+    check e s!"chooser-{slug}"
+        s!"a signal to linger's chooser hands its terminal back and then ends it ({slug})" fun f =>
+        do
+        let owned : Env := { e with dir := (f.root / "state").toString }
+        let f := { f with env := f.env.push ("LINGER_DIR", some owned.dir) }
+        let (up, handed, ended) ← stoppedBy f #["attach"] "Find or create a session" sig
+        return up && handed && ended == some (.signaled sig.toUInt8)
+    checkSaved e s!"signal-{slug}"
+        s!"a signal to the tmux browser hands its terminal back, imports nothing and then ends it \
+          ({slug})"
+        fun f _ => do
+        let save := f.root / "saved file"
+        IO.FS.writeFile save (savedPane "saved-first" f.root.toString)
+        let (up, handed, ended) ←
+          stoppedBy f #["tmux", "select", save.toString] "Find a saved pane" sig
+        return up && handed && ended == some (.signaled sig.toUInt8) && (← f.nativeNames).isEmpty
+
 /-- Start session `name` running a shell, and the session program probe in it, so Ctrl-C ends the
 probe and returns to the shell. -/
 private def startProgram (f : Fixture) (owned : Env) (name : String) : IO Bool := do
@@ -2747,7 +2796,7 @@ def run : IO UInt32 :=
         ("failure", failureChecks), ("input", inputChecks), ("display", displayChecks),
         ("status", statusChecks), ("fuzzy", fuzzyChecks), ("default", defaultChecks),
         ("real", realCheck), ("program", programChecks), ("saved", savedChecks),
-        ("color", colorChecks)]
+        ("color", colorChecks), ("signal", signalChecks)]
     let notes ← IO.mkRef (#[] : Array String)
     let timed (name : String) (checks : Env → IO Unit) : IO (String × Nat) := do
       let start ← monotonicMs

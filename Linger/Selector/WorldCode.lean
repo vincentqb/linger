@@ -34,9 +34,9 @@ inductive Choice where
   | cancel
   /-- A listing exited nonzero, with its exit status and standard error. -/
   | failed (status : UInt32) (stderr : String)
-  /-- A watched signal ended the visit, which handed the terminal back first, as a cancellation
-  does. -/
-  | interrupted
+  /-- A watched signal, with this number, ended the visit, which handed the terminal back first,
+  as a cancellation does. -/
+  | stopped (signal : UInt8)
 
 /-- Each listed target's status, read once per listing in one pass over its records: a name
 record starts a row, a blank record ends it, and its `status` record says its status, as
@@ -71,10 +71,10 @@ reported, and the header says how long before the latest listing that query star
 first frame, the first after a resize and the first after the refresh key, which clears and
 redraws the screen as Ctrl-L does in a line editor, paint every row; after that a change writes
 only the rows it changed (`Picker.update`). Native listings get a cooperative stop so they can
-retire the transports' isolated groups. Once `stopped` says a watched signal came, the visit ends
-on the cancellation's path, as `interrupted`. -/
+retire the transports' isolated groups. Once `heard` says which watched signal came, the visit
+ends on the cancellation's path, as `stopped` with that signal. -/
 def choose (executable : String) (save : Option String := none) (readOnly : Bool := false)
-    (stopped : IO Bool := pure false) : IO Choice := do
+    (heard : IO (Option UInt8) := pure none) : IO Choice := do
   let savedTmux := save.isSome
   unless (← stdinIsTty) && (← (← IO.getStdout).isTty) do
     throw (IO.userError "the picker needs terminal input and output")
@@ -131,8 +131,8 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
         size := current
         dirty := false
       let ready ← poll fds events 50
-      if ← stopped then
-        return .interrupted
+      if let some signal← heard then
+        return .stopped signal
       let bits := ready[0]!
       if bits &&& POLLNVAL != 0 then
         throw (IO.userError "picker input descriptor became invalid")
@@ -220,19 +220,21 @@ def attachArgs (target : String) (readOnly : Bool := false) : Array String :=
       Linger.Target.Remote.targetOperands target).toArray
 
 /-- Execute either selected row through attach, after terminal restoration. Every attach
-exit returns to a fresh listing; cancellation ends the manager, answering `interrupted`. The
+exit returns to a fresh listing; cancellation ends the manager, answering `cancelled`. The
 caller supplies one frozen absolute executable for all listing and attach children. A listing
 that fails ends the manager with the answer its exit status gives (`Answer.ofCode`). A signal of
-`handbackSignals` ends the manager with `interrupted`, as a cancellation does: a visit hands the
+`handbackSignals` ends the manager as a cancellation does, answering `stopped` with the first that
+came, even one that came while a visit handed the terminal back (`watching`): a visit hands the
 terminal back first, and an attach, which owns the terminal while it runs and hears the signals
 its terminal sends, first ends. -/
-def run (executable : String) (readOnly : Bool := false) : IO Linger.Os.Answer := do
-  let stops ← watch handbackSignals
-  try
+def run (executable : String) (readOnly : Bool := false) : IO Linger.Os.Answer :=
+  watching handbackSignals Linger.Os.Answer.stopped fun stops => do
     while true do
-      match ← choose executable (readOnly := readOnly) (stopped := stops.heard) with
-      | .cancel | .interrupted =>
-        return .interrupted
+      match ← choose executable (readOnly := readOnly) (heard := stops.came) with
+      | .cancel =>
+        return .cancelled
+      | .stopped signal =>
+        return .stopped signal
       | .failed status stderr =>
         IO.eprintln s!"linger: could not list sessions (exit {status})"
         if !stderr.isEmpty then
@@ -241,10 +243,8 @@ def run (executable : String) (readOnly : Bool := false) : IO Linger.Os.Answer :
       | .attach target _ =>
         let child ← IO.Process.spawn { cmd := executable, args := attachArgs target readOnly }
         discard child.wait
-        if ← stops.heard then
-          return .interrupted
+        if let some signal← stops.came then
+          return .stopped signal
     return .done
-  finally
-    stops.stop
 
 end Linger.Selector.Shell

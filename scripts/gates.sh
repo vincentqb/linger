@@ -436,7 +436,7 @@ import_closure Linger/Import/WorldCode.lean 'public import Linger.Os.CoreSpec;im
 import_closure Linger/Selector/WorldCode.lean \
   'public import Linger.Selector.CoreSpec;public import Linger.Os.CoreSpec;import Linger.Os.CoreCode.Answer;import Linger.Selector.CoreCode.Picker;import Os.WorldCode;import Linger.Target.CoreCode.Remote;import Terminal.CoreCode.Title;import Os.WorldCode.Command;import Linger.Display.CoreCode.View;import Std.Data.HashMap.Basic;import Linger.Display.CoreCode.Status;import Linger.Selector.CoreCode.Key;import Linger.Selector.CoreCode.Fetch;import Input.CoreCode;import Linger.Os.CoreCode.Env;'
 import_closure Linger/App/WorldCode/Main.lean \
-  'import Linger.Os.CoreCode.Answer;import Linger.App.WorldCode;import Linger.App.CoreCode.Entry;import Linger.Selector.WorldCode;import Linger.Import.WorldCode;'
+  'import Linger.Os.CoreCode.Answer;import Linger.App.WorldCode;import Linger.App.CoreCode.Entry;import Linger.Selector.WorldCode;import Linger.Import.WorldCode;import Os.WorldCode;'
 # `lean_lib Linger` builds the umbrella's closure, so this list is what `./lake build`
 # checks of the session library.
 import_closure Linger.lean "$(printf 'public import %s;' Linger.Session.CoreCode.Buf \
@@ -509,7 +509,10 @@ spec_imports_bad="$(module_imports 'Linger/*/CoreSpec*.lean' 'Linger/*/WorldSpec
 # keep its dispatch on the proved route; Linger.App.Suites.Manager,
 # Linger.Import.Suites.Recipes and Linger.Import.Suites.Interop exercise it in subprocesses.
 # Every route gives an answer, which `main` binds as one `Linger.Os.Answer`, so each executor
-# returns one, and the process exits only with that answer's code (`code_documented`).
+# returns one, and the process exits only with that answer's code (`code_documented`), but for
+# an answer a signal stopped, which ends the process by that signal, once its executor has handed
+# the terminal back, as a program that does not catch the signal ends (`Os.Shell.raiseSignal`),
+# and exits with the code only if the signal does not end it.
 # Fold layout whitespace for `main`'s small dispatch. Reuse the backtick-aware
 # matcher below, so quoted prose cannot stand in for these call sites.
 entry_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/WorldCode/Main.lean)"
@@ -519,7 +522,7 @@ for tie in \
   '[|] [.]tmux rest => Linger[.]Import[.]Shell[.]run [(]← IO[.]appPath[)][.]toString rest' \
   '[|] [.]session argv => Linger[.]App[.]Shell[.]main argv' \
   '[|] [.]malformed => IO[.]eprintln "linger: malformed encoded command line" pure [.]usage' \
-  'catch e => IO[.]eprintln s!"linger: [{]e[}]" pure [.]notDone return answer[.]code'; do
+  'catch e => IO[.]eprintln s!"linger: [{]e[}]" pure [.]notDone if let [.]stopped signal := answer then try Os[.]Shell[.]raiseSignal signal catch _ => pure [(][)] return answer[.]code'; do
   printf '%s\n' "$entry_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "entry point bypassed its proved route or fixed IO boundary: $tie"
 done
@@ -618,11 +621,11 @@ for tie in \
   'let value := if [[]"directory", "session", "window", "pane", "title", "command", "saved-command", "window-title"[]][.]contains key then value[.]quote else diagnostic value' \
   'Os[.]Shell[.]writeAll Os[.]Shell[.]stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor none rows[)][.]toArray[)]' \
   'let save ← readSave origin home file createPanes executable origin save[.]panes [(]readArchive save[.]path[)]' \
-  'let path ← savePath origin home file let stops ← Os[.]Shell[.]watch Os[.]Shell[.]handbackSignals try while true do match ← Linger[.]Selector[.]Shell[.]choose executable [(]some path[.]toString[)] [(]stopped := stops[.]heard[)] with' \
+  'let path ← savePath origin home file Os[.]Shell[.]watching Os[.]Shell[.]handbackSignals Linger[.]Os[.]Answer[.]stopped fun stops => do while true do match ← Linger[.]Selector[.]Shell[.]choose executable [(]some path[.]toString[)] [(]heard := stops[.]came[)] with' \
   '[|] [.]attach target displayed => unless displayed[.]candidates[.]contains target do throw [(]IO[.]userError "selected pane was absent from the displayed save"[)] let row := displayed[.]row target' \
   'let some dir := [(]row[.]lookup "directory"[)][.]bind fun value => [(]Lean[.]Syntax[.]decodeStrLit value[)][.]filter [(]·[.]quote == value[)] [|] throw [(]IO[.]userError "selected pane has no directory"[)]' \
   'let some pane := selectedPane target dir line details [|] throw [(]IO[.]userError "invalid selected pane"[)]' \
-  'createPanes executable origin [[]pane[]] archive let child ← IO[.]Process[.]spawn [{] cmd := executable, args := Linger[.]Selector[.]Shell[.]attachArgs pane[.]name, cwd := some [(]System[.]FilePath[.]mk pane[.]dir[)] [}] discard child[.]wait if ← stops[.]heard then return [.]interrupted' \
+  'createPanes executable origin [[]pane[]] archive let child ← IO[.]Process[.]spawn [{] cmd := executable, args := Linger[.]Selector[.]Shell[.]attachArgs pane[.]name, cwd := some [(]System[.]FilePath[.]mk pane[.]dir[)] [}] discard child[.]wait if let some signal[[:space:]]*← stops[.]came then return [.]stopped signal' \
   'let panes := panes[.]map [(]preparePane content panes[)]' \
   'let archive ← if [(]plan existing panes[)][.]isEmpty then pure none else archive for pane in plan existing panes do let contents ← capturedPane archive pane discard <[|] seedPane pane contents' \
   'preflight origin panes let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]] [}]'; do
@@ -712,10 +715,10 @@ for tie in \
   'nextListing := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]remoteDue [|][|] [(]← monotonicMs[)] ≥ nextListing[)] then full := savedTmux [|][|] remoteDue remoteDue := Linger[.]Selector[.]Picker[.]fetch remoteDue [.]list let args := if full then fullArgs else #[[]"ls", "--porcelain"[]] started ← monotonicMs pending[.]set [(]some [(]← Os[.]Shell[.]Command[.]start executable args[)][)] return [.]cancel finally' \
   'finally Os[.]Shell[.]Command[.]stop pending [(]if savedTmux then 0 else 1000[)]' \
   'let fullArgs := if savedTmux then #[[]"tmux", "ls", "--porcelain"[]] [+][+] save[.]toArray else #[[]"ls", "-r", "--porcelain"[]]' \
-  'match ← choose executable [(]readOnly := readOnly[)] [(]stopped := stops[.]heard[)] with' \
-  'let ready ← poll fds events 50 if ← stopped then return [.]interrupted' \
-  'IO Linger[.]Os[.]Answer := do let stops ← watch handbackSignals try while true do' \
-  'discard child[.]wait if ← stops[.]heard then return [.]interrupted return [.]done finally stops[.]stop' \
+  'match ← choose executable [(]readOnly := readOnly[)] [(]heard := stops[.]came[)] with' \
+  'let ready ← poll fds events 50 if let some signal[[:space:]]*← heard then return [.]stopped signal' \
+  'IO Linger[.]Os[.]Answer := watching handbackSignals Linger[.]Os[.]Answer[.]stopped fun stops => do while true do' \
+  'discard child[.]wait if let some signal[[:space:]]*← stops[.]came then return [.]stopped signal return [.]done' \
   'def attachArgs [(]target : String[)] [(]readOnly : Bool := false[)] : Array String := [(]"attach" :: [(]if readOnly then [[]"--read-only"[]] else [[][]][)] [+][+] Linger[.]Target[.]Remote[.]targetOperands target[)][.]toArray'; do
   printf '%s\n' "$picker_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "manager lost its selection, refresh, process ownership or attach contract: $tie"
@@ -823,15 +826,17 @@ for var in NO_COLOR TERM; do
 done
 # Discovery keeps bounded ownership until completion. Remote signal handlers
 # are installed before spawning the transports' isolated groups, so cancelling the chooser
-# reaches those groups through its listing helper. Each host's listing runs through its query
-# command, then the encoded words of `ls --porcelain` (`Remote.argv`). Linger.Target.Suites.Remote
-# checks overlap, output order, slot reuse, shared deadlines and descendant cleanup.
+# reaches those groups through its listing helper, and a signal that came before they stop, even
+# while the groups are retired, ends the listing with that signal's answer. Each host's listing
+# runs through its query command, then the encoded words of `ls --porcelain` (`Remote.argv`).
+# Linger.Target.Suites.Remote checks overlap, output order, slot reuse, shared deadlines,
+# descendant cleanup and the signal's ending.
 for tie in \
   'for signal in [[]Std[.]Async[.]Signal[.]sigterm, [.]sigint, [.]sighup[]] do let waiter ← Std[.]Async[.]Signal[.]Waiter[.]mk signal true try let task ← waiter[.]wait signals[.]modify [(]·[.]push [(]waiter, task[)][)] catch e => waiter[.]stop throw e let deadline := [(]← monotonicMs[)] [+] remoteQueryTimeoutMs' \
-  'for [(]_, signal[)] in ← signals[.]get do if [(]← signal[.]getState[)] == [.]finished then return none if [(]← monotonicMs[)] ≥ deadline then break' \
+  'while next < hosts[.]size [|][|] ![(]← jobs[.]get[)][.]isEmpty do if let some signal[[:space:]]*← [(][{] waiters := ← signals[.]get [}] : Watched[)][.]came then return [.]error signal if [(]← monotonicMs[)] ≥ deadline then break' \
   'while next < hosts[.]size && [(]← jobs[.]get[)][.]size < remoteQueryLimit && [(]← monotonicMs[)] < deadline do' \
   'if let cmd :: args := Linger[.]Target[.]Remote[.]argv hosts[[]index[]]![.]2 "ls" [[]"--porcelain"[]] then pending[.]set [(]some [(]← Command[.]start cmd args[.]toArray[)][)]' \
-  'finally for [(]_, pending[)] in ← jobs[.]get do try Command[.]stop pending catch _ => pure [(][)] for [(]waiter, _[)] in ← signals[.]get do waiter[.]stop' \
+  'finally for [(]_, pending[)] in ← jobs[.]get do try Command[.]stop pending catch _ => pure [(][)] for [(]waiter, _[)] in ← signals[.]get do waiter[.]stop if let some signal[[:space:]]*← [(][{] waiters := ← signals[.]get [}] : Watched[)][.]came then return [.]error signal return [.]ok listed' \
   'let task ← IO[.]asTask localRows Task[.]Priority[.]dedicated try let remote ← listRemotes remotes[.]toArray let locals ← IO[.]ofExcept [(]← IO[.]wait task[)] pure [(]locals, remote[)] finally discard <[|] IO[.]wait task'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "discovery lost its bounded task or process ownership: $tie"
@@ -858,19 +863,20 @@ for tie in \
   'while !leaving do if let some task[[:space:]]*← pending[.]get then if ← IO[.]hasFinished task then pending[.]set none let fresh := match ← IO[.]wait task with [|] [.]ok text => text [|] [.]error _ => String[.]singleton [(]Linger[.]Display[.]Status[.]icon [.]unknown[)] titleDirty := titleDirty [|][|] fresh != summary summary := fresh nextSummary := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextSummary then pending[.]set [(]some [(]← IO[.]asTask sample Task[.]Priority[.]dedicated[)][)] let revs ← poll #[[]stdinFd, fd[]] #[[]POLLIN, POLLIN[]] 200' \
   'writeAll stdoutFd [(]ByteArray[.]mk payload[.]toArray[)] observer := observer[.]observe payload receivedOutput := true' \
   'if receivedOutput && titleDirty && !leaving then let title := Linger[.]Display[.]Title[.]compose name observer[.]windowTitle summary Terminal[.]Title[.]maxChars let bytes := Terminal[.]Title[.]update observer title if !bytes[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] titleDirty := false' \
-  'try writeAll stdoutFd [(]ByteArray[.]mk Terminal[.]Render[.]leaveAnsi[.]toArray[)] finally termRestore stdinFd saved return result finally stops[.]stop close fd' \
+  'try writeAll stdoutFd [(]ByteArray[.]mk Terminal[.]Render[.]leaveAnsi[.]toArray[)] finally termRestore stdinFd saved return result finally close fd' \
   'def attach [(]name : String[)] [(]fd : UInt32[)] [(]sample : IO String[)] [(]readOnly : Bool := false[)] : IO Outcome := do let pending ← IO[.]mkRef [(]none : Option [(]Task [(]Except IO[.]Error String[)][)][)] try converse name fd sample readOnly pending finally if let some task[[:space:]]*← pending[.]get then discard <[|] IO[.]wait task'; do
   printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "attached title lost its observer, sampler or handback contract: $tie"
 done
 # SIGTERM, SIGHUP and SIGINT (`Os.Shell.handbackSignals`) end an attach, and a view of a saved
-# session, as a detach does: they are caught before raw mode, and the next poll round leaves the
-# loop, so the terminal is handed back on the same path. Linger.Session.Suites.Attach sends each.
+# session, as a detach does: they are caught before raw mode, the next poll round leaves the
+# loop, so the terminal is handed back on the same path, and the answer is the first that came,
+# even during the handback (`Os.Shell.watching`). Linger.Session.Suites.Attach sends each.
 for tie in \
-  'IO Outcome := do let stops ← watch handbackSignals try let detachEnabled' \
-  'let revs ← poll #[[]stdinFd, fd[]] #[[]POLLIN, POLLIN[]] 200 if ← stops[.]heard then result := [.]interrupted leaving := true continue' \
-  'IO Outcome := do let stops ← watch handbackSignals let saved ← termRaw stdinFd try' \
-  'let ready ← poll fds events 200 if ← stops[.]heard then return [.]interrupted'; do
+  'IO Outcome := do try watching handbackSignals Outcome[.]stopped fun stops => do let detachEnabled' \
+  'let revs ← poll #[[]stdinFd, fd[]] #[[]POLLIN, POLLIN[]] 200 if let some signal[[:space:]]*← stops[.]came then result := [.]stopped signal leaving := true continue' \
+  'IO Outcome := watching handbackSignals Outcome[.]stopped fun stops => do let saved ← termRaw stdinFd try' \
+  'let ready ← poll fds events 200 if let some signal[[:space:]]*← stops[.]came then return [.]stopped signal'; do
   printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "an attached client ends on a signal other than as a detach does: $tie"
 done

@@ -1372,26 +1372,33 @@ signal stopped its daemon, which never reads as an outcome or an unknown ending;
 session left while the program still ran answers that the ending is unknown, and only a name with no
 record answers nothing (`record_answer`). `info` reports each ending in fields no other ending has
 (`endingFields_injective`). `wait` answers with how the session ended when its daemon or the end
-record says, `interrupted` for a saved session, never a status of its program, and that it could not
-find out only when that is so: the program's ending is unknown, or the name stays held, with no
-daemon answering, from the look that first found it so for longer than a daemon's ending lasts.
-Every command answers with one of the answers `Os.Answer` names, the operating system's vocabulary,
-the selector and the tmux interchange as the session commands do, and exits with its code
-(`code_documented`); help lists each of linger's own once (`listed_once`). An attach goes only to a
-daemon whose `info` answer reports this version's protocol level, as every daemon of this version
-does (`infoFields_protocol`), so a daemon an older linger started, of any earlier level, is refused
-with a reason, never sent an attach it would refuse as unknown or drop unanswered. Not claimed: that
-the answer comes within the client's wait and that the refusal names the session and the level,
-which the attach suite checks against a level-2 daemon, one that reports no level and one that never
+record says, for a saved session `saved` with the signal that stopped its daemon, never a status of
+its program, and that it could not find out only when that is so: the program's ending is unknown,
+or the name stays held, with no daemon answering, from the look that first found it so for longer
+than a daemon's ending lasts. Every command answers with one of the answers `Os.Answer` names, the
+operating system's vocabulary, the selector and the tmux interchange as the session commands do,
+and exits with its code (`code_documented`); help lists each of linger's own once, and no status a
+signal or a program gives (`listed_once`). A signal's status says which signal, whatever it
+stopped: a program it killed, a command it stopped and a session whose daemon it stopped each
+answer 128 plus its number, as a shell reports a program that signal ended (`signal_status`), and a
+chooser cancelled by a key answers 130, as fzf's does. An attach goes only to a daemon whose `info`
+answer reports this version's protocol level, as every daemon of this version does
+(`infoFields_protocol`), so a daemon an older linger started, of any earlier level, is refused with
+a reason, never sent an attach it would refuse as unknown or drop unanswered. Not claimed: that the
+answer comes within the client's wait and that the refusal names the session and the level, which
+the attach suite checks against a level-2 daemon, one that reports no level and one that never
 answers; that a daemon hears a stop signal, which the operating system delivers through the daemon's
 signal pipe and the resume suite checks, and when it cannot make the pipe takes its default action;
-that an attached client or the selector, given SIGTERM, SIGHUP or SIGINT, hands its terminal back
-and answers `interrupted`, which the attach and manager suites check; that a client the model counts
-as attached when the program ends still reads what it is told, and that an attach executes the
-steps `visit_result` names, discarding only the checkpoint it showed and keeping the session when a
-signal interrupts the view, which the attach and watch suites check; and that the process exits
-with the code of its command's answer, which the type of every executor's result, `main`'s one exit
-and a gate on the shells keep.
+that an attached client, the chooser, the tmux browser and `ls -r`, given SIGTERM, SIGHUP or SIGINT,
+hand their terminal back or retire their transports and answer `stopped` with the first that came,
+however late in their cleanup it came, and that `main` then ends the process by that signal, as a
+program that does not catch it ends, which the attach, manager and remote suites check, and the
+resume suite that a client attached when a signal saves its session answers `saved`; that a client
+the model counts as attached when the program ends still reads what it is told, and that an attach
+executes the steps `visit_result` names, discarding only the checkpoint it showed and keeping the
+session when a signal interrupts the view, which the attach and watch suites check; and that the
+process exits with the code of its command's answer, or for `stopped` ends by its signal, which the
+type of every executor's result, `main`'s one exit and a gate on the shells keep.
 
 The daemon's driver runs the session's trace. When every effect succeeds, a stop replying how the
 program ended, the driver hands the session each event and then what that event's effects feed
@@ -1750,7 +1757,7 @@ theorem held_covers_ending :
 theorem held_covers_ending_rejects_drain :
     ¬Session.drainTimeoutMs + (Session.ending.map (·.2)).sum ≤ Session.drainTimeoutMs := by sorry
 
-theorem code_documented (status : UInt32) :
+theorem code_documented (status : UInt32) (signal : UInt8) :
     Os.Answer.code .done = 0 ∧
       Os.Answer.code .notDone = 1 ∧
       Os.Answer.code .usage = 2 ∧
@@ -1758,12 +1765,15 @@ theorem code_documented (status : UInt32) :
       Os.Answer.code .failed = 125 ∧
       Os.Answer.code .cannotRun = 126 ∧
       Os.Answer.code .notFound = 127 ∧
-      Os.Answer.code .interrupted = 130 ∧ Os.Answer.code (.program status) = status := by
+      Os.Answer.code .cancelled = 130 ∧
+      Os.Answer.code (.stopped signal) = 128 + signal.toUInt32 ∧
+      Os.Answer.code (.saved signal) = 128 + signal.toUInt32 ∧
+      Os.Answer.code (.program status) = status := by
   sorry
 
 @[kills code_documented]
 theorem code_documented_rejects_zero :
-    ¬∀ (status : UInt32),
+    ¬∀ (status : UInt32) (signal : UInt8),
         (fun (_ : Os.Answer) => (0 : UInt32)) .done = 0 ∧
           (fun (_ : Os.Answer) => (0 : UInt32)) .notDone = 1 ∧
           (fun (_ : Os.Answer) => (0 : UInt32)) .usage = 2 ∧
@@ -1771,8 +1781,26 @@ theorem code_documented_rejects_zero :
           (fun (_ : Os.Answer) => (0 : UInt32)) .failed = 125 ∧
           (fun (_ : Os.Answer) => (0 : UInt32)) .cannotRun = 126 ∧
           (fun (_ : Os.Answer) => (0 : UInt32)) .notFound = 127 ∧
-          (fun (_ : Os.Answer) => (0 : UInt32)) .interrupted = 130 ∧
+          (fun (_ : Os.Answer) => (0 : UInt32)) .cancelled = 130 ∧
+          (fun (_ : Os.Answer) => (0 : UInt32)) (.stopped signal) = 128 + signal.toUInt32 ∧
+          (fun (_ : Os.Answer) => (0 : UInt32)) (.saved signal) = 128 + signal.toUInt32 ∧
           (fun (_ : Os.Answer) => (0 : UInt32)) (.program status) = status := by
+  sorry
+
+@[kills code_documented]
+theorem code_documented_rejects_lumped :
+    ¬∀ (status : UInt32) (signal : UInt8),
+        Os.Answer.lumped .done = 0 ∧
+          Os.Answer.lumped .notDone = 1 ∧
+          Os.Answer.lumped .usage = 2 ∧
+          Os.Answer.lumped .timedOut = 124 ∧
+          Os.Answer.lumped .failed = 125 ∧
+          Os.Answer.lumped .cannotRun = 126 ∧
+          Os.Answer.lumped .notFound = 127 ∧
+          Os.Answer.lumped .cancelled = 130 ∧
+          Os.Answer.lumped (.stopped signal) = 128 + signal.toUInt32 ∧
+          Os.Answer.lumped (.saved signal) = 128 + signal.toUInt32 ∧
+          Os.Answer.lumped (.program status) = status := by
   sorry
 
 theorem listed_once : Os.Answer.listed.Nodup ∧ ∀ a, a ∈ Os.Answer.listed ↔ a.Own := by sorry
@@ -1780,6 +1808,29 @@ theorem listed_once : Os.Answer.listed.Nodup ∧ ∀ a, a ∈ Os.Answer.listed �
 @[kills listed_once]
 theorem listed_once_rejects_empty :
     ¬(([] : List Os.Answer).Nodup ∧ ∀ a, a ∈ ([] : List Os.Answer) ↔ a.Own) := by sorry
+
+@[kills listed_once]
+theorem listed_once_rejects_signal :
+    ¬(([.done, .notDone, .usage, .timedOut, .failed, .cannotRun, .notFound, .stopped 2] :
+            List Os.Answer).Nodup ∧
+        ∀ a,
+          a ∈
+              ([.done, .notDone, .usage, .timedOut, .failed, .cannotRun, .notFound, .stopped 2] :
+                List Os.Answer) ↔
+            a.Own) := by
+  sorry
+
+theorem signal_status (signal : UInt8) :
+    Os.Answer.code (.stopped signal) = (Outcome.signaled signal).status ∧
+      Os.Answer.code (Ending.saved signal).answer = (Outcome.signaled signal).status := by
+  sorry
+
+@[kills signal_status]
+theorem signal_status_rejects_lumped :
+    ¬∀ (signal : UInt8),
+        Os.Answer.lumped (.stopped signal) = (Outcome.signaled signal).status ∧
+          Os.Answer.lumped (Ending.saved signal).answer = (Outcome.signaled signal).status := by
+  sorry
 
 theorem outcomeFields_injective (o₁ o₂ : Outcome)
     (h : Session.outcomeFields o₁ = Session.outcomeFields o₂) : o₁ = o₂ := by sorry

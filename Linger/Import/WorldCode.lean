@@ -352,69 +352,69 @@ private def listSave (file : Option String) (porcelain : Bool) : IO Unit :=
 
 /-- Act on the selected snapshot's exact directory, never on a reread of `last`.
 Resolve default discovery once per visit; the picker follows that path on refresh. A cancellation
-ends the selection with `interrupted`, and so does a signal of `Os.Shell.handbackSignals`, once
-the visit, or the attach that owns the terminal meanwhile, has handed the terminal back; a
-listing that fails ends it with the answer its exit status gives (`Answer.ofCode`). -/
+ends the selection with `cancelled`, and a signal of `Os.Shell.handbackSignals` with `stopped` and
+the first that came (`Os.Shell.watching`), once the visit, or the attach that owns the terminal
+meanwhile, has handed the terminal back; a listing that fails ends it with the answer its exit
+status gives (`Answer.ofCode`). -/
 private def selectSave (executable : String) (file : Option String) : IO Linger.Os.Answer :=
   inContext fun origin home => do
     let path ← savePath origin home file
-    let stops ← Os.Shell.watch Os.Shell.handbackSignals
-    try
-      while true do
-        match
-          ←
-            Linger.Selector.Shell.choose executable (some path.toString) (stopped :=
-                stops.heard) with
-        | .cancel | .interrupted =>
-          return .interrupted
-        | .failed status stderr =>
-          if !stderr.isEmpty then
-            IO.eprint stderr
-          return Linger.Os.Answer.ofCode status
-        | .attach target displayed =>
-          unless displayed.candidates.contains target do
-            throw (IO.userError "selected pane was absent from the displayed save")
-          let row := displayed.row target
-          -- `decodeStrLit` tolerates malformed literals; accept only the canonical encoding.
-          let some dir :=
-            (row.lookup "directory").bind fun value =>
-              (Lean.Syntax.decodeStrLit value).filter (·.quote == value)
-            | throw (IO.userError "selected pane has no directory")
-          let some line := (row.lookup "line").bind String.toNat?
-            | throw (IO.userError "selected pane has no source line")
-          let text := fun key =>
-            (row.lookup key).bind fun value =>
-              (Lean.Syntax.decodeStrLit value).filter (·.quote == value)
-          let details : Details :=
-            { session := (text "session").getD "", window := (text "window").getD "",
-              index := (text "pane").getD "", title := (text "title").getD "",
-              command := (text "command").getD "", savedCommand := (text "saved-command").getD "",
-              windowTitle := (text "window-title").getD "",
-              cols := ((row.lookup "cols").bind String.toNat?).getD 80,
-              rows := ((row.lookup "rows").bind String.toNat?).getD 24 }
-          let some pane := selectedPane target dir line details
-            | throw (IO.userError "invalid selected pane")
-          let archive := do
-            let some save := text "archive-save" | return none
-            let found ← readArchive save
-            let some found := found
-              | throw (IO.userError "pane capture archive changed; refresh the saved panes")
-            unless
-              text "archive" == some found.path.toString &&
-                row.lookup "archive-revision" == some (archiveRevision found) do
-              throw (IO.userError "pane capture archive changed; refresh the saved panes")
-            return some found
-          createPanes executable origin [pane] archive
-          let child ←
-            IO.Process.spawn
-                { cmd := executable, args := Linger.Selector.Shell.attachArgs pane.name,
-                  cwd := some (System.FilePath.mk pane.dir) }
-          discard child.wait
-          if ← stops.heard then
-            return .interrupted
-      return .done
-    finally
-      stops.stop
+    Os.Shell.watching Os.Shell.handbackSignals Linger.Os.Answer.stopped fun stops => do
+        while true do
+          match
+            ←
+              Linger.Selector.Shell.choose executable (some path.toString) (heard :=
+                  stops.came) with
+          | .cancel =>
+            return .cancelled
+          | .stopped signal =>
+            return .stopped signal
+          | .failed status stderr =>
+            if !stderr.isEmpty then
+              IO.eprint stderr
+            return Linger.Os.Answer.ofCode status
+          | .attach target displayed =>
+            unless displayed.candidates.contains target do
+              throw (IO.userError "selected pane was absent from the displayed save")
+            let row := displayed.row target
+            -- `decodeStrLit` tolerates malformed literals; accept only the canonical encoding.
+            let some dir :=
+              (row.lookup "directory").bind fun value =>
+                (Lean.Syntax.decodeStrLit value).filter (·.quote == value)
+              | throw (IO.userError "selected pane has no directory")
+            let some line := (row.lookup "line").bind String.toNat?
+              | throw (IO.userError "selected pane has no source line")
+            let text := fun key =>
+              (row.lookup key).bind fun value =>
+                (Lean.Syntax.decodeStrLit value).filter (·.quote == value)
+            let details : Details :=
+              { session := (text "session").getD "", window := (text "window").getD "",
+                index := (text "pane").getD "", title := (text "title").getD "",
+                command := (text "command").getD "", savedCommand := (text "saved-command").getD "",
+                windowTitle := (text "window-title").getD "",
+                cols := ((row.lookup "cols").bind String.toNat?).getD 80,
+                rows := ((row.lookup "rows").bind String.toNat?).getD 24 }
+            let some pane := selectedPane target dir line details
+              | throw (IO.userError "invalid selected pane")
+            let archive := do
+              let some save := text "archive-save" | return none
+              let found ← readArchive save
+              let some found := found
+                | throw (IO.userError "pane capture archive changed; refresh the saved panes")
+              unless
+                text "archive" == some found.path.toString &&
+                  row.lookup "archive-revision" == some (archiveRevision found) do
+                throw (IO.userError "pane capture archive changed; refresh the saved panes")
+              return some found
+            createPanes executable origin [pane] archive
+            let child ←
+              IO.Process.spawn
+                  { cmd := executable, args := Linger.Selector.Shell.attachArgs pane.name,
+                    cwd := some (System.FilePath.mk pane.dir) }
+            discard child.wait
+            if let some signal← stops.came then
+              return .stopped signal
+        return .done
 
 /-- A failed live observation must not export a stale startup directory.
 Checkpoint decoding supplies the cwd for resumable sessions. -/

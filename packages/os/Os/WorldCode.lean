@@ -448,9 +448,10 @@ def nap (deadline step : Nat) : IO Bool := do
 take it (`scripts/gates.sh`), each on something that ends without waiting itself. -/
 def pause (ms : Nat) : IO Unit := IO.sleep ms.toUInt32
 
-/-- Signals a process catches instead of letting them end it, so that it ends as it chooses,
-as a client hands its terminal back first: each signal's waiter, from Lean core's `Std.Async`,
-and the task that resolves when the signal comes. -/
+/-- Signals a process catches instead of letting them end it at once, so that it cleans up first,
+as a client hands its terminal back, and then ends as the signal ends a program that does not
+catch it (`raiseSignal`): each signal's waiter, from Lean core's `Std.Async`, and the task that
+resolves, with the signal's number, when the signal comes. -/
 structure Watched where
   /-- Each watched signal's waiter and the task its signal resolves. -/
   waiters : Array (Std.Async.Signal.Waiter × Std.Async.AsyncTask Int) := #[]
@@ -480,10 +481,16 @@ def watch (signals : List Std.Async.Signal) : IO Watched := do
       waiters := waiters.push watched
   return { waiters }
 
-/-- Whether a watched signal has come. -/
-def Watched.heard (w : Watched) : IO Bool :=
-  w.waiters.anyM fun (_, task) => do
-    return (← task.getState) == IO.TaskState.finished
+/-- The first of the watched signals that has come, in the order `watch` was given them, by the
+number the operating system gave it: `none` while none has. A caller that ends on a signal says
+which one, so that it ends as that signal, and no other, ends a program. -/
+def Watched.came (w : Watched) : IO (Option UInt8) := do
+  for (_, task) in w.waiters do
+    if (← task.getState) == IO.TaskState.finished then
+      if let .ok number← IO.wait task then
+        if 0 < number && number < 256 then
+          return some number.toNat.toUInt8
+  return none
 
 /-- Stop catching the watched signals, which take their default actions again. Never throws, so
 a cleanup that ends with it cannot lose what follows. -/
@@ -493,6 +500,33 @@ def Watched.stop (w : Watched) : IO Unit := do
       waiter.stop
     catch _ =>
       pure ()
+
+/-- Run `body` catching `signals`, as `watch` does, and stop catching them once it has ended,
+however it ended, so that what `body` cleans up it cleans up with the signals still caught. The
+result is `body`'s, or the error it threw, unless one of the signals came before they took their
+default actions again, even after `body` had decided: then it is `stopped` with the first that
+came, as `Watched.came` says, so a signal that comes is never lost. -/
+def watching {α : Type} (signals : List Std.Async.Signal) (stopped : UInt8 → α)
+    (body : Watched → IO α) : IO α := do
+  let watched ← watch signals
+  let result ← (body watched).toBaseIO
+  watched.stop
+  if let some signal← watched.came then
+    return stopped signal
+  IO.ofExcept result
+
+/-- End this process as `signal` ends a program that does not catch it, once nothing in it catches
+the signal any more, as after `Watched.stop`: flush standard output and standard error, then send
+the signal to this process, so that whoever waits for the process sees the signal itself, as a
+program that catches a signal to clean up ends once it has. Returns only when the signal does not
+end the process, as when it is blocked or ignored. -/
+def raiseSignal (signal : UInt8) : IO Unit := do
+  try
+    (← IO.getStdout).flush
+    (← IO.getStderr).flush
+  catch _ =>
+    pure ()
+  kill (← getpid) signal.toUInt32
 
 /-- Unix epoch seconds — `created` timestamps in listings. -/
 def realtimeS : IO UInt64 := do

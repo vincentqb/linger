@@ -62,8 +62,8 @@ private def retiredCommand (word : String) : IO Answer := do
   return .usage
 
 /-- What `linger help` prints after the commands: the eight statuses a session can show, which
-of them titles and `ls --summary` count, and the exit statuses every command shares, one line
-per answer (`Answer.legend`). -/
+of them titles and `ls --summary` count, and the exit statuses every command shares: a program's
+and a signal's, then one line per answer of linger's own (`Answer.legend`). -/
 private def helpFooter : String :=
   let glyphs :=
     String.intercalate " "
@@ -72,7 +72,8 @@ private def helpFooter : String :=
   String.intercalate "\n"
     (["", "Statuses"] ++ Linger.Display.Status.legend.map ("  " ++ ·) ++
       [s!"Titles and ls --summary count {glyphs}", "",
-        "Exit statuses: the program's own, when the command waits for it to end; otherwise"] ++
+        "Exit statuses: the program's own, when the command waits for it to end; 128+N when",
+        "signal N stops the command, or the session it attaches to or waits for; otherwise"] ++
       Answer.legend.map ("  " ++ ·))
 
 /-- Start `name`'s daemon detached, running this executable as `__daemon name cwd cmd...`
@@ -580,63 +581,69 @@ private def resolveRemotes (flag : Option (List String)) :
 linger keeps whatever the transport: a transport's own keepalives alone cannot bound a remote
 command that never exits. Each host's answer, in host order, is the complete output of a command
 that succeeded, or `none`; stop and join every remaining group. Signal waiters let a cancelled
-chooser's listing retire the transports' isolated groups. -/
+chooser's listing retire the transports' isolated groups: a watched signal that comes before the
+waiters stop, even while the groups are retired, ends the listing, which answers with the first
+that came (`Watched.came`). -/
 private def listRemotes (hosts : Array (String × Linger.Target.Remote.Transport)) :
-    IO (Option (Array (Option String))) := do
+    IO (Except UInt8 (Array (Option String))) := do
   let signals ← IO.mkRef (#[] : Array (Std.Async.Signal.Waiter × Std.Async.AsyncTask Int))
   let jobs ← IO.mkRef (#[] : Array (Nat × IO.Ref (Option Command.Job)))
-  try
-    for signal in [Std.Async.Signal.sigterm, .sigint, .sighup] do
-      let waiter ← Std.Async.Signal.Waiter.mk signal true
-      try
-        let task ← waiter.wait
-        signals.modify (·.push (waiter, task))
-      catch e =>
-        waiter.stop
-        throw e
-    let deadline := (← monotonicMs) + remoteQueryTimeoutMs
-    let mut outputs := Array.replicate hosts.size none
-    let mut next := 0
-    while next < hosts.size || !(← jobs.get).isEmpty do
-      for (_, signal) in ← signals.get do
-        if (← signal.getState) == .finished then
-          return none
-      if (← monotonicMs) ≥ deadline then
-        break
-      while
-        next < hosts.size && (← jobs.get).size < remoteQueryLimit && (← monotonicMs) < deadline do
-        let index := next
-        next := next + 1
-        let pending ← IO.mkRef none
-        jobs.modify (·.push (index, pending))
+  let listed ←
+    try
+      for signal in [Std.Async.Signal.sigterm, .sigint, .sighup] do
+        let waiter ← Std.Async.Signal.Waiter.mk signal true
         try
-          if let cmd :: args := Linger.Target.Remote.argv hosts[index]!.2 "ls" ["--porcelain"] then
-            pending.set (some (← Command.start cmd args.toArray))
-        catch _ =>
-          pure ()
-      let mut running := #[]
-      for (index, pending) in ← jobs.get do
-        try
-          if let some output← Command.poll pending then
-            if output.exitCode == 0 then
-              outputs := outputs.set! index (some output.stdout)
-        catch _ =>
-          pure ()
-        if (← pending.get).isSome then
-          running := running.push (index, pending)
-      jobs.set running
-      if !running.isEmpty then
-        unless ← nap deadline 5 do
+          let task ← waiter.wait
+          signals.modify (·.push (waiter, task))
+        catch e =>
+          waiter.stop
+          throw e
+      let deadline := (← monotonicMs) + remoteQueryTimeoutMs
+      let mut outputs := Array.replicate hosts.size none
+      let mut next := 0
+      while next < hosts.size || !(← jobs.get).isEmpty do
+        if let some signal← ({ waiters := ← signals.get } : Watched).came then
+          return .error signal
+        if (← monotonicMs) ≥ deadline then
           break
-    return some outputs
-  finally
-    for (_, pending) in ← jobs.get do
-      try
-        Command.stop pending
-      catch _ =>
-        pure ()
-    for (waiter, _) in ← signals.get do
-      waiter.stop
+        while
+          next < hosts.size && (← jobs.get).size < remoteQueryLimit && (← monotonicMs) < deadline do
+          let index := next
+          next := next + 1
+          let pending ← IO.mkRef none
+          jobs.modify (·.push (index, pending))
+          try
+            if let cmd :: args :=
+                Linger.Target.Remote.argv hosts[index]!.2 "ls" ["--porcelain"] then
+              pending.set (some (← Command.start cmd args.toArray))
+          catch _ =>
+            pure ()
+        let mut running := #[]
+        for (index, pending) in ← jobs.get do
+          try
+            if let some output← Command.poll pending then
+              if output.exitCode == 0 then
+                outputs := outputs.set! index (some output.stdout)
+          catch _ =>
+            pure ()
+          if (← pending.get).isSome then
+            running := running.push (index, pending)
+        jobs.set running
+        if !running.isEmpty then
+          unless ← nap deadline 5 do
+            break
+      pure outputs
+    finally
+      for (_, pending) in ← jobs.get do
+        try
+          Command.stop pending
+        catch _ =>
+          pure ()
+      for (waiter, _) in ← signals.get do
+        waiter.stop
+  if let some signal← ({ waiters := ← signals.get } : Watched).came then
+    return .error signal
+  return .ok listed
 
 /-- Local attention counts under one 250 ms reply window: the text `ls --summary`
 prints and an attached title shows, computed in the calling process. A daemon whose end record
@@ -655,8 +662,8 @@ private def cmdSummary : IO Answer := do
   return .done
 
 /-- The answer that tells how a session ended, as its daemon reported it (`Ending.answer`): its
-program's, or `interrupted` for a session a signal to its daemon saved; an older daemon's status
-is the program's. -/
+program's, or `saved` with the signal for a session a signal to its daemon saved; an older
+daemon's status is the program's. -/
 private def endingAnswer : Client.Ending → Answer
   | .outcome outcome => (Linger.Session.Ending.program outcome).answer
   | .saved signal => (Linger.Session.Ending.saved signal).answer
@@ -812,13 +819,14 @@ private def cmdAttach (name : String) (cmd : List String) (readOnly : Bool) : IO
   | .ok (.ended ending) =>
     IO.eprintln s!"\r\nlinger: session '{name}' ended ({ending.describe})"
     return endingAnswer ending
-  | .ok .interrupted =>
-    -- the terminal is handed back, but a hung-up one cannot show why: the answer says it
+  | .ok (.stopped signal) =>
+    -- the terminal is handed back, but a hung-up one cannot show why: the answer says it, and
+    -- `main` then ends the process by the signal
     try
-      IO.eprintln s!"\r\nlinger: interrupted; detached from '{name}'"
+      IO.eprintln s!"\r\nlinger: signal {signal} stopped the attach; detached from '{name}'"
     catch _ =>
       pure ()
-    return .interrupted
+    return .stopped signal
   | .ok .detached =>
     IO.eprintln s!"\r\nlinger: detached from '{name}'"
     return .done
@@ -844,13 +852,13 @@ private def humanWidth : IO (Option Nat) := do
 `k<TAB>v` records separated by blank lines (`porcelain`) or as the terminal listing.
 Remote rows keep only name, command, state and status, as the host's linger reports them; a host
 that does not answer within the bounded wait is one record, its `host` with the status `?` no
-answer gives, which the terminal listing names `@host`. Answers `interrupted` when a signal
-cancels the remote queries. -/
+answer gives, which the terminal listing names `@host`. Answers `stopped`, with the signal, when
+a signal stops it while it queries remote hosts. -/
 private def cmdList (porcelain : Bool) (remotes : List (String × Linger.Target.Remote.Transport)) :
     IO Answer := do
   let (locals, remote) ←
     if remotes.isEmpty then
-      pure (← localRows, some #[])
+      pure (← localRows, (.ok #[] : Except UInt8 (Array (Option String))))
     else
       do
         let task ← IO.asTask localRows Task.Priority.dedicated
@@ -860,7 +868,12 @@ private def cmdList (porcelain : Bool) (remotes : List (String × Linger.Target.
           pure (locals, remote)
         finally
           discard <| IO.wait task
-  let some remote := remote | return .interrupted
+  let remote ←
+    match remote with
+    | .ok outputs =>
+      pure outputs
+    | .error signal =>
+      return .stopped signal
   let mut rows := locals
   for ((host, _), output) in remotes.zip remote.toList do
     match output with
@@ -1143,9 +1156,10 @@ private def hear (name : String) (silenceMs : Int32) : IO (Wait.Heard × String)
 /-- `wait`: block until the session ends and answer as `Wait.decide` does with what each look
 hears, saying why on stderr when that is not the program's own exit. The ending comes from its
 daemon or, with no daemon to answer, from the name's end record once nothing else holds the
-name: the program's, or `interrupted` for a session a signal to its daemon saved, whose program
-did not end by itself; `notFound`, as a shell's `wait` reports an unknown job, when no session
-has taken the name. A daemon lost during the wait leaves its own record, never an older
+name: the program's, or `saved` with the signal for a session a signal to its daemon saved, whose
+program did not end by itself, which exits with 128 plus the signal's number, as a shell's `wait`
+reports a job that signal stopped; `notFound`, as a shell's `wait` reports an unknown job, when no
+session has taken the name. A daemon lost during the wait leaves its own record, never an older
 one. With a `deadline` on the monotonic clock, `timedOut` once it has passed and the session is
 still running, as `timeout(1)` reports, leaving the session as it is. A refusal answers
 `notDone`; that linger could not find out, only for an unknown ending or a name held with no

@@ -136,12 +136,13 @@ def Ending.record : Ending → Record
   | .saved signal => .saved signal
 
 /-- The answer that tells how a session ended: its program's, as `Outcome.answer` gives it, or,
-for a session a signal to its daemon saved, that a signal interrupted it, and never a status of
-its program, which did not end by itself and runs again on `resume`. -/
+for a session a signal to its daemon saved, `saved` with that signal, whose status says which
+signal, as a shell reports a job that signal stopped, and never a status of its program, which
+did not end by itself and runs again on `resume`. -/
 @[expose]
 def Ending.answer : Ending → Os.Answer
   | .program outcome => outcome.answer
-  | .saved _ => .interrupted
+  | .saved signal => .saved signal
 
 end Linger.Session
 
