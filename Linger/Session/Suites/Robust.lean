@@ -129,41 +129,83 @@ def streamInfoServer (socketPath readyPath : String) : IO UInt32 := do
       pure ()
     return 0
 
-/-- Exhaust only the daemon's descriptors, leaving its existing client and pty
-usable. The actual accept error establishes the premise on each platform. -/
+/-- What the process `pid` holds open, from `/proc`: how many descriptors, and the number and path of
+each one on a file or a directory; the rest are connections, pipes, devices and the runtime's
+events, which name no path. A descriptor that closes while this reads is not counted, and one whose
+path cannot be read gives the empty path. -/
+def heldFiles (pid : UInt32) : IO (Nat × List (String × String)) := do
+  let mut count := 0
+  let mut files := []
+  for fd in ← System.FilePath.readDir s!"/proc/{pid}/fd" do
+    -- `metadata` follows the link to what it names, a connection as well as a file
+    let some held := (← fd.path.metadata.toBaseIO).toOption | continue
+    count := count + 1
+    if held.type != .other then
+      let path := (← (IO.FS.realPath fd.path).toBaseIO).toOption.map (·.toString)
+      files := (fd.fileName, path.getD "") :: files
+  return (count, files)
+
+/-- Exhaust only the daemon's descriptors, leaving its existing client and pty usable: the
+daemon reports the pressure once while it lasts and keeps serving. The actual accept error
+establishes the pressure on each platform. That it lasts is what `/proc` shows: before the flood
+the daemon holds no descriptor on its state directory or on a file being written, so what it holds
+then it holds for its life, and once every descriptor it may hold is taken, each by one of those
+or by a connection, an open fails and nothing it holds lets go while the clients stay. A write
+that held a descriptor into the flood can let it go first and a client take it, which ends the
+pressure and starts it again, as the daemon then truly reports. Where nothing shows what the
+daemon holds, that the pressure was reported only once says SKIP (`expectMeasured`). -/
 def admissionPressure (e : Env) : IO Unit := do
   let pressure : Env := { e with dir := s!"{e.dir}/admission" }
   IO.FS.createDirAll pressure.dir
   let socketPath := s!"{pressure.dir}/pressure.sock"
   let logPath := s!"{pressure.dir}/daemon.log"
   let marker := s!"{pressure.dir}/alive"
+  -- how many descriptors the daemon may hold
+  let limit := 24
   let server ←
     IO.Process.spawn
         { cmd := "/bin/sh",
           args :=
-            #["-c", "ulimit -n 24 || exit; pressure_log=$1; shift; exec \"$@\" 2>\"$pressure_log\"",
+            #["-c",
+              s!"ulimit -n {limit} || exit; pressure_log=$1; shift; exec \"$@\" 2>\"$pressure_log\"",
               "sh", logPath, e.bin, "__daemon", "pressure", pressure.dir, "/bin/sh"],
           env := pressure.procEnv, stdin := .null, stdout := .null, stderr := .null }
   let owned ← IO.mkRef (#[] : Array UInt32)
   let child ← IO.mkRef (none : Option UInt32)
   try
-    unless (← waitFor patienceMs (System.FilePath.pathExists socketPath)) do
-      throw (IO.userError "descriptor-pressure daemon did not start")
-    let raw ← Os.Shell.unixConnect socketPath
-    unless raw ≥ 0 do
-      throw (IO.userError "descriptor-pressure control client could not connect")
-    let control := raw.toUInt64.toUInt32
-    owned.modify (·.push control)
-    let initial ← Linger.Session.Shell.Inventory.readInfo control
+    -- the socket's path is there once the daemon binds it, before it listens: a connection is
+    -- what says it listens
+    let listen : IO Bool := do
+      let raw ← Os.Shell.unixConnect socketPath
+      if raw ≥ 0 then
+        owned.modify (·.push raw.toUInt64.toUInt32)
+      return raw ≥ 0
+    unless ← waitFor patienceMs listen do
+      throw (IO.userError "descriptor-pressure daemon did not listen")
+    let control := (← owned.get)[0]!
+    -- an answer on the control connection comes from a round of the daemon's loop that began
+    -- after the request was sent
+    let answered : IO Nat := do
+      let _ ←
+        Linger.Session.Shell.Inventory.readInfo control
+            (some ((← Os.Shell.monotonicMs) + patienceMs))
+      Os.Shell.monotonicMs
+    let initial ←
+      Linger.Session.Shell.Inventory.readInfo control (some ((← Os.Shell.monotonicMs) + patienceMs))
     let some pidText :=
       initial.find? (·.1 == "pid") |>.map
         (·.2) | throw (IO.userError "descriptor-pressure daemon did not report its child")
     let some pid := pidText.toNat? | throw (IO.userError "invalid child pid")
     child.set (some pid.toUInt32)
+    let measured ← System.FilePath.pathExists "/proc/self/fd"
+    let stateDir := (← IO.FS.realPath pressure.dir).toString
+    -- what a write holds: `Os.Shell.replaceFile` writes a temporary file beside the one it
+    -- replaces, then flushes their directory; a file whose path cannot be read may be either
+    let writing (path : String) : Bool := path.isEmpty || path == stateDir || path.endsWith ".tmp"
+    let before ← IO.mkRef ([] : List (String × String))
     -- The daemon's own first writes, its first checkpoint and the records of its shell's first
-    -- output, fresh and then stale and unseen, each flushed to the disk, hold descriptors while
-    -- they run: the clients flood it once they are done, so that the pressure below is the
-    -- clients' alone.
+    -- output, fresh and then stale and unseen, have reached their files, and it holds no
+    -- descriptor on its state directory or on a file being written.
     let settled ←
       waitFor patienceMs do
           let record ← (IO.FS.readBinFile s!"{pressure.dir}/pressure.end").toBaseIO
@@ -171,8 +213,14 @@ def admissionPressure (e : Env) : IO Unit := do
             record.toOption.any fun bytes =>
               Linger.Session.Record.decode bytes.toList matches
                 some (.running (some ⟨false, true, false⟩))
-          return stale && (← System.FilePath.pathExists s!"{pressure.dir}/pressure.ckpt") &&
+          let written :=
+            stale && (← System.FilePath.pathExists s!"{pressure.dir}/pressure.ckpt") &&
               !(← System.FilePath.pathExists s!"{pressure.dir}/pressure.ckpt.tmp")
+          unless written && measured do
+            return written
+          let (_, files) ← heldFiles server.pid
+          before.set files
+          return !files.any (writing ·.2)
     unless settled do
       throw (IO.userError "descriptor-pressure daemon did not settle its first writes")
     for _ in List.range maxClients do
@@ -184,16 +232,51 @@ def admissionPressure (e : Env) : IO Unit := do
           let log ← IO.FS.readFile logPath
           return has log "accept:"
     expect exhausted "descriptor pressure reaches the daemon's accept syscall"
-    if exhausted then
-      IO.sleep (UInt32.ofNat (2 * Linger.Session.Shell.Daemon.acceptRetryMs + 100))
-    let log ← IO.FS.readFile logPath
-    expect
-        (exhausted && (log.splitOn "client admission paused").length == 2 &&
+    let held ← before.get
+    let alone ←
+      if exhausted && measured then
+        waitFor patienceMs do
+            let (count, files) ← heldFiles server.pid
+            return count == limit && files.all held.contains
+      else
+        pure false
+    let reports : IO Nat := do
+      return ((← IO.FS.readFile logPath).splitOn "client admission paused").length - 1
+    -- Admission is retried at the first round that begins `acceptRetryMs` after the last try, while
+    -- a connection waits, and a round begins after each answer: two answers to requests sent
+    -- `acceptRetryMs` after `since` follow the try that was due by then, so two such waits in a
+    -- row follow a try begun after `since`.
+    let retried (since : Nat) : IO Nat := do
+      let now ← Os.Shell.monotonicMs
+      if now < since + Linger.Session.Shell.Daemon.acceptRetryMs then
+        IO.sleep (UInt32.ofNat (since + Linger.Session.Shell.Daemon.acceptRetryMs - now))
+      let _ ← answered
+      answered
+    -- the reports once the pressure was the clients' alone, and after two more tries
+    let counted ←
+      try
+        if exhausted then
+          let _ ← answered
+          let once ← reports
+          let _ ← retried (← Os.Shell.monotonicMs) >>= retried
+          pure (some (once, ← reports))
+        else
+          pure none
+      catch _ =>
+        pure none
+    let shown :=
+      match counted with
+      | some (once, after) => s!"{once} reported, {after} after two more tries"
+      | none => "not counted"
+    expectMeasured measured
+        (counted.any (fun (once, after) => once ≥ 1 && (!measured || alone && after == once)) &&
           (← server.tryWait).isNone)
-        "sustained descriptor pressure reports once and preserves the daemon"
+        s!"sustained descriptor pressure reports once and preserves the daemon ({shown})"
     let usable ←
       try
-        let current ← Linger.Session.Shell.Inventory.readInfo control
+        let current ←
+          Linger.Session.Shell.Inventory.readInfo control
+              (some ((← Os.Shell.monotonicMs) + patienceMs))
         Linger.Session.Shell.Client.sendMsg control
             (.input "printf alive > \"$LINGER_DIR/alive\"\n".toUTF8.toList)
         let ran ← waitFor patienceMs (System.FilePath.pathExists marker)
@@ -497,16 +580,32 @@ def unreadCapture (e : Env) : IO Unit := do
 
 /-- Run `cmd` with `args` on this process's standard output, made nonblocking first, as another
 program may leave a descriptor it hands on, and answer the command's exit status. The flag
-belongs to the pipe's open file, which the command shares. -/
-def nonblockingStdout (cmd : String) (args : List String) : IO UInt32 := do
+belongs to the pipe's open file, which the command shares. Once the pipe takes no more while the
+command runs, this creates the file `full`, which a reader that reads nothing waits for. -/
+def nonblockingStdout (full cmd : String) (args : List String) : IO UInt32 := do
   Os.Shell.setNonblock Os.Shell.stdoutFd
   let child ← IO.Process.spawn { cmd, args := args.toArray, stdin := .null }
-  child.wait
+  let ended ← IO.mkRef (none : Option UInt32)
+  let _ ←
+    waitFor hangMs do
+        if let some code← child.tryWait then
+          ended.set (some code)
+          return true
+        let revs ← Os.Shell.poll #[Os.Shell.stdoutFd] #[Os.Shell.POLLOUT] 0
+        if revs[0]! &&& Os.Shell.POLLOUT != 0 then
+          return false
+        IO.FS.writeFile full ""
+        return true
+  match ← ended.get with
+  | some code =>
+    return code
+  | none =>
+    child.wait
 
 /-- A write that finds its descriptor full waits for the reader and goes on, and never takes it
 for a reader that is gone (`Os.write_full_waits`): `capture --history` of a saved session into a
-pipe another program left nonblocking, whose reader reads nothing until the capture has ended or
-a second has passed, by when the history has filled the pipe, delivers the whole history. -/
+pipe another program left nonblocking, whose reader reads nothing until the capture has filled
+the pipe, as that program sees, or has ended, delivers the whole history. -/
 def nonblockingReader (e : Env) : IO Unit := do
   let name := "slow-reader"
   saveSession e name longHistory
@@ -514,26 +613,34 @@ def nonblockingReader (e : Env) : IO Unit := do
     ((Linger.Session.Checkpoint.loadBytes (← IO.FS.readBinFile s!"{e.dir}/{name}.ckpt")).map
           (Terminal.Render.history ·.vt)).getD
       []
+  let full := s!"{e.dir}/{name}.full"
   let helper ←
     IO.Process.spawn
         { cmd := (← IO.appPath).toString,
-          args := #["--nonblocking-stdout", e.bin, "capture", "--history", name], env := e.procEnv,
-          stdin := .null, stdout := .piped, stderr := .piped }
-  -- the slow reader: nothing is read until the capture has ended or a second has passed
-  let early ← waitProcess helper 1000
+          args := #["--nonblocking-stdout", full, e.bin, "capture", "--history", name],
+          env := e.procEnv, stdin := .null, stdout := .piped, stderr := .piped }
+  -- the slow reader: nothing is read until the history has filled the pipe or the capture ended
+  let ended ← IO.mkRef (none : Option UInt32)
+  let _ ←
+    waitFor hangMs do
+        if let some code← helper.tryWait then
+          ended.set (some code)
+          return true
+        System.FilePath.pathExists full
+  let filled ← System.FilePath.pathExists full
   let out ← IO.asTask helper.stdout.readBinToEnd Task.Priority.dedicated
   let err ← IO.asTask helper.stderr.readToEnd Task.Priority.dedicated
   let code ←
-    match early with
+    match ← ended.get with
     | some code =>
       pure (some code)
     | none =>
       waitOrKill helper hangMs
   let got := ((← IO.wait out).toOption.map (·.toList)).getD []
   let said := ((← IO.wait err).toOption.getD "").trimAscii.toString
-  expect (code == some 0 && !expected.isEmpty && got == expected)
+  expect (filled && code == some 0 && !expected.isEmpty && got == expected)
       s!"a capture into a nonblocking pipe its reader drains late delivers the whole history \
-        (exit {code}, {got.length} of {expected.length} bytes, '{said}')"
+        (exit {code}, {got.length} of {expected.length} bytes, pipe filled {filled}, '{said}')"
 
 /-- The robust suite: runtime boundaries under adverse timing. Concurrent starts of one name,
 and a resume while another process holds the name's locks, exercise the operating system's

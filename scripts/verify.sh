@@ -335,7 +335,7 @@ say "4. live suites (separate processes, at most four at once)"
 if [ -d /proc/self ]; then
   agent_skips=0 resume_skips=0 robust_skips=0 title_skips=0 quiet_skips=0
 else
-  agent_skips=2 resume_skips=1 robust_skips=2 title_skips=1 quiet_skips=4
+  agent_skips=2 resume_skips=1 robust_skips=3 title_skips=1 quiet_skips=4
 fi
 # shellcheck disable=SC2086  # each skip count is a number
 ./.lake/build/bin/suites --suites \
