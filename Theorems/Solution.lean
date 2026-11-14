@@ -794,6 +794,45 @@ theorem picker_create_new_rejects_empty :
   intro h
   exact absurd (h { candidates := [] } .accept "" rfl).2.1 (by simp)
 
+theorem relist_keeps_rows (s : Selector.Picker.State) (resort : Bool) (ordered : List String)
+    (descriptions : List (String × String)) :
+    (Selector.Picker.relist s resort ordered descriptions).candidates =
+        (if resort then ordered
+        else
+          s.candidates.filter (fun t => ordered.contains t) ++
+            ordered.filter fun t => !s.candidates.contains t) ∧
+      (Selector.Picker.relist s resort ordered descriptions).query = s.query ∧
+      (Selector.Picker.relist s resort ordered descriptions).descriptions = descriptions :=
+  Selector.Picker.relist_rows s resort ordered descriptions
+
+theorem relist_keeps_rows_rejects_resort :
+    ¬∀ (s : Selector.Picker.State) (resort : Bool) (ordered : List String)
+        (descriptions : List (String × String)),
+        ((fun (s : Selector.Picker.State) (_ : Bool) (ordered : List String)
+                    (descriptions : List (String × String)) =>
+                  { s with
+                    candidates := ordered, descriptions := descriptions })
+                s resort ordered descriptions).candidates =
+            (if resort then ordered
+            else
+              s.candidates.filter (fun t => ordered.contains t) ++
+                ordered.filter fun t => !s.candidates.contains t) ∧
+          ((fun (s : Selector.Picker.State) (_ : Bool) (ordered : List String)
+                    (descriptions : List (String × String)) =>
+                  { s with
+                    candidates := ordered, descriptions := descriptions })
+                s resort ordered descriptions).query =
+            s.query ∧
+          ((fun (s : Selector.Picker.State) (_ : Bool) (ordered : List String)
+                    (descriptions : List (String × String)) =>
+                  { s with
+                    candidates := ordered, descriptions := descriptions })
+                s resort ordered descriptions).descriptions =
+            descriptions := by
+  intro h
+  have kept := (h { candidates := ["a", "b"] } false ["b", "a"] []).1
+  exact absurd kept (by decide)
+
 theorem picker_eof_empty (s : Selector.Picker.State) :
     Selector.Picker.step s .deleteCharEof = if s.query = "" then .cancel else .stay s :=
   Selector.Picker.step_deleteCharEof s

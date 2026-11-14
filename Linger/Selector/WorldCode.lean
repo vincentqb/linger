@@ -70,7 +70,9 @@ reported, and the header says how long before the latest listing that query star
 (`Picker.ageParts`), so the age changes as those listings repaint, with no timer of its own. The
 first frame, the first after a resize and the first after the refresh key, which clears and
 redraws the screen as Ctrl-L does in a line editor, paint every row; after that a change writes
-only the rows it changed (`Picker.update`). Native listings get a cooperative stop so they can
+only the rows it changed (`Picker.update`). The rows are in `View.sort`'s order when the visit
+opens, at once on the refresh key and again after the listing it starts; any other listing keeps
+the rows shown where they are, a new row last (`Picker.relist`). Native listings get a cooperative stop so they can
 retire the transports' isolated groups. Once `heard` says which watched signal came, the visit
 ends on the cancellation's path, as `stopped` with that signal. -/
 def choose (executable : String) (save : Option String := none) (readOnly : Bool := false)
@@ -109,6 +111,9 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
     let mut size := (0, 0)
     let mut shown : Option (List (List UInt8)) := none
     let mut dirty := true
+    -- whether the next listing to start, and the running one, sort the rows again
+    let mut sortNext := false
+    let mut sorting := false
     while true do
       let current ← winsizeGet stdoutFd
       if dirty || current != size then
@@ -157,6 +162,11 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
         if key == .refresh then
           shown := none
           dirty := true
+          state :=
+            Linger.Selector.Picker.relist state true
+              (Linger.Display.View.sort (statuses.getD · .unknown) state.candidates)
+              state.descriptions
+          sortNext := true
         if !loaded && key == .accept then
           continue
         match Linger.Selector.Picker.step state key with
@@ -175,14 +185,15 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
           lastFull := listed
           fetched := if savedTmux then none else some started
         let incoming := if full then listed else listed.withRemote lastFull
-        -- what asks for someone first, as `ls` lists it (`View.sort`); the query finds a row by
-        -- its description too, and a directory under the account's home shows as `~`, as in `ls`;
-        -- the remote rows' age is as of this listing, which repaints it
+        -- what asks for someone first, as `ls` lists it (`View.sort`), when the visit opens and
+        -- after the refresh key, and otherwise the rows shown where they are (`Picker.relist`);
+        -- the query finds a row by its description too, and a directory under the account's home
+        -- shows as `~`, as in `ls`; the remote rows' age is as of this listing, which repaints it
         let incomingStatuses := statusesOf incoming
         let ordered :=
           Linger.Display.View.sort (incomingStatuses.getD · .unknown) incoming.candidates
         let next :=
-          if loaded then Linger.Selector.Picker.refresh state ordered incoming.descriptions
+          if loaded then Linger.Selector.Picker.relist state sorting ordered incoming.descriptions
           else
             { (Linger.Selector.Picker.init ordered state.allowCreate) with
               query := state.query, descriptions := incoming.descriptions }
@@ -201,6 +212,8 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
         remoteDue := Linger.Selector.Picker.fetch remoteDue .list
         let args := if full then fullArgs else #["ls", "--porcelain"]
         started ← monotonicMs
+        sorting := sortNext
+        sortNext := false
         pending.set (some (← Os.Shell.Command.start executable args))
     return .cancel
   finally

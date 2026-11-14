@@ -216,6 +216,20 @@ def refresh (s : State) (candidates : List String)
   { s with
     candidates, descriptions, cursor }
 
+/-- The rows a view shows after it showed `shown` and a listing gave `ordered`: each row of `shown`
+that `ordered` still lists, where `shown` had it, so a vanished row closes up, then each row of
+`ordered` that `shown` did not have, in `ordered`'s order. -/
+def arrange (shown ordered : List String) : List String :=
+  shown.filter (ordered.contains ·) ++ ordered.filter (!shown.contains ·)
+
+/-- The state after a listing that gives the targets `ordered`, as a view sorts them
+(`View.sort`): in that order when `resort` asks for it, as when the visit opens and on the refresh
+key, and otherwise the rows already shown where they are, with new rows last (`arrange`), so the
+view moves only when the person moves it. The highlight follows its target (`refresh`). -/
+def relist (s : State) (resort : Bool) (ordered : List String)
+    (descriptions : List (String × String)) : State :=
+  refresh s (if resort then ordered else arrange s.candidates ordered) descriptions
+
 /-- Editing resets the cursor. Navigation clamps; acceptance acts on the selected
 row. No selectable row stays editable. Ctrl-D's `deleteCharEof` ends the visit on an empty query
 and otherwise leaves the state as it is: the cursor sits after the query, with no character under

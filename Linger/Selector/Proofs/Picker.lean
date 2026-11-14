@@ -750,6 +750,19 @@ theorem refresh_missing (s : State) (candidates : List String)
     List.findIdx?_eq_none_iff.mpr (by simpa using hmissing)
   simp [refresh, hf]
 
+/-- A listing keeps the rows a view shows unless it sorts them again: it sorts them when asked
+to, and otherwise keeps each row still listed where it was, then adds the new ones. -/
+theorem relist_rows (s : State) (resort : Bool) (ordered : List String)
+    (descriptions : List (String × String)) :
+    (relist s resort ordered descriptions).candidates =
+        (if resort then ordered
+        else
+          s.candidates.filter (fun t => ordered.contains t) ++
+            ordered.filter fun t => !s.candidates.contains t) ∧
+      (relist s resort ordered descriptions).query = s.query ∧
+      (relist s resort ordered descriptions).descriptions = descriptions := by
+  simp [relist, refresh, arrange]
+
 theorem init_valid (candidates : List String) (allowCreate : Bool := true) :
     (init candidates allowCreate).Valid := by simp [init, State.Valid, maxQueryLength]
 

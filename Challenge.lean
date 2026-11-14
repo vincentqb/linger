@@ -317,6 +317,10 @@ def Linger.Selector.Picker.frameRows :
       (String → Status.Status) → Bool → Bool → Bool → Option Nat → Nat → Nat → List (List UInt8) :=
   sorry
 
+def Linger.Selector.Picker.relist :
+    Selector.Picker.State → Bool → List String → List (String × String) → Selector.Picker.State :=
+  sorry
+
 def Linger.Selector.Picker.update : List (List UInt8) → List (List UInt8) → List UInt8 := sorry
 
 def Linger.Selector.Picker.fetch : Bool → Selector.Picker.Event → Bool := sorry
@@ -586,9 +590,13 @@ after that, which the listing tests and the status suite check.
 In the chooser, a key does only what it does in a line editor: Enter attaches only to a listed
 target (`picker_attach_listed`) and creates only a new, valid one (`picker_create_new`), and
 Ctrl-D, which deletes the character under the cursor and on an empty line ends the input, ends the
-visit only on an empty query, since the cursor sits after the query (`picker_eof_empty`). Not
-claimed: which key requests which action, which the selector's key proofs and the manager suite
-check. -/
+visit only on an empty query, since the cursor sits after the query (`picker_eof_empty`). The
+chooser's view moves only when its person moves it: a listing keeps the rows it shows where they
+are, a vanished row closing up and a new one last, unless it sorts them again, as when the chooser
+opens and on Ctrl-L (`relist_keeps_rows`). Not claimed: which key requests which action, which
+the selector's key proofs and the manager suite check, that the chooser sorts exactly when it
+opens and on Ctrl-L, which the manager suite checks, and that the highlight follows its row, which
+the selector's picker proofs show. -/
 
 theorem one_owner (grant : Claim.State → Nat → Nat → Bool) (exclusive : Claim.Exclusive grant)
     {s : Claim.State} (reached : Claim.Reachable grant Claim.enters s) {a b resource : Nat}
@@ -944,6 +952,44 @@ theorem picker_create_new_rejects_empty :
               key =
             .create target →
           target ∉ s.candidates ∧ target ≠ "" ∧ Name.Valid ((target.splitOn "@").headD "") := by
+  sorry
+
+theorem relist_keeps_rows (s : Selector.Picker.State) (resort : Bool) (ordered : List String)
+    (descriptions : List (String × String)) :
+    (Selector.Picker.relist s resort ordered descriptions).candidates =
+        (if resort then ordered
+        else
+          s.candidates.filter (fun t => ordered.contains t) ++
+            ordered.filter fun t => !s.candidates.contains t) ∧
+      (Selector.Picker.relist s resort ordered descriptions).query = s.query ∧
+      (Selector.Picker.relist s resort ordered descriptions).descriptions = descriptions := by
+  sorry
+
+@[kills relist_keeps_rows]
+theorem relist_keeps_rows_rejects_resort :
+    ¬∀ (s : Selector.Picker.State) (resort : Bool) (ordered : List String)
+        (descriptions : List (String × String)),
+        ((fun (s : Selector.Picker.State) (_ : Bool) (ordered : List String)
+                    (descriptions : List (String × String)) =>
+                  { s with
+                    candidates := ordered, descriptions := descriptions })
+                s resort ordered descriptions).candidates =
+            (if resort then ordered
+            else
+              s.candidates.filter (fun t => ordered.contains t) ++
+                ordered.filter fun t => !s.candidates.contains t) ∧
+          ((fun (s : Selector.Picker.State) (_ : Bool) (ordered : List String)
+                    (descriptions : List (String × String)) =>
+                  { s with
+                    candidates := ordered, descriptions := descriptions })
+                s resort ordered descriptions).query =
+            s.query ∧
+          ((fun (s : Selector.Picker.State) (_ : Bool) (ordered : List String)
+                    (descriptions : List (String × String)) =>
+                  { s with
+                    candidates := ordered, descriptions := descriptions })
+                s resort ordered descriptions).descriptions =
+            descriptions := by
   sorry
 
 theorem picker_eof_empty (s : Selector.Picker.State) :

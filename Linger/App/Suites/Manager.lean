@@ -1309,15 +1309,15 @@ private def statusChecks (e : Env) : IO Unit := do
           unless ← s.until "after  new" start do
             return false
           let after ← s.capture "metadata-after"
-          -- beta, listed first, shares its place with the quiet alpha; what asks for someone
-          -- comes first, and the cursor stays on the row it was on
+          -- beta, listed first, shares its place with the quiet alpha; alpha now asks for
+          -- someone but keeps its row while the chooser is open, and the cursor stays on beta
           let changed :=
             rowText before 4 == "  ▸ ⣷ beta  other" && has (rowText before 5) "before  old  +1" &&
-              rowText after 4 == "    ✗ alpha after  new  +3" &&
-              rowText after 5 == "  ▸ ⣷ beta  other" &&
+              rowText after 4 == "  ▸ ⣷ beta  other" &&
+              rowText after 5 == "    ✗ alpha after  new  +3" &&
               rowText after 2 == "  › a 2" &&
-              (after.getCell 4 4).pen.fg == .idx 1 &&
-              (after.getCell 6 5).pen.reverse
+              (after.getCell 4 5).pen.fg == .idx 1 &&
+              (after.getCell 6 4).pen.reverse
           return changed && (← acceptThenCancel s) && (← f.visits) == attachVisit ["beta"]
   check e "status-control-text"
       "picker keeps hostile metadata out of terminal controls while retaining ordinary details"
@@ -1652,6 +1652,45 @@ private def refreshChecks (e : Env) : IO Unit := do
             | _, _ => false
           return kept && (← s.selected "alpha" start) && (← acceptThenCancel s) &&
               (← f.visits) == attachVisit ["alpha"]
+  check e "refresh-keeps-order"
+      "automatic refresh keeps the rows a visit shows where they are, a vanished row closing up and a new one last, until Ctrl-L sorts them again"
+      fun f => do
+      f.listing "name\talpha\nstatus\tidle\nname\tbeta\nstatus\tidle\nname\tgamma\nstatus\tidle\n"
+      withPrompt f.picker #[] fun s => do
+          unless ← s.untilRow "⣀ gamma" do
+            return false
+          let rowOf := fun (vt : Vt) (name : String) =>
+            (List.range vt.rowCount).find? fun row => has (rowText vt row) name
+          let start ← s.mark
+          -- gamma starts asking, beta ends and delta, which asks, is new: a fresh view would
+          -- list gamma and delta first
+          f.listing
+              "name\talpha\nstatus\tidle\nname\tgamma\nstatus\tasks-you\nname\tdelta\nstatus\tasks-you\n"
+          unless ← s.untilRow "⚑ delta" start do
+            return false
+          let kept ← s.capture "kept-order"
+          let pressed ← s.mark
+          s.text "\x0c"
+          let _ ←
+            s.untilScreen
+                (fun vt =>
+                  rowOf vt "gamma" == some 4 && rowOf vt "delta" == some 5 &&
+                    rowOf vt "alpha" == some 6)
+                pressed
+          let sorted ← s.capture "sorted-order"
+          IO.FS.writeFile (f.root / "order-observation")
+              s!"kept={[rowOf kept "alpha", rowOf kept "beta", rowOf kept "gamma", rowOf kept "delta"]}\nsorted={[rowOf sorted "alpha", rowOf sorted "gamma", rowOf sorted "delta"]}\n"
+          let keptOrder :=
+            rowOf kept "alpha" == some 4 && rowOf kept "gamma" == some 5 &&
+              rowOf kept "delta" == some 6 &&
+              rowOf kept "beta" == none
+          let sortedOrder :=
+            rowOf sorted "gamma" == some 4 && rowOf sorted "delta" == some 5 &&
+              rowOf sorted "alpha" == some 6
+          let highlight ← s.selected "alpha" pressed
+          s.text "\x03"
+          return keptOrder && sortedOrder && highlight && (← restored s 130) &&
+              (← f.visits) == listed
   check e "refresh-removed"
       "automatic refresh clamps a removed selection while preserving an invalid creation query"
       fun f => do
@@ -1931,13 +1970,14 @@ private def refreshChecks (e : Env) : IO Unit := do
           unless ← s.untilRow "delta.x" start do
             return false
           let vt ← s.capture "ready-frame"
-          let displayed := rowText vt 4 == "  ▸ ? beta.x  (busy)"
+          -- the rows shown keep their places and the new delta.x comes last
+          let displayed := rowText vt 5 == "  ▸ ? beta.x  (busy)" && has (rowText vt 7) "delta.x"
           IO.FS.removeFile (f.root / "hold-listing-from")
           let start ← s.mark
           s.text "\x0e"
-          unless ← s.selected "delta.x" start do
+          unless ← s.selected "gamma.x" start do
             return false
-          return displayed && (← acceptThenCancel s) && (← f.visits) == attachVisit ["delta.x"]
+          return displayed && (← acceptThenCancel s) && (← f.visits) == attachVisit ["gamma.x"]
   for (phase, serial) in [("initial", 1), ("refresh", 2)] do
     for (slug, key) in [("ctrl-c", "\x03"), ("escape", "\x1b")] do
       let caseName := if serial == 1 then s!"initial-cancel-{slug}" else s!"slow-cancel-{slug}"
