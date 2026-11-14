@@ -833,6 +833,66 @@ theorem relist_keeps_rows_rejects_resort :
   have kept := (h { candidates := ["a", "b"] } false ["b", "a"] []).1
   exact absurd kept (by decide)
 
+theorem enter_returns (s : Selector.Picker.State) (shown : List String) (focus : Option String)
+    (ordered : List String) (descriptions : List (String × String)) :
+    (Selector.Picker.enter s shown focus ordered descriptions).candidates =
+        shown.filter (fun t => ordered.contains t) ++ ordered.filter (fun t => !shown.contains t) ∧
+      (Selector.Picker.enter s shown focus ordered descriptions).query = s.query ∧
+      (∀ t,
+        focus = some t →
+          s.query = "" →
+          t ∈ ordered →
+          (Selector.Picker.enter s shown focus ordered
+                  descriptions).candidates[(Selector.Picker.enter s shown focus ordered
+                  descriptions).cursor]? =
+            some t) ∧
+      ((∀ t, focus = some t → s.query = "" → t ∉ ordered) →
+        (Selector.Picker.enter s shown focus ordered descriptions).cursor = 0) :=
+  Selector.Picker.enter_returns s shown focus ordered descriptions
+
+theorem enter_returns_rejects_top :
+    ¬∀ (s : Selector.Picker.State) (shown : List String) (focus : Option String)
+        (ordered : List String) (descriptions : List (String × String)),
+        ((fun (s : Selector.Picker.State) (_ : List String) (_ : Option String)
+                    (ordered : List String) (descriptions : List (String × String)) =>
+                  { s with
+                    candidates := ordered, descriptions := descriptions, cursor := 0 })
+                s shown focus ordered descriptions).candidates =
+            shown.filter (fun t => ordered.contains t) ++
+              ordered.filter (fun t => !shown.contains t) ∧
+          ((fun (s : Selector.Picker.State) (_ : List String) (_ : Option String)
+                    (ordered : List String) (descriptions : List (String × String)) =>
+                  { s with
+                    candidates := ordered, descriptions := descriptions, cursor := 0 })
+                s shown focus ordered descriptions).query =
+            s.query ∧
+          (∀ t,
+            focus = some t →
+              s.query = "" →
+              t ∈ ordered →
+              ((fun (s : Selector.Picker.State) (_ : List String) (_ : Option String)
+                          (ordered : List String) (descriptions : List (String × String)) =>
+                        { s with
+                          candidates := ordered, descriptions := descriptions, cursor := 0 })
+                      s shown focus ordered
+                      descriptions).candidates[((fun (s : Selector.Picker.State) (_ : List String)
+                          (_ : Option String) (ordered : List String)
+                          (descriptions : List (String × String)) =>
+                        { s with
+                          candidates := ordered, descriptions := descriptions, cursor := 0 })
+                      s shown focus ordered descriptions).cursor]? =
+                some t) ∧
+          ((∀ t, focus = some t → s.query = "" → t ∉ ordered) →
+            ((fun (s : Selector.Picker.State) (_ : List String) (_ : Option String)
+                      (ordered : List String) (descriptions : List (String × String)) =>
+                    { s with
+                      candidates := ordered, descriptions := descriptions, cursor := 0 })
+                  s shown focus ordered descriptions).cursor =
+              0) := by
+  intro h
+  have chosen := (h { candidates := [] } [] (some "b") ["a", "b"] []).2.2.1 "b" rfl rfl (by simp)
+  exact absurd chosen (by decide)
+
 theorem picker_eof_empty (s : Selector.Picker.State) :
     Selector.Picker.step s .deleteCharEof = if s.query = "" then .cancel else .stay s :=
   Selector.Picker.step_deleteCharEof s

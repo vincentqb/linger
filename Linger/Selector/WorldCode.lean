@@ -28,7 +28,7 @@ open Os.Shell
 /-- How one selection visit ended. -/
 inductive Choice where
   /-- An accepted row's exact target, existing or new, with the snapshot displayed
-  when it was accepted. -/
+  when it was accepted, its targets in the order the visit showed them. -/
   | attach (target : String) (snapshot : Linger.Selector.Picker.Snapshot)
   /-- Cancellation by key, or the end of terminal input. -/
   | cancel
@@ -72,11 +72,14 @@ first frame, the first after a resize and the first after the refresh key, which
 redraws the screen as Ctrl-L does in a line editor, paint every row; after that a change writes
 only the rows it changed (`Picker.update`). The rows are in `View.sort`'s order when the visit
 opens, at once on the refresh key and again after the listing it starts; any other listing keeps
-the rows shown where they are, a new row last (`Picker.relist`). Native listings get a cooperative stop so they can
+the rows shown where they are, a new row last (`Picker.relist`). The visit enters with the rows of
+the view it returns from, `left`, where they were, and the cursor on `focus`, the session it
+returns from or the one it was opened inside, while the listing has it (`Picker.enter`). Native listings get a cooperative stop so they can
 retire the transports' isolated groups. Once `heard` says which watched signal came, the visit
 ends on the cancellation's path, as `stopped` with that signal. -/
 def choose (executable : String) (save : Option String := none) (readOnly : Bool := false)
-    (heard : IO (Option UInt8) := pure none) : IO Choice := do
+    (heard : IO (Option UInt8) := pure none) (left : List String := [])
+    (focus : Option String := none) : IO Choice := do
   let savedTmux := save.isSome
   unless (← stdinIsTty) && (← (← IO.getStdout).isTty) do
     throw (IO.userError "the picker needs terminal input and output")
@@ -174,7 +177,7 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
           dirty := dirty || next != state
           state := next
         | .attach target | .create target =>
-          return .attach target snapshot
+          return .attach target { snapshot with candidates := state.candidates }
         | .cancel =>
           return .cancel
       if let some result← Os.Shell.Command.poll pending then
@@ -194,9 +197,7 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
           Linger.Display.View.sort (incomingStatuses.getD · .unknown) incoming.candidates
         let next :=
           if loaded then Linger.Selector.Picker.relist state sorting ordered incoming.descriptions
-          else
-            { (Linger.Selector.Picker.init ordered state.allowCreate) with
-              query := state.query, descriptions := incoming.descriptions }
+          else Linger.Selector.Picker.enter state left focus ordered incoming.descriptions
         let atHome := incoming.atHome home
         let now ← monotonicMs
         let age := fetched.map fun start => (now - start) / 1000
@@ -233,7 +234,8 @@ def attachArgs (target : String) (readOnly : Bool := false) : Array String :=
       Linger.Target.Remote.targetOperands target).toArray
 
 /-- Execute either selected row through attach, after terminal restoration. Every attach
-exit returns to a fresh listing; cancellation ends the manager, answering `cancelled`. The
+exit returns to a fresh listing, which shows the view the visit left, the session attached to
+selected, as the first visit selects the session `LINGER_SESSION` names; cancellation ends the manager, answering `cancelled`. The
 caller supplies one frozen absolute executable for all listing and attach children. A listing
 that fails ends the manager with the answer its exit status gives (`Answer.ofCode`). A signal of
 `handbackSignals` ends the manager as a cancellation does, answering `stopped` with the first that
@@ -242,8 +244,13 @@ terminal back first, and an attach, which owns the terminal while it runs and he
 its terminal sends, first ends. -/
 def run (executable : String) (readOnly : Bool := false) : IO Linger.Os.Answer :=
   watching handbackSignals Linger.Os.Answer.stopped fun stops => do
+    let mut left : List String := []
+    let mut focus := Linger.Os.Env.inSession (← IO.getEnv "LINGER_SESSION")
     while true do
-      match ← choose executable (readOnly := readOnly) (heard := stops.came) with
+      match
+        ←
+          choose executable (readOnly := readOnly) (heard := stops.came) (left := left) (focus :=
+              focus) with
       | .cancel =>
         return .cancelled
       | .stopped signal =>
@@ -253,7 +260,9 @@ def run (executable : String) (readOnly : Bool := false) : IO Linger.Os.Answer :
         if !stderr.isEmpty then
           IO.eprint stderr
         return Linger.Os.Answer.ofCode status
-      | .attach target _ =>
+      | .attach target displayed =>
+        left := displayed.candidates
+        focus := some target
         let child ← IO.Process.spawn { cmd := executable, args := attachArgs target readOnly }
         discard child.wait
         if let some signal← stops.came then

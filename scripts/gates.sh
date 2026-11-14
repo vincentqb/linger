@@ -708,16 +708,18 @@ picker_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Selector/WorldCode.lea
 # application binding before dispatch.
 for tie in \
   'for byte in bytes do let [(]next, emitted[)] := Input[.]feed decoder byte decoder := next keys := keys [+][+] [(]emitted[.]filterMap Linger[.]Selector[.]Key[.]ofInput[)][.]toArray else if Input[.]pending decoder && [(]← monotonicMs[)] - lastInput ≥ 150 then let [(]next, emitted[)] := Input[.]flush decoder decoder := next keys := [(]emitted[.]filterMap Linger[.]Selector[.]Key[.]ofInput[)][.]toArray for key in keys do' \
-  'let incomingStatuses := statusesOf incoming let ordered := Linger[.]Display[.]View[.]sort [(]incomingStatuses[.]getD · [.]unknown[)] incoming[.]candidates let next := if loaded then Linger[.]Selector[.]Picker[.]relist state sorting ordered incoming[.]descriptions else [{] [(]Linger[.]Selector[.]Picker[.]init ordered state[.]allowCreate[)] with query := state[.]query, descriptions := incoming[.]descriptions [}] let atHome := incoming[.]atHome home let now ← monotonicMs let age := fetched[.]map fun start => [(]now - start[)] / 1000 dirty := dirty [|][|] !loaded [|][|] next != state [|][|] atHome != snapshot [|][|] age != remoteAge state := next snapshot := atHome statuses := incomingStatuses remoteAge := age loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
+  'let incomingStatuses := statusesOf incoming let ordered := Linger[.]Display[.]View[.]sort [(]incomingStatuses[.]getD · [.]unknown[)] incoming[.]candidates let next := if loaded then Linger[.]Selector[.]Picker[.]relist state sorting ordered incoming[.]descriptions else Linger[.]Selector[.]Picker[.]enter state left focus ordered incoming[.]descriptions let atHome := incoming[.]atHome home let now ← monotonicMs let age := fetched[.]map fun start => [(]now - start[)] / 1000 dirty := dirty [|][|] !loaded [|][|] next != state [|][|] atHome != snapshot [|][|] age != remoteAge state := next snapshot := atHome statuses := incomingStatuses remoteAge := age loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
   'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let rows := Linger[.]Selector[.]Picker[.]frameRows state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor savedTmux remoteAge current[.]1[.]toNat current[.]2[.]toNat let frame := match shown with [|] some before => if current == size then Linger[.]Selector[.]Picker[.]update before rows else Linger[.]Selector[.]Picker[.]frame state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor savedTmux remoteAge current[.]1[.]toNat current[.]2[.]toNat [|] none => Linger[.]Selector[.]Picker[.]frame state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor savedTmux remoteAge current[.]1[.]toNat current[.]2[.]toNat if !frame[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk frame[.]toArray[)] shown := some rows size := current dirty := false let ready ← poll fds events 50' \
-  'for key in keys do remoteDue := Linger[.]Selector[.]Picker[.]fetch remoteDue [(][.]key key[)] if key == [.]refresh then shown := none dirty := true state := Linger[.]Selector[.]Picker[.]relist state true [(]Linger[.]Display[.]View[.]sort [(]statuses[.]getD · [.]unknown[)] state[.]candidates[)] state[.]descriptions sortNext := true if !loaded && key == [.]accept then continue match Linger[.]Selector[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target snapshot [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Os[.]Shell[.]Command[.]poll pending then' \
+  'for key in keys do remoteDue := Linger[.]Selector[.]Picker[.]fetch remoteDue [(][.]key key[)] if key == [.]refresh then shown := none dirty := true state := Linger[.]Selector[.]Picker[.]relist state true [(]Linger[.]Display[.]View[.]sort [(]statuses[.]getD · [.]unknown[)] state[.]candidates[)] state[.]descriptions sortNext := true if !loaded && key == [.]accept then continue match Linger[.]Selector[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target [{] snapshot with candidates := state[.]candidates [}] [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Os[.]Shell[.]Command[.]poll pending then' \
   'if full then lastFull := listed fetched := if savedTmux then none else some started let incoming := if full then listed else listed[.]withRemote lastFull' \
   'nextListing := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]remoteDue [|][|] [(]← monotonicMs[)] ≥ nextListing[)] then full := savedTmux [|][|] remoteDue remoteDue := Linger[.]Selector[.]Picker[.]fetch remoteDue [.]list let args := if full then fullArgs else #[[]"ls", "--porcelain"[]] started ← monotonicMs sorting := sortNext sortNext := false pending[.]set [(]some [(]← Os[.]Shell[.]Command[.]start executable args[)][)] return [.]cancel finally' \
   'finally Os[.]Shell[.]Command[.]stop pending [(]if savedTmux then 0 else 1000[)]' \
   'let fullArgs := if savedTmux then #[[]"tmux", "ls", "--porcelain"[]] [+][+] save[.]toArray else #[[]"ls", "-r", "--porcelain"[]]' \
-  'match ← choose executable [(]readOnly := readOnly[)] [(]heard := stops[.]came[)] with' \
+  'let mut focus := Linger[.]Os[.]Env[.]inSession [(]← IO[.]getEnv "LINGER_SESSION"[)]' \
+  'match ← choose executable [(]readOnly := readOnly[)] [(]heard := stops[.]came[)] [(]left := left[)] [(]focus := focus[)] with' \
+  '[|] [.]attach target displayed => left := displayed[.]candidates focus := some target let child' \
   'let ready ← poll fds events 50 if let some signal[[:space:]]*← heard then return [.]stopped signal' \
-  'IO Linger[.]Os[.]Answer := watching handbackSignals Linger[.]Os[.]Answer[.]stopped fun stops => do while true do' \
+  'IO Linger[.]Os[.]Answer := watching handbackSignals Linger[.]Os[.]Answer[.]stopped fun stops => do let mut left : List String := [[][]] let mut focus := Linger[.]Os[.]Env[.]inSession [(]← IO[.]getEnv "LINGER_SESSION"[)] while true do' \
   'discard child[.]wait if let some signal[[:space:]]*← stops[.]came then return [.]stopped signal return [.]done' \
   'def attachArgs [(]target : String[)] [(]readOnly : Bool := false[)] : Array String := [(]"attach" :: [(]if readOnly then [[]"--read-only"[]] else [[][]][)] [+][+] Linger[.]Target[.]Remote[.]targetOperands target[)][.]toArray'; do
   printf '%s\n' "$picker_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
@@ -794,7 +796,7 @@ for tie in \
     || fail "listing or prompt bypassed its shared policy: $tie"
 done
 # Environment policies decide unset and empty values for every input. The runtime
-# reads SHELL and LINGER_NO_DETACH_KEY once each, and HOME once for remote hosts, into
+# reads SHELL, LINGER_NO_DETACH_KEY and the chooser's LINGER_SESSION once each, and HOME once for remote hosts, into
 # their policies. An unset or empty HOME configures no remote hosts
 # (remotesFile_eq_none_iff): a fallback such as world-writable `/tmp` would let another
 # account choose them, and a suite cannot create `/tmp/.config`. The remotes file's lines mean
@@ -805,7 +807,7 @@ printf '%s\n' "$cli_code" | CG_RE='(^|[[:space:]])else pure [[][]] match Linger[
   || fail "remote configuration bypasses Remote.config, which reads each line of the remotes file as one meaning"
 [ "$(code_count 'Env[.]remotesFile' 'Linger/*.lean' ':!Linger/*/Suites/*' ':!Linger/*/Proofs/*' ':!Linger/*/Tests/*' ':!Linger/Os/CoreCode/Env.lean')" -eq 1 ] \
   || fail "the remotes file is read outside remoteConfig, which reads it through Env.remotesFile and Remote.config"
-for var in SHELL LINGER_NO_DETACH_KEY; do
+for var in SHELL LINGER_NO_DETACH_KEY LINGER_SESSION; do
   [ "$(code_count "getEnv \"$var\"" 'Linger/*' 'packages/*')" -eq 1 ] \
     || fail "$var is read more than once or not at all; read it once, into its Env policy"
 done

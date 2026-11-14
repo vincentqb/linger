@@ -230,6 +230,22 @@ def relist (s : State) (resort : Bool) (ordered : List String)
     (descriptions : List (String × String)) : State :=
   refresh s (if resort then ordered else arrange s.candidates ordered) descriptions
 
+/-- The state a visit enters with, from `s`, the state it had while its first listing ran, once
+that listing gives the targets `ordered`, as a view sorts them: the rows the view it returns from
+showed, `shown`, where they were, with new rows last (`arrange`), and the cursor on `focus`, the
+session it returns from or the one it was opened inside, while the query is empty and the listing
+still has it; otherwise on the first row. Returning is the inverse of leaving. -/
+def enter (s : State) (shown : List String) (focus : Option String) (ordered : List String)
+    (descriptions : List (String × String)) : State :=
+  let candidates := arrange shown ordered
+  { s with
+    candidates, descriptions,
+    cursor :=
+      match focus with
+      | some target =>
+        if s.query.isEmpty && candidates.contains target then candidates.idxOf target else 0
+      | none => 0 }
+
 /-- Editing resets the cursor. Navigation clamps; acceptance acts on the selected
 row. No selectable row stays editable. Ctrl-D's `deleteCharEof` ends the visit on an empty query
 and otherwise leaves the state as it is: the cursor sits after the query, with no character under

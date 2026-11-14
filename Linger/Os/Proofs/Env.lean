@@ -62,4 +62,11 @@ theorem withColor_iff (terminal : Bool) (noColor term : Option String) :
         ∃ name, term = some name ∧ name ≠ "" ∧ name ≠ "dumb" := by
   cases noColor <;> cases term <;> simp [withColor, String.isEmpty_iff, and_assoc]
 
+/-- A nonempty LINGER_SESSION names the session, unchanged. -/
+theorem inSession_set {name : String} (set : name ≠ "") : inSession (some name) = some name := by
+  simp [inSession, set]
+
+/-- An unset or empty LINGER_SESSION names no session. -/
+theorem inSession_absent : inSession none = none ∧ inSession (some "") = none := by simp [inSession]
+
 end Linger.Os.Env

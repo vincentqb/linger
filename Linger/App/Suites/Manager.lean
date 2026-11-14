@@ -238,19 +238,21 @@ private def launch (root : System.FilePath) (manager mode : String) (args : List
             args.toArray)
       else (manager, args.toArray)
   -- spawnPty accepts K=V entries; remove presence-sensitive flags at this boundary. The files
-  -- `no-color` and `term` hold NO_COLOR and TERM, and a variable without its file is unset.
+  -- `no-color`, `term` and `linger-session` hold NO_COLOR, TERM and LINGER_SESSION, and a
+  -- variable without its file is unset.
   let valueOf (file : String) : IO (Option String) := do
     if ← (root / file).pathExists then
       return some (← IO.FS.readFile (root / file))
     return none
   let noColor ← valueOf "no-color"
   let term ← valueOf "term"
+  let session ← valueOf "linger-session"
   let child ←
     withLaunchLock <|
         IO.Process.spawn
           { cmd, args,
             env :=
-              #[("LINGER_SESSION", none), ("LINGER_NO_DETACH_KEY", none), ("NO_COLOR", noColor),
+              #[("LINGER_SESSION", session), ("LINGER_NO_DETACH_KEY", none), ("NO_COLOR", noColor),
                 ("TERM", term)],
             stdin := if mode == "stdout-only" then .null else .inherit }
   IO.FS.writeFile (root / "manager-pid") (toString child.pid)
@@ -658,8 +660,9 @@ private def beforeAttach (s : Session) (count : Nat := 1) (entries : Nat := 1) :
   let some position := findText out s!"MANAGER-ATTACH-{count}" | return false
   return modesRestored (out.extract 0 position) entries
 
-/-- The next prompt must follow this attach, with an empty query and the new
-snapshot's first row selected. An earlier prompt cannot satisfy the wait. -/
+/-- The next prompt must follow this attach, with an empty query and `target` selected: the row
+attached to when the new snapshot lists it, else its first row. An earlier prompt cannot satisfy
+the wait. -/
 private def returned (s : Session) (target : String) (count : Nat := 1) : IO Bool := do
   let marker := s!"MANAGER-ATTACH-{count}"
   unless ← s.until marker do
@@ -674,7 +677,9 @@ private def returned (s : Session) (target : String) (count : Nat := 1) : IO Boo
 then cancel explicitly. Count every visit, including any preceding refresh. -/
 private def acceptThenCancel (s : Session) (keys : String := "\r") (visits : Nat := 2) : IO Bool :=
   do
-  s.fixture.afterAttach "name\tFresh\nname\tOther\n"
+  -- rows no visit lists before an attach, so the return enters with them alone, the first
+  -- selected
+  s.fixture.afterAttach "name\tFresh\nname\tLater\n"
   s.text keys
   unless ← returned s "Fresh" do
     return false
@@ -2093,7 +2098,7 @@ private def defaultChecks (e : Env) : IO Unit := do
             (shellText, "host", 255, "Fresh", [])] do
           unless ← s.typeQuery query query do
             return false
-          f.afterAttach s!"name\t{next}\nname\tOther\n"
+          f.afterAttach s!"name\t{next}\nname\tOther{count}\n"
           IO.FS.writeFile (f.root / "attach-rc") (toString rc)
           s.text "\r"
           count := count + 1
@@ -2105,6 +2110,36 @@ private def defaultChecks (e : Env) : IO Unit := do
               (← f.visits) == expected
         s.text "\x03"
         return normal && (← restored s 130 4) && (← f.visits) == expected
+  check e "return-selects"
+      "picker returns from an attach to the view it left, the attached row highlighted" fun f =>
+      withPrompt f.picker #[] fun s => do
+        let selection ← s.mark
+        s.text "\x1b[B"
+        unless ← s.selected "Beta" selection do
+          return false
+        f.afterAttach "name\tGamma\nname\tBeta\nname\tAlpha\nname\tDelta\n"
+        s.text "\r"
+        unless ← returned s "Beta" do
+          return false
+        let vt ← s.capture "return-frame"
+        -- the rows the visit left, in its order, and the new Delta last
+        let rows :=
+          ["Alpha", "Beta", "Gamma", "Delta"].zipIdx.all fun (name, index) =>
+            has (rowText vt (4 + index)) name
+        s.text "\x03"
+        return rows && (← restored s 130 2) && (← beforeAttach s) && (← attachNormal f) &&
+            (← f.visits) == attachVisit ["Beta"]
+  for (slug, session, chosen) in
+    [("inside-session", "Gamma", "Gamma"), ("inside-session-empty", "", "Alpha"),
+      ("inside-session-gone", "Gone", "Alpha")] do
+    check e slug
+        s!"picker opened inside a session starts on that session, or the top row without one ({slug})"
+        fun f => do
+        IO.FS.writeFile (f.root / "linger-session") session
+        withPrompt f.picker #[] fun s => do
+            let highlight ← s.selected chosen
+            s.text "\x03"
+            return highlight && (← restored s 130) && (← f.visits) == listed
   check e "return-listing-failure"
       "picker probe preserves a failed listing status after attach and restores the terminal"
       fun f =>

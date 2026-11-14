@@ -4,8 +4,8 @@ public section
 
 /-! # Linger.Os.Env — what an environment value means
 
-The runtime reads SHELL, LINGER_NO_DETACH_KEY, the remotes file's HOME and a resume's HOME
-once each, and NO_COLOR and TERM once for each listing that may color, those of `ls` and
+The runtime reads SHELL, LINGER_NO_DETACH_KEY, the chooser's LINGER_SESSION, the remotes
+file's HOME and a resume's HOME once each, and NO_COLOR and TERM once for each listing that may color, those of `ls` and
 `tmux ls` and the chooser's, and passes the result here, so what an unset or empty value means
 is a pure decision with a theorem (`Linger/Os/Proofs/Env.lean`). The suites run the program with
 both.
@@ -48,5 +48,10 @@ terminal other than `dumb`, which takes no escape sequences. An unset or empty T
 terminal. -/
 def withColor (terminal : Bool) (noColor term : Option String) : Bool :=
   terminal && (noColor.getD "").isEmpty && !["", "dumb"].contains (term.getD "")
+
+/-- The session linger runs inside: `LINGER_SESSION`, which a session's start sets to its name,
+when it is set and not empty; none when it is unset or empty, since an empty word names no
+session. -/
+def inSession (value : Option String) : Option String := value.filter (!·.isEmpty)
 
 end Linger.Os.Env

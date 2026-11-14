@@ -763,6 +763,50 @@ theorem relist_rows (s : State) (resort : Bool) (ordered : List String)
       (relist s resort ordered descriptions).descriptions = descriptions := by
   simp [relist, refresh, arrange]
 
+/-- **Returning is the inverse of leaving**: a visit enters with the rows the view it left
+showed, where they were, the new ones last, and with an empty query selects the session it
+returns from, or the one it was opened inside, while the listing has it; else the first row. -/
+theorem enter_returns (s : State) (shown : List String) (focus : Option String)
+    (ordered : List String) (descriptions : List (String × String)) :
+    (enter s shown focus ordered descriptions).candidates =
+        shown.filter (fun t => ordered.contains t) ++ ordered.filter (fun t => !shown.contains t) ∧
+      (enter s shown focus ordered descriptions).query = s.query ∧
+      (∀ t,
+        focus = some t →
+          s.query = "" →
+          t ∈ ordered →
+          (enter s shown focus ordered
+                  descriptions).candidates[(enter s shown focus ordered descriptions).cursor]? =
+            some t) ∧
+      ((∀ t, focus = some t → s.query = "" → t ∉ ordered) →
+        (enter s shown focus ordered descriptions).cursor = 0) := by
+  have listed (t : String) : (arrange shown ordered).contains t = true ↔ t ∈ ordered := by
+    simp only [arrange, List.contains_iff_mem, List.mem_append, List.mem_filter]
+    constructor
+    · rintro (⟨_, h⟩ | ⟨h, _⟩) <;> simpa using h
+    · intro h
+      by_cases hs : t ∈ shown
+      · exact Or.inl ⟨hs, by simpa using h⟩
+      · exact Or.inr ⟨h, by simpa using hs⟩
+  refine ⟨by simp [enter, arrange], by simp [enter], ?_, ?_⟩
+  · intro t hfocus hquery hmem
+    have hc := (listed t).mpr hmem
+    have bound := List.idxOf_lt_length_of_mem (List.contains_iff_mem.mp hc)
+    simp only [enter, hfocus, hquery, hc]
+    simp [List.getElem?_eq_getElem bound, List.getElem_idxOf bound]
+  · intro hnone
+    cases hfocus : focus with
+    | none => simp [enter]
+    | some t =>
+      by_cases hquery : s.query = ""
+      · have hc : (arrange shown ordered).contains t = false := by
+          cases h : (arrange shown ordered).contains t
+          · rfl
+          · exact absurd ((listed t).mp h) (hnone t hfocus hquery)
+        simp only [enter, hc]
+        simp
+      · simp [enter, hquery]
+
 theorem init_valid (candidates : List String) (allowCreate : Bool := true) :
     (init candidates allowCreate).Valid := by simp [init, State.Valid, maxQueryLength]
 

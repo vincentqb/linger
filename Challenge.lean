@@ -317,6 +317,11 @@ def Linger.Selector.Picker.frameRows :
       (String → Status.Status) → Bool → Bool → Bool → Option Nat → Nat → Nat → List (List UInt8) :=
   sorry
 
+def Linger.Selector.Picker.enter :
+    Selector.Picker.State →
+      List String → Option String → List String → List (String × String) → Selector.Picker.State :=
+  sorry
+
 def Linger.Selector.Picker.relist :
     Selector.Picker.State → Bool → List String → List (String × String) → Selector.Picker.State :=
   sorry
@@ -593,10 +598,16 @@ Ctrl-D, which deletes the character under the cursor and on an empty line ends t
 visit only on an empty query, since the cursor sits after the query (`picker_eof_empty`). The
 chooser's view moves only when its person moves it: a listing keeps the rows it shows where they
 are, a vanished row closing up and a new one last, unless it sorts them again, as when the chooser
-opens and on Ctrl-L (`relist_keeps_rows`). Not claimed: which key requests which action, which
+opens and on Ctrl-L (`relist_keeps_rows`). Returning is the inverse of leaving: the view a visit
+enters after an attach is the one it left, its rows where they were and new ones last, selecting
+the session it was in, and a visit opened inside a session selects that session; a session the
+listing no longer has, as after a seen ending, leaves the first row selected (`enter_returns`).
+Not claimed: which key requests which action, which
 the selector's key proofs and the manager suite check, that the chooser sorts exactly when it
 opens and on Ctrl-L, which the manager suite checks, and that the highlight follows its row, which
-the selector's picker proofs show. -/
+the selector's picker proofs show, that a cursor on a candidate's index selects it, which holds
+with an empty query, whose rows are the candidates in order, and that the chooser enters with the
+session it returns from or `LINGER_SESSION` names, which the manager suite checks. -/
 
 theorem one_owner (grant : Claim.State → Nat → Nat → Bool) (exclusive : Claim.Exclusive grant)
     {s : Claim.State} (reached : Claim.Reachable grant Claim.enters s) {a b resource : Nat}
@@ -990,6 +1001,65 @@ theorem relist_keeps_rows_rejects_resort :
                     candidates := ordered, descriptions := descriptions })
                 s resort ordered descriptions).descriptions =
             descriptions := by
+  sorry
+
+theorem enter_returns (s : Selector.Picker.State) (shown : List String) (focus : Option String)
+    (ordered : List String) (descriptions : List (String × String)) :
+    (Selector.Picker.enter s shown focus ordered descriptions).candidates =
+        shown.filter (fun t => ordered.contains t) ++ ordered.filter (fun t => !shown.contains t) ∧
+      (Selector.Picker.enter s shown focus ordered descriptions).query = s.query ∧
+      (∀ t,
+        focus = some t →
+          s.query = "" →
+          t ∈ ordered →
+          (Selector.Picker.enter s shown focus ordered
+                  descriptions).candidates[(Selector.Picker.enter s shown focus ordered
+                  descriptions).cursor]? =
+            some t) ∧
+      ((∀ t, focus = some t → s.query = "" → t ∉ ordered) →
+        (Selector.Picker.enter s shown focus ordered descriptions).cursor = 0) := by
+  sorry
+
+@[kills enter_returns]
+theorem enter_returns_rejects_top :
+    ¬∀ (s : Selector.Picker.State) (shown : List String) (focus : Option String)
+        (ordered : List String) (descriptions : List (String × String)),
+        ((fun (s : Selector.Picker.State) (_ : List String) (_ : Option String)
+                    (ordered : List String) (descriptions : List (String × String)) =>
+                  { s with
+                    candidates := ordered, descriptions := descriptions, cursor := 0 })
+                s shown focus ordered descriptions).candidates =
+            shown.filter (fun t => ordered.contains t) ++
+              ordered.filter (fun t => !shown.contains t) ∧
+          ((fun (s : Selector.Picker.State) (_ : List String) (_ : Option String)
+                    (ordered : List String) (descriptions : List (String × String)) =>
+                  { s with
+                    candidates := ordered, descriptions := descriptions, cursor := 0 })
+                s shown focus ordered descriptions).query =
+            s.query ∧
+          (∀ t,
+            focus = some t →
+              s.query = "" →
+              t ∈ ordered →
+              ((fun (s : Selector.Picker.State) (_ : List String) (_ : Option String)
+                          (ordered : List String) (descriptions : List (String × String)) =>
+                        { s with
+                          candidates := ordered, descriptions := descriptions, cursor := 0 })
+                      s shown focus ordered
+                      descriptions).candidates[((fun (s : Selector.Picker.State) (_ : List String)
+                          (_ : Option String) (ordered : List String)
+                          (descriptions : List (String × String)) =>
+                        { s with
+                          candidates := ordered, descriptions := descriptions, cursor := 0 })
+                      s shown focus ordered descriptions).cursor]? =
+                some t) ∧
+          ((∀ t, focus = some t → s.query = "" → t ∉ ordered) →
+            ((fun (s : Selector.Picker.State) (_ : List String) (_ : Option String)
+                      (ordered : List String) (descriptions : List (String × String)) =>
+                    { s with
+                      candidates := ordered, descriptions := descriptions, cursor := 0 })
+                  s shown focus ordered descriptions).cursor =
+              0) := by
   sorry
 
 theorem picker_eof_empty (s : Selector.Picker.State) :
