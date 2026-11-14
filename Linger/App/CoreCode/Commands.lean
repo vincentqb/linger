@@ -44,7 +44,7 @@ def table : List Command :=
     { word := "describe", args := "<name> [text...]",
       summary := "Describe a session; no text clears it" },
     { word := "upgrade", args := "[name...]",
-      summary := "Move live sessions onto this linger, running on" },
+      summary := "Move live sessions onto this linger; programs keep running" },
     { word := "version", aliases := ["v"], args := "", summary := "Print version and state paths" },
     { word := "help", aliases := ["h", "--help", "-h"], args := "", summary := "Show commands" }]
 

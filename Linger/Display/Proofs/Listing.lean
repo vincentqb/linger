@@ -557,7 +557,8 @@ theorem terminalListing_plain (width : Option Nat) (rows : List (List (String ×
       if rows.isEmpty then Terminal.Render.utf8s "no sessions".toList ++ [0x0A]
       else
         rows.flatMap
-          (fun r => Terminal.Render.utf8s (rowText width (layoutOf rows) r) ++ [0x0A]) := by
+          (fun r =>
+            Terminal.Render.utf8s (rowText width (layoutOf rows width.isSome) r) ++ [0x0A]) := by
   simp [terminalListing]
 
 /-- **Every byte of the whole uncoloured listing is printable content or a row-terminating

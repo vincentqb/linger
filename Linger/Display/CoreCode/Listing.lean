@@ -295,12 +295,13 @@ the directory's, the age's and the watchers'. A longer value is cut with `…`. 
 def caps : List Nat := [48, 24, 32, 4, 5]
 
 /-- The layout of a view of `rows`: the name column as wide as the widest name, and each later
-column as wide as its widest cell, up to its cap. -/
-def layoutOf (rows : List (List (String × String))) : Layout where
+column as wide as its widest cell, up to its cap when `capped`. -/
+def layoutOf (rows : List (List (String × String))) (capped : Bool := true) : Layout where
   nameCol := rows.foldl (fun m r => max m (cols (look r "name").toList)) 0
   widths :=
     caps.zipIdx.map fun (cap, i) =>
-      min cap (rows.foldl (fun m r => max m (cols ((cells (project r)).getD i "").toList)) 0)
+      let widest := rows.foldl (fun m r => max m (cols ((cells (project r)).getD i "").toList)) 0
+      if capped then min cap widest else widest
 
 /-- A home directory's place in a directory: `~` for the home itself and `~/…` below it. -/
 def tilde (home dir : String) : String :=
@@ -334,14 +335,15 @@ private def renderPieces (withColor : Bool) (pieces : List RowPiece) : List UInt
 /-- The whole human-readable listing, one LF-terminated row per session (or the
 empty-state line), with the same row pieces as the picker, each within `width` display columns
 when it is given. The columns are the set's (`layoutOf`), so each field starts at one column in
-every row. Callers choose whether color is enabled with `Linger.Os.Env.withColor`. -/
+every row; the columns' caps apply only within a width, so a listing written elsewhere than a
+terminal, or a saved catalog's, which `tmux ls` writes, cuts no value. Callers choose whether color is enabled with `Linger.Os.Env.withColor`. -/
 def terminalListing (withColor : Bool) (width : Option Nat) (rows : List (List (String × String))) :
     List UInt8 :=
   if rows.isEmpty then utf8s "no sessions".toList ++ [0x0A]
   else
     rows.flatMap fun r =>
-      (if withColor then renderPieces true (rowPiecesIn width (layoutOf rows) r)
-        else utf8s (rowText width (layoutOf rows) r)) ++
+      (if withColor then renderPieces true (rowPiecesIn width (layoutOf rows width.isSome) r)
+        else utf8s (rowText width (layoutOf rows width.isSome) r)) ++
         [0x0A]
 
 end Linger.Display.Listing

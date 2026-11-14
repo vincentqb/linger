@@ -1,6 +1,7 @@
 module
 
 import Linger.Os.CoreCode.Answer
+import Linger.App.CoreCode.Commands
 import Linger.Selector.WorldCode
 import Linger.Selector.CoreCode.Picker
 import Linger.Import.WorldCode
@@ -705,8 +706,7 @@ private def usageChecks (e : Env) : IO Unit := do
           [err, shortErr, helpErr, hErr].all String.isEmpty &&
           out.endsWith "\n" &&
           rows.map (fun line => (line.splitOn " ").headD "") ==
-            ["attach", "ls", "tmux", "start", "resume", "send", "detach", "kill", "info", "capture",
-              "resize", "wait", "get", "set", "unset", "clear", "describe", "version", "help"] &&
+            Linger.App.Commands.table.map (·.word) &&
           rows.all
             (fun line =>
               line == line.trimAscii.toString &&
