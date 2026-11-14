@@ -129,6 +129,35 @@ def sources : List String :=
     "label.description", "title", "notice", "lastcmd", "lastexit", "login", "fg", "fgpid", "fgdir",
     "idle", "clients"]
 
+/-- How a view lays out its rows, one field to a column: the name column's width, then the width of
+each later column, the caption, the foreground program, its directory, the age and the watchers,
+all in the display columns a terminal gives them. -/
+structure Layout where
+  /-- The name column's width: the widest name's. -/
+  nameCol : Nat := 0
+  /-- The widths of the columns after the name, in order. -/
+  widths : List Nat := []
+  deriving DecidableEq, BEq, Repr, Inhabited
+
+/-- The display columns each part of a row laid out by `layout` takes: the glyph and a space, the
+name column, then each later column with a space on each side, or nothing for a column no row
+fills. -/
+@[expose]
+def Layout.spans (layout : Layout) : List Nat :=
+  2 :: layout.nameCol :: layout.widths.map fun w => if w = 0 then 0 else w + 2
+
+/-- The fields each cell after the name reads, in order: the caption, which says how a session
+that is not running stands, the user's description or the program's title, a notification's text
+and how the last command ended; the foreground program, which the caption may already name; its
+directory, which the caption may already hold; the age, which a printing session lacks; and the
+watchers. -/
+@[expose]
+def cellSources : List (List String) :=
+  [["status", "state", "saved", "signal", "outcome", "exit", "pid", "cmd", "label.description",
+      "title", "notice", "lastcmd", "lastexit"],
+    ["fg", "login", "fgpid", "pid", "cmd", "label.description", "title"],
+    ["fgdir", "label.description", "title"], ["status", "idle"], ["clients"]]
+
 /-- The name of the program a command line runs: its first word, after the word's last `/`. -/
 @[expose]
 def command (line : String) : String := (((line.splitOn " ").headD "").splitOn "/").getLast?.getD ""

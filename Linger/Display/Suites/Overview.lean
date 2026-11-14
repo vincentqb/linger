@@ -2,6 +2,7 @@ module
 
 public import Verify.Harness
 import Linger.Display.CoreCode.Listing
+import Terminal.CoreCode.Vt
 
 public section
 
@@ -73,6 +74,35 @@ def present (e : Env) : IO Unit :=
         s!"a shell at its prompt shows its directory but not its shell: {← rowOf e "prompt"}"
     e.killAll #["described", "sleeper", "prompt"]
 
+/-- The display column where `needle` starts in `row`, counting each character as wide as a
+terminal shows it, or none when the row lacks it. -/
+def columnOf (row needle : String) : Option Nat :=
+  let cs := row.toList
+  (List.range cs.length).findSome? fun i =>
+    if (cs.drop i).take needle.length == needle.toList then
+      some ((cs.take i).map Terminal.Vt.charWidth).sum
+    else none
+
+/-- One field, one column: a row's program starts at the same display column in every row,
+whatever the names' lengths and however wide the characters of the captions before it. -/
+def aligned (e : Env) : IO Unit :=
+  IO.FS.withTempDir fun scratch => do
+    let dir := (← IO.FS.realPath scratch).toString
+    for (name, caption) in [("a", "漢字"), ("longer-name", "abcdefgh")] do
+      let _ ← e.typeIn name #["cd", shellQuote dir, "&&", "sleep", "100"]
+      let _ ← e.cli #["describe", name, caption]
+    let ready ←
+      waitFor patienceMs do
+          return has (← rowOf e "a") "sleep 100" && has (← rowOf e "longer-name") "sleep 100"
+    let short ← rowOf e "a"
+    let long ← rowOf e "longer-name"
+    expect
+        (ready && (columnOf short "sleep 100").isSome &&
+          columnOf short "sleep 100" == columnOf long "sleep 100" &&
+          columnOf short "漢字" == columnOf long "abcdefgh")
+        s!"each field starts at one display column in every row: {short} / {long}"
+    e.killAll #["a", "longer-name"]
+
 /-- The overview suite: explicit `linger ls` lists, exits and never reads stdin. -/
 def run : IO UInt32 :=
   Env.suite "overview" fun e => do
@@ -126,5 +156,6 @@ def run : IO UInt32 :=
         "a hostile checkpoint filename neither injects an escape nor creates an alias"
     IO.FS.removeFile ((System.FilePath.mk e.dir) / hostile)
     present e
+    aligned e
 
 end Linger.Display.Suites.Overview

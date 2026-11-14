@@ -426,14 +426,16 @@ theorem withRemote_row_remote (latest full : Snapshot) (target : String)
 
 /-- The selected existing row has precisely the listing's badge, aligned name,
 details, labels and watchers, with the same style boundaries. -/
-theorem presentation_existing (snapshot : Snapshot) (nameCol : Nat) (target : String) :
+theorem presentation_existing (snapshot : Snapshot) (nameCol : Linger.Display.Listing.Layout)
+    (target : String) :
     Linger.Selector.Picker.presentation snapshot nameCol (.existing target) =
       Linger.Display.Listing.rowPieces nameCol (snapshot.row target) := by
   simp [presentation]
 
 /-- Equivalence includes all rendered plain bytes, beyond status glyphs. Clipping
 and selection reverse are applied by the terminal executor after this shared row. -/
-theorem presentation_existing_humanRow (snapshot : Snapshot) (nameCol : Nat) (target : String) :
+theorem presentation_existing_humanRow (snapshot : Snapshot)
+    (nameCol : Linger.Display.Listing.Layout) (target : String) :
     Terminal.Render.utf8s
         ((Linger.Selector.Picker.presentation snapshot nameCol (.existing target)).flatMap
           (·.text)) =
@@ -441,7 +443,8 @@ theorem presentation_existing_humanRow (snapshot : Snapshot) (nameCol : Nat) (ta
   simp [presentation, Linger.Display.Listing.humanRow]
 
 /-- Creation never masquerades as a listed session status. -/
-theorem presentation_creation (snapshot : Snapshot) (nameCol : Nat) (target : String) :
+theorem presentation_creation (snapshot : Snapshot) (nameCol : Linger.Display.Listing.Layout)
+    (target : String) :
     Linger.Selector.Picker.presentation snapshot nameCol (.create target) =
       [{ text := s!"+ Create {target}".toList }] := by
   simp [presentation]
@@ -498,24 +501,24 @@ theorem markPiece_marked_iff (marks : Array Bool) (piece : Linger.Display.Listin
 
 /-- Query emphasis preserves the shared text and status for every row, including
 creation. Scores cannot change a character, badge, or attachment target. -/
-theorem highlightedPresentation_projection (snapshot : Snapshot) (nameCol : Nat) (query : String)
-    (item : Item) :
+theorem highlightedPresentation_projection (snapshot : Snapshot)
+    (nameCol : Linger.Display.Listing.Layout) (query : String) (item : Item) :
     (highlightedPresentation snapshot nameCol query item).map
         (fun char => (char.char, char.status)) =
       (presentation snapshot nameCol item).flatMap fun piece =>
         piece.text.map (fun char => (char, piece.status)) := by
   simp [highlightedPresentation, List.map_flatMap, markPiece_projection]
 
-theorem highlightedPresentation_text (snapshot : Snapshot) (nameCol : Nat) (query : String)
-    (item : Item) :
+theorem highlightedPresentation_text (snapshot : Snapshot) (nameCol : Linger.Display.Listing.Layout)
+    (query : String) (item : Item) :
     (highlightedPresentation snapshot nameCol query item).map (·.char) =
       (presentation snapshot nameCol item).flatMap (·.text) := by
   simpa [List.map_map, List.map_flatMap, Function.comp_def] using
     congrArg (List.map Prod.fst) (highlightedPresentation_projection snapshot nameCol query item)
 
 /-- Removing emphasis yields exactly the same human row that `linger ls` uses. -/
-theorem highlightedPresentation_existing_humanRow (snapshot : Snapshot) (nameCol : Nat)
-    (query target : String) :
+theorem highlightedPresentation_existing_humanRow (snapshot : Snapshot)
+    (nameCol : Linger.Display.Listing.Layout) (query target : String) :
     Terminal.Render.utf8s
         ((highlightedPresentation snapshot nameCol query (.existing target)).map (·.char)) =
       Linger.Display.Listing.humanRow nameCol (snapshot.row target) := by
@@ -525,8 +528,9 @@ theorem highlightedPresentation_existing_humanRow (snapshot : Snapshot) (nameCol
 /-- A displayed scalar is emphasized exactly when the chosen alignment marks
 that position in the original target. The badge and separator occupy two
 scalars; padding and metadata are outside the name span. -/
-theorem highlightedPresentation_existing_marked_iff (snapshot : Snapshot) (nameCol : Nat)
-    (query target : String) (index : Nat) (char : HighlightedChar)
+theorem highlightedPresentation_existing_marked_iff (snapshot : Snapshot)
+    (nameCol : Linger.Display.Listing.Layout) (query target : String) (index : Nat)
+    (char : HighlightedChar)
     (h : (highlightedPresentation snapshot nameCol query (.existing target))[index]? = some char) :
     char.matched = true ↔
       ∃ alignment,
@@ -567,8 +571,8 @@ theorem highlightedPresentation_existing_marked_iff (snapshot : Snapshot) (nameC
         exact ⟨1, target.length, ⟨rfl, rfl⟩, lower, by omega, marked⟩
 
 /-- Creation is a labelled action with neither matching emphasis nor a status badge. -/
-theorem highlightedPresentation_creation (snapshot : Snapshot) (nameCol : Nat)
-    (query target : String) :
+theorem highlightedPresentation_creation (snapshot : Snapshot)
+    (nameCol : Linger.Display.Listing.Layout) (query target : String) :
     (highlightedPresentation snapshot nameCol query (.create target)).all
         (fun char => !char.matched && char.status.isNone) =
       true := by

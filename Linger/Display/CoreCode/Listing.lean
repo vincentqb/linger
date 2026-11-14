@@ -3,6 +3,7 @@ module
 public import Linger.Display.CoreSpec
 import Linger.Display.CoreCode.Status
 import Terminal.CoreCode.Render
+import Terminal.CoreCode.Vt
 
 public section
 
@@ -188,66 +189,118 @@ def stateText (info : List (String × String)) : String :=
     if st == .unknown && (look info "pid").isEmpty && (look info "cmd").isEmpty then "(busy)"
     else ""
 
-/-- The fields after the name, in order, each shown once: how a session that is not running
-stands, the caption, the text of a notification while the session asks, how the last command
-that finished unseen ended, the program, its directory unless the caption holds it, how long ago
-the session last printed unless it prints now, and `+N` watchers. -/
-def details (info : List (String × String)) : List String :=
-  let dir := look info "fgdir"
-  let idle :=
-    if Status.ofName (look info "status") == .working then ""
-    else ((look info "idle").toNat?.map ago).getD ""
-  let watch :=
-    if (look info "clients").isEmpty || look info "clients" == "0" then ""
-    else s!"+{look info "clients"}"
-  let fields :=
-    [stateText info, caption info, notice info, lastText info, program info,
-      if decide (dir.toList <:+: (caption info).toList) then "" else dir, idle, watch]
-  (fields.filter (!·.isEmpty)).eraseDups
+/-- The fields of `info` that `keys` names, in their order: a cell built from them cannot read any
+other field. -/
+def only (keys : List String) (info : List (String × String)) : List (String × String) :=
+  keys.filterMap fun key => (info.lookup key).map ((key, ·))
+
+/-- The caption cell: how a session that is not running stands, the caption, the text of a
+notification while the session asks and how the last command that finished unseen ended, two
+spaces apart. -/
+def captionCell (info : List (String × String)) : String :=
+  String.intercalate "  "
+    ([stateText info, caption info, notice info, lastText info].filter (!·.isEmpty))
+
+/-- The directory cell: the foreground program's directory, unless the caption holds it. -/
+def dirCell (info : List (String × String)) : String :=
+  if decide ((look info "fgdir").toList <:+: (caption info).toList) then "" else look info "fgdir"
+
+/-- The age cell: how long ago the session last printed, unless it prints now. -/
+def ageCell (info : List (String × String)) : String :=
+  if Status.ofName (look info "status") == .working then ""
+  else ((look info "idle").toNat?.map ago).getD ""
+
+/-- The watchers cell: `+N` watchers, or nothing for none. -/
+def watchCell (info : List (String × String)) : String :=
+  if (look info "clients").isEmpty || look info "clients" == "0" then ""
+  else s!"+{look info "clients"}"
+
+/-- The cells after the name, in order, each from its own fields (`cellSources`): the caption,
+the program, its directory, the age and the watchers. -/
+def cells (info : List (String × String)) : List String :=
+  [captionCell (only (cellSources.getD 0 []) info), program (only (cellSources.getD 1 []) info),
+    dirCell (only (cellSources.getD 2 []) info), ageCell (only (cellSources.getD 3 []) info),
+    watchCell (only (cellSources.getD 4 []) info)]
 
 /-- The record a row reads: the `sources` fields of `info`, in their order. A row built from it
 cannot show any other field. -/
-def project (info : List (String × String)) : List (String × String) :=
-  sources.filterMap fun key => (info.lookup key).map ((key, ·))
+def project (info : List (String × String)) : List (String × String) := only sources info
 
-/-- Cut `cs` to `room` characters from the right: whole when it fits, else what fits before an
-ellipsis, its trailing blanks dropped. -/
+/-- The display columns `cs` takes on a terminal: a wide character two, a combining mark none. -/
+def cols (cs : List Char) : Nat := (cs.map Terminal.Vt.charWidth).sum
+
+/-- The longest start of `cs` that fits `room` display columns. -/
+def takeCols : Nat → List Char → List Char
+  | _, [] => []
+  | room, c :: cs =>
+    if Terminal.Vt.charWidth c ≤ room then c :: takeCols (room - Terminal.Vt.charWidth c) cs else []
+
+/-- Cut `cs` to `room` display columns from the right: whole when it fits, else what fits before
+an ellipsis, its trailing blanks dropped. -/
 def cut (room : Nat) (cs : List Char) : List Char :=
-  if cs.length ≤ room then cs
-  else if room = 0 then [] else dropTrailingBlanks (cs.take (room - 1)) ++ ['…']
+  if cols cs ≤ room then cs
+  else if room = 0 then [] else dropTrailingBlanks (takeCols (room - 1) cs) ++ ['…']
 
-/-- A row's pieces within `width` characters, if any: the status badge, then the name, padded to
-`nameCol`, and the fields `details` reads from `rest`, after a space and two spaces apart. The badge and the name
-are never cut; what follows shrinks from the right to fit. Every untrusted value is made
-printable before a renderer sees it, including C1 controls that can otherwise be interpreted as
-terminal commands. -/
-def piecesOf (width : Option Nat) (nameCol : Nat) (name status : String)
-    (rest : List (String × String)) : List RowPiece :=
+/-- `cs` padded with blanks to `width` display columns. -/
+def pad (width : Nat) (cs : List Char) : List Char := cs ++ List.replicate (width - cols cs) ' '
+
+/-- The parts of a row after its name, from the fields `rest`: each cell, cut to its column's
+width and padded to it, between two spaces, so cells stand two spaces apart and the first one
+space after the name, and nothing for a column of width zero. -/
+def segments (layout : Layout) (rest : List (String × String)) : List (List Char) :=
+  layout.widths.zipIdx.map fun (w, i) =>
+    if w = 0 then [] else ' ' :: pad w (cut w ((cells rest).getD i "").toList) ++ [' ']
+
+/-- A row's parts, one to a column, as a terminal shows them: the glyph and a space, the name
+padded to the name column, then the cells (`segments`). Each part takes the display columns
+`Layout.spans` gives it while the name fits its column (`columns_aligned`). -/
+def columns (layout : Layout) (info : List (String × String)) : List (List Char) :=
+  [[Status.icon (Status.ofName (look info "status")), ' '],
+      (pad layout.nameCol (look info "name").toList).map textChar] ++
+    (segments layout (project info)).map (·.map textChar)
+
+/-- A row's pieces within `width` display columns, if any: the status badge, then the name and
+what `after` shows after it, already printable. The badge and the name are never cut; what follows
+shrinks from the right to fit. Every untrusted value is made printable before a renderer sees it,
+including C1 controls that can otherwise be interpreted as terminal commands. -/
+def piecesOf (width : Option Nat) (name status : String) (after : List Char) : List RowPiece :=
   let st := Status.ofName status
   let name := name.toList
-  let detail := String.intercalate "  " (details rest)
-  let tail :=
-    dropTrailingBlanks
-      (List.replicate (nameCol - name.length) ' ' ++
-        (if detail.isEmpty then [] else ' ' :: detail.toList))
+  let tail := dropTrailingBlanks after
   let tail :=
     match width with
-    | some w => cut (w - 2 - name.length) tail
+    | some w => cut (w - 2 - cols name) tail
     | none => tail
   [{ text := [Status.icon st], status := some st },
-    { text := (' ' :: name ++ tail).map textChar, nameSpan := some (1, name.length) }]
+    { text := (' ' :: name).map textChar ++ tail, nameSpan := some (1, name.length) }]
 
-/-- A row's pieces within `width` characters, if any, from the fields `sources` names. -/
-def rowPiecesIn (width : Option Nat) (nameCol : Nat) (info : List (String × String)) :
-    List RowPiece := piecesOf width nameCol (look info "name") (look info "status") (project info)
+/-- A row's pieces within `width` display columns, if any, from the fields `sources` names: the
+badge, then its parts one to a column (`columns`), the name's padding and each cell in its column,
+from the fields `sources` names. -/
+def rowPiecesIn (width : Option Nat) (layout : Layout) (info : List (String × String)) :
+    List RowPiece :=
+  piecesOf width (look info "name") (look info "status")
+    (((columns layout info).drop 1).flatten.drop (look info "name").length)
 
 /-- One shared row of any width: status badge, aligned name and the session's present. -/
-def rowPieces (nameCol : Nat) (info : List (String × String)) : List RowPiece :=
-  rowPiecesIn none nameCol info
+def rowPieces (layout : Layout) (info : List (String × String)) : List RowPiece :=
+  rowPiecesIn none layout info
 
 /-- A row's characters within `width`, if any: what a terminal shows of it. -/
-def rowText (width : Option Nat) (nameCol : Nat) (info : List (String × String)) : List Char :=
-  (rowPiecesIn width nameCol info).flatMap (·.text)
+def rowText (width : Option Nat) (layout : Layout) (info : List (String × String)) : List Char :=
+  (rowPiecesIn width layout info).flatMap (·.text)
+
+/-- The widest a column after the name grows, in display columns: the caption's, the program's,
+the directory's, the age's and the watchers'. A longer value is cut with `…`. -/
+def caps : List Nat := [48, 24, 32, 4, 5]
+
+/-- The layout of a view of `rows`: the name column as wide as the widest name, and each later
+column as wide as its widest cell, up to its cap. -/
+def layoutOf (rows : List (List (String × String))) : Layout where
+  nameCol := rows.foldl (fun m r => max m (cols (look r "name").toList)) 0
+  widths :=
+    caps.zipIdx.map fun (cap, i) =>
+      min cap (rows.foldl (fun m r => max m (cols ((cells (project r)).getD i "").toList)) 0)
 
 /-- A home directory's place in a directory: `~` for the home itself and `~/…` below it. -/
 def tilde (home dir : String) : String :=
@@ -261,12 +314,8 @@ def atHome (home : String) (info : List (String × String)) : List (String × St
   info.map fun (k, v) => if k == "fgdir" then (k, tilde home v) else (k, v)
 
 /-- Plain bytes, including when redirected: styles are deliberately absent. -/
-def humanRow (nameCol : Nat) (info : List (String × String)) : List UInt8 :=
-  utf8s ((rowPieces nameCol info).flatMap (·.text))
-
-/-- Shared name column width over the complete listing snapshot. -/
-def nameWidth (rows : List (List (String × String))) : Nat :=
-  rows.foldl (fun m r => max m ((r.lookup "name").getD "").toList.length) 0
+def humanRow (layout : Layout) (info : List (String × String)) : List UInt8 :=
+  utf8s ((rowPieces layout info).flatMap (·.text))
 
 /-- `CSI <params> m`, select graphic rendition: the sequence that sets a style, its parameters
 in decimal separated by `;`. -/
@@ -283,17 +332,16 @@ private def renderPieces (withColor : Bool) (pieces : List RowPiece) : List UInt
     | none => text
 
 /-- The whole human-readable listing, one LF-terminated row per session (or the
-empty-state line), with the same row pieces as the picker, each within `width` characters when
-it is given. The name column is as wide as the widest name in the set, so the detail columns
-align. Callers choose
-whether color is enabled with `Linger.Os.Env.withColor`. -/
+empty-state line), with the same row pieces as the picker, each within `width` display columns
+when it is given. The columns are the set's (`layoutOf`), so each field starts at one column in
+every row. Callers choose whether color is enabled with `Linger.Os.Env.withColor`. -/
 def terminalListing (withColor : Bool) (width : Option Nat) (rows : List (List (String × String))) :
     List UInt8 :=
   if rows.isEmpty then utf8s "no sessions".toList ++ [0x0A]
   else
     rows.flatMap fun r =>
-      (if withColor then renderPieces true (rowPiecesIn width (nameWidth rows) r)
-        else utf8s (rowText width (nameWidth rows) r)) ++
+      (if withColor then renderPieces true (rowPiecesIn width (layoutOf rows) r)
+        else utf8s (rowText width (layoutOf rows) r)) ++
         [0x0A]
 
 end Linger.Display.Listing

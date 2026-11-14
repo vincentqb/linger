@@ -71,6 +71,21 @@ def Snapshot.row (snapshot : Snapshot) (target : String) : List (String × Strin
       | [key, value] => some (key, value)
       | _ => none
 
+/-- The columns of a view of the snapshot's rows (`Listing.layoutOf`). -/
+def Snapshot.laidOut (snapshot : Snapshot) : Linger.Display.Listing.Layout :=
+  Linger.Display.Listing.layoutOf (snapshot.candidates.map snapshot.row)
+
+/-- The snapshot with its columns fixed: `kept`'s, the name column grown to fit its names, since
+a name is never cut, or, with none kept, its own rows' (`laidOut`). -/
+def Snapshot.keepColumns (snapshot : Snapshot) (kept : Option Linger.Display.Listing.Layout) :
+    Snapshot :=
+  { snapshot with
+    layout :=
+      some
+        (match kept with
+        | some layout => { layout with nameCol := max layout.nameCol snapshot.laidOut.nameCol }
+        | none => snapshot.laidOut) }
+
 /-- Each target's description: the label `description` of its row. -/
 def Snapshot.descriptions (snapshot : Snapshot) : List (String × String) :=
   snapshot.candidates.filterMap fun target =>
@@ -131,9 +146,9 @@ private def Item.target : Item → String
 
 /-- Existing rows use the listing's entire presentation. Creation keeps its
 explicit label and exact target, and has no invented session status. -/
-private def presentation (snapshot : Snapshot) (nameCol : Nat) :
+private def presentation (snapshot : Snapshot) (layout : Linger.Display.Listing.Layout) :
     Item → List Linger.Display.Listing.RowPiece
-  | .existing target => Linger.Display.Listing.rowPieces nameCol (snapshot.row target)
+  | .existing target => Linger.Display.Listing.rowPieces layout (snapshot.row target)
   | .create target => [{ text := s!"+ Create {target}".toList }]
 
 /-- A displayed scalar keeps its shared row style independently of query emphasis. -/
@@ -158,13 +173,13 @@ private def markPiece (marks : Array Bool) (piece : Linger.Display.Listing.RowPi
 
 /-- Align only existing names. The shared presentation supplies the name span;
 every character and status survives, including on the unmarked creation row. -/
-def highlightedPresentation (snapshot : Snapshot) (nameCol : Nat) (query : String) (item : Item) :
-    List HighlightedChar :=
+def highlightedPresentation (snapshot : Snapshot) (layout : Linger.Display.Listing.Layout)
+    (query : String) (item : Item) : List HighlightedChar :=
   let marks : List Bool :=
     match item with
     | .existing target => ((Fuzzy.align query target).map (·.marks)).getD []
     | .create _ => []
-  (presentation snapshot nameCol item).flatMap (markPiece marks.toArray)
+  (presentation snapshot layout item).flatMap (markPiece marks.toArray)
 
 /-- A zero-width mark shares the preceding cell's pen. Carry its match back to
 the base before printing; a backward pass visits every scalar once. -/
@@ -312,8 +327,7 @@ def frameLines (state : State) (snapshot : Snapshot)
     (remoteAge : Option Nat) (rows : Nat) : List (List (String × List (List Nat))) :=
   let height := max 1 rows
   let choices := items state.candidates state.query state.allowCreate state.descriptions
-  let nameCol :=
-    Linger.Display.Listing.nameWidth (snapshot.candidates.map fun target => [("name", target)])
+  let layout := snapshot.layout.getD (snapshot.laidOut)
   let labels := if savedTmux then ["tmux save"] else if state.allowCreate then [] else ["read-only"]
   let title : List (List (String × List (List Nat))) :=
     if height ≥ 7 then
@@ -367,7 +381,7 @@ def frameLines (state : State) (snapshot : Snapshot)
             let chosen := index == state.cursor
             let selection := if chosen then [[7]] else []
             (if chosen then "  ▸ " else "    ", selection) ::
-              (emphasizeCells (highlightedPresentation snapshot nameCol state.query item)).map
+              (emphasizeCells (highlightedPresentation snapshot layout state.query item)).map
                 fun char =>
                 (String.singleton char.char,
                   selection ++

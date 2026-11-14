@@ -1272,7 +1272,10 @@ private def statusChecks (e : Env) : IO Unit := do
                   let badge := frame.getCell 4 (4 + index)
                   let name := frame.getCell 6 (4 + index)
                   let expected :=
-                    String.fromUTF8! (ByteArray.mk (Linger.Display.Listing.humanRow 5 info).toArray)
+                    String.fromUTF8!
+                      (ByteArray.mk
+                        (Linger.Display.Listing.humanRow (Linger.Display.Listing.layoutOf fields)
+                            info).toArray)
                   rowText frame (4 + index) ==
                       (if index == 0 then "  ▸ " else "    ") ++ expected &&
                     badge.pen.fg == (if colored then color else .default) &&
@@ -1311,15 +1314,17 @@ private def statusChecks (e : Env) : IO Unit := do
           let start ← s.mark
           f.listing
               "name\tbeta\nstatus\tworking\ncmd\tother\nname\talpha\nstatus\texited-bad\ncmd\tsh\npid\t2\nfg\tnew\nfgpid\t8\nlabel.description\tafter\nclients\t3\n"
-          unless ← s.until "after  new" start do
+          unless ← s.until "after   new" start do
             return false
           let after ← s.capture "metadata-after"
           -- beta, listed first, shares its place with the quiet alpha; alpha now asks for
-          -- someone but keeps its row while the chooser is open, and the cursor stays on beta
+          -- someone but keeps its row while the chooser is open, and the cursor stays on beta;
+          -- each field keeps its column, beta's empty caption included
           let changed :=
-            rowText before 4 == "  ▸ ⣷ beta  other" && has (rowText before 5) "before  old  +1" &&
-              rowText after 4 == "  ▸ ⣷ beta  other" &&
-              rowText after 5 == "    ✗ alpha after  new  +3" &&
+            rowText before 4 == "  ▸ ⣷ beta          other" &&
+              rowText before 5 == "    ⣀ alpha before  old    +1" &&
+              rowText after 4 == "  ▸ ⣷ beta          other" &&
+              rowText after 5 == "    ✗ alpha after   new    +3" &&
               rowText after 2 == "  › a 2" &&
               (after.getCell 4 5).pen.fg == .idx 1 &&
               (after.getCell 6 4).pen.reverse
@@ -1356,7 +1361,10 @@ private def fuzzyChecks (e : Env) : IO Unit := do
           let matched ← s.capture "competing-match"
           let expected :=
             "  ▸ " ++
-              String.fromUTF8! (ByteArray.mk (Linger.Display.Listing.humanRow 4 fields).toArray)
+              String.fromUTF8!
+                (ByteArray.mk
+                  (Linger.Display.Listing.humanRow (Linger.Display.Listing.layoutOf [fields])
+                      fields).toArray)
           -- The later adjacent pair beats the earliest subsequence.
           -- Matching metadata and the explicit create label stay plain.
           let positions :=
@@ -1390,7 +1398,7 @@ private def fuzzyChecks (e : Env) : IO Unit := do
                 (if index == 0 then "  ▸ " else "    ") ++
                   String.fromUTF8!
                     (ByteArray.mk
-                      (Linger.Display.Listing.humanRow (Linger.Display.Listing.nameWidth fields)
+                      (Linger.Display.Listing.humanRow (Linger.Display.Listing.layoutOf fields)
                           info).toArray)
           let start ← s.mark
           s.text "\x0e"
@@ -1696,6 +1704,24 @@ private def refreshChecks (e : Env) : IO Unit := do
           s.text "\x03"
           return keptOrder && sortedOrder && highlight && (← restored s 130) &&
               (← f.visits) == listed
+  check e "refresh-columns"
+      "automatic refresh keeps each column's width, cutting a longer value, until Ctrl-L lays the rows out again"
+      fun f => do
+      f.listing
+          "name\talpha\npid\t1\ncmd\tsh\nlabel.description\tab\nname\tbeta\npid\t1\ncmd\tsh\nlabel.description\tcd\n"
+      withPrompt f.picker #[] fun s => do
+          unless ← s.untilRow "? alpha ab" do
+            return false
+          let start ← s.mark
+          f.listing
+              "name\talpha\npid\t1\ncmd\tsh\nlabel.description\tabcdefgh\nname\tbeta\npid\t1\ncmd\tsh\nlabel.description\tcd\n"
+          let kept ← s.untilRow "? alpha a…" start
+          let pressed ← s.mark
+          s.text "\x0c"
+          let laidOut ← s.untilRow "? alpha abcdefgh" pressed
+          let beta ← s.untilRow "? beta  cd" pressed
+          s.text "\x03"
+          return kept && laidOut && beta && (← restored s 130) && (← f.visits) == listed
   check e "refresh-removed"
       "automatic refresh clamps a removed selection while preserving an invalid creation query"
       fun f => do

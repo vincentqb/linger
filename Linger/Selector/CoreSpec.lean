@@ -1,5 +1,7 @@
 module
 
+public import Linger.Display.CoreSpec
+
 public section
 
 /-! # What selector headlines are stated in
@@ -63,6 +65,9 @@ structure Snapshot where
   candidates : List String := []
   /-- Tab-split listing lines, from which the picker reads each target's metadata. -/
   records : List (List String) := []
+  /-- The columns the picker lays rows out in, fixed while a visit keeps its view; none lays them
+  out for these rows. -/
+  layout : Option Linger.Display.Listing.Layout := none
   deriving BEq, Repr, Inhabited
 
 /-- The result of one action: a next state, or a decision for the executor. -/

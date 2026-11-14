@@ -673,22 +673,23 @@ theorem rowFields_name_rejects_reply :
   intro h
   exact absurd (h "s" []) (by simp)
 
-theorem rowText_sources (width : Option Nat) (nameCol : Nat) (info info' : List (String × String))
+theorem rowText_sources (width : Option Nat) (layout : Listing.Layout)
+    (info info' : List (String × String))
     (h : ∀ key ∈ Listing.sources, info.lookup key = info'.lookup key) :
-    Listing.rowText width nameCol info = Listing.rowText width nameCol info' :=
-  Listing.rowText_sources width nameCol info info' h
+    Listing.rowText width layout info = Listing.rowText width layout info' :=
+  Listing.rowText_sources width layout info info' h
 
 theorem rowText_sources_rejects_labels :
-    ¬∀ (width : Option Nat) (nameCol : Nat) (info info' : List (String × String)),
+    ¬∀ (width : Option Nat) (layout : Listing.Layout) (info info' : List (String × String)),
         (∀ key ∈ Listing.sources, info.lookup key = info'.lookup key) →
-          (fun (_ : Option Nat) (_ : Nat) (info : List (String × String)) =>
+          (fun (_ : Option Nat) (_ : Listing.Layout) (info : List (String × String)) =>
                 info.flatMap fun kv => kv.2.toList)
-              width nameCol info =
-            (fun (_ : Option Nat) (_ : Nat) (info : List (String × String)) =>
+              width layout info =
+            (fun (_ : Option Nat) (_ : Listing.Layout) (info : List (String × String)) =>
                 info.flatMap fun kv => kv.2.toList)
-              width nameCol info' := by
+              width layout info' := by
   intro h
-  have := h none 0 [("label.k", "a")] [("label.k", "b")] (by simp [Listing.sources, List.lookup])
+  have := h none {} [("label.k", "a")] [("label.k", "b")] (by simp [Listing.sources, List.lookup])
   simp at this
 
 theorem caption_precedence (info : List (String × String)) :
@@ -716,55 +717,99 @@ theorem caption_precedence_rejects_title :
   have := (h [("label.description", "d"), ("title", "t")]).1 (by simp [List.lookup])
   simp [List.lookup] at this
 
-theorem rowText_fits (width : Option Nat) (nameCol : Nat) (info : List (String × String)) :
+theorem rowText_fits (width : Option Nat) (layout : Listing.Layout)
+    (info : List (String × String)) :
     (Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
           ' ' :: ((info.lookup "name").getD "").toList.map Terminal.Render.textChar <+:
-        Listing.rowText width nameCol info) ∧
+        Listing.rowText width layout info) ∧
       ∀ w,
         width = some w →
-          (Listing.rowText width nameCol info).length ≤
-            max w (2 + ((info.lookup "name").getD "").toList.length) := by
-  refine ⟨Listing.rowText_head width nameCol info, fun w hw => ?_⟩
+          ((Listing.rowText width layout info).map Terminal.Vt.charWidth).sum ≤
+            max w (2 + (((info.lookup "name").getD "").toList.map Terminal.Vt.charWidth).sum) := by
+  refine ⟨Listing.rowText_head width layout info, fun w hw => ?_⟩
   subst hw
-  exact Listing.rowText_width w nameCol info
+  exact Listing.rowText_width w layout info
 
 theorem rowText_fits_rejects_overflow :
-    ¬∀ (width : Option Nat) (nameCol : Nat) (info : List (String × String)),
+    ¬∀ (width : Option Nat) (layout : Listing.Layout) (info : List (String × String)),
         (Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
               ' ' :: ((info.lookup "name").getD "").toList.map Terminal.Render.textChar <+:
-            (fun (_ : Option Nat) (_ : Nat) (info : List (String × String)) =>
+            (fun (_ : Option Nat) (_ : Listing.Layout) (info : List (String × String)) =>
                 Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
                   ' ' ::
                   (((info.lookup "name").getD "").toList.map Terminal.Render.textChar ++
                     ['…', '…', '…']))
-              width nameCol info) ∧
+              width layout info) ∧
           ∀ w,
             width = some w →
-              ((fun (_ : Option Nat) (_ : Nat) (info : List (String × String)) =>
-                      Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
-                        ' ' ::
-                        (((info.lookup "name").getD "").toList.map Terminal.Render.textChar ++
-                          ['…', '…', '…']))
-                    width nameCol info).length ≤
-                max w (2 + ((info.lookup "name").getD "").toList.length) := by
+              (((fun (_ : Option Nat) (_ : Listing.Layout) (info : List (String × String)) =>
+                          Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
+                            ' ' ::
+                            (((info.lookup "name").getD "").toList.map Terminal.Render.textChar ++
+                              ['…', '…', '…']))
+                        width layout info).map
+                    Terminal.Vt.charWidth).sum ≤
+                max w
+                  (2 + (((info.lookup "name").getD "").toList.map Terminal.Vt.charWidth).sum) := by
   intro h
-  have := (h (some 0) 0 []).2 0 rfl
-  simp at this
+  have := (h (some 0) {} []).2 0 rfl
+  exact absurd this (by decide)
 
-theorem rowText_clean (width : Option Nat) (nameCol : Nat) (info : List (String × String)) :
-    ∀ c ∈ Listing.rowText width nameCol info, Display.Printable c :=
-  Listing.rowText_printable width nameCol info
+theorem rowText_clean (width : Option Nat) (layout : Listing.Layout)
+    (info : List (String × String)) :
+    ∀ c ∈ Listing.rowText width layout info, Display.Printable c :=
+  Listing.rowText_printable width layout info
 
 theorem rowText_clean_rejects_escape :
-    ¬∀ (width : Option Nat) (nameCol : Nat) (info : List (String × String)),
+    ¬∀ (width : Option Nat) (layout : Listing.Layout) (info : List (String × String)),
         ∀
           c ∈
-            (fun (_ : Option Nat) (_ : Nat) (_ : List (String × String)) => ['\x1b']) width nameCol
-              info,
+            (fun (_ : Option Nat) (_ : Listing.Layout) (_ : List (String × String)) => ['\x1b'])
+              width layout info,
           Display.Printable c := by
   intro h
-  have := h none 0 [] '\x1b' (by simp)
+  have := h none {} [] '\x1b' (by simp)
   simp [Display.Printable] at this
+
+theorem columns_aligned (layout : Listing.Layout) (info : List (String × String)) :
+    (∃ blanks : List Char,
+        (∀ c ∈ blanks, c = ' ') ∧
+          (Listing.columns layout info).flatten = Listing.rowText none layout info ++ blanks) ∧
+      ((((info.lookup "name").getD "").toList.map Terminal.Vt.charWidth).sum ≤ layout.nameCol →
+        (Listing.columns layout info).map (fun part => (part.map Terminal.Vt.charWidth).sum) =
+          layout.spans) := Listing.columns_aligned layout info
+
+theorem columns_aligned_rejects_join :
+    ¬∀ (layout : Listing.Layout) (info : List (String × String)),
+        (∃ blanks : List Char,
+            (∀ c ∈ blanks, c = ' ') ∧
+              ((fun (_ : Listing.Layout) (info : List (String × String)) =>
+                      [(String.intercalate " " (info.map (·.2))).toList])
+                    layout info).flatten =
+                Listing.rowText none layout info ++ blanks) ∧
+          ((((info.lookup "name").getD "").toList.map Terminal.Vt.charWidth).sum ≤ layout.nameCol →
+            ((fun (_ : Listing.Layout) (info : List (String × String)) =>
+                      [(String.intercalate " " (info.map (·.2))).toList])
+                    layout info).map
+                (fun part => (part.map Terminal.Vt.charWidth).sum) =
+              layout.spans) := by
+  intro h
+  have := (h {} []).2 (by decide)
+  simp [Listing.Layout.spans] at this
+
+theorem cells_sources (i : Nat) (info info' : List (String × String))
+    (h : ∀ key ∈ Listing.cellSources.getD i [], info.lookup key = info'.lookup key) :
+    (Listing.cells info)[i]? = (Listing.cells info')[i]? := Listing.cells_sources i info info' h
+
+theorem cells_sources_rejects_all :
+    ¬∀ (i : Nat) (info info' : List (String × String)),
+        (∀ key ∈ Listing.cellSources.getD i [], info.lookup key = info'.lookup key) →
+          ((fun (info : List (String × String)) => [String.join (info.map (·.2))]) info)[i]? =
+            ((fun (info : List (String × String)) => [String.join (info.map (·.2))])
+                info')[i]? := by
+  intro h
+  have := h 0 [("x", "a")] [] (by decide)
+  simp at this
 
 theorem picker_attach_listed (s : Selector.Picker.State) (key : Selector.Key) (target : String)
     (h : Selector.Picker.step s key = .attach target) : target ∈ s.candidates :=

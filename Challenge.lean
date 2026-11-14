@@ -181,7 +181,13 @@ def Linger.Display.Listing.rowStatus : Listing.Row → Status.Status := sorry
 def Linger.Display.Listing.terminalListing :
     Bool → Option Nat → List (List (String × String)) → List UInt8 := sorry
 
-def Linger.Display.Listing.rowText : Option Nat → Nat → List (String × String) → List Char := sorry
+def Linger.Display.Listing.rowText :
+    Option Nat → Listing.Layout → List (String × String) → List Char := sorry
+
+def Linger.Display.Listing.columns : Listing.Layout → List (String × String) → List (List Char) :=
+  sorry
+
+def Linger.Display.Listing.cells : List (String × String) → List String := sorry
 
 def Linger.Display.Listing.caption : List (String × String) → String := sorry
 
@@ -590,7 +596,12 @@ reports each have one source, and a listing names each row by its socket. A huma
 the fields `Listing.sources` names (`rowText_sources`): the user's description outranks the
 program's title, and the foreground program, which the operating system reports, shows only when
 that caption does not name it (`caption_precedence`); its glyph and name are never cut, the rest
-fits a width (`rowText_fits`), and each character is printable (`rowText_clean`). Not claimed:
+fits a width in display columns (`rowText_fits`), and each character is printable
+(`rowText_clean`). One field, one column: a row's parts, the glyph, the name and the caption,
+program, directory, age and watchers cells, each take the display columns its view's layout gives
+them while the name fits its column, so each field starts at one column in every row
+(`columns_aligned`), and each cell reads only its own fields (`cells_sources`); the layout may
+depend on the view, a cell's content may not. Not claimed:
 that the daemon reports the title, foreground and idle time it read, which the overview suite
 checks, what the operating system reports of the foreground, which `Pty.Foreground` assumes
 and its check tests, that a row shows the text of a notification right after its caption
@@ -859,20 +870,21 @@ theorem rowFields_name_rejects_reply :
           some socketName := by
   sorry
 
-theorem rowText_sources (width : Option Nat) (nameCol : Nat) (info info' : List (String × String))
+theorem rowText_sources (width : Option Nat) (layout : Listing.Layout)
+    (info info' : List (String × String))
     (h : ∀ key ∈ Listing.sources, info.lookup key = info'.lookup key) :
-    Listing.rowText width nameCol info = Listing.rowText width nameCol info' := by sorry
+    Listing.rowText width layout info = Listing.rowText width layout info' := by sorry
 
 @[kills rowText_sources]
 theorem rowText_sources_rejects_labels :
-    ¬∀ (width : Option Nat) (nameCol : Nat) (info info' : List (String × String)),
+    ¬∀ (width : Option Nat) (layout : Listing.Layout) (info info' : List (String × String)),
         (∀ key ∈ Listing.sources, info.lookup key = info'.lookup key) →
-          (fun (_ : Option Nat) (_ : Nat) (info : List (String × String)) =>
+          (fun (_ : Option Nat) (_ : Listing.Layout) (info : List (String × String)) =>
                 info.flatMap fun kv => kv.2.toList)
-              width nameCol info =
-            (fun (_ : Option Nat) (_ : Nat) (info : List (String × String)) =>
+              width layout info =
+            (fun (_ : Option Nat) (_ : Listing.Layout) (info : List (String × String)) =>
                 info.flatMap fun kv => kv.2.toList)
-              width nameCol info' := by
+              width layout info' := by
   sorry
 
 theorem caption_precedence (info : List (String × String)) :
@@ -899,49 +911,92 @@ theorem caption_precedence_rejects_title :
                     info).toList) := by
   sorry
 
-theorem rowText_fits (width : Option Nat) (nameCol : Nat) (info : List (String × String)) :
+theorem rowText_fits (width : Option Nat) (layout : Listing.Layout)
+    (info : List (String × String)) :
     (Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
           ' ' :: ((info.lookup "name").getD "").toList.map Terminal.Render.textChar <+:
-        Listing.rowText width nameCol info) ∧
+        Listing.rowText width layout info) ∧
       ∀ w,
         width = some w →
-          (Listing.rowText width nameCol info).length ≤
-            max w (2 + ((info.lookup "name").getD "").toList.length) := by
+          ((Listing.rowText width layout info).map Terminal.Vt.charWidth).sum ≤
+            max w (2 + (((info.lookup "name").getD "").toList.map Terminal.Vt.charWidth).sum) := by
   sorry
 
 @[kills rowText_fits]
 theorem rowText_fits_rejects_overflow :
-    ¬∀ (width : Option Nat) (nameCol : Nat) (info : List (String × String)),
+    ¬∀ (width : Option Nat) (layout : Listing.Layout) (info : List (String × String)),
         (Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
               ' ' :: ((info.lookup "name").getD "").toList.map Terminal.Render.textChar <+:
-            (fun (_ : Option Nat) (_ : Nat) (info : List (String × String)) =>
+            (fun (_ : Option Nat) (_ : Listing.Layout) (info : List (String × String)) =>
                 Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
                   ' ' ::
                   (((info.lookup "name").getD "").toList.map Terminal.Render.textChar ++
                     ['…', '…', '…']))
-              width nameCol info) ∧
+              width layout info) ∧
           ∀ w,
             width = some w →
-              ((fun (_ : Option Nat) (_ : Nat) (info : List (String × String)) =>
-                      Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
-                        ' ' ::
-                        (((info.lookup "name").getD "").toList.map Terminal.Render.textChar ++
-                          ['…', '…', '…']))
-                    width nameCol info).length ≤
-                max w (2 + ((info.lookup "name").getD "").toList.length) := by
+              (((fun (_ : Option Nat) (_ : Listing.Layout) (info : List (String × String)) =>
+                          Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
+                            ' ' ::
+                            (((info.lookup "name").getD "").toList.map Terminal.Render.textChar ++
+                              ['…', '…', '…']))
+                        width layout info).map
+                    Terminal.Vt.charWidth).sum ≤
+                max w
+                  (2 + (((info.lookup "name").getD "").toList.map Terminal.Vt.charWidth).sum) := by
   sorry
 
-theorem rowText_clean (width : Option Nat) (nameCol : Nat) (info : List (String × String)) :
-    ∀ c ∈ Listing.rowText width nameCol info, Display.Printable c := by sorry
+theorem rowText_clean (width : Option Nat) (layout : Listing.Layout)
+    (info : List (String × String)) :
+    ∀ c ∈ Listing.rowText width layout info, Display.Printable c := by sorry
 
 @[kills rowText_clean]
 theorem rowText_clean_rejects_escape :
-    ¬∀ (width : Option Nat) (nameCol : Nat) (info : List (String × String)),
+    ¬∀ (width : Option Nat) (layout : Listing.Layout) (info : List (String × String)),
         ∀
           c ∈
-            (fun (_ : Option Nat) (_ : Nat) (_ : List (String × String)) => ['\x1b']) width nameCol
-              info,
+            (fun (_ : Option Nat) (_ : Listing.Layout) (_ : List (String × String)) => ['\x1b'])
+              width layout info,
           Display.Printable c := by
+  sorry
+
+theorem columns_aligned (layout : Listing.Layout) (info : List (String × String)) :
+    (∃ blanks : List Char,
+        (∀ c ∈ blanks, c = ' ') ∧
+          (Listing.columns layout info).flatten = Listing.rowText none layout info ++ blanks) ∧
+      ((((info.lookup "name").getD "").toList.map Terminal.Vt.charWidth).sum ≤ layout.nameCol →
+        (Listing.columns layout info).map (fun part => (part.map Terminal.Vt.charWidth).sum) =
+          layout.spans) := by
+  sorry
+
+@[kills columns_aligned]
+theorem columns_aligned_rejects_join :
+    ¬∀ (layout : Listing.Layout) (info : List (String × String)),
+        (∃ blanks : List Char,
+            (∀ c ∈ blanks, c = ' ') ∧
+              ((fun (_ : Listing.Layout) (info : List (String × String)) =>
+                      [(String.intercalate " " (info.map (·.2))).toList])
+                    layout info).flatten =
+                Listing.rowText none layout info ++ blanks) ∧
+          ((((info.lookup "name").getD "").toList.map Terminal.Vt.charWidth).sum ≤ layout.nameCol →
+            ((fun (_ : Listing.Layout) (info : List (String × String)) =>
+                      [(String.intercalate " " (info.map (·.2))).toList])
+                    layout info).map
+                (fun part => (part.map Terminal.Vt.charWidth).sum) =
+              layout.spans) := by
+  sorry
+
+theorem cells_sources (i : Nat) (info info' : List (String × String))
+    (h : ∀ key ∈ Listing.cellSources.getD i [], info.lookup key = info'.lookup key) :
+    (Listing.cells info)[i]? = (Listing.cells info')[i]? := by sorry
+
+@[kills cells_sources]
+theorem cells_sources_rejects_all :
+    ¬∀ (i : Nat) (info info' : List (String × String)),
+        (∀ key ∈ Listing.cellSources.getD i [], info.lookup key = info'.lookup key) →
+          ((fun (info : List (String × String)) => [String.join (info.map (·.2))]) info)[i]? =
+            ((fun (info : List (String × String)) => [String.join (info.map (·.2))])
+                info')[i]? := by
   sorry
 
 theorem picker_attach_listed (s : Selector.Picker.State) (key : Selector.Key) (target : String)

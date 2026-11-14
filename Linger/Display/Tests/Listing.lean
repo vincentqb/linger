@@ -24,13 +24,13 @@ def hostile : List (String × String) :=
 -- C1 metadata is text too; selectors and listings must not emit a CSI codepoint.
 example :
     !(String.fromUTF8!
-            (ByteArray.mk (humanRow 1 [("name", "x"), ("cmd", "vi\u009b31m")]).toArray)).contains
+            (ByteArray.mk (humanRow {} [("name", "x"), ("cmd", "vi\u009b31m")]).toArray)).contains
         '\u009b' := by
   native_decide
 
 /-- The scrub is a *replacement*, not a deletion: the control bytes became
 U+FFFD (0xEF 0xBF 0xBD), so the row still shows something happened. -/
-example : (humanRow 8 hostile).contains 0xEF = true := by native_decide
+example : (humanRow (layoutOf [hostile]) hostile).contains 0xEF = true := by native_decide
 
 /-- One line per row: a `cmd`/label/name with an embedded newline cannot forge a
 listing row. Two hostile rows → exactly two line terminators. -/
@@ -56,10 +56,14 @@ example :
   native_decide
 
 example :
-    (rowPieces 5 hostile).map (·.status) = [some Linger.Display.Status.Status.idle, none] := by
+    (rowPieces {} hostile).map (·.status) = [some Linger.Display.Status.Status.idle, none] := by
   native_decide
 
-example : nameWidth [[("name", "a")], [("name", "work@host")]] = 9 := by native_decide
+example : (layoutOf [[("name", "a")], [("name", "work@host")]]).nameCol = 9 := by native_decide
+
+/-- A row alone in its view, laid out by itself. -/
+def alone (width : Option Nat) (info : List (String × String)) : List Char :=
+  rowText width (layoutOf [info]) info
 
 /-- A shell session as a daemon reports it: its login shell runs `vim` in the foreground. -/
 def present : List (String × String) :=
@@ -70,29 +74,28 @@ def present : List (String × String) :=
 -- The row shows the foreground program, its directory, how long ago it printed and its watcher,
 -- and neither the pid, the start command nor another label.
 example :
-    String.ofList (rowText none 4 (atHome "/home/u" present)) =
+    String.ofList (alone none (atHome "/home/u" present)) =
       "⣀ work vim notes.md  ~/src  6m  +1" := by
   native_decide
 
 -- The description outranks the title, which outranks nothing it names: `vim` is in the title.
 example :
-    String.ofList (rowText none 4 (present ++ [("title", "notes.md - VIM - vim")])) =
+    String.ofList (alone none (present ++ [("title", "notes.md - VIM - vim")])) =
         "⣀ work notes.md - VIM - vim  /home/u/src  6m  +1" ∧
       String.ofList
-          (rowText none 4
-            (("label.description", "fixing the parser") :: present ++ [("title", "t")])) =
+          (alone none (("label.description", "fixing the parser") :: present ++ [("title", "t")])) =
         "⣀ work fixing the parser  vim notes.md  /home/u/src  6m  +1" := by
   native_decide
 
 -- A login shell at its prompt shows no program, and a title that holds its directory hides it.
 example :
     String.ofList
-          (rowText none 4
+          (alone none
             [("name", "work"), ("pid", "10"), ("status", "idle"), ("login", "true"),
               ("fg", "/bin/zsh"), ("fgpid", "10"), ("fgdir", "/home/u/src"), ("idle", "5")]) =
         "⣀ work /home/u/src  5s" ∧
       String.ofList
-          (rowText none 4
+          (alone none
             [("name", "work"), ("pid", "10"), ("status", "idle"), ("login", "true"),
               ("fg", "/bin/zsh"), ("fgpid", "10"), ("fgdir", "/home/u/src"),
               ("title", "u@host: /home/u/src")]) =
@@ -102,7 +105,7 @@ example :
 -- A program started as the session's command shows, though it is the session's own process.
 example :
     String.ofList
-        (rowText none 4
+        (alone none
           [("name", "work"), ("pid", "10"), ("status", "working"), ("fg", "sleep 100"),
             ("fgpid", "10"), ("fgdir", "/tmp")]) =
       "⣷ work sleep 100  /tmp" := by
@@ -110,8 +113,8 @@ example :
 
 -- A narrow terminal cuts the fields from the right, and never the glyph or the name.
 example :
-    String.ofList (rowText (some 20) 4 present) = "⣀ work vim notes.md…" ∧
-      String.ofList (rowText (some 3) 4 present) = "⣀ work" := by
+    String.ofList (alone (some 20) present) = "⣀ work vim notes.md…" ∧
+      String.ofList (alone (some 3) present) = "⣀ work" := by
   native_decide
 
 example : tilde "/home/u" "/home/u" = "~" ∧ tilde "/home/u" "/home/user" = "/home/user" := by
@@ -169,10 +172,10 @@ def asking : List (String × String) :=
 -- While it asks, the row shows the notification's text right after the caption; once it no longer
 -- asks, the text is gone.
 example :
-    String.ofList (rowText none 5 (atHome "/home/u" asking)) =
+    String.ofList (alone none (atHome "/home/u" asking)) =
         "⚑ agent fix parser  edit src/Foo.lean?  claude  ~/src  2m" ∧
       String.ofList
-          (rowText none 5
+          (alone none
             (atHome "/home/u"
               (asking.map fun (k, v) => if k == "status" then (k, "idle") else (k, v)))) =
         "⣀ agent fix parser  claude  ~/src  2m" := by
@@ -187,12 +190,24 @@ def ended : List (String × String) :=
 -- The row shows how the command ended right after the caption, its line and its status, or the
 -- line alone when the shell gave no status, and the status alone when no line reads.
 example :
-    String.ofList (rowText none 5 (atHome "/home/u" ended)) =
+    String.ofList (alone none (atHome "/home/u" ended)) =
         "⣿ build fix parser  make test: exit 2  ~/src  5s" ∧
-      String.ofList (rowText none 5 (ended.filter (·.1 != "lastexit"))) =
+      String.ofList (alone none (ended.filter (·.1 != "lastexit"))) =
         "⣿ build fix parser  make test: ended  /home/u/src  5s" ∧
-      String.ofList (rowText none 5 (ended.filter (·.1 != "lastcmd"))) =
+      String.ofList (alone none (ended.filter (·.1 != "lastcmd"))) =
         "⣿ build fix parser  exit 2  /home/u/src  5s" := by
+  native_decide
+
+-- One field, one column: rows of different names and captions, one with wide characters, start
+-- each field at the same display column.
+example :
+    let rows :=
+      [[("name", "a"), ("status", "idle"), ("label.description", "漢字"), ("fg", "vim"),
+          ("pid", "1")],
+        [("name", "longer"), ("status", "idle"), ("label.description", "abcdefgh"), ("fg", "vi"),
+          ("pid", "1")]]
+    rows.map (fun r => String.ofList (rowText none (layoutOf rows) r)) =
+      ["⣀ a      漢字      vim", "⣀ longer abcdefgh  vi"] := by
   native_decide
 
 end Linger.Display.Listing.Tests

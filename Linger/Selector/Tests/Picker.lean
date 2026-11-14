@@ -150,17 +150,18 @@ namespace Linger.Selector.Picker.Tests
 #guard
   match parseSnapshot "name\twork\ncmd\tvi\x1b[31m\u009b31m\n" with
   | .ok snapshot =>
-    let pieces := presentation snapshot 4 (.existing "work")
-    pieces == Linger.Display.Listing.rowPieces 4 (snapshot.row "work") &&
+    let pieces := presentation snapshot snapshot.laidOut (.existing "work")
+    pieces == Linger.Display.Listing.rowPieces snapshot.laidOut (snapshot.row "work") &&
       String.ofList (pieces.flatMap (·.text)) == "? work vi�[31m�31m"
   | .error _ => false
 
 #guard
   match parseSnapshot "name\twork\nname\tother\n" with
   | .ok snapshot =>
-    String.ofList ((presentation snapshot 5 (.existing "work")).flatMap (·.text)) ==
+    String.ofList ((presentation snapshot snapshot.laidOut (.existing "work")).flatMap (·.text)) ==
         "? work  (busy)" &&
-      String.ofList ((presentation snapshot 5 (.create "work@host")).flatMap (·.text)) ==
+      String.ofList
+          ((presentation snapshot snapshot.laidOut (.create "work@host")).flatMap (·.text)) ==
         "+ Create work@host"
   | .error _ => false
 
@@ -171,7 +172,9 @@ namespace Linger.Selector.Picker.Tests
   match
     parseSnapshot "name\taxab\nstatus\tworking\ncmd\tab\nlabel.description\tab\nclients\t2\n" with
   | .ok snapshot =>
-    let chars := highlightedPresentation snapshot 8 "ab" (.existing "axab")
+    let chars :=
+      highlightedPresentation snapshot { snapshot.laidOut with nameCol := 8 } "ab"
+        (.existing "axab")
     (chars.zipIdx.filterMap fun (char, index) => if char.matched then some index else none) ==
         [4, 5] &&
       String.ofList (chars.map (·.char)) == "⣷ axab     ab  +2" &&
@@ -193,24 +196,24 @@ namespace Linger.Selector.Picker.Tests
   | .error _ => false
 
 #guard
-  (highlightedPresentation {} 0 "work" (.create "work")).all (fun char => !char.matched) &&
-    (highlightedPresentation {} 0 "" (.existing "work")).all (fun char => !char.matched)
+  (highlightedPresentation {} {} "work" (.create "work")).all (fun char => !char.matched) &&
+    (highlightedPresentation {} {} "" (.existing "work")).all (fun char => !char.matched)
 
 -- Scalar positions survive wide and combining characters without byte indexing.
 #guard
-  let chars := highlightedPresentation {} 0 "é界" (.existing "café@世界")
+  let chars := highlightedPresentation {} {} "é界" (.existing "café@世界")
   (chars.zipIdx.filterMap fun (char, index) => if char.matched then some index else none) == [5, 8]
 
 -- An accent-only match underlines the base cell, even through another mark.
 -- A following wide character starts its own cell and cannot carry emphasis back.
 #guard
-  let chars := highlightedPresentation {} 0 "\u0301" (.existing "s@e\u0300\u0301界")
+  let chars := highlightedPresentation {} {} "\u0301" (.existing "s@e\u0300\u0301界")
   (chars.zipIdx.filterMap fun (char, index) => if char.matched then some index else none) == [6] &&
     ((emphasizeCells chars).zipIdx.filterMap fun (char, index) =>
         if char.matched then some index else none) ==
       [4, 5, 6] &&
     ((emphasizeCells
-            (highlightedPresentation {} 0 "界" (.existing "s@e\u0300\u0301界"))).zipIdx.filterMap
+            (highlightedPresentation {} {} "界" (.existing "s@e\u0300\u0301界"))).zipIdx.filterMap
         fun (char, index) => if char.matched then some index else none) ==
       [7]
 
@@ -456,7 +459,8 @@ def lineText (line : List (String × List (List Nat))) : String := String.join (
         [["source", "/tmp/save file"], ["saved", "2026-10-03T10:15:00Z"]] &&
       (snapshot.row "work").lookup "directory" == some "\"/tmp/exact\\tpath\\n\\\"quoted\\\"\"" &&
       (snapshot.row "work").lookup "line" == some "4" &&
-      String.ofList ((presentation snapshot 4 (.existing "work")).flatMap (·.text)) ==
+      String.ofList
+          ((presentation snapshot snapshot.laidOut (.existing "work")).flatMap (·.text)) ==
         String.singleton (Linger.Display.Status.icon .resumable) ++ " work pane command"
   | .error _ => false
 

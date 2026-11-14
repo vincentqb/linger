@@ -169,6 +169,7 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
             Linger.Selector.Picker.relist state true
               (Linger.Display.View.sort (statuses.getD · .unknown) state.candidates)
               state.descriptions
+          snapshot := snapshot.keepColumns none
           sortNext := true
         if !loaded && key == .accept then
           continue
@@ -191,14 +192,17 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
         -- what asks for someone first, as `ls` lists it (`View.sort`), when the visit opens and
         -- after the refresh key, and otherwise the rows shown where they are (`Picker.relist`);
         -- the query finds a row by its description too, and a directory under the account's home
-        -- shows as `~`, as in `ls`; the remote rows' age is as of this listing, which repaints it
+        -- shows as `~`, as in `ls`; the remote rows' age is as of this listing, which repaints it;
+        -- the columns are this listing's when the rows are sorted, and otherwise stay as they
+        -- were, so they never move under the person (`Picker.Snapshot.keepColumns`)
         let incomingStatuses := statusesOf incoming
         let ordered :=
           Linger.Display.View.sort (incomingStatuses.getD · .unknown) incoming.candidates
         let next :=
           if loaded then Linger.Selector.Picker.relist state sorting ordered incoming.descriptions
           else Linger.Selector.Picker.enter state left focus ordered incoming.descriptions
-        let atHome := incoming.atHome home
+        let atHome :=
+          (incoming.atHome home).keepColumns (if loaded && !sorting then snapshot.layout else none)
         let now ← monotonicMs
         let age := fetched.map fun start => (now - start) / 1000
         dirty := dirty || !loaded || next != state || atHome != snapshot || age != remoteAge
