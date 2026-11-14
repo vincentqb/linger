@@ -9,6 +9,7 @@ import Linger.Session.WorldCode.Record
 import Linger.Display.CoreCode.Listing
 public import Linger.Display.CoreSpec
 import Linger.Display.CoreCode.Status
+import Linger.Display.CoreCode.View
 
 public section
 
@@ -217,8 +218,9 @@ read from the record without waking the daemon (`rowStatus_published`). -/
 def localRows (stopAt : Option Nat := none) (statusOnly : Bool := false) :
     IO (List (List (String × String))) := do
   let deadline := stopAt.getD ((← monotonicMs) + 2000)
-  let sockets := (← Paths.listSocketNames).toArray.qsort (·.name < ·.name)
-  let ckpts := (← Paths.listCkptNames).toArray.qsort (·.name < ·.name) |>.toList
+  -- names as people read them, `w2` before `w10` (`View.before`)
+  let sockets := (Linger.Display.View.byName (·.name) (← Paths.listSocketNames)).toArray
+  let ckpts := Linger.Display.View.byName (·.name) (← Paths.listCkptNames)
   let liveRow := fun name info =>
     Linger.Display.Listing.rowFields name info ++
       [("state", "live"),

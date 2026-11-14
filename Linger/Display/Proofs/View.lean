@@ -2,6 +2,7 @@ module
 
 import all Linger.Display.CoreCode.View
 import all Linger.Display.CoreCode.Status
+import all Init.Data.Repr
 
 /-! # Views of many sessions — nothing that needs you is hidden, and every count adds up
 
@@ -464,5 +465,247 @@ theorem hidden_adds_up (targets : List String) :
 theorem mem_attention (st : Status) :
     st ∈ Status.attention ↔ st = .asks ∨ st = .wantsYou ∨ st = .exitedBad ∨ st = .unknown := by
   simp [Status.attention]
+
+/-! ## Names as people read them -/
+
+/-- A name's runs, back from what they compare by. -/
+def decode : List Nat → List Char
+  | [] => []
+  | n :: rest =>
+    if n = 0x30 then
+      ((rest.drop 2).take (rest.getD 1 0)).map Char.ofNat ++
+        decode ((rest.drop 2).drop (rest.getD 1 0))
+    else Char.ofNat n :: decode rest
+termination_by l => l.length
+decreasing_by
+  all_goals simp only [List.length_drop, List.length_cons]
+  all_goals omega
+
+/-- A run as `runs` cuts it: one character that is not a digit, or digits. -/
+def Run (r : List Char) : Prop :=
+  (∃ c, r = [c] ∧ c.isDigit = false) ∨ (r ≠ [] ∧ ∀ c ∈ r, c.isDigit = true)
+
+theorem runs_run (cs : List Char) : ∀ r ∈ runs cs, Run r := by
+  induction cs using runs.induct with
+  | case1 => simp [runs]
+  | case2 c cs digit ih =>
+    intro r hr
+    rw [runs] at hr
+    simp only [digit, ↓reduceIte] at hr
+    rcases List.mem_cons.mp hr with rfl | hr
+    · refine Or.inr ⟨by simp, ?_⟩
+      intro x hx
+      rcases List.mem_cons.mp hx with rfl | hx
+      · exact digit
+      · exact List.all_eq_true.mp (List.all_takeWhile (p := Char.isDigit) (l := cs)) x hx
+    · exact ih r hr
+  | case3 c cs digit ih =>
+    intro r hr
+    rw [runs] at hr
+    simp only [digit] at hr
+    rcases List.mem_cons.mp hr with rfl | hr
+    · exact Or.inl ⟨c, rfl, by simpa using digit⟩
+    · exact ih r hr
+
+theorem runs_flatten (cs : List Char) : (runs cs).flatten = cs := by
+  induction cs using runs.induct with
+  | case1 => simp [runs]
+  | case2 c cs digit ih =>
+    rw [runs]
+    simp [digit, ih]
+  | case3 c cs digit ih =>
+    rw [runs]
+    simp [digit, ih]
+
+theorem decode_other (n : Nat) (rest : List Nat) (h : n ≠ 0x30) :
+    decode (n :: rest) = Char.ofNat n :: decode rest := by
+  rw [decode]
+  simp [h]
+
+theorem decode_digits (v len : Nat) (more : List Nat) :
+    decode (0x30 :: v :: len :: more) =
+      (more.take len).map Char.ofNat ++ decode (more.drop len) := by
+  rw [decode]
+  simp
+
+theorem decode_code (r : List Char) (run : Run r) (rest : List Nat) :
+    decode (code r ++ rest) = r ++ decode rest := by
+  rcases run with ⟨c, rfl, digit⟩ | ⟨nonempty, digits⟩
+  · have hc : c.toNat ≠ 0x30 := by
+      intro h
+      have : c = '0' := Char.toNat_inj.mp h
+      simp [this] at digit
+    simp only [code, List.head?_cons, Option.any_some, digit, Bool.false_eq_true, ↓reduceIte,
+      List.map_cons, List.map_nil, List.cons_append, List.nil_append]
+    rw [decode_other _ _ hc, Char.ofNat_toNat]
+  · obtain ⟨c, cs, rfl⟩ := List.exists_cons_of_ne_nil nonempty
+    have hc : c.isDigit = true := digits c (by simp)
+    simp only [code, List.head?_cons, Option.any_some, hc, ite_true, List.cons_append]
+    rw [decode_digits]
+    simp [Function.comp_def]
+
+theorem decode_runs (rs : List (List Char)) (h : ∀ r ∈ rs, Run r) :
+    decode (rs.flatMap code) = rs.flatten := by
+  induction rs with
+  | nil => simp [decode]
+  | cons r rs
+    ih =>
+    rw [List.flatMap_cons, decode_code r (h r (by simp)), ih fun r hr => h r (by simp [hr])]
+    simp
+
+theorem key_inj {a b : String} (h : key a = key b) : a = b := by
+  have ha := decode_runs (runs a.toList) (runs_run a.toList)
+  have hb := decode_runs (runs b.toList) (runs_run b.toList)
+  rw [runs_flatten] at ha hb
+  unfold key at h
+  rw [h] at ha
+  exact String.toList_inj.mp (ha.symm.trans hb)
+
+/-- **Natural order is a total order**: no name comes before itself, it is transitive, and of two
+different names one comes before the other. -/
+theorem before_total (a b c : String) :
+    before a a = false ∧
+      (before a b = true → before b c = true → before a c = true) ∧
+      (a ≠ b → before a b = true ∨ before b a = true) := by
+  refine ⟨by simp [before, List.lt_irrefl], ?_, ?_⟩
+  · simp only [before, decide_eq_true_eq]
+    exact List.lt_trans
+  · intro hne
+    simp only [before, decide_eq_true_eq]
+    rcases List.le_total (key a) (key b) with h | h
+    · rcases (List.le_iff_lt_or_eq.mp h) with h | h
+      · exact Or.inl h
+      · exact absurd (key_inj h) hne
+    · rcases (List.le_iff_lt_or_eq.mp h) with h | h
+      · exact Or.inr h
+      · exact absurd (key_inj h).symm hne
+
+theorem takeWhile_dropWhile_stop (cs x : List Char) (h : ∃ a ∈ cs, a.isDigit = false) :
+    (cs ++ x).takeWhile Char.isDigit = cs.takeWhile Char.isDigit ∧
+      (cs ++ x).dropWhile Char.isDigit = cs.dropWhile Char.isDigit ++ x := by
+  induction cs with
+  | nil => simp at h
+  | cons c cs ih =>
+    by_cases hc : c.isDigit = true
+    · have h' : ∃ a ∈ cs, a.isDigit = false := by
+        obtain ⟨a, ha, hd⟩ := h
+        rcases List.mem_cons.mp ha with rfl | ha
+        · simp [hc] at hd
+        · exact ⟨a, ha, hd⟩
+      obtain ⟨h1, h2⟩ := ih h'
+      simp [hc, h1, h2]
+    · simp [hc]
+
+theorem runs_append (p x : List Char) (hp : ∀ c, p.getLast? = some c → c.isDigit = false) :
+    runs (p ++ x) = runs p ++ runs x := by
+  induction p using runs.induct with
+  | case1 => simp [runs]
+  | case2 c cs digit
+    ih =>
+    have stop : ∃ a ∈ cs, a.isDigit = false := by
+      cases hcs : cs.getLast? with
+      | none =>
+        have : cs = [] := List.getLast?_eq_none_iff.mp hcs
+        subst this
+        simp [hp c (by simp)] at digit
+      | some l => exact ⟨l, List.mem_of_getLast? hcs, hp l (by simp [List.getLast?_cons, hcs])⟩
+    obtain ⟨h1, h2⟩ := takeWhile_dropWhile_stop cs x stop
+    have hsuffix := List.dropWhile_suffix (l := cs) Char.isDigit
+    obtain ⟨pre, hpre⟩ := hsuffix
+    have hnil : cs.dropWhile Char.isDigit ≠ [] := by
+      intro he
+      obtain ⟨a, ha, hd⟩ := stop
+      have := List.any_dropWhile (l := cs) (p := Char.isDigit)
+      rw [he] at this
+      have hall : cs.all Char.isDigit = false := by
+        cases hh : cs.all Char.isDigit
+        · rfl
+        · exact absurd (List.all_eq_true.mp hh a ha) (by simp [hd])
+      simp [hall] at this
+    have hlast : ∀ l, (cs.dropWhile Char.isDigit).getLast? = some l → l.isDigit = false := by
+      intro l hl
+      apply hp l
+      rw [List.getLast?_cons, ← hpre, List.getLast?_append, hl]
+      simp
+    have unfolded :
+      runs (c :: cs) = (c :: cs.takeWhile Char.isDigit) :: runs (cs.dropWhile Char.isDigit) := by
+      rw [runs]
+      simp [digit]
+    rw [List.cons_append, runs]
+    simp only [digit, ↓reduceIte, h1, h2, ih hlast, unfolded]
+    simp
+  | case3 c cs digit
+    ih =>
+    have hcs : ∀ l, cs.getLast? = some l → l.isDigit = false := by
+      intro l hl
+      apply hp l
+      simp [List.getLast?_cons, hl]
+    have unfolded : runs (c :: cs) = [c] :: runs cs := by
+      rw [runs]
+      simp [digit]
+    rw [List.cons_append, runs]
+    simp only [digit, ih hcs, unfolded]
+    simp
+
+theorem runs_digits (d q : List Char) (nonempty : d ≠ []) (digits : ∀ c ∈ d, c.isDigit = true)
+    (hq : ∀ c, q.head? = some c → c.isDigit = false) : runs (d ++ q) = d :: runs q := by
+  obtain ⟨c, ds, rfl⟩ := List.exists_cons_of_ne_nil nonempty
+  have hc : c.isDigit = true := digits c (by simp)
+  have hds : ∀ a ∈ ds, a.isDigit = true := fun a ha => digits a (by simp [ha])
+  have htake : q.takeWhile Char.isDigit = [] := by
+    cases q with
+    | nil => rfl
+    | cons a as => simp [hq a rfl]
+  have hdrop : q.dropWhile Char.isDigit = q := by
+    cases q with
+    | nil => rfl
+    | cons a as => simp [hq a rfl]
+  rw [List.cons_append, runs]
+  simp [hc, List.takeWhile_append_of_pos hds, List.dropWhile_append_of_pos hds, htake, hdrop]
+
+theorem value_toDigits (n : Nat) : value (Nat.toDigits 10 n) = n := by
+  induction n using Nat.strongRecOn with
+  | ind n
+    ih =>
+    have digit : ∀ k, k < 10 → (Nat.digitChar k).toNat - 48 = k := by
+      intro k hk
+      rcases k with _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | k
+      all_goals
+        first
+        | omega
+        | (simp [Nat.digitChar]; rfl)
+        | simp [Nat.digitChar]
+    rw [Nat.toDigits_eq_ite (by decide)]
+    split
+    · simp [value, digit n (by assumption)]
+    · rename_i h
+      simp only [value, List.foldl_append, List.foldl_cons, List.foldl_nil] at ih ⊢
+      rw [ih (n / 10) (by omega), digit (n % 10) (Nat.mod_lt _ (by decide))]
+      omega
+
+/-- **Names that differ only in one number are ordered by it**: `p{n}q` comes before `p{m}q`
+when `n < m`, whatever `p` and `q` say around the number. -/
+theorem before_number (p q : String) (n m : Nat) (h : n < m)
+    (hp : ∀ c, p.toList.getLast? = some c → c.isDigit = false)
+    (hq : ∀ c, q.toList.head? = some c → c.isDigit = false) :
+    before (p ++ toString n ++ q) (p ++ toString m ++ q) = true := by
+  have shape (k : Nat) :
+    key (p ++ toString k ++ q) = key p ++ code (Nat.toDigits 10 k) ++ key q := by
+    have digits : ∀ c ∈ Nat.toDigits 10 k, c.isDigit = true := fun c hc =>
+      Nat.isDigit_of_mem_toDigits (by decide) (by decide) hc
+    simp only [key, String.toList_append, Nat.toString_eq_repr, Nat.toList_repr]
+    rw [List.append_assoc, runs_append _ _ hp, runs_digits _ _ Nat.toDigits_ne_nil digits hq]
+    simp
+  have head (k : Nat) : (Nat.toDigits 10 k).head?.any Char.isDigit = true := by
+    cases hd : Nat.toDigits 10 k with
+    | nil => exact absurd hd Nat.toDigits_ne_nil
+    | cons c cs =>
+      simp [Nat.isDigit_of_mem_toDigits (b := 10) (n := k) (c := c) (by decide) (by decide)
+            (by
+              rw [hd]; simp)]
+  simp only [before, decide_eq_true_eq, shape, List.append_assoc]
+  apply List.append_left_lt
+  simp only [code, head, ite_true, value_toDigits, List.cons_append]
+  exact List.cons_lt_cons_iff.mpr (Or.inr ⟨rfl, List.cons_lt_cons_iff.mpr (Or.inl h)⟩)
 
 end Linger.Display.View

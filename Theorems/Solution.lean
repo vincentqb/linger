@@ -3256,6 +3256,39 @@ theorem sort_live_above_done_rejects_done_above :
     h (fun b : Bool => if b then .exitedOk else .working) [true, false] [true] [false] (by decide)
       true (by simp) (by simp) false (by simp) (by simp)
 
+theorem before_total (a b c : String) :
+    View.before a a = false ∧
+      (View.before a b = true → View.before b c = true → View.before a c = true) ∧
+      (a ≠ b → View.before a b = true ∨ View.before b a = true) := View.before_total a b c
+
+theorem before_total_rejects_none :
+    ¬∀ (a b c : String),
+        (fun (_ _ : String) => false) a a = false ∧
+          ((fun (_ _ : String) => false) a b = true →
+            (fun (_ _ : String) => false) b c = true → (fun (_ _ : String) => false) a c = true) ∧
+          (a ≠ b →
+            (fun (_ _ : String) => false) a b = true ∨
+              (fun (_ _ : String) => false) b a = true) := by
+  intro h
+  exact absurd ((h "a" "b" "a").2.2 (by decide)) (by simp)
+
+theorem before_number (p q : String) (n m : Nat) (h : n < m)
+    (hp : ∀ c, p.toList.getLast? = some c → c.isDigit = false)
+    (hq : ∀ c, q.toList.head? = some c → c.isDigit = false) :
+    View.before (p ++ toString n ++ q) (p ++ toString m ++ q) = true :=
+  View.before_number p q n m h hp hq
+
+theorem before_number_rejects_lexicographic :
+    ¬∀ (p q : String) (n m : Nat),
+        n < m →
+          (∀ c, p.toList.getLast? = some c → c.isDigit = false) →
+          (∀ c, q.toList.head? = some c → c.isDigit = false) →
+          (fun (a b : String) => decide (a < b)) (p ++ toString n ++ q) (p ++ toString m ++ q) =
+            true := by
+  intro h
+  have wrong := h "p" "" 2 10 (by decide) (by decide) (by decide)
+  exact absurd wrong (by decide)
+
 theorem groups_exact (keys : List String) :
     ((View.groups keys).map (·.2)).sum = keys.length ∧
       ∀ (k : String) (n : Nat), (k, n) ∈ View.groups keys → n = keys.count k :=

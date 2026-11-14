@@ -107,6 +107,14 @@ def run : IO UInt32 :=
           recs.any (fun kv => kv.1 == "state" && kv.2 == "live"))
         "porcelain carries name/state (the remote-parse contract)"
     e.killAll #["alpha", "beta"]
+    -- names as people read them: a number in a name counts by its value, so w2 comes before w10
+    for name in ["w10", "w2", "w1"] do
+      let _ ← e.typeIn name #["true"]
+    let names :=
+      (records (← e.out #["ls", "--porcelain"])).filterMap fun kv =>
+        if kv.1 == "name" then some kv.2 else none
+    expect (names == ["w1", "w2", "w10"]) s!"ls lists w1, w2 and w10 in natural order: {names}"
+    e.killAll #["w1", "w2", "w10"]
     let _ ← waitFor 5000 (return (← e.out #["ls"]).toUTF8 == ByteArray.mk emptyLine.toArray)
     -- Invalid filenames are ignored rather than rewritten into selectable aliases.
     -- Control bytes must not reach the terminal, and no resumable row may appear.

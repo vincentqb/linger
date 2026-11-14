@@ -110,4 +110,46 @@ def hidden (targets : List String) : Nat × List (String × Nat) :=
   (targets.length,
     ((chooseDepth targets).map fun depth => groups (targets.map (stem depth))).getD [])
 
+/-! ## Names as people read them
+
+Within a place a view keeps the listing's order, and a listing orders names as people read
+them: a run of digits counts by its value, so `w2` comes before `w10`, a value's leading zeros
+break a tie between runs of equal value, and every other character compares as a string's
+characters do. -/
+
+/-- A name's runs: each maximal run of digits, and each other character alone. -/
+def runs : List Char → List (List Char)
+  | [] => []
+  | c :: cs =>
+    if c.isDigit then (c :: cs.takeWhile Char.isDigit) :: runs (cs.dropWhile Char.isDigit)
+    else [c] :: runs cs
+termination_by cs => cs.length
+decreasing_by
+  · have := (List.dropWhile_sublist (l := cs) Char.isDigit).length_le
+    simp only [List.length_cons]
+    omega
+  · simp
+
+/-- The value of a run of digits. -/
+def value (digits : List Char) : Nat := digits.foldl (fun n c => n * 10 + (c.toNat - 48)) 0
+
+/-- What a run compares by: a digit run as `0x30`, the code of `0`, then its value, its length
+and its characters, so it sits where its digits would among other characters; any other run as
+its character's code. -/
+def code (run : List Char) : List Nat :=
+  if run.head?.any Char.isDigit then 0x30 :: value run :: run.length :: run.map Char.toNat
+  else run.map Char.toNat
+
+/-- What a name compares by: its runs' codes in order. -/
+def key (name : String) : List Nat := (runs name.toList).flatMap code
+
+/-- Whether name `a` comes before name `b` as people read them: `key a` is lexicographically less
+than `key b`. -/
+def before (a b : String) : Bool := decide (key a < key b)
+
+/-- Rows in the order of their names as people read them (`before`), rows with one name in their
+order: a stable merge sort. -/
+def byName {α : Type} (name : α → String) (rows : List α) : List α :=
+  rows.mergeSort fun a b => !before (name b) (name a)
+
 end Linger.Display.View

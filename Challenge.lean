@@ -63,7 +63,9 @@ and titles and `ls --summary` count `⚑`, `⣿`, `✗` and `?`. Its section fol
 the titles, listings and selector views that show statuses: a view ranks rows by what needs you
 to act, `⚑`, then `✗` and `?`, then `⣿`, first, then the running sessions, then `✓` and `~`, so
 no row that ended well or can only be resumed sits above a live one, and a running session's row
-keeps its place whether it is printing or quiet. A session
+keeps its place whether it is printing or quiet. Within a place a view keeps the listing's order,
+and a listing orders names as people read them: a total order (`before_total`) that puts names
+differing only in one number in the order of that number, `w2` before `w10` (`before_number`). A session
 asks exactly while its program has rung the bell or posted a notification since the session was
 last looked at: output with nobody attached asks as the terminal package's mediator hears it, a
 look, an attach, a capture or output while a client is attached, clears the ask, and nothing else
@@ -186,6 +188,8 @@ def Linger.Display.Listing.caption : List (String × String) → String := sorry
 def Linger.Display.Listing.program : List (String × String) → String := sorry
 
 def Linger.Display.View.sort {α : Type} : (α → Status.Status) → List α → List α := sorry
+
+def Linger.Display.View.before : String → String → Bool := sorry
 
 def Linger.Display.View.groups : List String → List (String × Nat) := sorry
 
@@ -3212,6 +3216,38 @@ theorem sort_live_above_done_rejects_done_above :
                 y ∈ rest →
                   ¬(status y = .asks ∨
                       status y = .wantsYou ∨ status y = .working ∨ status y = .idle) := by
+  sorry
+
+theorem before_total (a b c : String) :
+    View.before a a = false ∧
+      (View.before a b = true → View.before b c = true → View.before a c = true) ∧
+      (a ≠ b → View.before a b = true ∨ View.before b a = true) := by
+  sorry
+
+@[kills before_total]
+theorem before_total_rejects_none :
+    ¬∀ (a b c : String),
+        (fun (_ _ : String) => false) a a = false ∧
+          ((fun (_ _ : String) => false) a b = true →
+            (fun (_ _ : String) => false) b c = true → (fun (_ _ : String) => false) a c = true) ∧
+          (a ≠ b →
+            (fun (_ _ : String) => false) a b = true ∨
+              (fun (_ _ : String) => false) b a = true) := by
+  sorry
+
+theorem before_number (p q : String) (n m : Nat) (h : n < m)
+    (hp : ∀ c, p.toList.getLast? = some c → c.isDigit = false)
+    (hq : ∀ c, q.toList.head? = some c → c.isDigit = false) :
+    View.before (p ++ toString n ++ q) (p ++ toString m ++ q) = true := by sorry
+
+@[kills before_number]
+theorem before_number_rejects_lexicographic :
+    ¬∀ (p q : String) (n m : Nat),
+        n < m →
+          (∀ c, p.toList.getLast? = some c → c.isDigit = false) →
+          (∀ c, q.toList.head? = some c → c.isDigit = false) →
+          (fun (a b : String) => decide (a < b)) (p ++ toString n ++ q) (p ++ toString m ++ q) =
+            true := by
   sorry
 
 theorem groups_exact (keys : List String) :
