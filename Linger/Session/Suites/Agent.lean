@@ -101,7 +101,7 @@ def malformedServer (socketPath readyPath : String) : IO UInt32 := do
     pure ()
   return rc
 
-/-- Two info conversations, one for `get` and one for listing. Failure modes
+/-- Two info conversations, one for the named listing and one for the whole one. Failure modes
 first send plausible fields: neither a partial label nor a healthy-looking
 prefix may be mistaken for a completed answer. The socket path stays for the
 caller to check that listing did not unlink a connected peer. -/
@@ -176,7 +176,7 @@ def infoServer (socketPath readyPath mode : String) : IO UInt32 := do
   finally
     Os.Shell.close lfd
 
-private def checkInfo (e : Env) (mode : String) (error : Option String) : IO Unit := do
+private def checkInfo (e : Env) (mode : String) (failed : Bool) : IO Unit := do
   let name := s!"info-{mode}"
   let socketPath := s!"{e.dir}/{name}.sock"
   let readyPath := s!"{e.dir}/{name}.ready"
@@ -188,25 +188,30 @@ private def checkInfo (e : Env) (mode : String) (error : Option String) : IO Uni
   try
     unless (← waitFor patienceMs (System.FilePath.pathExists readyPath)) do
       throw (IO.userError s!"{mode} info server did not become ready")
-    let (rc, out, err) ← e.cli #["get", name]
+    let (rc, out, err) ← e.cli #["ls", name, "--porcelain"]
     let (lrc, listing, _) ← e.cli #["ls", "--porcelain"]
     let serverRc ← waitProcess server hangMs
     let recs := records listing
+    let named := records out
     let pathKept ← System.FilePath.pathExists socketPath
-    match error with
-    | some why =>
-      expect (rc == 1 && out.isEmpty && has err why && !has err "\x1b")
-          s!"get rejects {mode} info without printing partial labels"
+    if failed then
+      expect
+          (rc == 0 && err.isEmpty &&
+            named ==
+              [("name", name), ("state", "live"), ("status", Linger.Display.Status.name .unknown)])
+          s!"ls {name} lists a {mode} info peer as live/unknown without partial fields"
       expect
           (serverRc == some 0 && lrc == 0 && pathKept && recs.contains ("name", name) &&
             recs.contains ("state", "live") &&
             recs.contains ("status", Linger.Display.Status.name .unknown) &&
             !recs.any (fun kv => kv.1 == "cmd" || kv.1.startsWith "label."))
           s!"listing retains {mode} info peer as live/unknown without partial fields"
-    | none =>
-      let expected := if mode == "empty" then "" else "partial=value\nsecond=another\n"
-      expect (serverRc == some 0 && rc == 0 && out == expected && err.isEmpty)
-          s!"get accepts {mode} info terminated by done"
+    else
+      let fields := named.filter (·.1.startsWith "label.")
+      let expected :=
+        if mode == "empty" then [] else [("label.partial", "value"), ("label.second", "another")]
+      expect (serverRc == some 0 && rc == 0 && fields == expected && err.isEmpty)
+          s!"ls {name} reports {mode} info terminated by done"
   finally
     reapOrKill server 0
     IO.FS.removeFile socketPath
@@ -311,9 +316,10 @@ private def startChecks (e : Env) : IO Unit := do
   e.killAll #["st1"]
   let (runRc, _, runErr) ← e.cli #["run", "st-run", "true"]
   let (shortRc, _, shortErr) ← e.cli #["r", "st-run"]
-  let (infoRc, _, _) ← e.cli #["info", "st-run"]
+  let (infoRc, _, _) ← e.cli #["ls", "st-run", "--porcelain"]
   expect
-      (runRc == 2 && shortRc == 2 && shortErr == runErr && has runErr "removed" &&
+      (runRc == 2 && shortRc == 2 && has shortErr "removed" && has shortErr "start" &&
+        has runErr "removed" &&
         has runErr "start" &&
         has runErr "resume" &&
         has runErr "send" &&
@@ -552,13 +558,10 @@ def run : IO UInt32 :=
     startChecks e
     cleanChecks e
     endedChecks e
-    for (mode, why) in
-      [("eof", "connection lost"), ("timeout", "no reply"), ("refused", "info refused"),
-        ("malformed", "invalid response"), ("exited", "ended before"), ("utf8", "invalid UTF-8"),
-        ("record", "invalid info record"), ("cap", "info reply exceeds")] do
-      checkInfo e mode (some why)
-    checkInfo e "complete" none
-    checkInfo e "empty" none
+    for mode in ["eof", "timeout", "refused", "malformed", "exited", "utf8", "record", "cap"] do
+      checkInfo e mode true
+    checkInfo e "complete" false
+    checkInfo e "empty" false
     -- ── info ──────────────────────────────────────────────────────────────────
     let _ ← e.typeIn "ag" #["true"] -- upsert a headless session (default shell)
     IO.sleep 1500
@@ -590,15 +593,9 @@ def run : IO UInt32 :=
         "info reflects the attached terminal size"
     cl.bye -- detach, close, reap
     -- info against a missing session fails cleanly, quoting the name it looked for.
-    let (irc, _, ierr) ← e.cli #["info", "nosuch"]
+    let (irc, _, ierr) ← e.cli #["ls", "nosuch", "--porcelain"]
     expect (irc == 127 && has ierr "no session 'nosuch'")
-        "info on a missing session exits 127 with a message"
-    -- All arguments are valid; the daemon rejects the entry beyond its label cap.
-    let labels := (List.range (Linger.Session.maxLabels + 1)).map fun i => s!"probe-{i}=value"
-    let (lrc, _, lerr) ← e.cli (#["set", "ag"] ++ labels.toArray)
-    expect (lrc == 1 && has lerr "too many labels")
-        "a daemon-rejected label exits 1 with its reason"
-    let _ ← e.cli #["clear", "ag"]
+        "ls on a missing session exits 127 with a message"
     -- A malformed daemon response must also fail. The fake server is this suite
     -- binary in a child mode, so the wire bytes and `maxPayload` come from
     -- `Linger.Session.Wire`.
@@ -611,7 +608,7 @@ def run : IO UInt32 :=
             stdout := .null, stderr := .piped }
     unless (← waitFor 5000 (System.FilePath.pathExists badReady)) do
       throw (IO.userError "malformed-frame server did not become ready")
-    let (mrc, _, merr) ← e.cli #["set", "malformed", "k=v"]
+    let (mrc, _, merr) ← e.cli #["describe", "malformed", "text"]
     let serverRc ← badServer.wait
     expect (serverRc == 0 && mrc == 1 && has merr "invalid response")
         "a malformed daemon response exits 1"

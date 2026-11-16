@@ -29,23 +29,18 @@ def run : IO UInt32 :=
       let _ ← e.typeIn "a_b" #["true"]
       let pid ← e.info "a_b" "pid"
       for name in ["a b", "a/b", "", ".hidden", String.ofList (List.replicate 81 'a')] do
-        let (rc, _, _) ← e.cli #["info", name]
+        let (rc, _, _) ← e.cli #["ls", name, "--porcelain"]
         expect (rc == 2) s!"invalid target {repr name} is a usage error"
-      let (prefixRc, _, _) ← e.cli #["info", "a"]
+      let (prefixRc, _, _) ← e.cli #["ls", "a", "--porcelain"]
       expect (prefixRc != 0) "command lookup never selects a name by prefix"
       let (killRc, _, _) ← e.cli #["kill", "a b"]
       expect (killRc == 2 && (← e.info "a_b" "pid") == pid && pid.isSome)
           "a malformed kill target cannot kill its sanitized alias"
       let (waitRc, _, _) ← e.cli #["wait", "missing name"]
       expect (waitRc == 2) "wait validates names even when no session exists"
-      let (setRc, _, _) ← e.cli #["set", "a_b", "partial=bad", "=missing-key"]
-      let (_, labels, _) ← e.cli #["get", "a_b"]
-      expect (setRc == 2 && !has labels "partial=")
-          "set validates every argument before changing any label"
-      let (bareSetRc, _, _) ← e.cli #["set", "a_b", "missing-equals"]
-      let (emptyUnsetRc, _, _) ← e.cli #["unset", "a_b", ""]
-      expect (bareSetRc == 2 && emptyUnsetRc == 2)
-          "label commands reject malformed arguments as usage errors"
+      let (describeRc, _, _) ← e.cli #["describe", "a b", "text"]
+      expect (describeRc == 2 && (← e.info "a_b" "label.description").isNone)
+          "describe validates its target before changing any session"
       let vt := (Terminal.Vt.Vt.init 20 2).feedBytes "old\r\nmiddle\r\nscreen".toUTF8
       let bytes := Linger.Session.Checkpoint.saveBytes ⟨vt, e.dir, [("saved", "yes")]⟩
       let path := s!"{e.dir}/saved.ckpt"
@@ -60,7 +55,7 @@ def run : IO UInt32 :=
           ((← IO.FS.readBinFile path).toList == bytes.toList &&
             !(← System.FilePath.pathExists s!"{e.dir}/saved.sock"))
           "offline reads preserve the checkpoint and do not start a daemon"
-      let (caseLiveRc, _, _) ← e.cli #["info", "A_B"]
+      let (caseLiveRc, _, _) ← e.cli #["ls", "A_B", "--porcelain"]
       let (caseSavedRc, caseSavedOut, _) ← e.cli #["capture", "--history", "SAVED"]
       expect (caseLiveRc != 0 && caseSavedRc != 0 && caseSavedOut.isEmpty)
           "case variants never resolve to an existing live or saved session"
@@ -81,7 +76,7 @@ def run : IO UInt32 :=
       let checkpoint := s!"{e.dir}/state/linger/{host}/work.ckpt"
       let (firstRc, _, _) ← e.typeInEnv (splitEnv e 1) "work" #["true"]
       let saved ← waitFor 3000 (System.FilePath.pathExists checkpoint)
-      let first := records (← e.cliEnv (splitEnv e 1) #["info", "work"]).2.1
+      let first := records (← e.cliEnv (splitEnv e 1) #["ls", "work", "--porcelain"]).2.1
       let firstPid := first.find? (·.1 == "pid")
       expect (firstRc == 0 && saved && firstPid.isSome)
           "first runtime owns a live session and its checkpoint"
@@ -97,19 +92,19 @@ def run : IO UInt32 :=
           "listing does not offer another runtime's owned checkpoint as resumable"
       let (otherKillRc, _, _) ← e.cliEnv (splitEnv e 2) #["kill", "work"]
       IO.sleep 250
-      let firstAfter := records (← e.cliEnv (splitEnv e 1) #["info", "work"]).2.1
+      let firstAfter := records (← e.cliEnv (splitEnv e 1) #["ls", "work", "--porcelain"]).2.1
       expect
           (otherKillRc != 0 && firstAfter.find? (·.1 == "pid") == firstPid &&
             (← System.FilePath.pathExists checkpoint))
           "commands in the other runtime cannot delete the live owner's saved state"
       let isolated := isolatedEnv e
       let (isolatedRc, _, _) ← e.typeInEnv isolated "work" #["true"]
-      let separate := records (← e.cliEnv isolated #["info", "work"]).2.1
+      let separate := records (← e.cliEnv isolated #["ls", "work", "--porcelain"]).2.1
       let separatePid := separate.find? (·.1 == "pid")
       expect (isolatedRc == 0 && separatePid.isSome && separatePid != firstPid)
           "independent runtime and state directories allow the same session name"
       let _ ← e.cliEnv isolated #["kill", "work"]
-      let original := records (← e.cliEnv (splitEnv e 1) #["info", "work"]).2.1
+      let original := records (← e.cliEnv (splitEnv e 1) #["ls", "work", "--porcelain"]).2.1
       expect (original.find? (·.1 == "pid") == firstPid)
           "ending an independent namesake leaves the original session intact"
       let _ ← e.cliEnv (splitEnv e 1) #["kill", "work"]
@@ -117,7 +112,7 @@ def run : IO UInt32 :=
         waitFor 3000 do
             return !(← System.FilePath.pathExists s!"{e.dir}/r1/linger/work.sock")
       let (handoffRc, _, _) ← e.typeInEnv (splitEnv e 2) "work" #["true"]
-      let successor := records (← e.cliEnv (splitEnv e 2) #["info", "work"]).2.1
+      let successor := records (← e.cliEnv (splitEnv e 2) #["ls", "work", "--porcelain"]).2.1
       expect
           (released && handoffRc == 0 && (successor.find? (·.1 == "pid")).isSome &&
             successor.find? (·.1 == "pid") != firstPid)

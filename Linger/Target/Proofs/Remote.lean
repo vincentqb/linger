@@ -446,10 +446,11 @@ theorem targetArgv_eq (transport : Transport) (verb : String) (options : List St
         "linger" ::
           marker ::
           (verb :: options ++
-                (if verb = "attach" ∨ verb = "capture" then targetOperands name else [name]) ++
+                (if verb = "attach" ∨ verb = "capture" ∨ verb = "ls" then targetOperands name
+                else [name]) ++
                 args).map
             encodeWord := by
-  simp [targetArgv, argv, operands, commandWords]
+  simp [targetArgv, argv, operands, commandWords, or_assoc]
 
 /-- A line's words after its host name no command: ssh reaches it. -/
 theorem transportOf_nil (host : String) : transportOf host [] = .ok (ssh host) := by

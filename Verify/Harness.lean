@@ -542,16 +542,16 @@ def Env.log (e : Env) (name : String) : IO String := do
     pure ""
 
 /-- Parse `k<TAB>v` lines into an association list — the shape both
-`linger info` and `linger ls --porcelain` emit (`Session.infoText`). -/
+`linger ls --porcelain` emits (`Session.infoText`). -/
 def records (txt : String) : List (String × String) :=
   txt.splitOn "\n" |>.filterMap fun line =>
     match line.splitOn "\t" with
     | [k, v] => some (k, v)
     | _ => none
 
-/-- One field of `linger info <name>`. -/
+/-- One field of `linger ls --porcelain -- <name>`. -/
 def Env.info (e : Env) (name field : String) : IO (Option String) := do
-  let recs := records (← e.out #["info", name])
+  let recs := records (← e.out #["ls", "--porcelain", "--", name])
   return (recs.find? (·.1 == field)).map (·.2)
 
 /-- One field of one session's `ls --porcelain` row. A `name` record opens a
@@ -572,7 +572,7 @@ suites that read it. -/
 def Env.status (e : Env) (name : String) : IO Linger.Display.Status.Status := do
   return Linger.Display.Status.ofName ((← e.field name "status").getD "")
 
-/-- The pid of the daemon behind `name`. `linger info` is answered over
+/-- The pid of the daemon behind `name`. `linger ls` is answered over
 `<LINGER_DIR>/<name>.sock`, so the reply comes from this directory's daemon. Its `pid` is
 the shell's and the daemon is the shell's parent, read with `ps -o ppid=` (the same on
 Linux and macOS). `getcwdOf` cannot identify it: `spawnDetached` does not chdir. -/

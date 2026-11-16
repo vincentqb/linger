@@ -11,4 +11,4 @@ configuration. Terminals need `linger` on PATH or an absolute executable path.
 | Fish attention counts | [fish_prompt.fish](fish_prompt.fish) |
 | SSH keepalives | [ssh_config](ssh_config) |
 
-Run `linger help` for session commands and `linger tmux help` for save interchange.
+Run `linger --help` for session commands and `linger tmux help` for save interchange.

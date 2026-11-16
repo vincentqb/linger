@@ -291,7 +291,7 @@ def admissionPressure (e : Env) : IO Unit := do
     owned.set #[control]
     let recovered ←
       waitFor hangMs do
-          let reply ← pressure.cliTimeout #["info", "pressure"] patienceMs
+          let reply ← pressure.cliTimeout #["ls", "pressure", "--porcelain"] patienceMs
           return reply.any fun (rc, text, _) => rc == 0 && (records text).contains ("pid", pidText)
     expect recovered "new connections recover after descriptor pressure clears"
   finally
@@ -349,8 +349,11 @@ def hostileRun (e : Env) : IO Hostile := do
         let flood := (List.replicate 1000 (Linger.Session.Wire.encode .history)).flatten
         Os.Shell.writeAll fd (ByteArray.mk flood.toArray)
         let start ← Os.Shell.monotonicMs
-        let reply ← e.cliTimeout #["info", name] hangMs
-        pure (reply.any (·.1 == 0), (← Os.Shell.monotonicMs) - start)
+        let reply ← e.cliTimeout #["ls", name, "--porcelain"] hangMs
+        -- the row carries the daemon's own fields only when it answered
+        pure
+            (reply.any fun (rc, text, _) => rc == 0 && ((records text).lookup "pid").isSome,
+              (← Os.Shell.monotonicMs) - start)
       finally
         Os.Shell.close fd
     -- A daemon that did not answer cannot be measured; the check fails on `answered`.
@@ -489,8 +492,8 @@ def slowSave (e : Env) : IO Unit := do
   try
     let (startRc, _, _) ← e.cli #["start", name, "/bin/sh", "-c", "exec sleep 1000"]
     let made ← IO.Process.output { cmd := "mkfifo", args := #[tmp] }
-    -- a label makes the session dirty, and its first tick saves at once, in the same round
-    let (setRc, _, _) ← e.cli #["set", name, "slow=save"]
+    -- a description makes the session dirty, and its first tick saves at once, in the same round
+    let (setRc, _, _) ← e.cli #["describe", name, "slow", "save"]
     let began ← Os.Shell.monotonicMs
     let answered ← waitFor hangMs (return (← e.info name "pid").isSome)
     let answerMs := (← Os.Shell.monotonicMs) - began
@@ -655,8 +658,8 @@ def run : IO UInt32 :=
     let some dpid ←
       e.daemonPid "busy" | throw (IO.userError "no daemon answered for 'busy' — nothing to SIGSTOP")
     signalByName dpid "STOP"
-    let out ← e.out #["list"]
-    let porc ← e.out #["list", "--porcelain"]
+    let out ← e.out #["ls"]
+    let porc ← e.out #["ls", "--porcelain"]
     let socks ← e.dirNames ".sock"
     signalByName dpid "CONT"
     -- the leading glyph is the status column: a daemon that did not answer within
@@ -795,7 +798,7 @@ def run : IO UInt32 :=
     if heldLock < 0 then
       throw (IO.userError "could not acquire lock-held test lock")
     IO.FS.writeFile heldSocket "not-a-socket" -- failed connect while the name is owned
-    let (heldRc, heldOut, heldErr) ← e.cli #["list"]
+    let (heldRc, heldOut, heldErr) ← e.cli #["ls"]
     let heldSocks ← e.dirNames ".sock"
     expect (heldRc == 0 && heldSocks.contains s!"{heldName}.sock" && has heldOut heldName)
         s!"list preserves a failed-connect owned socket (rc={heldRc}, sockets={heldSocks}, out='{heldOut}', err='{heldErr}')"
@@ -819,7 +822,7 @@ def run : IO UInt32 :=
     let t0 ← Os.Shell.monotonicMs
     let listing ←
       IO.Process.spawn
-          { cmd := e.bin, args := #["list"], env := e.procEnv, stdout := .null, stderr := .null }
+          { cmd := e.bin, args := #["ls"], env := e.procEnv, stdout := .null, stderr := .null }
     let listCode ← waitOrKill listing hangMs
     let elapsed := (← Os.Shell.monotonicMs) - t0
     let streamCode ← waitOrKill streamServer hangMs

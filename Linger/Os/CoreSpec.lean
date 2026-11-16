@@ -16,8 +16,8 @@ namespace Linger.Os
 /-- What a command answers, as its exit status gives it: an answer of linger's own, the signal
 that stopped it or the session it attached to or waited for, or the status of the program the
 command waited for. The statuses are a shell's, and a program may exit with one linger also uses,
-as with `timeout` and `env`, so a status alone cannot tell the two apart; `info` and the porcelain
-output say exactly. -/
+as with `timeout` and `env`, so a status alone cannot tell the two apart; the porcelain output
+says exactly. -/
 inductive Answer where
   /-- It did what was asked. -/
   | done

@@ -8,7 +8,7 @@ public section
 
 **One vocabulary.** Every command answers with an `Answer` and exits with its code (`code`), the
 session commands, the selector and the tmux interchange alike: each of linger's own answers has
-one code, the one `linger help` lists for it (`legend`), a signal's status says which signal, as
+one code, the one `linger --help` lists for it (`legend`), a signal's status says which signal, as
 a shell reports it, and a program's status passes through. Help lists each of linger's answers
 once (`listed`). -/
 
@@ -30,11 +30,11 @@ def code : Answer → UInt32
   | .saved signal => 128 + signal.toUInt32
   | .program status => status
 
-/-- linger's own answers, in the order `linger help` lists them. -/
+/-- linger's own answers, in the order `linger --help` lists them. -/
 def listed : List Answer :=
   [.done, .notDone, .usage, .timedOut, .failed, .cannotRun, .notFound, .cancelled]
 
-/-- What an answer means, in the words `linger help` gives it. -/
+/-- What an answer means, in the words `linger --help` gives it. -/
 def meaning : Answer → String
   | .done => "done"
   | .notDone => "refused or failed"
@@ -48,7 +48,7 @@ def meaning : Answer → String
   | .saved _ => "saved by its daemon's signal"
   | .program _ => "the program's own"
 
-/-- The lines `linger help` prints for linger's own answers: one per answer, its code and then
+/-- The lines `linger --help` prints for linger's own answers: one per answer, its code and then
 what it means. -/
 def legend : List String :=
   listed.map fun answer =>

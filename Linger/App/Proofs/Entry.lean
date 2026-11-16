@@ -48,21 +48,19 @@ theorem route_plain (args : List String) (unmarked : args.head? ≠ some Remote.
   rw [route_eq]
   simp [unmarked]
 
-theorem route_bare_help : route [] = .session ["help"] := by
+theorem route_bare_help : route [] = .session ["--help"] := by
   rw [route_plain [] (by simp)]
   rfl
 
 theorem route_selector_iff (args : List String) (readOnly : Bool)
     (unmarked : args.head? ≠ some Remote.marker) :
     route args = .selector readOnly ↔
-      args = "attach" :: (if readOnly then ["--read-only"] else []) ∨
-        args = "a" :: (if readOnly then ["--read-only"] else []) := by
+      args = "attach" :: (if readOnly then ["--read-only"] else []) := by
   rw [route_plain args unmarked, ← plain_eq]
   cases readOnly <;> unfold plain <;> split <;> simp_all
 
 theorem route_session_argv (command : String) (rest : List String) (hTmux : command ≠ "tmux")
     (hAttach : command ≠ "attach" ∨ (rest ≠ [] ∧ rest ≠ ["--read-only"]))
-    (hAlias : command ≠ "a" ∨ (rest ≠ [] ∧ rest ≠ ["--read-only"]))
     (hMarker : command ≠ Remote.marker) : route (command :: rest) = .session (command :: rest) := by
   rw [route_plain _ (by simpa using hMarker), ← plain_eq]
   unfold plain
@@ -70,18 +68,18 @@ theorem route_session_argv (command : String) (rest : List String) (hTmux : comm
 
 theorem route_attach_operands (rest : List String) (h : rest ≠ [])
     (hReadOnly : rest ≠ ["--read-only"]) : route ("attach" :: rest) = .session ("attach" :: rest) :=
-  route_session_argv "attach" rest (by decide) (.inr ⟨h, hReadOnly⟩) (.inl (by decide)) (by decide)
+  route_session_argv "attach" rest (by decide) (.inr ⟨h, hReadOnly⟩) (by decide)
 
 theorem route_select_retired (rest : List String) :
     route ("select" :: rest) = .session ("select" :: rest) :=
-  route_session_argv "select" rest (by decide) (.inl (by decide)) (.inl (by decide)) (by decide)
+  route_session_argv "select" rest (by decide) (.inl (by decide)) (by decide)
 
 theorem route_daemon_argv (rest : List String) :
     route ("__daemon" :: rest) = .session ("__daemon" :: rest) :=
-  route_session_argv "__daemon" rest (by decide) (.inl (by decide)) (.inl (by decide)) (by decide)
+  route_session_argv "__daemon" rest (by decide) (.inl (by decide)) (by decide)
 
 theorem route_ls_argv (rest : List String) : route ("ls" :: rest) = .session ("ls" :: rest) :=
-  route_session_argv "ls" rest (by decide) (.inl (by decide)) (.inl (by decide)) (by decide)
+  route_session_argv "ls" rest (by decide) (.inl (by decide)) (by decide)
 
 theorem route_tmux_argv (rest : List String) : route ("tmux" :: rest) = .tmux rest := by
   rw [route_plain _ (by simp [Remote.marker])]
@@ -95,11 +93,11 @@ theorem route_tmux_iff (args rest : List String) (unmarked : args.head? ≠ some
 
 theorem route_import_argv (rest : List String) :
     route ("import" :: rest) = .session ("import" :: rest) :=
-  route_session_argv "import" rest (by decide) (.inl (by decide)) (.inl (by decide)) (by decide)
+  route_session_argv "import" rest (by decide) (.inl (by decide)) (by decide)
 
 theorem route_export_argv (rest : List String) :
     route ("export" :: rest) = .session ("export" :: rest) :=
-  route_session_argv "export" rest (by decide) (.inl (by decide)) (.inl (by decide)) (by decide)
+  route_session_argv "export" rest (by decide) (.inl (by decide)) (by decide)
 
 /-- An encoded command line goes where its decoded words go. -/
 theorem route_encoded (encoded argv : List String) (decoded : Remote.decode encoded = some argv) :

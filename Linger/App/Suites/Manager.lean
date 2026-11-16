@@ -11,6 +11,7 @@ import Linger.Target.CoreCode.Name
 import Linger.Target.CoreCode.Remote
 import Linger.Target.CoreSpec
 import Terminal.CoreCode.Title
+import Terminal.CoreCode.Mediation
 import Linger.Session.WorldCode.Paths
 import Linger.Import.CoreCode.Resurrect
 import Linger.Session.CoreCode.Checkpoint
@@ -690,27 +691,25 @@ private def acceptThenCancel (s : Session) (keys : String := "\r") (visits : Nat
 
 private def usageChecks (e : Env) : IO Unit := do
   check e "help"
-      "linger help lists each command on one line, then every status and exit code, and aliases agree"
+      "linger --help lists each operation's one command on one line, in table order, then its options, every status and exit code"
       fun f => do
-      let (rc, out, err) ← f.piped #["--help"]
-      let (shortRc, shortOut, shortErr) ← f.piped #["-h"]
-      let (helpRc, helpOut, helpErr) ← f.piped #["help"]
-      let (hRc, hOut, hErr) ← f.piped #["h"]
+      let (rc, out, err) ← f.piped #[Linger.App.Commands.helpOption]
       IO.FS.writeFile (f.root / "help.txt") out
       let lines := (out.dropEnd 1).toString.splitOn "\n"
       let rows := lines.takeWhile (· != "")
       let footer := lines.dropWhile (· != "")
-      return rc == 0 && shortRc == 0 && helpRc == 0 && hRc == 0 && shortOut == out &&
-          helpOut == out &&
-          hOut == out &&
-          [err, shortErr, helpErr, hErr].all String.isEmpty &&
-          out.endsWith "\n" &&
+      return rc == 0 && err.isEmpty && out.endsWith "\n" && rows == Linger.App.Commands.helpLines &&
           rows.map (fun line => (line.splitOn " ").headD "") ==
             Linger.App.Commands.table.map (·.word) &&
+          Linger.App.Commands.table.map (·.op) == Linger.App.Commands.Op.all &&
           rows.all
             (fun line =>
               line == line.trimAscii.toString &&
                 ((line.splitOn "  ").filter (!·.isEmpty)).length ≥ 2) &&
+          footer.any
+            (fun line =>
+              has line Linger.App.Commands.helpOption &&
+                has line Linger.App.Commands.versionOption) &&
           Linger.Display.Status.legend.all (fun line => footer.contains ("  " ++ line)) &&
           footer.any
             (fun line =>
@@ -723,28 +722,101 @@ private def usageChecks (e : Env) : IO Unit := do
           has out "--summary" &&
           has out "--read-only" &&
           has out "--history" &&
+          !has out "--remote" &&
           !has out "linger import [SAVE]" &&
           !has out "--loop" &&
           !has out "--restore-processes" &&
           !has out "lz"
+  check e "version" "linger --version prints the version and the state paths, and nothing else does"
+      fun f => do
+      let (rc, out, err) ← f.piped #[Linger.App.Commands.versionOption]
+      let (extraRc, _, _) ← f.piped #[Linger.App.Commands.versionOption, "extra"]
+      return rc == 0 && err.isEmpty && has out s!"linger {Terminal.Mediation.versionNumber}" &&
+          has out "sockets: " &&
+          has out "state: " &&
+          extraRc == 2
+  check e "removed"
+      "each removed command and spelling is refused with a usage error that names its replacement"
+      fun f => do
+      let mut ok := !Linger.App.Commands.retired.isEmpty
+      for (word, advice) in Linger.App.Commands.retired do
+        for args in [#[word], #[word, "work"]] do
+          let (rc, out, err) ← f.piped args
+          appendText (f.root / "removed-observation") s!"{repr args}: {rc} {repr err}\n"
+          ok :=
+            ok && rc == 2 && out.isEmpty && has err s!"linger: {word} was removed: {advice}" &&
+              (Linger.App.Commands.table.any (fun command => has advice command.word) ||
+                has advice Linger.App.Commands.helpOption ||
+                has advice Linger.App.Commands.versionOption) &&
+              (Linger.App.Commands.lookup word).isNone
+      return ok
+  check e "ls-named"
+      "ls with names lists only those sessions, in the order named, as their porcelain records, a name with only an end record as its ending, and answers notFound for a name no session took"
+      fun f => do
+      let (oneRc, _, _) ← f.piped #["start", "named-one", "/bin/cat"]
+      let (twoRc, _, _) ← f.piped #["start", "named-two", "/bin/cat"]
+      let (descRc, _, _) ← f.piped #["describe", "named-one", "first", "one"]
+      let (rc, out, err) ← f.piped #["ls", "named-two", "named-one", "--porcelain"]
+      let (allRc, all, _) ← f.piped #["ls", "--porcelain"]
+      let (humanRc, human, _) ← f.piped #["ls", "named-one"]
+      let (missingRc, missingOut, missingErr) ← f.piped #["ls", "--porcelain", "named-missing"]
+      IO.FS.writeFile (f.root / "named-observation") s!"{rc} {repr out} {repr err}\n{repr human}\n"
+      let blocks := fun (text : String) =>
+        ((text.splitOn "\n\n").filter (!·.trimAscii.isEmpty)).map records
+      let named := blocks out
+      let field := fun (row : List (String × String)) (key : String) => row.lookup key
+      let listed := blocks all
+      let rowOf := fun (name : String) => listed.find? (field · "name" == some name)
+      -- each named record holds its row of the full listing's identity and liveness
+      let same := fun (row : List (String × String)) =>
+        match field row "name" >>= rowOf with
+        | some full =>
+          ["name", "pid", "cmd", "state", "start_dir"].all
+            (fun key => field row key == field full key)
+        | none => false
+      let (killRc, _, _) ← f.piped #["kill", "named-one"]
+      let (endedRc, ended, _) ← f.piped #["ls", "named-one", "--porcelain"]
+      let (twoKilled, _, _) ← f.piped #["kill", "named-two"]
+      let endedRow := records ended
+      return oneRc == 0 && twoRc == 0 && descRc == 0 && rc == 0 && allRc == 0 && err.isEmpty &&
+          named.map (field · "name") == [some "named-two", some "named-one"] &&
+          named.all same &&
+          named.all (field · "state" == some "live") &&
+          named.all (field · "cmd" == some "/bin/cat") &&
+          field (named.getD 1 []) "label.description" == some "first one" &&
+          (field (named.getD 0 []) "label.description").isNone &&
+          humanRc == 0 &&
+          has human "named-one" &&
+          has human "first one" &&
+          !has human "named-two" &&
+          missingRc == 127 &&
+          missingOut.isEmpty &&
+          has missingErr "no session 'named-missing'" &&
+          killRc == 0 &&
+          twoKilled == 0 &&
+          endedRc == 0 &&
+          endedRow.head? == some ("name", "named-one") &&
+          (endedRow.lookup "exit").isSome
   check e "usage" "linger rejects retired commands and conflicting listing options" fun f => do
       let mut ok := true
       for args in
         [#["work"], #["--unknown"], #["--help", "extra"], #["-h", "extra"], #["help", "extra"],
-          #["ls", "--unknown"], #["select"], #["status"], #["--summary"], #["watch", "work"],
-          #["history", "work"], #["hi", "work"], #["run", "work", "true"], #["r", "work"],
-          #["attach", "--unknown"], #["attach", "--"],
-          #["attach", "--read-only", "work", "/bin/sh"], #["capture", "--unknown"],
-          #["capture", "--"], #["capture", "--history"], #["capture", "--history", "work", "extra"],
-          #["capture", "work", "--history"], #["ls", "--summary", "--porcelain"],
-          #["ls", "--porcelain", "--summary"], #["ls", "--summary", "-r"],
-          #["ls", "-r", "--summary"], #["ls", "--summary", "extra"], #["select", ""],
-          #["select", "work"], #["select", "--help"], #["select", "-h"], #["select", "one", "two"],
-          #["--loop", ""], #["--loop", "one", "two"], #["import-resurrect"], #["import", ""],
-          #["import", "--unknown"], #["import", "--help"], #["import", "-h"], #["import", "-save"],
-          #["import", "one", "two"], #["import"], #["export", "save"], #["tmux", "select", ""],
-          #["tmux", "select", "-save"], #["tmux", "select", "one", "two"],
-          #["tmux", "select", "--unknown"]] do
+          #["--porcelain"], #["-r"], #["--summary", "work"], #["ls", "--remote"],
+          #["ls", "--remote", "host"], #["ls", "work", "-r"], #["ls", "-r", "host", "work"],
+          #["ls", "--summary", "work"], #["ls", "work", "--summary"], #["ls", "--unknown"],
+          #["select"], #["status"], #["--summary"], #["watch", "work"], #["history", "work"],
+          #["hi", "work"], #["run", "work", "true"], #["r", "work"], #["attach", "--unknown"],
+          #["attach", "--"], #["attach", "--read-only", "work", "/bin/sh"],
+          #["capture", "--unknown"], #["capture", "--"], #["capture", "--history"],
+          #["capture", "--history", "work", "extra"], #["capture", "work", "--history"],
+          #["ls", "--summary", "--porcelain"], #["ls", "--porcelain", "--summary"],
+          #["ls", "--summary", "-r"], #["ls", "-r", "--summary"], #["ls", "--summary", "extra"],
+          #["select", ""], #["select", "work"], #["select", "--help"], #["select", "-h"],
+          #["select", "one", "two"], #["--loop", ""], #["--loop", "one", "two"],
+          #["import-resurrect"], #["import", ""], #["import", "--unknown"], #["import", "--help"],
+          #["import", "-h"], #["import", "-save"], #["import", "one", "two"], #["import"],
+          #["export", "save"], #["tmux", "select", ""], #["tmux", "select", "-save"],
+          #["tmux", "select", "one", "two"], #["tmux", "select", "--unknown"]] do
         let (rc, _, _) ← f.piped args
         appendText (f.root / "usage-results") s!"{repr args}: {rc}\n"
         ok := ok && rc == 2
@@ -779,7 +851,7 @@ private def usageChecks (e : Env) : IO Unit := do
       fun f => do
       let state := f.root / "absent"
       let f := { f with env := f.env.push ("LINGER_DIR", some state.toString) }
-      let (helpRc, expected, helpErr) ← f.piped #["help"]
+      let (helpRc, expected, helpErr) ← f.piped #[Linger.App.Commands.helpOption]
       let (rc, out, err) ← f.piped #[]
       IO.FS.writeFile (f.root / "stdout") out
       return helpRc == 0 && !expected.isEmpty && helpErr.isEmpty && rc == 0 && out == expected &&
@@ -791,7 +863,7 @@ private def usageChecks (e : Env) : IO Unit := do
         fun f => do
         let state := f.root / "absent"
         let f := { f with env := f.env.push ("LINGER_DIR", some state.toString) }
-        let (helpRc, expected, helpErr) ← f.piped #["help"]
+        let (helpRc, expected, helpErr) ← f.piped #[Linger.App.Commands.helpOption]
         withSession f #[]
             (fun s => do
               let clean ← termiosRestored s 0
@@ -802,7 +874,7 @@ private def usageChecks (e : Env) : IO Unit := do
   check e "help-sockets" "bare linger help neither probes live sockets nor cleans stale sockets"
       fun f => do
       let f := { f with env := f.env.push ("LINGER_DIR", some f.root.toString) }
-      let (helpRc, expected, helpErr) ← f.piped #["help"]
+      let (helpRc, expected, helpErr) ← f.piped #[Linger.App.Commands.helpOption]
       let stale := f.root / "stale.sock"
       close (← unixListen stale.toString)
       let listener ← unixListen (f.root / "unread.sock").toString
@@ -2235,7 +2307,7 @@ private def realCheck (e : Env) : IO Unit := do
                 return false
               let detached ← clientsReach owned name "0"
               IO.FS.writeFile (f.root / "after-detach")
-                  (← withLaunchLock (owned.out #["info", name]))
+                  (← withLaunchLock (owned.out #["ls", "--porcelain", "--", name]))
               s.text "\x03"
               return shown && untouched && names == [name] && detached &&
                   (← termiosRestored s 130) &&
@@ -2805,7 +2877,7 @@ private def programChecks (e : Env) : IO Unit := do
           unless ← startProgram f owned name do
             return false
           let pid ← numberFile (f.root / "session-program-pid")
-          let before ← withLaunchLock (owned.out #["info", name])
+          let before ← withLaunchLock (owned.out #["ls", "--porcelain", "--", name])
           withPrompt f #["attach"] fun s => do
               unless ← s.selected name do
                 return false
@@ -2822,7 +2894,8 @@ private def programChecks (e : Env) : IO Unit := do
               IO.FS.writeFile (f.root / "survival-observation")
                   s!"pid={pid}\nalive-before={live}\nalive-after={survived}\nsend-exit={sent}\nanswered-after-cancel={answered}\nno-client={detached}\n"
               IO.FS.writeFile (f.root / "before-info") before
-              IO.FS.writeFile (f.root / "after-info") (← withLaunchLock (owned.out #["info", name]))
+              IO.FS.writeFile (f.root / "after-info")
+                  (← withLaunchLock (owned.out #["ls", "--porcelain", "--", name]))
               return clean && live && survived && sent == 0 && answered && detached
         finally
           let _ ← withLaunchLock (owned.cli #["send", name, "stop-program\n"])
@@ -2850,7 +2923,7 @@ private def programChecks (e : Env) : IO Unit := do
             let attached ← clientsReach owned name "1"
             let live := pid > 0 && (← alive (UInt32.ofNat pid))
             observe
-                s!"pid={pid} attached={attached} alive-before={live} info={repr (← withLaunchLock (owned.out #["info", name]))}"
+                s!"pid={pid} attached={attached} alive-before={live} info={repr (← withLaunchLock (owned.out #["ls", "--porcelain", "--", name]))}"
             unless attached && live do
               return false
             s.text "\x03"
@@ -2878,7 +2951,7 @@ private def programChecks (e : Env) : IO Unit := do
                 (← withLaunchLock (owned.info name "clients")) == some "0"
       finally
         observe
-            s!"screen={repr (← withLaunchLock (owned.out #["capture", name]))} info={repr (← withLaunchLock (owned.out #["info", name]))}"
+            s!"screen={repr (← withLaunchLock (owned.out #["capture", name]))} info={repr (← withLaunchLock (owned.out #["ls", "--porcelain", "--", name]))}"
         let _ ← withLaunchLock (owned.cli #["send", name, "stop-program\n"])
         withLaunchLock (owned.killAll #[name])
 

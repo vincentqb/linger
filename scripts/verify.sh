@@ -296,8 +296,8 @@ cleanup_sentinel() {
 }
 trap cleanup_sentinel EXIT HUP TERM
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger start "$sentinel_name" sleep 600
-LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \
-  || fail "sentinel session did not start"
+LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger ls "$sentinel_name" --porcelain \
+  | grep -qx 'state	live' || fail "sentinel session did not start"
 # A suite changes only the directories it creates, never one a plain `linger` here uses, which
 # holds the user's own sessions and whose lock files are never removed. linger names those
 # directories itself, with LINGER_DIR unset and with every variable they follow unset, as a
@@ -305,8 +305,8 @@ LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/
 # live suites as before. A session the user starts or ends meanwhile, or another checkout's
 # suites, change them too.
 default_dirs() {
-  { env -u LINGER_DIR ./.lake/build/bin/linger version
-    env -u LINGER_DIR -u XDG_RUNTIME_DIR -u XDG_STATE_HOME -u HOME ./.lake/build/bin/linger version
+  { env -u LINGER_DIR ./.lake/build/bin/linger --version
+    env -u LINGER_DIR -u XDG_RUNTIME_DIR -u XDG_STATE_HOME -u HOME ./.lake/build/bin/linger --version
   } | sed -n 's/^sockets: //p; s/^state: *//p' | sort -u
 }
 default_listing() {
@@ -320,7 +320,7 @@ default_listing() {
   done
 }
 [ "$(default_dirs | awk 'END { print NR }')" -ge 2 ] \
-  || fail "linger version does not name its default directories"
+  || fail "linger --version does not name its default directories"
 defaults_before="$(default_listing)"
 
 say "4. live suites (separate processes, at most four at once)"
@@ -339,9 +339,9 @@ else
 fi
 # shellcheck disable=SC2086  # each skip count is a number
 ./.lake/build/bin/suites --suites \
-  manager:165 delivery:38 attach:83 agent:70:$agent_skips \
+  manager:168 delivery:38 attach:83 agent:69:$agent_skips \
   resume:44:$resume_skips watch:52 title:18:$title_skips graphics:9 robust:35:$robust_skips \
-  interop:73 recipes:56 status:35 terminal:14 overview:23 remote:79 shells:5 identity:25 \
+  interop:73 recipes:56 status:35 terminal:14 overview:23 remote:74 shells:5 identity:24 \
   quiet:7:$quiet_skips upgrade:13:$upgrade_skips \
   || fail "live suites (see $logs/linger-*.out)"
 defaults_after="$(default_listing)"
@@ -352,8 +352,8 @@ if [ "$defaults_after" != "$defaults_before" ]; then
   fail "the live suites changed a directory a plain linger uses (diff above); a suite may change only what it creates"
 fi
 
-LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \
-  || fail "a suite terminated the unrelated sentinel session"
+LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger ls "$sentinel_name" --porcelain \
+  | grep -qx 'state	live' || fail "a suite terminated the unrelated sentinel session"
 cleanup_sentinel
 trap - EXIT HUP TERM
 finish_phase

@@ -49,7 +49,7 @@ def ownedCases (v : Vt) : List OwnedCase :=
     ⟨[ESC, 0x5D, 0x31, 0x33, 0x3B, 0x3F, BEL], []⟩,
     ⟨[ESC, 0x5D, 0x31, 0x39, 0x3B, 0x3F, ESC, STFinal], []⟩]
 
-/-- XTVERSION reports the same version as `linger version` and `TERM_PROGRAM_VERSION`. -/
+/-- XTVERSION reports the same version as `linger --version` and `TERM_PROGRAM_VERSION`. -/
 example :
     versionReply =
       [ESC, 0x50, 0x3E, 0x7C] ++ ("linger " ++ versionNumber).toUTF8.toList ++ [ESC, STFinal] := by

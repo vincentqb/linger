@@ -109,7 +109,7 @@ def run : IO UInt32 :=
     -- With every state override absent, fallback storage is still per-user.
     let uid ← Os.Shell.getuid
     let (vrc, vout, _) ←
-      e.cliEnv #[("LINGER_DIR", none), ("XDG_STATE_HOME", none), ("HOME", none)] #["version"]
+      e.cliEnv #[("LINGER_DIR", none), ("XDG_STATE_HOME", none), ("HOME", none)] #["--version"]
     expect (vrc == 0 && has vout s!"state:   /tmp/linger-{uid}/state/")
         "HOME-less state fallback is namespaced by uid"
     -- empty state: the explicit listing says so and exits 0 within the deadline

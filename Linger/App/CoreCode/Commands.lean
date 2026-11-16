@@ -6,73 +6,83 @@ public section
 
 /-! # Linger.App.Commands — the command table
 
-**One command table.** Every command the CLI accepts is one row here: the word that names it, its
-other spellings, the arguments it takes and what it does. `linger help` prints the table
-(`helpText`), a usage error quotes its command's row (`usageLine`), and no two commands share a
-word (`words_nodup`), so each word means one command. A removed command's words name none and say
-what to use instead (`retired`). -/
+**One command table, one command per operation.** Every command the CLI accepts is one row here:
+the word that names it, its only spelling, the operation it performs, the arguments it takes and
+what it does. The session CLI dispatches a command line through `lookup` to its row's `Op`, so a
+word no row has names no command. Each operation of the session model has exactly one row, in
+the order of `Op.all`, so each has exactly one spelling and no command is another's alias.
+`linger --help` prints the table (`helpText`), and a usage error quotes its command's row
+(`usageLine`). A removed word names no command and says what to use instead (`retired`).
+`--help` and `--version` are the program's options, spelled as every program spells them, and
+no operation of a session. -/
 
 namespace Linger.App.Commands
 
-/-- The command table, in the order `linger help` lists it. -/
+/-- The command table, in the order `linger --help` lists it: one row for each `Op`. -/
 def table : List Command :=
-  [{ word := "attach", aliases := ["a"], args := "[--read-only] [name] [command...]",
+  [{ word := "attach", op := .attach, args := "[--read-only] [name] [command...]",
      summary := "Choose, create or attach to a session" },
-    { word := "ls", aliases := ["list", "l"], args := "[-r [hosts]] [--summary|--porcelain]",
-      summary := "List sessions or attention counts" },
-    { word := "tmux", args := "<command> [SAVE]", summary := "Saved tmux panes; see tmux help" },
-    { word := "start", args := "<name> <program> [args...]",
+    { word := "ls", op := .list, args := "[-r [hosts] | name...] [--porcelain]",
+      summary := "List sessions, or --summary attention counts" },
+    { word := "tmux", op := .tmux, args := "<command> [SAVE]",
+      summary := "Saved tmux panes; see tmux help" },
+    { word := "start", op := .start, args := "<name> <program> [args...]",
       summary := "Start a program, exactly, in a new session" },
-    { word := "resume", args := "<name>",
+    { word := "resume", op := .resume, args := "<name>",
       summary := "Run a saved or ended session's program again" },
-    { word := "send", aliases := ["s"], args := "<name> <text...|->",
+    { word := "send", op := .send, args := "<name> <text...|->",
       summary := "Send raw input; - reads stdin" },
-    { word := "detach", aliases := ["d"], args := "<name>",
+    { word := "detach", op := .detach, args := "<name>",
       summary := "Detach all clients from a session" },
-    { word := "kill", aliases := ["k"], args := "<name>",
+    { word := "kill", op := .kill, args := "<name>",
       summary := "End a session, or discard a saved or ended one" },
-    { word := "info", aliases := ["i"], args := "<name>", summary := "Print session details" },
-    { word := "capture", aliases := ["c"], args := "[--history] <name>",
+    { word := "capture", op := .capture, args := "[--history] <name>",
       summary := "Print the live or saved screen" },
-    { word := "resize", args := "<name> <cols> <rows>", summary := "Resize a detached session" },
-    { word := "wait", aliases := ["w"], args := "[--timeout SECONDS] <name>...",
+    { word := "resize", op := .resize, args := "<name> <cols> <rows>",
+      summary := "Resize a detached session" },
+    { word := "wait", op := .wait, args := "[--timeout SECONDS] <name>...",
       summary := "Wait for programs to end; 124 on timeout" },
-    { word := "get", aliases := ["g"], args := "<name>", summary := "Print session labels" },
-    { word := "set", args := "<name> <k=v>...", summary := "Set labels" },
-    { word := "unset", aliases := ["un"], args := "<name> <key>...", summary := "Remove labels" },
-    { word := "clear", aliases := ["cl"], args := "<name>", summary := "Remove all labels" },
-    { word := "describe", args := "<name> [text...]",
+    { word := "describe", op := .describe, args := "<name> [text...]",
       summary := "Describe a session; no text clears it" },
-    { word := "upgrade", args := "[name...]",
-      summary := "Move live sessions onto this linger; programs keep running" },
-    { word := "version", aliases := ["v"], args := "", summary := "Print version and state paths" },
-    { word := "help", aliases := ["h", "--help", "-h"], args := "", summary := "Show commands" }]
+    { word := "upgrade", op := .upgrade, args := "[name...]",
+      summary := "Move live sessions onto this linger; programs keep running" }]
 
-/-- Words of removed commands, each with what to use instead. A removed word names no command
-(`retired_free`), so it never comes back meaning something else. -/
+/-- The option that explains the command line. -/
+def helpOption : String := "--help"
+
+/-- The option that prints linger's version and the state paths. -/
+def versionOption : String := "--version"
+
+/-- Words of removed commands and spellings, each with what to use instead. A removed word names
+no command (`retired_free`), so it never comes back meaning something else. -/
 def retired : List (String × String) :=
   let run :=
     "use start to run a program in a new session, resume to run a saved session's program \
       again, or send to type into a session"
-  [("run", run), ("r", run)]
+  let labels := "labels were removed; use describe to describe a session"
+  [("run", run), ("r", run), ("a", "use attach"), ("list", "use ls"), ("l", "use ls"),
+    ("s", "use send"), ("d", "use detach"), ("k", "use kill"), ("c", "use capture"),
+    ("w", "use wait"), ("info", "use ls NAME --porcelain"), ("i", "use ls NAME --porcelain"),
+    ("get", "use ls NAME --porcelain, which reports the description"),
+    ("g", "use ls NAME --porcelain, which reports the description"), ("set", labels),
+    ("unset", labels), ("un", labels), ("clear", labels), ("cl", labels), ("help", "use --help"),
+    ("h", "use --help"), ("-h", "use --help"), ("version", "use --version"), ("v", "use --version")]
 
-/-- Every word a command answers to: each command's word, then its other spellings. -/
-def words : List String := table.flatMap fun command => command.word :: command.aliases
-
-/-- The command a word names, if any. -/
-def lookup (word : String) : Option Command :=
-  table.find? fun command => command.word == word || command.aliases.contains word
+/-- The command a word names, if any: the row whose word it is. -/
+def lookup (word : String) : Option Command := table.find? fun command => command.word == word
 
 /-- The column help starts each summary at. -/
 def summaryColumn : Nat := 42
 
-/-- A command's line in `linger help`: its word and arguments, then its summary from
+/-- A command's line in `linger --help`: its word and arguments, then its summary from
 `summaryColumn` on, at least two spaces after them. -/
 def helpLine (command : Command) : String :=
-  let synopsis := if command.args.isEmpty then command.word else s!"{command.word} {command.args}"
-  synopsis.pushn ' ' (max 2 (summaryColumn - synopsis.length)) ++ command.summary
+  command.word ++ " " ++
+    (command.args.pushn ' '
+        (max 2 (summaryColumn - (command.word.length + 1 + command.args.length))) ++
+      command.summary)
 
-/-- What `linger help` lists first: one line per command, in table order. -/
+/-- What `linger --help` lists first: one line per command, in table order. -/
 def helpLines : List String := table.map helpLine
 
 /-- `helpLines`, one per line. -/

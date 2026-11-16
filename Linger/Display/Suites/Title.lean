@@ -332,7 +332,7 @@ def run (binary : Option String := none) : IO UInt32 :=
         let refreshed ← awaitOutput c seen (titleIs (expectedTitle true))
         expect (otherReady && changed && refreshed)
             "unread output elsewhere refreshes the title while the application is silent"
-        let (infoCode, _, _) ← e.cli #["info", "title-other"]
+        let (infoCode, _, _) ← e.cli #["ls", "title-other", "--porcelain"]
         let after := ((← e.info "title-other" "behind").getD "").toNat?
         expect
             (infoCode == 0 && before.isSome && before.getD 0 > 0 && after == before &&

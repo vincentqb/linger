@@ -7,9 +7,9 @@ public section
 
 /-! # What command-line headlines are stated in
 
-The executor a command line reaches, where a command line of plain words goes, one row of the
-command table, what a command does with a name's saved session and what an attach to it does,
-what `wait` hears on each look
+The executor a command line reaches, where a command line of plain words goes, the operations of
+the session model and one row of the command table, an operation's one command, what a command
+does with a name's saved session and what an attach to it does, what `wait` hears on each look
 at a name and does next, and the steps of `capture` of a saved session, which of them hold the
 name's locks and which wait on a party outside linger. What a command answers is the operating
 system's vocabulary, `Linger.Os.Answer`, which the selector and the tmux interchange answer in
@@ -21,44 +21,99 @@ namespace Linger.App.Entry
 interchange or the session CLI, or a usage error for an encoded command line that does not
 decode. -/
 inductive Route where
-  /-- `attach` or `a` without a target: open the selector, read-only on request. -/
+  /-- `attach` without a target: open the selector, read-only on request. -/
   | selector (readOnly : Bool)
   /-- Save interchange, given the arguments after `tmux`. -/
   | tmux (args : List String)
-  /-- Every other command line, with its exact arguments; an empty one becomes `help`. -/
+  /-- Every other command line, with its exact arguments; an empty one becomes `--help`. -/
   | session (args : List String)
   /-- An encoded command line whose words do not decode: a usage error, exit status 2. -/
   | malformed
   deriving BEq, Repr
 
 /-- Where a command line goes, once its words are the ones its sender meant: bare invocation
-explains the CLI, `attach` or `a` alone opens the selector, read-only on request, `tmux` hands
-the rest to save interchange, and every other command line reaches the session CLI with its
-exact words. -/
+explains the CLI, as `--help` does, `attach` alone opens the selector, read-only on request,
+`tmux` hands the rest to save interchange, and every other command line reaches the session CLI
+with its exact words. -/
 @[expose]
 def Route.of (args : List String) : Route :=
-  if args = [] then .session ["help"]
+  if args = [] then .session ["--help"]
   else
-    if args = ["attach"] ∨ args = ["a"] then .selector false
+    if args = ["attach"] then .selector false
     else
-      if args = ["attach", "--read-only"] ∨ args = ["a", "--read-only"] then .selector true
+      if args = ["attach", "--read-only"] then .selector true
       else if args.head? = some "tmux" then .tmux args.tail else .session args
 
 end Linger.App.Entry
 
 namespace Linger.App.Commands
 
-/-- One row of the command table. -/
+/-- The operations of the session model, each with the meaning it has for a session, in the order
+help lists them. A command exists only for an `Op`, and each `Op` has exactly one command, spelled
+one way: adding a command adds an `Op` here, which changes what linger claims. -/
+inductive Op where
+  /-- Connect this terminal to a session, starting one under the name when there is none, or
+  choose one when no name is given; read-only on request. -/
+  | attach
+  /-- Report sessions: every local one, the named ones, the remote hosts' too, or the attention
+  counts. -/
+  | list
+  /-- Read tmux-resurrect saves and import their panes as saved sessions. -/
+  | tmux
+  /-- Start a program, exactly as named, in a new session. -/
+  | start
+  /-- Run a saved or ended session's program again, from its saved screen and directory. -/
+  | resume
+  /-- Deliver bytes to a session's program as its input. -/
+  | send
+  /-- Disconnect every client attached to a session; the session runs on. -/
+  | detach
+  /-- End a session, or discard a saved or ended one. -/
+  | kill
+  /-- Read a session's screen, or its history. -/
+  | capture
+  /-- Set the terminal size of a session no client is attached to. -/
+  | resize
+  /-- Wait for sessions' programs to end, and answer how they ended. -/
+  | wait
+  /-- Set or clear a session's description. -/
+  | describe
+  /-- Carry live sessions over to this linger's image, their programs running on. -/
+  | upgrade
+  deriving Repr, DecidableEq
+
+/-- Every operation, once each, in the order of its constructors. -/
+@[expose]
+def Op.all : List Op :=
+  [.attach, .list, .tmux, .start, .resume, .send, .detach, .kill, .capture, .resize, .wait,
+    .describe, .upgrade]
+
+/-- One row of the command table: the one command of an operation. -/
 structure Command where
-  /-- The word that names the command. -/
+  /-- The word that names the command, its only spelling. -/
   word : String
-  /-- Its other spellings, each a word no other command uses. -/
-  aliases : List String := []
+  /-- The operation it performs. -/
+  op : Op
   /-- The arguments it takes, as help and its usage error show them. -/
   args : String
   /-- What it does, in a few words. -/
   summary : String
   deriving Repr, DecidableEq
+
+/-- The command table before commands were one to one with operations, a wrong part: each of a
+command's spellings its own row, `info` and `get` readers of what `ls` reports, and `set`,
+`unset` and `clear` writers of the labels `describe` writes one of. Every operation has a command
+in it, but some have several. -/
+@[expose]
+def aliased : List Command :=
+  [("attach", .attach), ("a", .attach), ("ls", .list), ("list", .list), ("l", .list),
+        ("tmux", .tmux), ("start", .start), ("resume", .resume), ("send", .send), ("s", .send),
+        ("detach", .detach), ("d", .detach), ("kill", .kill), ("k", .kill), ("info", .list),
+        ("i", .list), ("capture", .capture), ("c", .capture), ("resize", .resize), ("wait", .wait),
+        ("w", .wait), ("get", .list), ("g", .list), ("set", .describe), ("unset", .describe),
+        ("un", .describe), ("clear", .describe), ("cl", .describe), ("describe", .describe),
+        ("upgrade", .upgrade)].map
+    fun (word, op) => { word, op, args := "", summary := "" }
 
 end Linger.App.Commands
 
@@ -91,7 +146,7 @@ inductive Step where
   /-- Tell the viewer how the session's program ended, and answer as its ending does. -/
   | tell (outcome : Linger.Session.Outcome)
   /-- Discard the session, as `kill` discards a saved one: delete its checkpoint, when it is
-  still the one shown, and leave its end record, which `wait` and `info` read. -/
+  still the one shown, and leave its end record, which `wait` and `ls` read. -/
   | discard
   deriving Repr, DecidableEq
 

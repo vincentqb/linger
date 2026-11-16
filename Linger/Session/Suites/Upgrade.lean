@@ -137,7 +137,7 @@ def run : IO UInt32 :=
     discard <| IO.Process.output { cmd := "cp", args := #[e.bin, next] }
     let (startRc, _, _) ← e.cli #["start", "u", "/bin/sh", "-c", ticker]
     let (catRc, _, _) ← e.cli #["start", "c", "/bin/cat"]
-    let (labelRc, _, _) ← e.cli #["set", "u", "carried=yes"]
+    let (labelRc, _, _) ← e.cli #["describe", "u", "carried", "over"]
     let pidBefore ← e.info "u" "pid"
     let daemonBefore ← e.daemonPid "u"
     let catDaemon ← e.daemonPid "c"
@@ -186,8 +186,8 @@ def run : IO UInt32 :=
         s!"the daemon runs the binary that asked ({image})"
     expect (!(← System.FilePath.pathExists s!"{e.dir}/logs/u.handoff"))
         "the new image removes the handoff it took"
-    let (_, labels, _) ← e.cli #["get", "u"]
-    expect (has labels "carried=yes") "the session's labels are carried over"
+    expect ((← e.info "u" "label.description") == some "carried over")
+        "the session's description is carried over"
     let (sendAfterRc, _, _) ← e.cli #["send", "c", "after\n"]
     let echoed ←
       waitFor patienceMs do

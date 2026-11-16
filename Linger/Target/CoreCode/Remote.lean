@@ -222,7 +222,7 @@ def argv (transport : Transport) (verb : String) (words : List String) : List St
 `targetArgs`, after their options, so it travels as `targetOperands` places it; the other verbs
 take it by position and never read `--`. -/
 def operands (verb name : String) : List String :=
-  if verb == "attach" || verb == "capture" then targetOperands name else [name]
+  if verb == "attach" || verb == "capture" || verb == "ls" then targetOperands name else [name]
 
 /-- The argv that runs `verb` on the session `name` of a host through `transport`: its options,
 the target's `operands`, then its arguments, which remain opaque (`transport_exact`). -/

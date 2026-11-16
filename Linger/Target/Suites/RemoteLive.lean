@@ -70,7 +70,7 @@ def run : IO UInt32 := do
       try
         IO.println s!"driving the overview and a remote attach against {host}"
         -- the overview folds in the far linger's sessions through the remotes file's command
-        let (_, out, _) ← e.cliEnv env #["-r"]
+        let (_, out, _) ← e.cliEnv env #["ls", "-r"]
         expect (has out s!"alpha@{host}") s!"remote alpha@{host} listed through its transport"
         expect (has out s!"beta@{host}") s!"remote beta@{host} listed through its transport"
         -- `attach alpha@HOST` runs the host's attach command, then `linger` and the words

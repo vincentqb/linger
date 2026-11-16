@@ -57,7 +57,7 @@ private def cprReply (v : Vt) (private_ : Bool) : Bytes :=
     digits (v.cursor.x + 1) ++
     [0x52]
 
-/-- The version `linger version`, `TERM_PROGRAM_VERSION` and XTVERSION report. -/
+/-- The version `linger --version`, `TERM_PROGRAM_VERSION` and XTVERSION report. -/
 def versionNumber : String := "0.1.0"
 
 /-- XTVERSION reply: `DCS > | linger 0.1.0 ST`; `Terminal.Tests.Mediation` ties these

@@ -306,12 +306,12 @@ private def damagedChecks (e : Env) : IO Unit := do
   expect (killRc == 0 && !(← System.FilePath.pathExists path))
       s!"kill discards a checkpoint that does not decode (rc={killRc})"
 
-/-- The value the checkpoint at `path` holds for the label `key`, or `none` when the file does not
-decode. -/
-private def savedLabel (path key : String) : IO (Option String) := do
+/-- The description the checkpoint at `path` holds, or `none` when the file does not decode or
+holds none. -/
+private def savedDescription (path : String) : IO (Option String) := do
   match ← (IO.FS.readBinFile path).toBaseIO with
   | .ok bytes =>
-    return (Linger.Session.Checkpoint.loadBytes bytes).bind (·.labels.lookup key)
+    return (Linger.Session.Checkpoint.loadBytes bytes).bind (·.labels.lookup "description")
   | .error _ =>
     return none
 
@@ -337,11 +337,11 @@ private def durableChecks (e : Env) : IO Unit := do
   let name := "durable"
   let path := s!"{e.dir}/{name}.ckpt"
   let tmp := path ++ ".tmp"
-  -- attach, change the label, and detach: the last detach asks for a save
+  -- attach, change the description, and detach: the last detach asks for a save
   let askSave (gen : Nat) : IO Unit := do
     let client ← e.spawn #["attach", name]
     let _ ← waitFor patienceMs (return (← e.info name "clients") == some "1")
-    let _ ← e.cli #["set", name, s!"gen={gen}"]
+    let _ ← e.cli #["describe", name, toString gen]
     client.detach
     client.bye (sendDetach := false)
   let recordDecodes : IO Bool := do
@@ -352,7 +352,7 @@ private def durableChecks (e : Env) : IO Unit := do
       return false
   let _ ← e.typeIn name #["true"]
   askSave 1
-  let first ← waitFor patienceMs (return (← savedLabel path "gen") == some "1")
+  let first ← waitFor patienceMs (return (← savedDescription path) == some "1")
   let made ← IO.Process.output { cmd := "mkfifo", args := #[tmp] }
   askSave 2
   -- the save waits to open the FIFO, off the daemon's loop, so the daemon still answers
@@ -361,7 +361,7 @@ private def durableChecks (e : Env) : IO Unit := do
   IO.FS.removeFile tmp
   expect
       (first && made.exitCode == 0 && answered && crashed &&
-        (← savedLabel path "gen") == some "1" &&
+        (← savedDescription path) == some "1" &&
         (← recordDecodes))
       "a crash while a save waits to write leaves the previous checkpoint whole, and the daemon \
         answers meanwhile"
@@ -370,14 +370,14 @@ private def durableChecks (e : Env) : IO Unit := do
     e.typeIn name
         #["awk 'BEGIN { for (i = 0; i < 12000; i++) { s = \"\"; for (j = 0; j < 7; j++) s = s sprintf(\"%09d \", 7 * i + j); print s } }'; echo DURABLE-$((40+2))"]
   let filled ← waitFor hangMs (return has (← e.out #["capture", name]) "DURABLE-42")
-  let mut kept ← savedLabel path "gen"
+  let mut kept ← savedDescription path
   let mut whole := filled
   let mut during := 0
   for (gen, point) in
     [(3, "asked"), (4, "writing"), (5, "placed"), (6, "writing"), (7, "writing")] do
     let client ← e.spawn #["attach", name]
     let _ ← waitFor patienceMs (return (← e.info name "clients") == some "1")
-    let _ ← e.cli #["set", name, s!"gen={gen}"]
+    let _ ← e.cli #["describe", name, toString gen]
     let dpid ← e.daemonPid name
     client.detach
     let _ ←
@@ -385,7 +385,7 @@ private def durableChecks (e : Env) : IO Unit := do
       | "writing" =>
         soon patienceMs (System.FilePath.pathExists tmp)
       | "placed" =>
-        soon patienceMs (return (← savedLabel path "gen") == some (toString gen))
+        soon patienceMs (return (← savedDescription path) == some (toString gen))
       | _ =>
         pure true
     if let some pid := dpid then
@@ -402,7 +402,7 @@ private def durableChecks (e : Env) : IO Unit := do
     if ← System.FilePath.pathExists tmp then
       during := during + 1
       IO.FS.removeFile tmp
-    let now ← savedLabel path "gen"
+    let now ← savedDescription path
     whole := whole && gone && (now == kept || now == some (toString gen)) && (← recordDecodes)
     kept := now
   expect whole
@@ -523,7 +523,7 @@ def run : IO UInt32 :=
     let hist0 := lines (← e.out #["capture", "--history", "boot"])
     expect (hist0.contains marker && !(hist0.drop (hist0.length - rows.toNat)).contains marker)
         "the pre-reboot marker is in the ring, off the 24-row screen"
-    let _ ← e.cli #["set", "boot", "k=v"]
+    let _ ← e.cli #["describe", "boot", "kept", "across"]
     -- detach (last attached client): the machine checkpoints here
     boot.detach
     -- the save runs on its own thread, so the daemon answers at once: it is on disk once the
@@ -533,7 +533,8 @@ def run : IO UInt32 :=
       waitFor 4000 do
           match ← (IO.FS.readBinFile s!"{e.dir}/boot.ckpt").toBaseIO with
           | .ok bytes =>
-            return (Linger.Session.Checkpoint.loadBytes bytes).any (·.labels.contains ("k", "v"))
+            return (Linger.Session.Checkpoint.loadBytes bytes).any
+                (·.labels.contains ("description", "kept across"))
           | .error _ =>
             return false
     boot.bye (sendDetach := false) -- fd and zombie only; the client already left
@@ -557,7 +558,7 @@ def run : IO UInt32 :=
     -- this line left to mean anything.
     unless (← e.crashDaemon "boot") do
       throw (IO.userError "daemon for this LINGER_DIR not found, or the SIGKILL did not land")
-    expect ((← e.status "boot") == Status.resumable && has (← e.out #["list"]) "boot")
+    expect ((← e.status "boot") == Status.resumable && has (← e.out #["ls"]) "boot")
         "killed session listed as resumable"
     -- attach again: fresh shell, restored screen, restored labels, saved cwd
     let boot2 ← e.spawn #["attach", "boot"] cols rows
@@ -569,7 +570,8 @@ def run : IO UInt32 :=
     -- `PWD` the fresh shell inherits.
     let savedCwd ← IO.FS.realPath e.dir
     expect (has (← drainStr boot2.fd 1500) savedCwd.toString) "fresh shell starts in the saved cwd"
-    expect (has (← e.out #["get", "boot"]) "k=v") "labels survive the reboot"
+    expect ((← e.info "boot" "label.description") == some "kept across")
+        "the description survives the reboot"
     -- a clean exit nobody sees keeps the session as a result: its last screen stays saved,
     -- listed as ended with status 0. The marker is an expansion, so the typed line cannot show
     -- it, and the program ends only once the client has left.
@@ -595,7 +597,7 @@ def run : IO UInt32 :=
     let (againRc, _, _) ← e.cli #["resume", "boot"]
     expect
         (resumedRc == 0 && live && has (← e.out #["capture", "--history", "boot"]) "LAST-42" &&
-          has (← e.out #["get", "boot"]) "k=v" &&
+          (← e.info "boot" "label.description") == some "kept across" &&
           againRc == 0 &&
           (← e.info "boot" "pid") == pid)
         "resume runs an ended session's program again on its last screen, and leaves a live one as it is"

@@ -62,16 +62,21 @@ private def retiredCommand (word : String) : IO Answer := do
     IO.eprintln s!"linger: {word} was removed: {advice}"
   return .usage
 
-/-- What `linger help` prints after the commands: the eight statuses a session can show, which
-of them titles and `ls --summary` count, and the exit statuses every command shares: a program's
-and a signal's, then one line per answer of linger's own (`Answer.legend`). -/
+/-- What `linger --help` prints after the commands: the program's two options, the eight statuses
+a session can show, which of them titles and `ls --summary` count, and the exit statuses every
+command shares: a program's and a signal's, then one line per answer of linger's own
+(`Answer.legend`). -/
 private def helpFooter : String :=
   let glyphs :=
     String.intercalate " "
       (Linger.Display.Status.attention.map fun status =>
         String.singleton (Linger.Display.Status.icon status))
   String.intercalate "\n"
-    (["", "Statuses"] ++ Linger.Display.Status.legend.map ("  " ++ ·) ++
+    (["",
+        s!"{Linger.App.Commands.helpOption} shows this; {Linger.App.Commands.versionOption} \
+          prints the version and state paths",
+        "", "Statuses"] ++
+      Linger.Display.Status.legend.map ("  " ++ ·) ++
       [s!"Titles and ls --summary count {glyphs}", "",
         "Exit statuses: the program's own, when the command waits for it to end; 128+N when",
         "signal N stops the command, or the session it attaches to or waits for; otherwise"] ++
@@ -701,7 +706,7 @@ private def attachSpoken (name : String) (fd : UInt32) (readOnly : Bool) :
 /-- Discard the saved session `name` once a viewer has seen it, as `kill` discards one: delete its
 checkpoint while holding the name, when it still holds `shown`, the bytes the viewer was shown, so
 that a session resumed or replaced since is never lost. Its end record stays, for `wait` and
-`info`. A name another process holds, or a checkpoint that cannot be read or deleted, keeps the
+`ls`. A name another process holds, or a checkpoint that cannot be read or deleted, keeps the
 session and says so. -/
 private def discardShown (name : String) (shown : ByteArray) : IO Unit := do
   let discarded ←
@@ -849,6 +854,38 @@ private def humanWidth : IO (Option Nat) := do
   catch _ =>
     return none
 
+/-- Print listing rows: as `k<TAB>v` records each followed by a blank line (`porcelain`), or as
+the terminal listing. -/
+private def printRows (porcelain : Bool) (rows : List (List (String × String))) : IO Unit := do
+  if porcelain then
+    for info in rows do
+      for (k, v) in info do
+        IO.println s!"{k}\t{v}"
+      IO.println ""
+  else
+    -- The selector consumes these same row pieces. Only the status badge has
+    -- a palette style, and only where `Env.withColor` allows color. What asks for
+    -- someone comes first, as in the selector (`View.sort`). A terminal's rows fit its width, and
+    -- a directory under the account's home shows as `~`. A host that did not answer has no
+    -- session name, so its row shows `@host`.
+    let withColor :=
+      Linger.Os.Env.withColor (← (← IO.getStdout).isTty) (← IO.getEnv "NO_COLOR")
+        (← IO.getEnv "TERM")
+    let named :=
+      rows.map fun info =>
+        match info.lookup "name", info.lookup "host" with
+        | none, some host => ("name", "@" ++ host) :: info
+        | _, _ => info
+    let ordered :=
+      Linger.Display.View.sort
+        (fun info => Linger.Display.Status.ofName ((info.lookup "status").getD "")) named
+    let width ← humanWidth
+    let home ← accountHome
+    writeAll stdoutFd
+        (ByteArray.mk
+          (Linger.Display.Listing.terminalListing withColor width
+              (ordered.map (Linger.Display.Listing.atHome home))).toArray)
+
 /-- `ls`: local rows, then each remote host's rows named `name@host`, printed as
 `k<TAB>v` records separated by blank lines (`porcelain`) or as the terminal listing.
 Remote rows keep only name, command, state and status, as the host's linger reports them; a host
@@ -893,50 +930,30 @@ private def cmdList (porcelain : Bool) (remotes : List (String × Linger.Target.
                 ("status",
                   Linger.Display.Status.name
                     (Linger.Display.Listing.rowStatus (.remote row.live row.status)))]]
-  if porcelain then
-    for info in rows do
-      for (k, v) in info do
-        IO.println s!"{k}\t{v}"
-      IO.println ""
-  else
-    -- The selector consumes these same row pieces. Only the status badge has
-    -- a palette style, and only where `Env.withColor` allows color. What asks for
-    -- someone comes first, as in the selector (`View.sort`). A terminal's rows fit its width, and
-    -- a directory under the account's home shows as `~`. A host that did not answer has no
-    -- session name, so its row shows `@host`.
-    let withColor :=
-      Linger.Os.Env.withColor (← (← IO.getStdout).isTty) (← IO.getEnv "NO_COLOR")
-        (← IO.getEnv "TERM")
-    let named :=
-      rows.map fun info =>
-        match info.lookup "name", info.lookup "host" with
-        | none, some host => ("name", "@" ++ host) :: info
-        | _, _ => info
-    let ordered :=
-      Linger.Display.View.sort
-        (fun info => Linger.Display.Status.ofName ((info.lookup "status").getD "")) named
-    let width ← humanWidth
-    let home ← accountHome
-    writeAll stdoutFd
-        (ByteArray.mk
-          (Linger.Display.Listing.terminalListing withColor width
-              (ordered.map (Linger.Display.Listing.atHome home))).toArray)
+  printRows porcelain rows
   return .done
 
-/-- Parse the `ls` argument set: an optional `--porcelain` and an
-optional `-r`/`--remote [hosts]`, in any order. `-r` followed by a
-`-`-prefixed token (or nothing) means "use the file"; `-r hosts` is an
-explicit comma list. Returns `none` on any unrecognized token. -/
-def parseLs : List String → Option (Bool × Option (List String))
-  | [] => some (false, none)
-  | "--porcelain" :: rest => (parseLs rest).map (fun (_, r) => (true, r))
-  | "-r" :: rest | "--remote" :: rest =>
-    match rest with
-    | h :: more =>
-      if h.startsWith "-" then (parseLs (h :: more)).map (fun (p, _) => (p, some []))
-      else (parseLs more).map (fun (p, _) => (p, some (h.splitOn ",")))
-    | [] => some (false, some [])
-  | _ => none
+/-- Parse the listing's arguments: an optional `--porcelain`, and either `-r` with its hosts or
+the names of the sessions to list, in any order, every word after `--` a name, as
+`Remote.targetOperands` places one that starts with `-`. `-r` followed by a `-`-prefixed token
+(or nothing) means "use the file"; `-r hosts` is an explicit comma list. Returns `none` on any
+other option, and on names with `-r`. -/
+def parseLs (args : List String) : Option (Bool × Option (List String) × List String) :=
+  let rec go : List String → Option (Bool × Option (List String) × List String)
+    | [] => some (false, none, [])
+    | "--" :: names => some (false, none, names)
+    | "--porcelain" :: rest => (go rest).map fun (_, r, n) => (true, r, n)
+    | "-r" :: rest =>
+      match rest with
+      | h :: more =>
+        if h.startsWith "-" then (go (h :: more)).map fun (p, _, n) => (p, some [], n)
+        else (go more).map fun (p, _, n) => (p, some (h.splitOn ","), n)
+      | [] => some (false, some [], [])
+    | word :: rest =>
+      if word.startsWith "-" then none else (go rest).map fun (p, r, n) => (p, r, word :: n)
+  match go args with
+  | some (_, some _, _ :: _) => none
+  | parsed => parsed
 
 /-- The answer to a one-shot request: `done` when the daemon completed it with `done`,
 otherwise `notDone` after printing why it did not complete. -/
@@ -1266,7 +1283,7 @@ private def discardSaved (name : String) : IO (Except String Bool) := do
 /-- `kill`: end the session and return once it has ended. Its daemon stops the program (SIGHUP to
 its terminal session, then SIGKILL after a second), tells whoever is attached or waiting how it
 ended, records that and gives the name up. With no daemon, a saved session is discarded instead,
-an ended one included, whose end record stays for `wait` and `info`. No session answers
+an ended one included, whose end record stays for `wait` and `ls`. No session answers
 `notFound`; a refusal, a name another process holds, or a session that has not ended within
 `Wait.heldNameMs`, prints a diagnostic and answers `notDone`. -/
 private def cmdKill (name : String) : IO Answer := do
@@ -1299,42 +1316,7 @@ private def cmdKill (name : String) : IO Answer := do
       IO.eprintln s!"linger: {why}"
       return .notDone
 
-/-- `info`: the live session's fields; with no daemon to answer, the name and how the last session
-to hold it ended (`Session.endingFields`), from the name's end record: how its program ended, or
-the signal that stopped its daemon, which saved it. No session answers `notFound`; a
-refusal or a failed reply prints a diagnostic and answers `notDone`. -/
-private def cmdInfo (name : String) : IO Answer := do
-  match ← Client.oneShot name .info with
-  | some result =>
-    requestStatus name result
-  | none =>
-    match ← unanswered name with
-    | .recorded (some ending) =>
-      for (k, v) in ("name", name) :: Linger.Session.endingFields ending do
-        IO.println s!"{k}\t{v}"
-      return .done
-    | .recorded none =>
-      noSession name
-    | .held why =>
-      IO.eprintln s!"linger: no answer for '{name}': {why}"
-      return .notDone
-
-/-- `get`: print the session's labels as `key=value` lines from one info reply. No session
-answers `notFound`, and a failed reply prints a diagnostic and answers `notDone`. -/
-private def cmdGet (name : String) : IO Answer := do
-  match ← queryInfo name with
-  | none =>
-    noSession name
-  | some (.error err) =>
-    IO.eprintln s!"linger: {err} for '{name}'"
-    return .notDone
-  | some (.ok info) =>
-    for (k, v) in info do
-      if k.startsWith "label." then
-        IO.println s!"{(k.drop 6).toString}={v}"
-    return .done
-
-/-- `version`: print `linger` and `Mediation.versionNumber`, which sessions also see as
+/-- `--version`: print `linger` and `Mediation.versionNumber`, which sessions also see as
 `TERM_PROGRAM_VERSION`, then the socket and state directories this environment resolves. -/
 private def cmdVersion : IO Answer := do
   IO.println s!"linger {Terminal.Mediation.versionNumber}"
@@ -1342,14 +1324,68 @@ private def cmdVersion : IO Answer := do
   IO.println s!"state:   {← Paths.stateDir}"
   return .done
 
-/-- Execute a validated listing request. -/
-private def overview (args : List String) : IO Answer := do
+/-- The worse of two answers to one command's requests, as its exit status should tell: the one
+with the higher code. -/
+private def worse (a b : Answer) : Answer := if a.code < b.code then b else a
+
+/-- `ls name...`: the named sessions' listing rows, as `ls` lists them, in the order named in
+`porcelain` records, each a session's fields as its daemon reports them, then its name, state
+and status; with no daemon or checkpoint for a name, its name and how the last session to hold it
+ended (`Session.endingFields`), from its end record. A `name@host` target is listed by its host's
+linger. A name no session has taken answers `notFound`; one another process holds with no daemon
+answering prints why and answers `notDone`. -/
+private def cmdListNamed (porcelain : Bool) (names : List String) : IO Answer := do
+  let some targets := names.mapM Linger.Target.Remote.parseTarget | invalidTarget
+  let rows ←
+    localRows (only :=
+        some (targets.filterMap fun t => if t.host.isNone then some t.name else none))
+  let mut answer : Answer := .done
+  let mut shown : List (List (String × String)) := []
+  for target in targets do
+    let row ←
+      if target.host.isSome then
+        answer :=
+          worse answer
+            (←
+              runTarget "ls" target [] (fun _ => pure .done)
+                  (if porcelain then ["--porcelain"] else []))
+        pure none
+      else
+        match rows.find? (·.lookup "name" == some target.name) with
+        | some row =>
+          pure (some row)
+        | none =>
+          match ← unanswered target.name with
+          | .recorded (some ending) =>
+            pure (some (("name", target.name) :: Linger.Session.endingFields ending))
+          | .recorded none =>
+            answer := worse answer (← noSession target.name)
+            pure none
+          | .held why =>
+            IO.eprintln s!"linger: no answer for '{target.name}': {why}"
+            answer := worse answer .notDone
+            pure none
+    if let some row := row then
+      if porcelain then
+        printRows true [row]
+      else
+        shown := shown ++ [row]
+  unless porcelain || shown.isEmpty do
+    printRows false shown
+  return answer
+
+/-- `ls`'s arguments: `--summary` alone, or a listing of every session, the remote hosts' too
+with `-r`, or of the named ones, as records with `--porcelain`. Any other is a usage error. -/
+private def listArgs (args : List String) : IO Answer := do
+  if args == ["--summary"] then
+    return ← cmdSummary
   match parseLs args with
-  | some (porcelain, remoteFlag) =>
+  | some (porcelain, remoteFlag, []) =>
     cmdList porcelain (← resolveRemotes remoteFlag)
+  | some (porcelain, _, names) =>
+    cmdListNamed porcelain names
   | none =>
-    IO.eprintln usage
-    return .usage
+    usageError "ls"
 
 /-- An optional `--read-only`, then the target as `Remote.targetArgs` reads it. -/
 private def attachArgs (args : List String) : IO Answer := do
@@ -1373,10 +1409,6 @@ private def captureArgs (args : List String) : IO Answer := do
       (cmdRead · (if history then .history else .screen)
         (if history then Terminal.Render.history else Terminal.Render.screenText))
       (if history then ["--history"] else [])
-
-/-- The worse of two answers to one command's requests, as its exit status should tell: the one
-with the higher code. -/
-private def worse (a b : Answer) : Answer := if a.code < b.code then b else a
 
 /-- How long `upgrade` waits for a daemon's answer: its probe of this binary, its saves and the
 new image's start, which a loaded host slows. -/
@@ -1420,9 +1452,89 @@ private def cmdUpgrade (names : List String) : IO Answer := do
     answer := worse answer (← withTarget "upgrade" name [] upgradeOne)
   return answer
 
+/-- Perform `op` with the words after its command's word, and give its answer: `usage` for words
+the operation does not take, otherwise the operation's own. Each operation has its one command
+(`Commands.table`), and this is the one place a command line reaches it. -/
+private def runOp (op : Linger.App.Commands.Op) (args : List String) : IO Answer := do
+  match op, args with
+  | .upgrade, names =>
+    cmdUpgrade names
+  | .resume, [name] =>
+    withTarget "resume" name [] cmdResume
+  | .resume, _ =>
+    usageError "resume"
+  | .start, name :: argv =>
+    if argv.isEmpty then
+      return ← usageError "start"
+    withTarget "start" name argv (cmdStart · argv)
+  | .start, [] =>
+    usageError "start"
+  | .attach, rest =>
+    attachArgs rest
+  | .send, name :: text =>
+    if text.isEmpty then
+      return ← usageError "send"
+    withTarget "send" name text fun name =>
+        if text == ["-"] then cmdSendStdin name
+        else
+          requireLiveSend name
+            (Linger.Session.Wire.inputFrames (String.intercalate " " text).toUTF8.toList)
+  | .send, [] =>
+    usageError "send"
+  | .detach, [name] =>
+    withTarget "detach" name [] (requireLive · .detachAll)
+  | .detach, _ =>
+    usageError "detach"
+  | .kill, [name] =>
+    withTarget "kill" name [] cmdKill
+  | .kill, _ =>
+    usageError "kill"
+  | .capture, rest =>
+    captureArgs rest
+  | .resize, [name, cs, rs] =>
+    match cs.toNat?, rs.toNat? with
+    | some cols, some rows =>
+      -- Accept exactly the sizes the emulator keeps, so the pty cannot disagree.
+      if Terminal.Vt.clampDim cols != cols || Terminal.Vt.clampDim rows != rows then
+        do
+          IO.eprintln "linger: size must be 1..1000 (the emulator clamps at 1000)"
+          return .usage
+      else
+        withTarget "resize" name [cs, rs]
+            (requireLive · (.resize (UInt32.ofNat cols) (UInt32.ofNat rows)))
+    | _, _ =>
+      usageError "resize"
+  | .resize, _ =>
+    usageError "resize"
+  | .wait, "--timeout" :: seconds :: names =>
+    match parseSeconds seconds with
+    | some ms =>
+      waitAll names (some ms)
+    | none =>
+      usageError "wait"
+  | .wait, names =>
+    waitAll names none
+  | .describe, name :: words =>
+    -- the description is the label `description`: no words clear it
+    withTarget "describe" name words fun name =>
+        if words.isEmpty then requireLive name (.labelUnset "description".toUTF8.toList)
+        else
+          requireLive name
+            (.labelSet ("description=" ++ String.intercalate " " words).toUTF8.toList)
+  | .describe, [] =>
+    usageError "describe"
+  | .list, rest =>
+    listArgs rest
+  | .tmux, _ =>
+    -- `Entry.route` hands every `tmux` command line to save interchange before this CLI
+    usageError "tmux"
+
 /-- Run one session command and give its answer, whose code is its exit status: `usage` for a
-usage error or invalid target, otherwise the verb's own. `main` routes interactive selection and
-tmux interchange elsewhere; `__daemon` runs a session's daemon in this process. -/
+usage error or invalid target, otherwise the verb's own. The program's two options, `--help` and
+`--version`, stand alone; any other first word is a command's (`Commands.lookup`), which performs
+its operation (`runOp`), a removed one's, which says what to use instead (`Commands.retired`), or
+a usage error. `main` routes interactive selection and tmux interchange elsewhere; `__daemon`
+runs a session's daemon in this process. -/
 def main (args : List String) : IO Answer := do
   match args with
   | "__daemon" :: name :: cwd :: cmd =>
@@ -1446,96 +1558,21 @@ def main (args : List String) : IO Answer := do
   | ["__handoff-formats"] =>
     IO.println Linger.Session.Upgrade.formatsText
     return .done
-  | "upgrade" :: names =>
-    cmdUpgrade names
-  | ["resume", name] =>
-    withTarget "resume" name [] cmdResume
-  | "resume" :: _ =>
-    return ← usageError "resume"
-  | "start" :: name :: argv =>
-    if argv.isEmpty then
-      return ← usageError "start"
-    withTarget "start" name argv (cmdStart · argv)
-  | "attach" :: rest | "a" :: rest =>
-    attachArgs rest
-  | "run" :: _ | "r" :: _ =>
-    retiredCommand "run"
-  | "send" :: name :: text | "s" :: name :: text =>
-    if text.isEmpty then
-      return ← usageError "send"
-    withTarget "send" name text fun name =>
-        if text == ["-"] then cmdSendStdin name
-        else
-          requireLiveSend name
-            (Linger.Session.Wire.inputFrames (String.intercalate " " text).toUTF8.toList)
-  | ["detach", name] | ["d", name] =>
-    withTarget "detach" name [] (requireLive · .detachAll)
-  | ["kill", name] | ["k", name] =>
-    withTarget "kill" name [] cmdKill
-  | ["info", name] | ["i", name] =>
-    withTarget "info" name [] cmdInfo
-  | "capture" :: rest | "c" :: rest =>
-    captureArgs rest
-  | ["resize", name, cs, rs] =>
-    match cs.toNat?, rs.toNat? with
-    | some cols, some rows =>
-      -- Accept exactly the sizes the emulator keeps, so the pty cannot disagree.
-      if Terminal.Vt.clampDim cols != cols || Terminal.Vt.clampDim rows != rows then
-        do
-          IO.eprintln "linger: size must be 1..1000 (the emulator clamps at 1000)"
-          return .usage
-      else
-        withTarget "resize" name [cs, rs]
-            (requireLive · (.resize (UInt32.ofNat cols) (UInt32.ofNat rows)))
-    | _, _ =>
-      do
-        return ← usageError "resize"
-  | "wait" :: "--timeout" :: seconds :: names | "w" :: "--timeout" :: seconds :: names =>
-    match parseSeconds seconds with
-    | some ms =>
-      waitAll names (some ms)
+  | args =>
+    if args.isEmpty || args == [Linger.App.Commands.helpOption] then
+      IO.println (usage ++ "\n" ++ helpFooter)
+      return .done
+    if args == [Linger.App.Commands.versionOption] then
+      return ← cmdVersion
+    let word := args.headD ""
+    match Linger.App.Commands.lookup word with
+    | some command =>
+      runOp command.op args.tail
     | none =>
-      return ← usageError "wait"
-  | "wait" :: names | "w" :: names =>
-    waitAll names none
-  | ["get", name] | ["g", name] =>
-    withTarget "get" name [] cmdGet
-  | "set" :: name :: kvs =>
-    if kvs.isEmpty || kvs.any (fun pair => !pair.contains '=' || pair.startsWith "=") then
-      return ← usageError "set"
-    withTarget "set" name kvs fun name => do
-        let mut answer : Answer := .done
-        for kvp in kvs do
-          answer := worse answer (← requireLive name (.labelSet kvp.toUTF8.toList))
-        return answer
-  | "unset" :: name :: ks | "un" :: name :: ks =>
-    if ks.isEmpty || ks.any (·.isEmpty) then
-      return ← usageError "unset"
-    withTarget "unset" name ks fun name => do
-        let mut answer : Answer := .done
-        for k in ks do
-          answer := worse answer (← requireLive name (.labelUnset k.toUTF8.toList))
-        return answer
-  | ["clear", name] | ["cl", name] =>
-    withTarget "clear" name [] (requireLive · .labelClear)
-  | "describe" :: name :: words =>
-    -- the description is the label `description`: no words clear it
-    withTarget "describe" name words fun name =>
-        if words.isEmpty then requireLive name (.labelUnset "description".toUTF8.toList)
-        else
-          requireLive name
-            (.labelSet ("description=" ++ String.intercalate " " words).toUTF8.toList)
-  | ["ls", "--summary"] | ["list", "--summary"] | ["l", "--summary"] =>
-    cmdSummary
-  | ["version"] | ["v"] =>
-    cmdVersion
-  | ["help"] | ["h"] | ["--help"] | ["-h"] =>
-    IO.println (usage ++ "\n" ++ helpFooter)
-    return .done
-  -- Explicit listing forms reach this backend.
-  | "ls" :: rest | "list" :: rest | "l" :: rest =>
-    overview rest
-  | other =>
-    overview other
+      if (Linger.App.Commands.retired.lookup word).isSome then
+        retiredCommand word
+      else
+        IO.eprintln usage
+        return .usage
 
 end Linger.App.Shell

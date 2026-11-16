@@ -453,7 +453,7 @@ def run : IO UInt32 :=
     let st1 ← c1.reap 2000
     expect (st1 ≥ 0) "detach: client exited on ctrl-backslash"
     c1.bye (sendDetach := false) -- fd and any zombie only; the client already left
-    expect (has (← e.out #["list"]) "demo") "detach: session still listed"
+    expect (has (← e.out #["ls"]) "demo") "detach: session still listed"
     -- 3. background output while detached reaches the emulator: a session with zero
     -- clients still advances
     let _ ← e.cli #["send", "demo", "echo while-detached-$((40+2))\n"]
@@ -538,7 +538,7 @@ def run : IO UInt32 :=
       waitFor 5000 do
           return (← e.status "w5") == .exitedBad && (← e.field "w5" "exit") == some "37"
     let (lateRc, _, _) ← e.cli #["wait", "w5"]
-    let (infoRc, lateInfo, _) ← e.cli #["info", "w5"]
+    let (infoRc, lateInfo, _) ← e.cli #["ls", "w5", "--porcelain"]
     expect (ended && lateRc == 37 && infoRc == 0 && has lateInfo "exit\t37")
         s!"an ended session's record answers wait and info (rc={lateRc})"
     let (neverRc, _, neverErr) ← e.cli #["wait", "w-never"]
@@ -560,7 +560,7 @@ def run : IO UInt32 :=
         s!"wait --timeout stops waiting and leaves the session running ({limitMs} ms)"
     -- kill returns once the session has ended, and the record says how: by its hangup.
     let (killRc, _, _) ← e.cli #["kill", "w6"]
-    let (_, killedInfo, _) ← e.cli #["info", "w6"]
+    let (_, killedInfo, _) ← e.cli #["ls", "w6", "--porcelain"]
     expect (killRc == 0 && has killedInfo "signal\t1")
         s!"kill returns once the session has ended (rc={killRc})"
     let trapFile := s!"{e.dir}/w7.trapped"
@@ -568,7 +568,7 @@ def run : IO UInt32 :=
       e.typeIn "w7" #[s!"exec sh -c \"trap '' HUP; : > {trapFile}; while :; do sleep 1; done\""]
     let trapped ← waitFor 3000 (System.FilePath.pathExists trapFile)
     let (stubbornRc, _, _) ← e.cli #["kill", "w7"]
-    let (_, stubbornInfo, _) ← e.cli #["info", "w7"]
+    let (_, stubbornInfo, _) ← e.cli #["ls", "w7", "--porcelain"]
     expect (trapped && stubbornRc == 0 && has stubbornInfo "signal\t9")
         "kill ends a program that ignores SIGHUP"
     -- Nothing of the session's terminal session outlives it: not a background job of a shell
@@ -803,7 +803,7 @@ def run : IO UInt32 :=
       -- `-1` from WNOHANG waitpid is "still running"
       expect ((← Os.Shell.waitpidNohang nd.pid) == -1)
           s!"LINGER_NO_DETACH_KEY={value}: ctrl-\\ does not detach (client still attached)"
-      expect (has (← e.out #["list"]) name) s!"LINGER_NO_DETACH_KEY={value}: session still live"
+      expect (has (← e.out #["ls"]) name) s!"LINGER_NO_DETACH_KEY={value}: session still live"
       nd.type "echo nd-$((20+2))\r" -- still interactive: input reaches the pty
       expect (← waitFor 4000 (return has (← e.out #["capture", "--history", name]) "nd-22"))
           s!"LINGER_NO_DETACH_KEY={value}: input still reaches the session"

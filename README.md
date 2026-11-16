@@ -14,14 +14,15 @@ linger attach work
 ```
 
 Press **Ctrl-\\** to detach; run the same command to reattach.
-`linger help` lists commands, the statuses a session shows and the exit codes.
+`linger --help` lists commands, the statuses a session shows and the exit codes.
 [Configuration recipes](recipes/README.md).
 
 ## Command endings
 
 A shell that marks its prompts and commands with OSC 133 reports each command's ending: until
-you look, `linger ls` shows the command and its status, as `make test: exit 2`, and `linger info`
-reports them as `lastcmd` and `lastexit`. fish marks them by itself; for zsh, add to `~/.zshrc`:
+you look, `linger ls` shows the command and its status, as `make test: exit 2`, and
+`linger ls NAME --porcelain` reports them as `lastcmd` and `lastexit`. fish marks them by itself;
+for zsh, add to `~/.zshrc`:
 
 ```zsh
 autoload -Uz add-zsh-hook

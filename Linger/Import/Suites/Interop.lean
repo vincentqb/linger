@@ -58,7 +58,7 @@ private def Fixture.own (f : Fixture) (name : String) : IO Unit :=
     else (f.env, name) :: names
 
 private def Fixture.info (f : Fixture) (name field : String) : IO (Option String) := do
-  let (code, out, _) ← f.cli #["info", name]
+  let (code, out, _) ← f.cli #["ls", name, "--porcelain"]
   return if code != 0 then none else (records out |>.find? (·.1 == field)).map (·.2)
 
 private def Fixture.pid (f : Fixture) (name : String) : IO (Option UInt32) := do
@@ -1142,7 +1142,7 @@ private def check (root : System.FilePath) (bin : String) (index : Nat) (label :
     let cleanup := { f with env }
     try
       let _ ← cleanup.cli #["kill", name]
-      let _ ← cleanup.cli #["list"]
+      let _ ← cleanup.cli #["ls"]
       let gone ←
         waitFor 5000 do
             return !(← (System.FilePath.mk env.dir / s!"{name}.sock").pathExists)

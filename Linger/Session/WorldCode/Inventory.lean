@@ -214,13 +214,16 @@ one deadline (two seconds for a listing); unqueried peers stay unknown. The name
 the directories, so no path here needs a spelling check. A saved session is listed as its end
 record says (`savedRow`), read while holding the name. With `statusOnly`, as for a summary, a
 row carries only its status, and a live session whose end record says what its daemon saw is
-read from the record without waking the daemon (`rowStatus_published`). -/
-def localRows (stopAt : Option Nat := none) (statusOnly : Bool := false) :
-    IO (List (List (String × String))) := do
+read from the record without waking the daemon (`rowStatus_published`). With `only`, just the
+rows of the names it holds. -/
+def localRows (stopAt : Option Nat := none) (statusOnly : Bool := false)
+    (only : Option (List String) := none) : IO (List (List (String × String))) := do
   let deadline := stopAt.getD ((← monotonicMs) + 2000)
+  let named := fun (listed : Paths.Listed) => only.all (·.contains listed.name)
   -- names as people read them, `w2` before `w10` (`View.before`)
-  let sockets := (Linger.Display.View.byName (·.name) (← Paths.listSocketNames)).toArray
-  let ckpts := Linger.Display.View.byName (·.name) (← Paths.listCkptNames)
+  let sockets :=
+    (Linger.Display.View.byName (·.name) ((← Paths.listSocketNames).filter named)).toArray
+  let ckpts := Linger.Display.View.byName (·.name) ((← Paths.listCkptNames).filter named)
   let liveRow := fun name info =>
     Linger.Display.Listing.rowFields name info ++
       [("state", "live"),

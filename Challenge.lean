@@ -95,8 +95,8 @@ buffers retain; ownership among processes that do not cooperate or replace the l
 fidelity beyond linger's own terminal model, which stands in for every receiver; the incoming
 title content and the saved cursor slot, which fixtures cover; processes or images, since
 recovery restores screens; that an exit status tells linger's answers from a program's, since a
-program may exit with any status, as with `timeout` and `env`, so that `info` and the porcelain
-output are the exact channel; for tmux imports, captures other than the latest save's archive;
+program may exit with any status, as with `timeout` and `env`, so that the porcelain output is
+the exact channel; for tmux imports, captures other than the latest save's archive;
 and that an imported pane's saved command never runs, which a gate checks. -/
 
 public section
@@ -116,6 +116,10 @@ def Linger.App.Commands.lookup : String → Option App.Commands.Command := sorry
 def Linger.App.Commands.retired : List (String × String) := sorry
 
 def Linger.App.Commands.usageLine : App.Commands.Command → String := sorry
+
+def Linger.App.Commands.helpLine : App.Commands.Command → String := sorry
+
+def Linger.App.Commands.helpLines : List String := sorry
 
 def Linger.Os.Answer.code : Os.Answer → UInt32 := sorry
 
@@ -1154,7 +1158,18 @@ one that does not decode as a usage error. POSIX quoting would not: fish reads a
 single quotes, so a quoted word could close its quote there and run what follows. Not claimed:
 that a transport reaches its host, which is the transport's, its keys, jumps, latency and
 authentication included; that the remote linger decodes, since an older one refuses the encoded
-line as a usage error; nor that a command line fits the remote host's argument limit. -/
+line as a usage error; nor that a command line fits the remote host's argument limit.
+
+The command line is complete and minimal. Every operation of the session model, `Op`, has a
+command, a word that names it (`commands_complete`), and exactly one: one word names each
+operation, so no command is another's alias or a second reader or writer of what another reads or
+writes, the table has one row for each operation, in `Op.all`'s order, each word names its own
+row, and help lists the rows, each line its command's word (`commands_minimal`). A command exists
+only for an `Op`, so adding one changes `Op`, and with it what linger claims. A removed word names
+no command (`retired_free`). Not claimed: that the session CLI dispatches each command line
+through `lookup` to its row's operation, which its IO code does and the manager suite checks,
+with a removed word refused with what to use instead; nor that each option is one parameter of
+one operation with one spelling, which the suites check. -/
 
 theorem route_exact (args : List String) :
     App.Entry.route args =
@@ -1172,20 +1187,51 @@ theorem route_exact_rejects_selector :
           else App.Entry.Route.of args := by
   sorry
 
-theorem lookup_table :
-    (App.Commands.table.flatMap fun command => command.word :: command.aliases).Nodup ∧
-      ∀ command ∈ App.Commands.table,
-        App.Commands.lookup command.word = some command ∧
-          ∀ word ∈ command.aliases, App.Commands.lookup word = some command := by
+theorem commands_complete (op : App.Commands.Op) :
+    ∃ word, (App.Commands.lookup word).map (·.op) = some op := by sorry
+
+@[kills commands_complete]
+theorem commands_complete_rejects_none :
+    ¬∀ (op : App.Commands.Op),
+        ∃ word,
+          ((fun (_ : String) => (none : Option App.Commands.Command)) word).map (·.op) =
+            some op := by
   sorry
 
-@[kills lookup_table]
-theorem lookup_table_rejects_none :
-    ¬((App.Commands.table.flatMap fun command => command.word :: command.aliases).Nodup ∧
+theorem commands_minimal :
+    (∀ op : App.Commands.Op,
+        ∃ word,
+          (App.Commands.lookup word).map (·.op) = some op ∧
+            ∀ other, (App.Commands.lookup other).map (·.op) = some op → other = word) ∧
+      App.Commands.table.map (·.op) = App.Commands.Op.all ∧
+      App.Commands.helpLines = App.Commands.table.map App.Commands.helpLine ∧
+      ∀ command ∈ App.Commands.table,
+        App.Commands.lookup command.word = some command ∧
+          ∃ rest, App.Commands.helpLine command = command.word ++ " " ++ rest := by
+  sorry
+
+@[kills commands_minimal]
+theorem commands_minimal_rejects_aliased :
+    ¬((∀ op : App.Commands.Op,
+          ∃ word,
+            ((fun (word : String) => App.Commands.aliased.find? fun command => command.word == word)
+                      word).map
+                  (·.op) =
+                some op ∧
+              ∀ other,
+                ((fun (word : String) =>
+                            App.Commands.aliased.find? fun command => command.word == word)
+                          other).map
+                      (·.op) =
+                    some op →
+                  other = word) ∧
+        App.Commands.table.map (·.op) = App.Commands.Op.all ∧
+        App.Commands.helpLines = App.Commands.table.map App.Commands.helpLine ∧
         ∀ command ∈ App.Commands.table,
-          (fun (_ : String) => (none : Option App.Commands.Command)) command.word = some command ∧
-            ∀ word ∈ command.aliases,
-              (fun (_ : String) => (none : Option App.Commands.Command)) word = some command) := by
+          (fun (word : String) => App.Commands.aliased.find? fun command => command.word == word)
+                command.word =
+              some command ∧
+            ∃ rest, App.Commands.helpLine command = command.word ++ " " ++ rest) := by
   sorry
 
 theorem retired_free : ∀ entry ∈ App.Commands.retired, App.Commands.lookup entry.1 = none := by
@@ -1195,7 +1241,8 @@ theorem retired_free : ∀ entry ∈ App.Commands.retired, App.Commands.lookup e
 theorem retired_free_rejects_any :
     ¬∀ entry ∈ App.Commands.retired,
         (fun (_ : String) =>
-              some ({ word := "run", args := "", summary := "" } : App.Commands.Command))
+              some
+                ({ word := "run", op := .start, args := "", summary := "" } : App.Commands.Command))
             entry.1 =
           none := by
   sorry
@@ -1288,7 +1335,8 @@ theorem transport_exact (t : Remote.Transport) (verb name : String) (options arg
         App.Entry.route line =
           App.Entry.Route.of
             (verb :: options ++
-              (if verb = "attach" ∨ verb = "capture" then Remote.targetOperands name else [name]) ++
+              (if verb = "attach" ∨ verb = "capture" ∨ verb = "ls" then Remote.targetOperands name
+              else [name]) ++
               args) := by
   sorry
 
@@ -1310,7 +1358,8 @@ theorem transport_exact_rejects_ssh :
               App.Entry.route line =
                 App.Entry.Route.of
                   (verb :: options ++
-                    (if verb = "attach" ∨ verb = "capture" then Remote.targetOperands name
+                    (if verb = "attach" ∨ verb = "capture" ∨ verb = "ls" then
+                      Remote.targetOperands name
                     else [name]) ++
                     args) := by
   sorry
@@ -1547,14 +1596,14 @@ session then ends as a kill ends it, its checkpoint deleted once every client is
 found it, and keeps it (`step_childExited_keeps`), and the first attach to it, in either mode,
 shows that screen, then how its program ended, and discards it once it leaves (`visit_result`). A
 watcher counts as seeing, since it is shown the same screen and told the same ending as a typist
-(`seenBy`); `wait`, `info` and `ls` tell the status, not the screen, and `capture` exports it, so
+(`seenBy`); `wait` and `ls` tell the status, not the screen, and `capture` exports it, so
 none of them sees it. A session a signal stopped is saved, not ended: everyone hears which signal stopped the daemon and
 nothing of an outcome of its program, which `resume` runs again from that screen. When the file
 system keeps what linger saves (`Record.Kept`, which its check and the agent suite test), a name's
 end record keeps how its last session ended, for whoever asks later: how its program ended, or which
 signal stopped its daemon, which never reads as an outcome or an unknown ending; a record its
 session left while the program still ran answers that the ending is unknown, and only a name with no
-record answers nothing (`record_answer`). `info` reports each ending in fields no other ending has
+record answers nothing (`record_answer`). `ls` reports each ending in fields no other ending has
 (`endingFields_injective`). `wait` answers with how the session ended when its daemon or the end
 record says, for a saved session `saved` with the signal that stopped its daemon, never a status of
 its program, and that it could not find out only when that is so: the program's ending is unknown,
@@ -2999,10 +3048,10 @@ theorem capture_waits_unlocked_rejects_inside :
 And the titles, listings and selector views that show statuses, what makes a session ask, and
 what it tells of its shell's commands.
 Not claimed: which bytes ask, which `Terminal.Mediation` decides: a BEL a terminal executes as a
-control, and an OSC 9 or OSC 777 notification, which the status suite checks; that `info`, the
-porcelain and a row report the text of the last notification since the last look, which the status
+control, and an OSC 9 or OSC 777 notification, which the status suite checks; that the porcelain
+and a row report the text of the last notification since the last look, which the status
 suite checks too; which bytes are a shell's marks and what a mark's parameters say, which
-`Terminal.Mediation` decides too and its fixtures pin, and that `info`, the porcelain and a row
+`Terminal.Mediation` decides too and its fixtures pin, and that the porcelain and a row
 report an ending's command line and status, which the status suite checks; repainting the marks
 after a reattach, which a repaint does not carry, and marks inside a full-screen program, which the
 session hears as its shell's; and that the daemon publishes what it sees to its name's end record,

@@ -468,7 +468,7 @@ def Vt.init (cols rows : Nat) : Vt :=
 toolkit (`Render`/`Mediation`/`Replay` are friends and read the fields directly). They exist
 because the seal blocks reads as well as writes, and `Linger/Session/CoreCode.lean` —
 the daemon's session model, a client of the emulator and not part of it — needs
-geometry, cursor and the alt-screen flag to answer `linger info` and to decide
+geometry, cursor and the alt-screen flag to answer `linger ls NAME --porcelain` and to decide
 whether a resize is a no-op.
 
 Read-only is the point: a friend import would have let the daemon *forge* a `Vt`,
@@ -487,7 +487,7 @@ def Vt.rowCount (v : Vt) : Nat := v.rows
 def Vt.cursorPos (v : Vt) : Nat × Nat := (v.cursor.x, v.cursor.y)
 
 /-- Is the alternate screen live? True exactly when MAIN state is stashed, which is
-what "a full-screen app is running" means to `linger info`. -/
+what "a full-screen app is running" means to `linger ls NAME --porcelain`. -/
 def Vt.inAlt (v : Vt) : Bool := v.altGrid.isSome
 
 /-- The most recent application window title, as received through OSC 0 or 2. -/

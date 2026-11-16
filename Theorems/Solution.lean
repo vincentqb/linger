@@ -969,23 +969,58 @@ theorem route_exact_rejects_selector :
   intro h
   exact absurd (h ["attach"]) (by simp [App.Entry.Route.of, Remote.marker])
 
-theorem lookup_table :
-    (App.Commands.table.flatMap fun command => command.word :: command.aliases).Nodup ∧
+theorem commands_complete (op : App.Commands.Op) :
+    ∃ word, (App.Commands.lookup word).map (·.op) = some op := App.Commands.complete op
+
+theorem commands_complete_rejects_none :
+    ¬∀ (op : App.Commands.Op),
+        ∃ word,
+          ((fun (_ : String) => (none : Option App.Commands.Command)) word).map (·.op) =
+            some op := by
+  intro h
+  obtain ⟨_, named⟩ := h .attach
+  simp at named
+
+theorem commands_minimal :
+    (∀ op : App.Commands.Op,
+        ∃ word,
+          (App.Commands.lookup word).map (·.op) = some op ∧
+            ∀ other, (App.Commands.lookup other).map (·.op) = some op → other = word) ∧
+      App.Commands.table.map (·.op) = App.Commands.Op.all ∧
+      App.Commands.helpLines = App.Commands.table.map App.Commands.helpLine ∧
       ∀ command ∈ App.Commands.table,
         App.Commands.lookup command.word = some command ∧
-          ∀ word ∈ command.aliases, App.Commands.lookup word = some command :=
-  ⟨App.Commands.table_words_nodup, fun command member =>
-    ⟨App.Commands.lookup_word command member, App.Commands.lookup_alias command member⟩⟩
+          ∃ rest, App.Commands.helpLine command = command.word ++ " " ++ rest :=
+  ⟨App.Commands.one_spelling, App.Commands.table_ops, App.Commands.helpLines_eq,
+    fun command member =>
+    ⟨App.Commands.lookup_word command member, App.Commands.helpLine_word command⟩⟩
 
-theorem lookup_table_rejects_none :
-    ¬((App.Commands.table.flatMap fun command => command.word :: command.aliases).Nodup ∧
+theorem commands_minimal_rejects_aliased :
+    ¬((∀ op : App.Commands.Op,
+          ∃ word,
+            ((fun (word : String) => App.Commands.aliased.find? fun command => command.word == word)
+                      word).map
+                  (·.op) =
+                some op ∧
+              ∀ other,
+                ((fun (word : String) =>
+                            App.Commands.aliased.find? fun command => command.word == word)
+                          other).map
+                      (·.op) =
+                    some op →
+                  other = word) ∧
+        App.Commands.table.map (·.op) = App.Commands.Op.all ∧
+        App.Commands.helpLines = App.Commands.table.map App.Commands.helpLine ∧
         ∀ command ∈ App.Commands.table,
-          (fun (_ : String) => (none : Option App.Commands.Command)) command.word = some command ∧
-            ∀ word ∈ command.aliases,
-              (fun (_ : String) => (none : Option App.Commands.Command)) word = some command) := by
+          (fun (word : String) => App.Commands.aliased.find? fun command => command.word == word)
+                command.word =
+              some command ∧
+            ∃ rest, App.Commands.helpLine command = command.word ++ " " ++ rest) := by
   intro h
-  obtain ⟨command, member⟩ := List.exists_mem_of_ne_nil _ App.Commands.table_ne_nil
-  exact absurd (h.2 command member).1 (by simp)
+  obtain ⟨word, _, unique⟩ := h.1 .attach
+  have long : "attach" = word := unique "attach" (by decide)
+  have short : "a" = word := unique "a" (by decide)
+  exact absurd (long.trans short.symm) (by decide)
 
 theorem retired_free : ∀ entry ∈ App.Commands.retired, App.Commands.lookup entry.1 = none :=
   App.Commands.retired_free
@@ -993,7 +1028,8 @@ theorem retired_free : ∀ entry ∈ App.Commands.retired, App.Commands.lookup e
 theorem retired_free_rejects_any :
     ¬∀ entry ∈ App.Commands.retired,
         (fun (_ : String) =>
-              some ({ word := "run", args := "", summary := "" } : App.Commands.Command))
+              some
+                ({ word := "run", op := .start, args := "", summary := "" } : App.Commands.Command))
             entry.1 =
           none := by
   intro h
@@ -1011,7 +1047,7 @@ theorem usageLine_exact_rejects_bare :
           if command.args.isEmpty then s!"usage: linger {command.word}"
           else s!"usage: linger {command.word} {command.args}" := by
   intro h
-  exact absurd (h { word := "help", args := "", summary := "" }) (by decide)
+  exact absurd (h { word := "ls", op := .list, args := "", summary := "" }) (by decide)
 
 theorem plan_exact (existing : List String) (panes : List Import.Resurrect.Pane)
     (pane : Import.Resurrect.Pane) :
@@ -1102,12 +1138,14 @@ theorem transport_exact (t : Remote.Transport) (verb name : String) (options arg
         App.Entry.route line =
           App.Entry.Route.of
             (verb :: options ++
-              (if verb = "attach" ∨ verb = "capture" then Remote.targetOperands name else [name]) ++
+              (if verb = "attach" ∨ verb = "capture" ∨ verb = "ls" then Remote.targetOperands name
+              else [name]) ++
               args) := by
   refine
     ⟨Remote.marker ::
         (verb :: options ++
-              (if verb = "attach" ∨ verb = "capture" then Remote.targetOperands name else [name]) ++
+              (if verb = "attach" ∨ verb = "capture" ∨ verb = "ls" then Remote.targetOperands name
+              else [name]) ++
               args).map
           Remote.encodeWord,
       Remote.targetArgv_eq t verb options name args, ?_,
@@ -1119,7 +1157,7 @@ theorem transport_exact (t : Remote.Transport) (verb name : String) (options arg
       word ∈
         Remote.marker ::
           (verb :: options ++
-                (if verb = "attach" ∨ verb = "capture" then Remote.targetOperands name
+                (if verb = "attach" ∨ verb = "capture" ∨ verb = "ls" then Remote.targetOperands name
                 else [name]) ++
                 args).map
             Remote.encodeWord,
@@ -1154,7 +1192,8 @@ theorem transport_exact_rejects_ssh :
               App.Entry.route line =
                 App.Entry.Route.of
                   (verb :: options ++
-                    (if verb = "attach" ∨ verb = "capture" then Remote.targetOperands name
+                    (if verb = "attach" ∨ verb = "capture" ∨ verb = "ls" then
+                      Remote.targetOperands name
                     else [name]) ++
                     args) := by
   intro h

@@ -407,7 +407,7 @@ private def transportChecks (e : Env) (procPath : Array (String × Option String
     c.detach
     let attachRc ← c.reap patienceMs
     c.bye (sendDetach := false)
-    let (liveRc, _, _) ← far.cli #["info", "work"]
+    let (liveRc, _, _) ← far.cli #["ls", "work", "--porcelain"]
     expect
         (prompted && answered && attachRc == 0 && liveRc == 0 &&
           (← readArgs attachLog) == sent "attach" ["work"])
@@ -432,7 +432,7 @@ private def transportChecks (e : Env) (procPath : Array (String × Option String
       IO.FS.writeFile queryLog ""
       IO.FS.writeFile attachLog ""
       let (listRc, _, listErr) ← e.cliEnv procPath #["ls", "-r"]
-      let (infoRc, _, infoErr) ← e.cliEnv procPath #["info", "alpha@far"]
+      let (infoRc, _, infoErr) ← e.cliEnv procPath #["ls", "alpha@far", "--porcelain"]
       expect
           (listRc != 0 && has listErr "far" && infoRc != 0 && has infoErr "far" &&
             (← readArgs queryLog).isEmpty &&
@@ -472,9 +472,9 @@ def run : IO UInt32 :=
     let _ ← e.typeInEnv procPath "localsess" #["echo local-content"]
     let tag := s!"{goodName}@{devHost}"
     try
-      let (drc, _, derr) ← e.cliEnv procPath #["-r", s!"{devHost},{devHost}"]
+      let (drc, _, derr) ← e.cliEnv procPath #["ls", "-r", s!"{devHost},{devHost}"]
       expect (drc != 0 && has derr dupMsg) "duplicate remote host errors loudly"
-      let (rrc, out, _) ← e.cliEnv procPath #["-r", s!"{devHost},{deadHost}"]
+      let (rrc, out, _) ← e.cliEnv procPath #["ls", "-r", s!"{devHost},{deadHost}"]
       let (_, pout, _) ← e.cliEnv procPath #["ls", "--porcelain", "-r", s!"{devHost},{deadHost}"]
       let recs := records pout
       expect (rrc == 0) "remote listing exits cleanly"
@@ -566,12 +566,10 @@ def run : IO UInt32 :=
         literal.bye (sendDetach := false)
       for (verb, canonical, options, args) in
         [("start", "start", [], words), ("resume", "resume", [], []), ("send", "send", [], words),
-          ("s", "send", [], ["two words"]), ("detach", "detach", [], []), ("kill", "kill", [], []),
-          ("info", "info", [], []), ("capture", "capture", [], []), ("c", "capture", [], []),
-          ("capture", "capture", ["--history"], []), ("c", "capture", ["--history"], []),
-          ("resize", "resize", [], ["120", "40"]), ("wait", "wait", [], []), ("get", "get", [], []),
-          ("set", "set", [], ["x=two words", "y='$(printf X)'", "empty="]),
-          ("unset", "unset", [], ["x", "y"]), ("clear", "clear", [], [])] do
+          ("detach", "detach", [], []), ("kill", "kill", [], []), ("ls", "ls", [], []),
+          ("ls", "ls", ["--porcelain"], []), ("capture", "capture", [], []),
+          ("capture", "capture", ["--history"], []), ("resize", "resize", [], ["120", "40"]),
+          ("wait", "wait", [], []), ("describe", "describe", [], words)] do
         let (rc, _, _) ← e.cliEnv procPath ([verb] ++ options ++ [tag] ++ args).toArray
         expect
             (rc == 0 &&
@@ -617,15 +615,17 @@ def run : IO UInt32 :=
             s!"remote {repr args} requires terminal input and output"
       expect
           ([["--porcelain", "-r", s!"{devHost},{deadHost}"],
-                ["-r", s!"{devHost},{deadHost}", "--porcelain"],
-                ["--remote", s!"{devHost},{deadHost}", "--porcelain"]].all
-            (fun args => Linger.App.Shell.parseLs args == some (true, some [devHost, deadHost])))
+                ["-r", s!"{devHost},{deadHost}", "--porcelain"]].all
+            (fun args =>
+              Linger.App.Shell.parseLs args == some (true, some [devHost, deadHost], [])))
           "ls accepts explicit hosts in either option order"
       expect
-          (Linger.App.Shell.parseLs ["-r", "--porcelain"] == some (true, some []) &&
-            Linger.App.Shell.parseLs ["--porcelain", "--remote"] == some (true, some []) &&
+          (Linger.App.Shell.parseLs ["-r", "--porcelain"] == some (true, some [], []) &&
+            Linger.App.Shell.parseLs ["--porcelain", "--remote"] == none &&
+            Linger.App.Shell.parseLs ["--remote", devHost] == none &&
+            Linger.App.Shell.parseLs ["work", "-r"] == none &&
             Linger.App.Shell.parseLs ["-r", "--typo"] == none)
-          "ls preserves options after -r and rejects unknown options"
+          "ls preserves options after -r, spells -r one way, takes no names with it and rejects unknown options"
       -- Only a nonempty HOME configures hosts (`remotesFile_eq_none_iff`). Decoy files
       -- under the working, XDG and temporary directories would run SSH if a fallback
       -- read them; world-writable `/tmp` itself is left to the theorem.

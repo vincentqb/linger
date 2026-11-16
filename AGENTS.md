@@ -152,6 +152,9 @@ size: Lean erases proofs regardless of file placement.
   alternative private enforces it. IO behavior is tested, not proved. Start behavioral
   fixes with a failing check and verify that new assertions detect a deliberate break;
   a check of a failure or cleanup path also asserts that the path was reached.
+- A command exists only for an `Op` of `Linger/App/CoreSpec.lean`, with one spelling and each
+  option one parameter of it: adding one changes the owned `Op`, a claim change
+  (`commands_minimal`).
 - One signal, one meaning: every signal that crosses linger's boundary means what its standard
   says, and linger gives none a meaning of its own. That covers a sequence a program writes
   (ECMA-48 and the xterm, OSC 9, 52, 133 and 777 conventions), a key a person presses (readline

@@ -105,7 +105,7 @@ def run : IO UInt32 :=
               [encodeWord "start", encodeWord "made", encodeWord "/bin/sh", "xzz"]].mapM
           fun encoded => do
           return (← e.cli (marker :: encoded).toArray)
-    let (madeRc, _, _) ← e.cli #["info", "made"]
+    let (madeRc, _, _) ← e.cli #["ls", "made", "--porcelain"]
     expect (refused.all (fun (rc, _, err) => rc == 2 && has err "malformed") && madeRc == 127)
         s!"linger refuses an encoded command line that does not decode with status 2 and starts \
           nothing ({refused.map (·.1)}, info {madeRc})"

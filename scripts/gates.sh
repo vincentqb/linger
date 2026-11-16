@@ -759,12 +759,12 @@ cli_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/WorldCode.lean)"
 for tie in \
   'match Linger[.]Target[.]Remote[.]checkHosts hosts with [|] [.]ok l => return l[.]map fun host => [(]host, Linger[.]Target[.]Remote[.]transportFor config host[)] [|] [.]error e => throw [(]IO[.]userError e[)]' \
   'for [(][(]host, _[)], output[)] in remotes[.]zip remote[.]toList do match output with [|] none => rows := rows [+][+] [[][[][(]"host", host[)], [(]"status", Linger[.]Display[.]Status[.]name [.]unknown[)][]][]] [|] some output => for row in Linger[.]Target[.]Remote[.]parse output do' \
-  '[|] some [(]porcelain, remoteFlag[)] => cmdList porcelain [(]← resolveRemotes remoteFlag[)]' \
+  '[|] some [(]porcelain, remoteFlag, [[][]][)] => cmdList porcelain [(]← resolveRemotes remoteFlag[)]' \
   'let withColor := Linger[.]Os[.]Env[.]withColor [(]← [(]← IO[.]getStdout[)][.]isTty[)] [(]← IO[.]getEnv "NO_COLOR"[)] [(]← IO[.]getEnv "TERM"[)] let named := rows[.]map fun info => match info[.]lookup "name", info[.]lookup "host" with [|] none, some host => [(]"name", "@" [+][+] host[)] :: info [|] _, _ => info let ordered := Linger[.]Display[.]View[.]sort [(]fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD ""[)][)] named let width ← humanWidth let home ← accountHome writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor width [(]ordered[.]map [(]Linger[.]Display[.]Listing[.]atHome home[)][)][)][.]toArray[)]' \
   'def summaryText : IO String := do let rows ← localRows [(]some [(][(]← monotonicMs[)] [+] 250[)][)] [(]statusOnly := true[)] return Linger[.]Display[.]Status[.]summary [(]rows[.]map fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD "unknown"[)][)]' \
   'def cmdSummary : IO Answer := do let summary ← summaryText if !summary[.]isEmpty then IO[.]println summary return [.]done' \
   'match ← connectUpsert name cmd with [|] [.]ok fd => attachSpoken name fd false' \
-  '[|] [[]"ls", "--summary"[]] [|] [[]"list", "--summary"[]] [|] [[]"l", "--summary"[]] => cmdSummary'; do
+  'if args == [[]"--summary"[]] then return ← cmdSummary'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "listing or prompt bypassed its shared policy: $tie"
 done
@@ -777,11 +777,11 @@ printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$COD
   || fail "an attach bypasses its daemon's protocol level (Wire.admits): $tie"
 [ "$(code_count 'Client[.]attach([^[:alnum:]_]|$)' Linger/App/WorldCode.lean)" -eq 1 ] \
   || fail "Client.attach is called outside attachSpoken, which first asks the daemon's protocol level"
-# `linger help` lists the exit statuses from the vocabulary every command answers in
+# `linger --help` lists the exit statuses from the vocabulary every command answers in
 # (`code_documented`, `listed_once`), one line per answer of linger's own.
 printf '%s\n' "$cli_code" | CG_RE='(^|[[:space:]])Answer[.]legend[.]map [(]" +" [+][+] ·[)][)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
-  || fail "linger help no longer lists the exit statuses from Answer.legend"
-# The session inventory the listing, the prompt summary, `get` and the importer share.
+  || fail "linger --help no longer lists the exit statuses from Answer.legend"
+# The session inventory the listing, the prompt summary and the importer share.
 inventory_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/WorldCode/Inventory.lean)"
 for tie in \
   'if let some deadline := stopAt then if [(]← monotonicMs[)] ≥ deadline then return some [(][.]error [(]IO[.]userError "overview deadline reached"[)][)] match ← connect stopAt[.]isSome with [|] none => if stopAt[.]isSome && retainUnavailable then return some [(][.]error [(]IO[.]userError "overview connection unavailable"[)][)] return none [|] some fd => try let info ← [(]readInfo fd stopAt[)][.]toBaseIO return some info finally close fd' \
@@ -1245,17 +1245,23 @@ code_grep '^[[:space:]]+Linger[.]Session[.]Buf[.]bufOffer infoReplyCap acc [(]By
 attach_words="$(code_grep '"attach"[[:space:]]*(,|[]]|::)' 'Linger/*/WorldCode.lean' 'Linger/*/WorldCode/*' \
   | sed 's/^\([^:]*\):[0-9]*:[[:space:]]*/\1: /')"
 [ "$attach_words" = "$(printf '%s\n' \
-    'Linger/App/WorldCode.lean: | "attach" :: rest | "a" :: rest =>' \
     'Linger/Selector/WorldCode.lean: ("attach" :: (if readOnly then ["--read-only"] else []) ++')" ] \
   || fail "a literal attach argv: build it with Picker.attachArgs, whose operands come from Remote.targetOperands: $attach_words"
 ! code_grep '(^|[^A-Za-z0-9_.])Fuzzy[.]|Name[.]sanitize' Linger/App/WorldCode.lean Linger/Session/WorldCode/Client.lean \
   || fail "noninteractive command lookup must not fuzzy-match or rewrite a name"
 code_grep '^[[:space:]]+Linger[.]Target[.]Remote[.]targetValid target = true ∧ target ∉ candidates := by$' Linger/Selector/Proofs/Picker.lean >/dev/null \
   || fail "selector creation and command arguments no longer share the target grammar"
-for verb in attach start resume send detach kill info capture resize get set unset clear; do
+for verb in attach start resume send detach kill capture resize describe; do
   code_grep "^[[:space:]]+withTarget \"$verb\" " Linger/App/WorldCode.lean >/dev/null \
     || fail "session command bypassed the common exact target boundary: $verb"
 done
+# A command line reaches its operation only through the command table (`commands_minimal`): the
+# session CLI looks up its first word and performs that row's `Op`, and no pattern of its own
+# names a command word, which would be a second spelling no headline sees.
+printf '%s\n' "$cli_code" | CG_RE='(^|[[:space:]])match Linger[.]App[.]Commands[.]lookup word with [|] some command => runOp command[.]op args[.]tail([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "the session CLI no longer dispatches through Commands.lookup to the row's Op"
+! code_grep '^[[:space:]]*[|] [[]?"[a-z][a-z-]*"' Linger/App/WorldCode.lean \
+  || fail "a command word is matched outside the command table (Commands.lookup)"
 for tie in \
   'match Linger[.]Target[.]Remote[.]parseTarget target with [|] none => invalidTarget [|] some parsed => runTarget verb parsed args localAction options' \
   'let some targets := names[.]mapM Linger[.]Target[.]Remote[.]parseTarget [|] invalidTarget let deadline ← limit[.]mapM' \

@@ -11,9 +11,9 @@ namespace Linger.App.Entry
 /-- Where a command line of the words its sender meant goes (`plain_eq`). -/
 private def plain (args : List String) : Route :=
   match args with
-  | [] => .session ["help"]
-  | ["attach"] | ["a"] => .selector false
-  | ["attach", "--read-only"] | ["a", "--read-only"] => .selector true
+  | [] => .session ["--help"]
+  | ["attach"] => .selector false
+  | ["attach", "--read-only"] => .selector true
   | "tmux" :: rest => .tmux rest
   | _ => .session args
 
