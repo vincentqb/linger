@@ -15,7 +15,7 @@ package declares nothing, and its build directory is linger's. -/
 require first from "first"
 
 require software_challenge from git
-  "https://github.com/vincentqb/lean-software-challenge"@"203f0aff941844ccade71343c76a707bd19747a4"
+  "https://github.com/vincentqb/lean-software-challenge"@"57aae4dfe83ef6f28f313cdec1007fc3554b474c"
 
 /-- The fuzzy matcher, a package of its own with its own challenge and audit. -/
 require fuzzy from "packages/fuzzy"
@@ -45,6 +45,7 @@ lean_exe lingertest where root := `Linger.Os.Suites.Shim
 /-- Proofs have their own import and verification graph: every module under `Theorems/` and
 under a component's `Proofs/` is built. Lean erases proofs regardless of file placement. -/
 @[default_target] lean_lib Theorems where
+  roots := #[`Theorems.Coverage, `Theorems.Solution]
   globs :=
   #[.submodules `Theorems, .submodules `Linger.App.Proofs, .submodules `Linger.Display.Proofs,
     .submodules `Linger.Import.Proofs, .submodules `Linger.Os.Proofs,
@@ -64,7 +65,7 @@ lean_lib Tests where
 /-- The checks of linger's world claims, which no program module imports: built by default, so
 the audit counts them, and run by the challenge library's checks runner. -/
 @[default_target] lean_lib Checks where
-  globs := #[.one `Linger.Session.WorldCode.Checks, .one `Linger.Target.WorldCode.Checks]
+  roots := #[`Linger.Session.WorldCode.Checks, `Linger.Target.WorldCode.Checks]
   leanOptions := implementationOptions
 
 /-- Executable suites: `./lake exe suites <suite>`. -/

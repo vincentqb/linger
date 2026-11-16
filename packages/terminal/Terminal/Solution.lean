@@ -1,5 +1,6 @@
 module
 
+meta import SoftwareChallenge
 public import Terminal.CoreCode.Render
 public import Terminal.CoreCode.Replay
 public import Terminal.CoreSpec

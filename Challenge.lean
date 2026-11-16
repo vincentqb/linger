@@ -2930,7 +2930,7 @@ theorem older_import_described (pane : Import.Resurrect.Pane) (contents : Option
                 (Import.Resurrect.checkpoint pane contents).cwd,
                 (Import.Resurrect.checkpoint pane contents).fields.filter
                   (·.1 != "description")⟩).set!
-          (4 : Nat) 3) =
+          4 3) =
       some (Import.Resurrect.checkpoint pane contents) := by
   sorry
 
@@ -2945,7 +2945,7 @@ theorem older_import_described_rejects_stored :
                     (Import.Resurrect.checkpoint pane contents).cwd,
                     (Import.Resurrect.checkpoint pane contents).fields.filter
                       (·.1 != "description")⟩).set!
-              (4 : Nat) 3) =
+              4 3) =
           some (Import.Resurrect.checkpoint pane contents) := by
   sorry
 

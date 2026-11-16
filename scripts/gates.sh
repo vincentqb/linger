@@ -314,9 +314,9 @@ library_roots() {
 # The checks of linger's world claims are a default target, so the audit counts them: the Checks
 # library builds exactly each component's `WorldCode/Checks.lean`, which no program module imports.
 checks_want="$(git ls-files -- 'Linger/*/WorldCode/Checks.lean' | sed 's/[.]lean$//; s#/#.#g' \
-  | awk '{ printf "%s.one `%s", (NR > 1 ? ", " : ""), $0 }')"
+  | awk '{ printf "%s`%s", (NR > 1 ? ", " : ""), $0 }')"
 [ -n "$checks_want" ] || fail "no module holds linger's checks"
-[ "$(library_decl Checks)" = "lean_lib Checks where globs := #[$checks_want] leanOptions := implementationOptions " ] \
+[ "$(library_decl Checks)" = "lean_lib Checks where roots := #[$checks_want] leanOptions := implementationOptions " ] \
   || fail "the Checks library must build exactly each WorldCode/Checks.lean: $(library_decl Checks)"
 checks_imported="$(module_imports '*/CoreSpec*.lean' '*/CoreCode*.lean' '*/WorldSpec*.lean' \
     '*/WorldCode*.lean' Linger.lean | awk -F: "$IMPORT_AWK"'
@@ -357,14 +357,18 @@ done
 # Proofs and fixtures build every module under their directories, so every module is
 # checked without a root module importing it: the legacy `Theorems/` tree and each
 # component's `Proofs/` and `Tests/`, in component order. The glob omits the root
-# itself, so a Theorems.lean or Tests.lean would never be built.
+# itself, so a Theorems.lean or Tests.lean would never be built. A default target's roots are
+# what `lake lint --builtin-lint` lints, so Theorems names each module of `Theorems/` as one.
 lib_globs() {                                # lib_globs <lib> <component subdirectory>
+  lg_roots=''
+  [ "$1" != Theorems ] || lg_roots="roots := #[$(git ls-files -- 'Theorems/*.lean' \
+    | sed 's/[.]lean$//; s#/#.#g' | awk '{ printf "%s`%s", (NR > 1 ? ", " : ""), $0 }')] "
   lg_parts=''
   [ -z "$(git ls-files -- "$1/*.lean")" ] || lg_parts=".submodules \`$1"
   for lg_c in $(git ls-files -- "Linger/*/$2/*.lean" | cut -d/ -f2 | sort -u); do
     lg_parts="${lg_parts:+$lg_parts, }.submodules \`Linger.$lg_c.$2"
   done
-  printf 'lean_lib %s where globs := #[%s] leanOptions := implementationOptions ' "$1" "$lg_parts"
+  printf 'lean_lib %s where %sglobs := #[%s] leanOptions := implementationOptions ' "$1" "$lg_roots" "$lg_parts"
 }
 for lib in 'Theorems Proofs' 'Tests Tests'; do
   lr_lib="${lib% *}"; lr_dir="${lib#* }"

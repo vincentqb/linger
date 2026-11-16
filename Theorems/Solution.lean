@@ -2876,7 +2876,7 @@ theorem older_import_described (pane : Import.Resurrect.Pane) (contents : Option
                 (Import.Resurrect.checkpoint pane contents).cwd,
                 (Import.Resurrect.checkpoint pane contents).fields.filter
                   (·.1 != "description")⟩).set!
-          (4 : Nat) 3) =
+          4 3) =
       some (Import.Resurrect.checkpoint pane contents) :=
   Import.Resurrect.older_checkpoint pane contents
 
@@ -2890,7 +2890,7 @@ theorem older_import_described_rejects_stored :
                     (Import.Resurrect.checkpoint pane contents).cwd,
                     (Import.Resurrect.checkpoint pane contents).fields.filter
                       (·.1 != "description")⟩).set!
-              (4 : Nat) 3) =
+              4 3) =
           some (Import.Resurrect.checkpoint pane contents) := by
   intro h
   have named := h { name := "a", dir := "x", line := 0, details := { windowTitle := "w" } } none

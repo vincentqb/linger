@@ -1,5 +1,6 @@
 module
 
+meta import SoftwareChallenge
 public import Fuzzy.CoreCode
 import all Fuzzy.Proofs
 

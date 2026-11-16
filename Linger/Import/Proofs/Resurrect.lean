@@ -290,7 +290,7 @@ theorem older_checkpoint (pane : Pane) (contents : Option String) :
         ((Linger.Session.Checkpoint.saveBytes
               ⟨(checkpoint pane contents).vt, (checkpoint pane contents).cwd,
                 (checkpoint pane contents).fields.filter (·.1 != "description")⟩).set!
-          (4 : Nat) 3) =
+          4 3) =
       some (checkpoint pane contents) := by
   rw [Linger.Session.Checkpoint.saveBytes_tagV3,
     Linger.Session.Checkpoint.loadBytes_saveV3_live

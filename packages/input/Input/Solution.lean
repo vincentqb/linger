@@ -1,5 +1,6 @@
 module
 
+meta import SoftwareChallenge
 public import Input.CoreCode
 import Input.Proofs
 

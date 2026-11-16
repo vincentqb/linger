@@ -36,8 +36,9 @@ brought commits, and on manual dispatch. Pushes and pull requests do not trigger
 
 `./lake test` is the full verifier, `scripts/verify.sh`: among its stages it runs every `Check`
 of linger's world claims and of each package's, as the challenge library's checks runner does.
-`./lake script run software_challenge/test_challenge` is the library's own test: the build, the
-lint, every `Check` and a sandboxed `lake comparator`.
+`./lake script run software_challenge/test_challenge` is the library's own test: the build,
+`lake lint --builtin-lint`, which runs the lint driver and Lean's builtin linters on each default
+target's roots, every `Check` and, once every headline is proved, a sandboxed `lake comparator`.
 `./lake script run software_challenge/grade <commit>` judges a commit as the Lean Software
 Challenge does: it refuses one that changes a file the audit lists as `Owned:`, then builds it
 from scratch in a temporary worktree and runs `lake comparator` and `lake test` there. Run it
@@ -127,11 +128,16 @@ size: Lean erases proofs regardless of file placement.
   what is not, and holes, headlines and kills carry no doc comments.
 - Every headline in `Challenge.lean` needs a kill marked `@[kills headline]`: a theorem there
   stating the headline's negation with a wrong part in place of a hole, proved in
-  `Theorems/Solution.lean`. The audit matches a kill against its headline term by term, so a
-  wrong part is a closed term of the hole's type as written: when a hole takes type parameters,
-  or the elaborator would widen a lambda's type, name the wrong part in a `CoreSpec` module
-  (`Offloop.eager`, `Render.escape`). Statements bind no `let` and match no pattern, whose
-  auxiliary definitions a challenge may not declare.
+  `Theorems/Solution.lean`. The audit matches a kill against its headline term by term, ignoring
+  binder names and metadata, so a wrong part is a closed term of the hole's type as written: when
+  a hole takes type parameters, or the elaborator would widen a lambda's type, name the wrong part
+  in a `CoreSpec` module (`Offloop.eager`, `Render.escape`). Statements bind no `let` and match
+  no pattern, whose auxiliary definitions a challenge may not declare. The audit rejects two
+  headlines that state the same up to binder names, and the report marks a headline that
+  quantifies over no input `(one instance)` and a world claim its proof never uses `unused by the
+  proof`, which it reads from a linter that runs where `SoftwareChallenge.Commands` is loaded: a
+  module that proves headlines loads it, as a package's `Solution` does with
+  `meta import SoftwareChallenge`.
 - State each assumption about the outside world as a `WorldClaim` in a `WorldSpec` module, over
   the foreign behaviour it constrains, and give it a `Check` in its component's
   `WorldCode/Checks.lean` that tests the real behaviour on the host: the check names the
