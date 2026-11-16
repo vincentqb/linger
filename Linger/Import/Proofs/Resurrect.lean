@@ -381,13 +381,13 @@ theorem older_checkpoint (pane : Pane) (contents : Option String) :
     Linger.Session.Checkpoint.loadBytes
         ((Linger.Session.Checkpoint.saveBytes
               ⟨(checkpoint pane contents).vt, (checkpoint pane contents).cwd,
-                (checkpoint pane contents).labels.filter (·.1 != "description")⟩).set!
+                (checkpoint pane contents).fields.filter (·.1 != "description")⟩).set!
           (4 : Nat) 3) =
       some (checkpoint pane contents) := by
   rw [Linger.Session.Checkpoint.saveBytes_tagV3,
     Linger.Session.Checkpoint.loadBytes_saveV3_live
       ⟨(checkpoint pane contents).vt, (checkpoint pane contents).cwd,
-        (checkpoint pane contents).labels.filter (·.1 != "description")⟩
+        (checkpoint pane contents).fields.filter (·.1 != "description")⟩
       (checkpoint_live pane contents)]
   have window : (paneLabels pane contents).lookup "tmux.window-title" =
       some pane.details.windowTitle := by
@@ -401,13 +401,13 @@ theorem older_checkpoint (pane : Pane) (contents : Option String) :
         paneLabels pane contents := by
     simp only [Linger.Session.Checkpoint.importDescription, window]
     split <;> simp [paneLabels]
-  simp only [checkpoint, kept, Linger.Session.Checkpoint.readLabels, none, Terminal.Vt.Vt.quiesce]
+  simp only [checkpoint, kept, Linger.Session.Checkpoint.readFields, none, Terminal.Vt.Vt.quiesce]
   rfl
 
 /-- A pane whose window has a name has that name as its description. -/
 theorem checkpoint_described (pane : Pane) (contents : Option String)
     (named : pane.details.windowTitle ≠ "") :
-    (checkpoint pane contents).labels.lookup "description" = some pane.details.windowTitle := by
+    (checkpoint pane contents).fields.lookup "description" = some pane.details.windowTitle := by
   have window : (paneLabels pane contents).lookup "tmux.window-title" =
       some pane.details.windowTitle := by
     simp [paneLabels, List.lookup]
@@ -426,9 +426,9 @@ theorem lookup_filter_key (key : String) (labels : List (String × String)) :
 captures from empty captures. Commands are data in labels. -/
 theorem checkpoint_metadata (pane : Pane) (contents : Option String) :
     (checkpoint pane contents).cwd = pane.dir ∧
-      (checkpoint pane contents).labels.lookup "tmux.command" = some pane.details.command ∧
-      (checkpoint pane contents).labels.lookup "tmux.saved-command" = some pane.details.savedCommand ∧
-      (checkpoint pane contents).labels.lookup "tmux.capture" =
+      (checkpoint pane contents).fields.lookup "tmux.command" = some pane.details.command ∧
+      (checkpoint pane contents).fields.lookup "tmux.saved-command" = some pane.details.savedCommand ∧
+      (checkpoint pane contents).fields.lookup "tmux.capture" =
         some (if contents.isSome then "saved" else "none") := by
   exact ⟨rfl, rfl, rfl, rfl⟩
 

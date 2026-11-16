@@ -10,7 +10,7 @@ public section
 /-! # Linger.Session.Suites.Resume — reboot-resume: checkpoint, crash, restore
 
 Checkpoint on last detach, daemon SIGKILLed (simulated crash/reboot), session
-listed as resumable, attach restores the old screen and labels and starts a fresh
+listed as resumable, attach restores the old screen and description and starts a fresh
 shell in the saved cwd. The resumable row is compared as a `Status`, not as a
 substring of the listing, which some *other* row's `(resumable)` could also match. A daemon
 killed while it saves leaves the previous checkpoint or the new one, whole, and a checkpoint that
@@ -33,7 +33,7 @@ output. The injected clock checks retry cadence without waiting a minute. -/
 def checkpointRetry : IO Unit := do
   let attempts ← IO.mkRef (0 : Nat)
   let saved ← IO.mkRef ([] : List (String × String))
-  let labels := [("quiet", "kept")]
+  let labels := [("description", "kept")]
   let rt : Linger.Session.Shell.Daemon.Rt :=
     { st := Linger.Session.State.boot (Terminal.Vt.Vt.init 20 5) labels [], listenFd := 0,
       ptyFd := 0, childPid := 0,
@@ -41,7 +41,7 @@ def checkpointRetry : IO Unit := do
         attempts.modify (· + 1)
         if (← attempts.get) == 1 then
           throw (IO.userError "injected save failure")
-        saved.set st.labels,
+        saved.set st.fields,
       dropCkpt := pure () }
   let interval := Linger.Session.ckptIntervalMs
   let rt ← Linger.Session.Shell.Daemon.pump rt [.ptyOut [65], .tick interval]
@@ -311,7 +311,7 @@ holds none. -/
 private def savedDescription (path : String) : IO (Option String) := do
   match ← (IO.FS.readBinFile path).toBaseIO with
   | .ok bytes =>
-    return (Linger.Session.Checkpoint.loadBytes bytes).bind (·.labels.lookup "description")
+    return (Linger.Session.Checkpoint.loadBytes bytes).bind (·.fields.lookup "description")
   | .error _ =>
     return none
 
@@ -328,7 +328,7 @@ private def soon (ms : Nat) (p : IO Bool) : IO Bool := do
 
 /-- A crash while the daemon saves leaves the previous checkpoint or the new one at the path,
 whole, and an end record that decodes (`Disk.Durable`, whose flushes only a power cut could
-test, which no suite makes). Each save is the one a last detach asks for once the label `gen`
+test, which no suite makes). Each save is the one a last detach asks for once the description
 changed. The daemon is killed with SIGKILL while a FIFO at the temporary sibling holds a save
 open before it writes a byte, and then, over a checkpoint of a full history ring, at three points
 of a save: just after it is asked for, once its temporary sibling appears, and once the new
@@ -504,7 +504,7 @@ def run : IO UInt32 :=
     let rows : UInt32 := 24
     let marker := "survives-the-reboot-42"
     -- create a session working in this suite's directory, leave a marker on screen and
-    -- a label
+    -- a description
     let boot ← e.spawn #["attach", "boot"] cols rows
     let _ ← waitFor 4000 (return (← e.info "boot" "clients") == some "1")
     boot.type s!"cd '{e.dir}' && echo survives-the-reboot-$((40+2))\r"
@@ -527,14 +527,14 @@ def run : IO UInt32 :=
     -- detach (last attached client): the machine checkpoints here
     boot.detach
     -- the save runs on its own thread, so the daemon answers at once: it is on disk once the
-    -- checkpoint holds the label set just before the detach
+    -- checkpoint holds the description given just before the detach
     let _ ← waitFor 4000 (return (← e.info "boot" "clients") == some "0")
     let _ ←
       waitFor 4000 do
           match ← (IO.FS.readBinFile s!"{e.dir}/boot.ckpt").toBaseIO with
           | .ok bytes =>
             return (Linger.Session.Checkpoint.loadBytes bytes).any
-                (·.labels.contains ("description", "kept across"))
+                (·.fields.contains ("description", "kept across"))
           | .error _ =>
             return false
     boot.bye (sendDetach := false) -- fd and zombie only; the client already left
@@ -560,7 +560,7 @@ def run : IO UInt32 :=
       throw (IO.userError "daemon for this LINGER_DIR not found, or the SIGKILL did not land")
     expect ((← e.status "boot") == Status.resumable && has (← e.out #["ls"]) "boot")
         "killed session listed as resumable"
-    -- attach again: fresh shell, restored screen, restored labels, saved cwd
+    -- attach again: fresh shell, restored screen, restored description, saved cwd
     let boot2 ← e.spawn #["attach", "boot"] cols rows
     let replay ← IO.mkRef ByteArray.empty
     expect (← boot2.awaitText replay (hasText · marker) (ms := 5000))
@@ -570,7 +570,7 @@ def run : IO UInt32 :=
     -- `PWD` the fresh shell inherits.
     let savedCwd ← IO.FS.realPath e.dir
     expect (has (← drainStr boot2.fd 1500) savedCwd.toString) "fresh shell starts in the saved cwd"
-    expect ((← e.info "boot" "label.description") == some "kept across")
+    expect ((← e.info "boot" "description") == some "kept across")
         "the description survives the reboot"
     -- a clean exit nobody sees keeps the session as a result: its last screen stays saved,
     -- listed as ended with status 0. The marker is an expansion, so the typed line cannot show
@@ -597,7 +597,7 @@ def run : IO UInt32 :=
     let (againRc, _, _) ← e.cli #["resume", "boot"]
     expect
         (resumedRc == 0 && live && has (← e.out #["capture", "--history", "boot"]) "LAST-42" &&
-          (← e.info "boot" "label.description") == some "kept across" &&
+          (← e.info "boot" "description") == some "kept across" &&
           againRc == 0 &&
           (← e.info "boot" "pid") == pid)
         "resume runs an ended session's program again on its last screen, and leaves a live one as it is"

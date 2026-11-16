@@ -79,7 +79,7 @@ def rowStatus : Row → Status
 
 The daemon's info reply is framed by `infoText` (`infoText_records`); the CLI prints porcelain
 from those parsed records. The *human* listing is different: it is printed straight to a
-terminal, so a control byte in a `cmd`, a label value, a checkpoint filename or a `-r` host
+terminal, so a control byte in a `cmd`, a description, a checkpoint filename or a `-r` host
 would execute as an escape sequence. Rather than scrub at the call site — an audit that has to
 be redone whenever a new field is displayed — the row is rendered here, in the core, through
 `Render.utf8s` (which maps every C0/DEL codepoint to U+FFFD), and `Linger/Display/Proofs/Listing.lean` proves
@@ -120,8 +120,7 @@ def look (info : List (String × String)) (key : String) : String := (info.looku
 
 /-- The row's words: the user's description, else the title the program gave its window. -/
 def caption (info : List (String × String)) : String :=
-  if (look info "label.description").isEmpty then look info "title"
-  else look info "label.description"
+  if (look info "description").isEmpty then look info "title" else look info "description"
 
 /-- The text of the program's last notification since the session was last looked at, while the
 session asks; nothing for any other status. -/

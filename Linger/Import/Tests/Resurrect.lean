@@ -410,9 +410,9 @@ namespace Linger.Import.Resurrect.Tests
     Terminal.Render.screenText saved.vt ==
       "last\nSaved foreground command: vi 'draft.txt'\n\n".toUTF8.toList &&
     saved.cwd == pane.dir &&
-    saved.labels.lookup "tmux.command" == some "vi" &&
-    saved.labels.lookup "tmux.saved-command" == some "vi 'draft.txt'" &&
-    saved.labels.lookup "tmux.capture" == some "saved" &&
+    saved.fields.lookup "tmux.command" == some "vi" &&
+    saved.fields.lookup "tmux.saved-command" == some "vi 'draft.txt'" &&
+    saved.fields.lookup "tmux.capture" == some "saved" &&
     (Linger.Session.Checkpoint.loadBytes (Linger.Session.Checkpoint.saveBytes saved)).map
         Linger.Session.Checkpoint.saveBytes ==
       some (Linger.Session.Checkpoint.saveBytes saved)
@@ -420,7 +420,7 @@ namespace Linger.Import.Resurrect.Tests
 #guard
   let pane : Pane := { name := "desk-w0-p0", dir := "/one", line := 1 }
   let saved := checkpoint pane none
-  saved.vt.cols == 80 && saved.vt.rows == 24 && saved.labels.lookup "tmux.capture" == some "none"
+  saved.vt.cols == 80 && saved.vt.rows == 24 && saved.fields.lookup "tmux.capture" == some "none"
 
 -- A missing command line falls back to the name; missing metadata adds no notice.
 #guard
@@ -440,7 +440,7 @@ namespace Linger.Import.Resurrect.Tests
   let saved := checkpoint pane (some "\x1b[31m\x1b(0\x0esaved\x1b[")
   Terminal.Render.history saved.vt ==
       "saved\nSaved foreground command: vim?[2J??λ?\n\n\n".toUTF8.toList &&
-    saved.labels.lookup "tmux.saved-command" == some command &&
+    saved.fields.lookup "tmux.saved-command" == some command &&
     saved.vt.pen == {} &&
     !saved.vt.g0Line &&
     !saved.vt.shiftOut

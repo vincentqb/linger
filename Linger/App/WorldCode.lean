@@ -135,7 +135,7 @@ private def recoverFor (name : String) (create : Bool) : IO Daemon.Recovered := 
   | .fresh =>
     return .ok none
   | .resume ck =>
-    return .ok (some (ck.vt, ck.cwd, ck.labels))
+    return .ok (some (ck.vt, ck.cwd, ck.fields))
   | .refuse answer =>
     let why ←
       if answer == .notFound then
@@ -920,8 +920,8 @@ private def cmdList (porcelain : Bool) (remotes : List (String × Linger.Target.
     | some output =>
       for row in Linger.Target.Remote.parse output do
         -- a remote row is built from what the peer's porcelain says about identity
-        -- and liveness. It also emits `clients` and `label.*`; those are dropped
-        -- rather than rendered, so a remote row's label and watcher columns are
+        -- and liveness. It also emits `clients` and its record fields; those are dropped
+        -- rather than rendered, so a remote row's caption and watcher columns are
         -- blank whatever the peer reports.
         rows :=
           rows ++
@@ -1515,12 +1515,9 @@ private def runOp (op : Linger.App.Commands.Op) (args : List String) : IO Answer
   | .wait, names =>
     waitAll names none
   | .describe, name :: words =>
-    -- the description is the label `description`: no words clear it
+    -- no words clear the description
     withTarget "describe" name words fun name =>
-        if words.isEmpty then requireLive name (.labelUnset "description".toUTF8.toList)
-        else
-          requireLive name
-            (.labelSet ("description=" ++ String.intercalate " " words).toUTF8.toList)
+        requireLive name (.describe (String.intercalate " " words).toUTF8.toList)
   | .describe, [] =>
     usageError "describe"
   | .list, rest =>

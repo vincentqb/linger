@@ -36,7 +36,7 @@ Proved here:
   dimensions, never the scrollback.
 * The session bounds — the session layer adds four bounded components on top of
   Vt's: the client list (≤ `maxClients`), the label table
-  (≤ `maxLabels`), a wire decoder per client (≤ the decoder's cap, never
+  (≤ `maxFields`), a wire decoder per client (≤ the decoder's cap, never
   errored — a malformed peer is closed, not buffered) and the terminal
   scanner (`Bounded.scanOk`). `step` preserves all four against any
   event stream; `Bounded` is the `Bounds` that `run_total_safe` (`Challenge.lean`, part 5)
@@ -167,56 +167,29 @@ theorem infoMsgs_no_resize (id : Nat) (bs : List UInt8) (cols rows : UInt32) :
   unfold infoMsgs
   split <;> simp
 
-/-! ## Label removal
+/-! ## Describing
 
-`.labelSet` is pinned four ways — the cap (`onMsg_labels_le`), the round trip
-(`Linger/Session/Tests/Session.lean`), the forged-record channel (`infoText_records`) and the
-boot cap. Its two *removal* siblings are pinned here. For a writable connection both arms are
-unconditional, so both take the exact-shape treatment `onMsg_screen` gets. -/
+`.describe` is pinned three ways — the cap (`onMsg_fields_le`), the forged-record channel
+(`infoText_records`) and the exact shape below: for a writable connection it replaces the
+description, or removes it for an empty text, keeps every other field, and answers `.done`. -/
 
-/-- **`linger unset <key>` removes exactly the named key.** The exact shape: the
-key is the payload through `labelText` (invalid bytes → `""`, which matches no key
-`.labelSet` can store since it rejects an empty key), the store is filtered, and
-the only effect is `.done`. `rfl`, so a smuggled side effect — a vt touch, a
-`.err`, an append — breaks it. -/
-theorem onMsg_labelUnset (s : State) (c : Client) (k : List UInt8) (control : c.mode = .writable) :
-    onMsg s c (.labelUnset k) =
+/-- **`linger describe` sets exactly the description.** `rfl`-shaped, so a smuggled side
+effect — a vt touch, an append to another field — breaks it. -/
+theorem onMsg_describe (s : State) (c : Client) (text : List UInt8) (control : c.mode = .writable)
+    (fits :
+      (s.fields.filter (·.1 != "description") ++
+            if descriptionText text = "" then []
+            else [("description", descriptionText text)]).length ≤
+        maxFields) :
+    onMsg s c (.describe text) =
       ({ s with
-          labels := s.labels.filter (fun kv => kv.1 != labelText k), dirty := true },
+          fields :=
+            s.fields.filter (·.1 != "description") ++
+              if descriptionText text = "" then [] else [("description", descriptionText text)],
+          dirty := true },
         [.send c.id .done]) := by
-  simp [onMsg, control]
-
-/-- …and the consequence, stated where a reader looks for it: after an unset, no
-label carries that key. This is the promise; the shape above is how it is kept. -/
-theorem onMsg_labelUnset_gone (s : State) (c : Client) (k : List UInt8)
-    (control : c.mode = .writable) :
-    ∀ kv ∈ (onMsg s c (.labelUnset k)).1.labels, kv.1 ≠ labelText k := by
-  intro kv hkv
-  rw [onMsg_labelUnset s c k control] at hkv
-  simp only [List.mem_filter, bne_iff_ne] at hkv
-  exact hkv.2
-
-/-- …and it removes *only* that key: every other label survives. Without this,
-`onMsg_labelUnset_gone` is satisfied by an arm that clears the whole store — the
-vacuity that makes a removal claim worthless. -/
-theorem onMsg_labelUnset_keeps (s : State) (c : Client) (k : List UInt8) (kv : String × String)
-    (control : c.mode = .writable) (hmem : kv ∈ s.labels) (hne : kv.1 ≠ labelText k) :
-    kv ∈ (onMsg s c (.labelUnset k)).1.labels := by
-  rw [onMsg_labelUnset s c k control]
-  simp only [List.mem_filter, bne_iff_ne]
-  exact ⟨hmem, hne⟩
-
-/-- **`linger clear` empties the store and marks it for checkpointing.** -/
-theorem onMsg_labelClear (s : State) (c : Client) (control : c.mode = .writable) :
-    onMsg s c .labelClear =
-      ({ s with
-          labels := [], dirty := true },
-        [.send c.id .done]) := by
-  simp [onMsg, control]
-
-/-- …the consequence, so the name a reader greps for states the fact. -/
-theorem onMsg_labelClear_empty (s : State) (c : Client) (control : c.mode = .writable) :
-    (onMsg s c .labelClear).1.labels = [] := by rw [onMsg_labelClear s c control]
+  simp only [onMsg, control]
+  simp_all [String.isEmpty_iff]
 
 /-! ## Detach: sessions outlive their clients -/
 
@@ -258,7 +231,7 @@ theorem closeClient_vt (s : State) (id : Nat) : (closeClient s id).1.vt = s.vt :
 
 /-- Closing a connection leaves the labels alone. -/
 @[simp]
-theorem closeClient_labels (s : State) (id : Nat) : (closeClient s id).1.labels = s.labels := by
+theorem closeClient_labels (s : State) (id : Nat) : (closeClient s id).1.fields = s.fields := by
   unfold closeClient
   dsimp only
   split <;> rfl
@@ -655,13 +628,13 @@ theorem onMsg_input_readonly (s : State) (c : Client) (bs : List UInt8) (h : c.m
 it through the state's observations; `bounded_iff_bounds` relates the two. -/
 structure Bounded (s : State) : Prop where
   clientsLe : s.clients.length ≤ maxClients
-  labelsLe : s.labels.length ≤ maxLabels
+  fieldsLe : s.fields.length ≤ maxFields
   decOk : ∀ c ∈ s.clients, c.decoder.errored = false ∧ c.decoder.buf.length ≤ 4 + Wire.maxPayload
   scanOk : s.scan.Bounded
 
 /-- The private bound and the specification's agree. -/
 theorem bounded_iff_bounds (s : State) :
-    Bounded s ↔ Bounds State.roster State.labelList State.scanner s :=
+    Bounded s ↔ Bounds State.roster State.fieldList State.scanner s :=
   ⟨fun h => ⟨h.1, h.2, h.3, h.4⟩, fun h => ⟨h.1, h.2, h.3, h.4⟩⟩
 
 /-! ### The roster cap at the door
@@ -741,7 +714,7 @@ changes nothing else the session holds: its screen, roster, labels and unsaved c
 theorem ticked_frame (s : State) (now : Nat) :
     (s.ticked now).vt = s.vt ∧
       (s.ticked now).clients = s.clients ∧
-      (s.ticked now).labels = s.labels ∧
+      (s.ticked now).fields = s.fields ∧
       (s.ticked now).dirty = s.dirty ∧
       (s.ticked now).lastOutMs = (if s.tickOutSeq < s.outSeq then some now else s.lastOutMs) :=
   ⟨rfl, rfl, rfl, rfl, rfl⟩
@@ -864,7 +837,7 @@ theorem closeClient_bounded (s : State) (id : Nat) (h : Bounded s) :
   dsimp only
   split
   all_goals
-    refine ⟨Nat.le_trans (dropClient_length_le s id) h.clientsLe, h.labelsLe, ?_, h.scanOk⟩
+    refine ⟨Nat.le_trans (dropClient_length_le s id) h.clientsLe, h.fieldsLe, ?_, h.scanOk⟩
     intro c hmem
     exact h.decOk c (List.mem_filter.mp hmem).1
 
@@ -874,9 +847,9 @@ theorem onMsg_clients_length_le (s : State) (c : Client) (m : Msg) :
   unfold onMsg
   grind
 
-/-- `onMsg` keeps labels within the cap. -/
-theorem onMsg_labels_le (s : State) (c : Client) (m : Msg) (h : s.labels.length ≤ maxLabels) :
-    (onMsg s c m).1.labels.length ≤ maxLabels := by
+/-- `onMsg` keeps the record fields within the cap. -/
+theorem onMsg_fields_le (s : State) (c : Client) (m : Msg) (h : s.fields.length ≤ maxFields) :
+    (onMsg s c m).1.fields.length ≤ maxFields := by
   unfold onMsg
   grind
 
@@ -916,7 +889,7 @@ theorem onMsg_scan (s : State) (c : Client) (m : Msg) : (onMsg s c m).1.scan = s
 theorem onMsg_bounded {s : State} {c : Client} (m : Msg)
     (hc : c.decoder.errored = false ∧ c.decoder.buf.length ≤ 4 + Wire.maxPayload) (h : Bounded s) :
     Bounded (onMsg s c m).1 :=
-  ⟨Nat.le_trans (onMsg_clients_length_le s c m) h.clientsLe, onMsg_labels_le s c m h.labelsLe,
+  ⟨Nat.le_trans (onMsg_clients_length_le s c m) h.clientsLe, onMsg_fields_le s c m h.fieldsLe,
     onMsg_decOk s c m hc h.decOk, by
     rw [onMsg_scan]; exact h.scanOk⟩
 
@@ -1427,7 +1400,7 @@ then the hypothesis-free form over the term the daemon actually computes. -/
 
 /-- **The resume door.** A daemon booting from any byte string that loads at all holds a
 state a live session can hold. `Checkpoint.load_live` is the whole content; what this adds
-is that `State.boot` does not disturb it — the `take maxLabels` `boot` performs touches the
+is that `State.boot` does not disturb it — the `take maxFields` `boot` performs touches the
 labels, never the `Vt`. -/
 theorem liveVt_boot_of_load {l : List UInt8} {c : Checkpoint.Ckpt Vt.Vt}
     (h : Checkpoint.load l = some c) (ls mk : List (String × String)) :
@@ -1514,10 +1487,10 @@ theorem run_resume_load_save (b : ByteArray) (labels metaKv : List (String × St
     Checkpoint.loadBytes
         (Checkpoint.saveBytes
           { vt := (run (State.boot (resumeVt b) labels metaKv) evs).1.vt, cwd,
-            labels := (run (State.boot (resumeVt b) labels metaKv) evs).1.labels }) =
+            fields := (run (State.boot (resumeVt b) labels metaKv) evs).1.fields }) =
       some
         { vt := (run (State.boot (resumeVt b) labels metaKv) evs).1.vt.quiesce, cwd,
-          labels := (run (State.boot (resumeVt b) labels metaKv) evs).1.labels } :=
+          fields := (run (State.boot (resumeVt b) labels metaKv) evs).1.fields } :=
   Checkpoint.loadBytes_saveBytes_live _
     (run_boot_vt_live _ labels metaKv evs (liveReachableVt_resumeVt b))
 
@@ -1528,7 +1501,7 @@ way a `State` comes to exist outside this module's friends, and `step` the
 only way forward — so `boot_wf ∘ run_wf` stops being "the invariant holds if
 the runtime starts politely" and covers every state the daemon can possess.
 The labels conjunct is what `boot`'s `take` buys: without it, a corrupt
-checkpoint's label list would boot straight past `maxLabels` and `Bounded` would
+checkpoint's label list would boot straight past `maxFields` and `Bounded` would
 be false of a resumed daemon. The `Good vt`
 hypothesis is honest: a fresh boot has `Good (Vt.init …)`, and the resume
 path's decoded emulator carries it from the checkpoint theorems' side. -/
@@ -1620,7 +1593,7 @@ theorem resize_changed_dirty (s : State) (cols rows : UInt32)
 /-- All successful label changes schedule persistence; rejected messages leave
 the store alone and cannot satisfy the premise. -/
 theorem onMsg_labels_changed_dirty (s : State) (c : Client) (m : Msg)
-    (h : (onMsg s c m).1.labels ≠ s.labels) : (onMsg s c m).1.dirty = true := by
+    (h : (onMsg s c m).1.fields ≠ s.fields) : (onMsg s c m).1.dirty = true := by
   unfold onMsg at *
   grind
 
@@ -2395,14 +2368,14 @@ with, how `run` composes single events and finds a client, and what connecting, 
 output do to them. -/
 
 /-- A daemon boots with the terminal its checkpoint restored, or a fresh 80×24 one, no clients,
-its first `maxLabels` restored labels and an idle scanner. -/
-theorem boot_observed (vt : Vt.Vt) (labels metaKv : List (String × String)) :
+the first `maxFields` of its restored fields that are the record's own, and an idle scanner. -/
+theorem boot_observed (vt : Vt.Vt) (fields metaKv : List (String × String)) :
     bootVt none = Vt.Vt.init 80 24 ∧
       bootVt (some vt) = vt ∧
-      (State.boot vt labels metaKv).terminal = vt ∧
-      (State.boot vt labels metaKv).roster = [] ∧
-      (State.boot vt labels metaKv).labelList = labels.take maxLabels ∧
-      (State.boot vt labels metaKv).scanner = .ground := ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
+      (State.boot vt fields metaKv).terminal = vt ∧
+      (State.boot vt fields metaKv).roster = [] ∧
+      (State.boot vt fields metaKv).fieldList = (fields.filter (recordField ·.1)).take maxFields ∧
+      (State.boot vt fields metaKv).scanner = .ground := ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- `run` handles a trace one event at a time, and a client's record is the first in the
 roster with its identifier. -/
@@ -2563,7 +2536,7 @@ theorem onMsg_watcher_vt (s : State) (c : Client) (m : Msg) (ha : c.attached = t
 
 /-- A message from a watcher leaves the labels alone. -/
 theorem onMsg_watcher_labels (s : State) (c : Client) (m : Msg) (ha : c.attached = true)
-    (hs : c.mode = .readOnly) : (onMsg s c m).1.labels = s.labels := by
+    (hs : c.mode = .readOnly) : (onMsg s c m).1.fields = s.fields := by
   cases m
   all_goals
     unfold onMsg resizeOwned resize
@@ -2577,12 +2550,12 @@ theorem feedMsgs_watcher (id : Nat) (msgs : List Msg) (acc : State × List (Effe
     (hw : Watches acc.1 id) (hq : acc.2.all (watcherEffect id) = true) :
     Watches (feedMsgs id msgs acc).1 id ∧
       (feedMsgs id msgs acc).1.vt = acc.1.vt ∧
-      (feedMsgs id msgs acc).1.labels = acc.1.labels ∧
+      (feedMsgs id msgs acc).1.fields = acc.1.fields ∧
       (feedMsgs id msgs acc).2.all (watcherEffect id) = true := by
   apply
     feedMsgs_induct id msgs acc (P := fun r =>
       Watches r.1 id ∧
-        r.1.vt = acc.1.vt ∧ r.1.labels = acc.1.labels ∧ r.2.all (watcherEffect id) = true)
+        r.1.vt = acc.1.vt ∧ r.1.fields = acc.1.fields ∧ r.2.all (watcherEffect id) = true)
       ?_ ⟨hw, rfl, rfl, hq⟩
   intro r c m _ _ _ hc ⟨hw', hvt, hlb, hq'⟩
   have hid : c.id = id := client?_id hc
@@ -2603,7 +2576,7 @@ alone, and adds only effects a watcher may cause. -/
 theorem step_bytes_watcher (s : State) (id : Nat) (chunk : List UInt8) (hw : Watches s id) :
     Watches (step s (.bytes id chunk)).1 id ∧
       (step s (.bytes id chunk)).1.vt = s.vt ∧
-      (step s (.bytes id chunk)).1.labels = s.labels ∧
+      (step s (.bytes id chunk)).1.fields = s.fields ∧
       (step s (.bytes id chunk)).2.all (watcherEffect id) = true := by
   unfold step
   dsimp only
@@ -2640,7 +2613,7 @@ theorem step_bytes_watcher (s : State) (id : Nat) (chunk : List UInt8) (hw : Wat
 effects a watcher may cause. -/
 theorem run_bytes_watcher (s : State) (id : Nat) (chunks : List (List UInt8)) (hw : Watches s id) :
     (run s (chunks.map (Event.bytes id))).1.vt = s.vt ∧
-      (run s (chunks.map (Event.bytes id))).1.labels = s.labels ∧
+      (run s (chunks.map (Event.bytes id))).1.fields = s.fields ∧
       (run s (chunks.map (Event.bytes id))).2.all (watcherEffect id) = true := by
   induction chunks generalizing s with
   | nil => exact ⟨rfl, rfl, rfl⟩
@@ -2657,7 +2630,7 @@ effect they cause is a message to the watcher, its own disconnection or a checkp
 theorem run_readonly (s : State) (id : Nat) (chunks : List (List UInt8)) {c : Client}
     (hc : s.client? id = some c) (attached : c.attached = true) (watcher : c.mode = .readOnly) :
     (run s (chunks.map (Event.bytes id))).1.terminal = s.terminal ∧
-      (run s (chunks.map (Event.bytes id))).1.labelList = s.labelList ∧
+      (run s (chunks.map (Event.bytes id))).1.fieldList = s.fieldList ∧
       ∀ eff ∈ (run s (chunks.map (Event.bytes id))).2,
         (∃ m, eff = .send id m) ∨ eff = .close id ∨ eff = .checkpoint := by
   have hw : Watches s id := by
@@ -2913,7 +2886,7 @@ theorem step_unknown_refused (s : State) (id : Nat) (chunk : List UInt8) {c : Cl
     (read : c.decoder.feed chunk = (dec, [.unknown tag payload])) (healthy : dec.errored = false) :
     (step s (.bytes id chunk)).2 = [.send id (.err "unknown message".toUTF8.toList)] ∧
       (step s (.bytes id chunk)).1.terminal = s.terminal ∧
-      (step s (.bytes id chunk)).1.labelList = s.labelList := by
+      (step s (.bytes id chunk)).1.fieldList = s.fieldList := by
   have hid : c.id = id := client?_id hc
   rw [step_bytes_single hc read healthy, onMsg_unknown]
   exact ⟨by simp [hid], rfl, rfl⟩
@@ -2928,7 +2901,7 @@ theorem step_kill_stops (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     (healthy : dec.errored = false) :
     (step s (.bytes id chunk)).2 = [.stopProgram, .close id] ∧
       (step s (.bytes id chunk)).1.terminal = s.terminal ∧
-      (step s (.bytes id chunk)).1.labelList = s.labelList := by
+      (step s (.bytes id chunk)).1.fieldList = s.fieldList := by
   have he :
     ({ c with
             decoder := dec, answered := false } :
@@ -3186,10 +3159,10 @@ metadata never changes, and only program output feeds the terminal: every other 
 or resizes it. -/
 
 /-- A message that is no label request leaves the labels as they were. -/
-theorem onMsg_labels_kept (s : State) (c : Client) (m : Msg) (h : ¬m.ChangesLabels) :
-    (onMsg s c m).1.labels = s.labels := by
+theorem onMsg_labels_kept (s : State) (c : Client) (m : Msg) (h : ¬m.Describes) :
+    (onMsg s c m).1.fields = s.fields := by
   cases m
-  all_goals simp only [Msg.ChangesLabels, not_true_eq_false] at h
+  all_goals simp only [Msg.Describes, not_true_eq_false] at h
   all_goals
     unfold onMsg controlResize resizeOwned resize focusEffects infoMsgs outputMsgs
     dsimp only
@@ -3198,24 +3171,24 @@ theorem onMsg_labels_kept (s : State) (c : Client) (m : Msg) (h : ¬m.ChangesLab
 
 /-- A batch with no label request leaves the labels as they were. -/
 theorem feedMsgs_labels (id : Nat) (msgs : List Msg) (acc : State × List (Effect Plan))
-    (none : ∀ m ∈ msgs, ¬m.ChangesLabels) : (feedMsgs id msgs acc).1.labels = acc.1.labels := by
+    (none : ∀ m ∈ msgs, ¬m.Describes) : (feedMsgs id msgs acc).1.fields = acc.1.fields := by
   exact
-    feedMsgs_induct id msgs acc (P := fun r => r.1.labels = acc.1.labels)
+    feedMsgs_induct id msgs acc (P := fun r => r.1.fields = acc.1.fields)
       (fun current c m hm _ _ _ hs => (onMsg_labels_kept current.1 c m (none m hm)).trans hs) rfl
 
 /-- **The labels have one source**: an event that changes them is a read, from a client that is
 not a watcher, that holds a label request. -/
 theorem step_labels_sources (s : State) (ev : Event)
-    (changed : (step s ev).1.labelList ≠ s.labelList) :
+    (changed : (step s ev).1.fieldList ≠ s.fieldList) :
     ∃ id chunk c,
       ev = .bytes id chunk ∧
         s.client? id = some c ∧
         (c.attached = false ∨ c.mode = .writable) ∧
-        ∃ m ∈ (c.decoder.feed chunk).2, m.ChangesLabels := by
+        ∃ m ∈ (c.decoder.feed chunk).2, m.Describes := by
   cases ev with
   | bytes id chunk =>
     cases hc : s.client? id with
-    | none => exact absurd (by simp [step, hc, State.labelList]) changed
+    | none => exact absurd (by simp [step, hc, State.fieldList]) changed
     | some c =>
       refine ⟨id, chunk, c, rfl, hc, ?_, ?_⟩
       · by_cases hw : c.attached = true ∧ c.mode = .readOnly
@@ -3230,7 +3203,7 @@ theorem step_labels_sources (s : State) (ev : Event)
         intro hnone
         apply changed
         simp only [not_exists, not_and] at hnone
-        simp only [step, hc, State.labelList]
+        simp only [step, hc, State.fieldList]
         split
         · simp
         · rw [feedMsgs_labels]
@@ -3240,7 +3213,7 @@ theorem step_labels_sources (s : State) (ev : Event)
     refine absurd ?_ changed
     dsimp only [step]
     split <;> rfl
-  | closed id => exact absurd (by simp [step, State.labelList]) changed
+  | closed id => exact absurd (by simp [step, State.fieldList]) changed
   | ptyOut chunk => exact absurd rfl changed
   | childExited o => exact absurd rfl changed
   | stopped o => exact absurd rfl changed
@@ -4018,18 +3991,18 @@ theorem feedMsgs_unsaved (id : Nat) (msgs : List Msg) (acc : State × List (Effe
       ((feedMsgs id msgs acc).1.dirty = true ∨
         acc.1.dirty = false ∧
           (feedMsgs id msgs acc).1.vt = acc.1.vt ∧
-          (feedMsgs id msgs acc).1.labels = acc.1.labels) := by
+          (feedMsgs id msgs acc).1.fields = acc.1.fields) := by
   apply
     feedMsgs_preserves id msgs acc (P := fun t =>
       t.lastCkptMs = acc.1.lastCkptMs ∧
-        (t.dirty = true ∨ acc.1.dirty = false ∧ t.vt = acc.1.vt ∧ t.labels = acc.1.labels))
+        (t.dirty = true ∨ acc.1.dirty = false ∧ t.vt = acc.1.vt ∧ t.fields = acc.1.fields))
   · intro t c m _ ⟨clock, mark⟩
     obtain ⟨kept, mono⟩ := onMsg_unsaved_kept t c m
     refine ⟨kept.trans clock, ?_⟩
     rcases mark with dirty | ⟨clean, vt, labels⟩
     · exact .inl (mono dirty)
     · by_cases hv : (onMsg t c m).1.vt = t.vt
-      · by_cases hl : (onMsg t c m).1.labels = t.labels
+      · by_cases hl : (onMsg t c m).1.fields = t.fields
         · cases hd : (onMsg t c m).1.dirty
           · exact .inr ⟨clean, hv.trans vt, hl.trans labels⟩
           · exact .inl rfl
@@ -4042,7 +4015,7 @@ theorem feedMsgs_unsaved (id : Nat) (msgs : List Msg) (acc : State × List (Effe
 /-- An event that changes what a save holds, the terminal or the labels, marks the session
 unsaved. -/
 theorem step_changed_dirty (s : State) (ev : Event)
-    (h : (step s ev).1.vt ≠ s.vt ∨ (step s ev).1.labels ≠ s.labels) :
+    (h : (step s ev).1.vt ≠ s.vt ∨ (step s ev).1.fields ≠ s.fields) :
     (step s ev).1.dirty = true := by
   cases ev with
   | ptyOut chunk => rfl
@@ -4204,7 +4177,7 @@ holds and no step since asked for a save, the session's save falls due no later 
 wakes no later than that, and a tick then asks for the save. -/
 theorem unsaved_due (s : State) (ev : Event) (post : List Event) {t : Nat}
     (clocked : s.lastCkptMs ≤ t)
-    (changed : (step s ev).1.vt ≠ s.vt ∨ (step s ev).1.labels ≠ s.labels)
+    (changed : (step s ev).1.vt ≠ s.vt ∨ (step s ev).1.fields ≠ s.fields)
     (unsaved : Effect.checkpoint ∉ (trace step s (ev :: post)).2) :
     ∃ due,
       due ≤ t + ckptIntervalMs ∧

@@ -22,7 +22,7 @@ Format (one record per session, blank-line separated):
 name\twork
 state\tlive
 clients\t1
-label.env\tdev
+description\tdev
 
 name\tother
 state\tresumable

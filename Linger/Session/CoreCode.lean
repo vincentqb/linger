@@ -20,12 +20,12 @@ module is the session's decision logic:
 What `step` keeps:
 * A session with zero clients still advances; detach never touches the screen; attach
   touches only the dimensions (resize).
-* Clients ≤ `maxClients`, labels ≤ `maxLabels`, every stored wire decoder holds at most
+* Clients ≤ `maxClients`, record fields ≤ `maxFields`, every stored wire decoder holds at most
   one frame and is not errored (a malformed peer is closed, not buffered), and the pty
   scanner stays within its caps: `Bounds`, which `run_total_safe` (`Challenge.lean`,
   part 5) keeps.
 * An `unknown` message is refused and changes nothing (`onMsg_unknown`); the event that
-  carries it answers only the refusal and keeps the terminal and labels
+  carries it answers only the refusal and keeps the terminal and the record's fields
   (`step_unknown_refused`, part 5).
 -/
 
@@ -84,7 +84,7 @@ constructor private too — outside this module and its friends
 `Linger/App/Proofs/Wait.lean`, via `import all`) a `State` can only be `State.boot`ed
 and `step`ped, never forged or field-poked, so
 `run_wf`'s well-formedness is a fact about every state the daemon can possess
-rather than about the states it politely constructs. `vt`, `labels` and
+rather than about the states it politely constructs. `vt`, `fields` and
 `metaKv` stay public-read: the checkpoint save hook (`Linger/Session/WorldCode/Resume.lean`) saves
 the first two and finds the session's directory through the third. `scan` and `clients` are
 public-read too, because the session bounds headline theorems state (`Linger.Session.Bounds`)
@@ -96,12 +96,13 @@ structure StateRec where
   scan : Terminal.Mediation.Scan := .ground
   /-- The connected clients, in arrival order. -/
   clients : List Client := []
-  /-- Key/value labels in the order they were set, at most `maxLabels`. -/
-  labels : List (String × String) := []
+  /-- The fields of the session's record, at most `maxFields`: its description, which only
+  `.describe` sets, and those a restored checkpoint holds, as a tmux import's provenance. -/
+  fields : List (String × String) := []
   /-- name/pid/created/cwd…, set once by the runtime at boot. -/
   metaKv : List (String × String) := []
   private ended : Option Ending := none
-  /-- Persistent screen or label changes since the last checkpoint? -/
+  /-- Persistent screen or record changes since the last checkpoint? -/
   private dirty : Bool := false
   private lastCkptMs : Nat := 0
   /-- monotone attach counter, for size ownership. -/
@@ -153,8 +154,8 @@ def State.terminal (s : State) : Vt.Vt := s.vt
 /-- The connected clients, in arrival order, as the headline theorems observe them. -/
 def State.roster (s : State) : List Client := s.clients
 
-/-- The session's labels, as the headline theorems observe them. -/
-def State.labelList (s : State) : List (String × String) := s.labels
+/-- The fields of the session's record, as the headline theorems observe them. -/
+def State.fieldList (s : State) : List (String × String) := s.fields
 
 /-- The pty scanner's state, as the headline theorems observe it. -/
 def State.scanner (s : State) : Mediation.Scan := s.scan
@@ -168,17 +169,17 @@ def State.commands (s : State) : Commands := { running := s.running, finished :=
 -- absence is what makes the seal hide reads. A `State` has exactly one door, `State.boot`.
 
 /-- The one public door into a `State`: a fresh or restored emulator, the
-restored labels, the boot-time metadata. Everything else a `State` ever holds
+restored record fields, the boot-time metadata. Everything else a `State` ever holds
 is `step`'s doing (the private fields above make the constructor private).
 
-Restored labels are capped HERE: `.labelSet` enforces `maxLabels` per message, but
-`Checkpoint.loadBytes` is deliberately total on arbitrary bytes, so a corrupt or
-forged checkpoint could carry any list. Over
-the cap, the first `maxLabels` survive (`.labelSet` appends at the end, so
-these are the oldest). `boot_wf` is the claim; composed with `run_wf`
+Restored fields are kept to the record's own and capped HERE: `.describe` enforces
+`maxFields`, but `Checkpoint.loadBytes` is deliberately total on arbitrary bytes, so a corrupt
+or forged checkpoint could carry any list, and a checkpoint an older linger saved holds the
+labels it had, any key. Only `recordField`s are restored, and over the cap, the first
+`maxFields` of them. `boot_wf` is the claim; composed with `run_wf`
 (`run_boot_wf`), every state the daemon can hold is well-formed. -/
-def State.boot (vt : Vt.Vt) (labels : List (String × String)) (metaKv : List (String × String)) :
-    State := { vt, labels := labels.take maxLabels, metaKv }
+def State.boot (vt : Vt.Vt) (fields : List (String × String)) (metaKv : List (String × String)) :
+    State := { vt, fields := (fields.filter (recordField ·.1)).take maxFields, metaKv }
 
 /-- The emulator a daemon boots with: a restored checkpoint's, else a fresh 80×24 screen. -/
 def bootVt (restored : Option Vt.Vt) : Vt.Vt := restored.getD (Vt.Vt.init 80 24)
@@ -186,15 +187,9 @@ def bootVt (restored : Option Vt.Vt) : Vt.Vt := restored.getD (Vt.Vt.init 80 24)
 /-- How long output counts as happening right now (`⣷`): from the tick that saw it. -/
 def freshMs : Nat := 1000
 
-/-- A label payload decoded as text: a bare key for `.labelUnset`, a `k=v` pair
-for `.labelSet`. Invalid UTF-8 becomes `""`, which is the safe direction —
-`.labelSet` rejects an empty key, so a corrupt payload can neither set nor unset
-anything.
-
-One decode shared by both arms, so they cannot drift about what a key *is*: a
-`.labelSet` that decoded differently from `.labelUnset` would leave a label no
-`unset` could reach. -/
-private def labelText (bs : List UInt8) : String :=
+/-- A `.describe` payload decoded as text. Invalid UTF-8 becomes `""`, which clears the
+description: a corrupt payload sets no text it did not carry. -/
+private def descriptionText (bs : List UInt8) : String :=
   String.fromUTF8? (ByteArray.mk bs.toArray) |>.getD ""
 
 /-! ## Helpers -/
@@ -404,19 +399,19 @@ def infoFields (s : State) : List (String × String) :=
     noticeFields s.notice ++
     finishedFields s.commands.finished ++
     presentFields s.observed s.lastOutMs ++
-    s.labels.map (fun (k, v) => (s!"label.{k}", v))
+    s.fields.filter (recordField ·.1)
 
 /-- Frame the fields as `k` TAB `v` LF records.
 
 **The two framing bytes are emitted structurally, and nothing else can produce
 them.** Every character of a key or a value goes through `Render.textChar` and
 `Render.utf8s`, which replace a C0 control — tab and newline included — with
-U+FFFD, and a C1 control too, since `info`, `get` and `ls --porcelain` print these
-records to a terminal. So a label value containing a newline shows a replacement
+U+FFFD, and a C1 control too, since `ls --porcelain` prints these records to a terminal. So
+a description containing a newline shows a replacement
 character instead of **forging an extra record**, and in particular cannot forge a
 `status`/`state` pair that the listing would then display as a session's state.
 
-Established here rather than at `.labelSet`, for the same reason `Render.gridAnsi`
+Established here rather than at `.describe`, for the same reason `Render.gridAnsi`
 establishes its own pen instead of trusting its callers: a guard at the emit site
 needs no invariant about where the field came from, and it covers fields nobody has
 added yet. `Status.name_clean` proves the *status* column carries no framing byte;
@@ -517,7 +512,7 @@ private def broadcast (s : State) (bytes : List UInt8) : List (Effect Plan) :=
 /-- Handle one client message; one query per read is answered (`Client.answered`). A connection's
 rights are its mode alone: a watcher, a client that attached read-only, may look and leave,
 whatever its size: its keystrokes are dropped and its requests to disconnect every client, end
-the session or change labels are refused. -/
+the session or describe it are refused. -/
 private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Plan) :=
   match m with
   | .attach mode cols rows =>
@@ -593,33 +588,18 @@ private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Pla
     match s.ended with
     | some ending => (s, ending.told.map (Effect.send c.id))
     | none => (s.setClient { c with waiting := true }, [])
-  | .labelSet kv =>
+  | .describe text =>
     if c.mode == .readOnly then (s, [.send c.id (.err "read-only".toUTF8.toList)])
     else
-      let parts := (labelText kv).splitOn "="
-      let k := parts.headD ""
-      if k.isEmpty then (s, [.send c.id (.err "empty label key".toUTF8.toList)])
+      let text := descriptionText text
+      let fields :=
+        s.fields.filter (·.1 != "description") ++
+          if text.isEmpty then [] else [("description", text)]
+      if fields.length > maxFields then (s, [.send c.id (.err "too many fields".toUTF8.toList)])
       else
-        let v := String.intercalate "=" parts.tail
-        let labels := (s.labels.filter (·.1 != k)) ++ [(k, v)]
-        if labels.length > maxLabels then (s, [.send c.id (.err "too many labels".toUTF8.toList)])
-        else
-          ({ s with
-              labels, dirty := true },
-            [.send c.id .done])
-  | .labelUnset k =>
-    if c.mode == .readOnly then (s, [.send c.id (.err "read-only".toUTF8.toList)])
-    else
-      let txt := labelText k
-      ({ s with
-          labels := s.labels.filter (·.1 != txt), dirty := true },
-        [.send c.id .done])
-  | .labelClear =>
-    if c.mode == .readOnly then (s, [.send c.id (.err "read-only".toUTF8.toList)])
-    else
-      ({ s with
-          labels := [], dirty := true },
-        [.send c.id .done])
+        ({ s with
+            fields, dirty := true },
+          [.send c.id .done])
   | .upgrade exe =>
     -- a watcher may not replace the daemon, nor may a client that streams the session; the
     -- runtime carries one upgrade out at a time and refuses the others it is asked for meanwhile

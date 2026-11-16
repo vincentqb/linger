@@ -81,11 +81,11 @@ private def Fixture.cwdIs (f : Fixture) (name : String) (dir : System.FilePath) 
 private def Fixture.savedIn (f : Fixture) (name : String) (dir : System.FilePath) : IO Bool :=
   Linger.Import.Suites.Recipes.savedIn f.env.dir name dir
 
-/-- The label `key` that session `name`'s checkpoint holds. -/
+/-- The field `key` that session `name`'s checkpoint holds. -/
 private def Fixture.savedLabel (f : Fixture) (name key : String) : IO (Option String) := do
   match ← (IO.FS.readBinFile (System.FilePath.mk f.env.dir / s!"{name}.ckpt")).toBaseIO with
   | .ok bytes =>
-    return (Linger.Session.Checkpoint.loadBytes bytes).bind (·.labels.lookup key)
+    return (Linger.Session.Checkpoint.loadBytes bytes).bind (·.fields.lookup key)
   | .error _ =>
     return none
 
@@ -100,7 +100,7 @@ private def Fixture.start (f : Fixture) (name : String) (dir : System.FilePath) 
     throw (IO.userError s!"session did not start in {dir}: {name}: {err}")
 
 private def Fixture.seed (f : Fixture) (name cwd : String) : IO Unit := do
-  let ck : Ckpt Terminal.Vt.Vt := { vt := Terminal.Vt.Vt.init 20 5, cwd, labels := [] }
+  let ck : Ckpt Terminal.Vt.Vt := { vt := Terminal.Vt.Vt.init 20 5, cwd, fields := [] }
   IO.FS.writeBinFile (System.FilePath.mk f.env.dir / s!"{name}.ckpt") (saveBytes ck)
 
 private def Fixture.importText (f : Fixture) (text : String) : IO (UInt32 × String × String) := do
@@ -629,7 +629,7 @@ private def Fixture.row (f : Fixture) (name : String) : IO String := do
   return ((out.splitOn "\n").find? fun line => (line.splitOn " ")[1]? == some name).getD ""
 
 /-- A session an import made before a row had a description: its checkpoint, in the format a
-linger of then wrote, holds the import's labels and no description. Resumed, its row shows the
+linger of then wrote, holds the import's provenance and no description. Resumed, its row shows the
 description today's import gives, the window's name; `describe` with no text clears it, and a
 crash and a resume keep it cleared. -/
 private def olderImport (f : Fixture) : IO Bool := do
@@ -642,16 +642,16 @@ private def olderImport (f : Fixture) : IO Bool := do
   let today := Linger.Import.Resurrect.checkpoint pane none
   -- the record of a linger older than descriptions: the same layout under the tag 3
   let old : Ckpt Terminal.Vt.Vt :=
-    { today with labels := today.labels.filter (·.1 != "description") }
+    { today with fields := today.fields.filter (·.1 != "description") }
   f.own pane.name
   let checkpoint := System.FilePath.mk f.env.dir / s!"{pane.name}.ckpt"
   IO.FS.writeBinFile checkpoint ((saveBytes old).set! 4 3)
   unless ← f.resume pane.name do
     throw (IO.userError "older import did not resume")
-  let described ← f.info pane.name "label.description"
+  let described ← f.info pane.name "description"
   let row ← f.row pane.name
   let (cleared, _, _) ← f.cli #["describe", pane.name]
-  let after ← f.info pane.name "label.description"
+  let after ← f.info pane.name "description"
   let some shellPid ← f.pid pane.name | throw (IO.userError "fixture shell pid is missing")
   let (psCode, parent, _) ←
     process { cmd := "ps", args := #["-o", "ppid=", "-p", toString shellPid] }
@@ -676,7 +676,7 @@ private def olderImport (f : Fixture) : IO Bool := do
     waitFor 5000 do
         let some bytes ← readBytes checkpoint | return false
         return (loadBytes bytes).any fun ck =>
-            ck.labels.lookup "description" == none && ck.labels.lookup "tmux.window" == some "4"
+            ck.fields.lookup "description" == none && ck.fields.lookup "tmux.window" == some "4"
   Os.Shell.kill daemon.toUInt32 9
   unless
     ←
@@ -687,8 +687,8 @@ private def olderImport (f : Fixture) : IO Bool := do
   if ← Os.Shell.alive shellPid then
     Os.Shell.kill shellPid 9
   let resumed ← f.resume pane.name
-  let again ← f.info pane.name "label.description"
-  let window ← f.info pane.name "label.tmux.window-title"
+  let again ← f.info pane.name "description"
+  let window ← f.info pane.name "tmux.window-title"
   return described == some "Old window" && has row "Old window" && cleared == 0 && after.isNone &&
       saved &&
       resumed &&
@@ -885,7 +885,7 @@ private def captureImport (f : Fixture) : IO Bool := do
   let labels ←
     ["tmux.session", "tmux.window", "tmux.pane", "tmux.title", "tmux.command", "tmux.saved-command",
             "tmux.window-title", "tmux.capture", "description"].mapM
-        (fun key => f.info "captured-w3-p0" ("label." ++ key))
+        (fun key => f.info "captured-w3-p0" key)
   let barrier := f.root / "shell-ready"
   let secondBarrier := f.root / "second-shell-ready"
   let (ran, _, _) ← f.cli #["send", "captured-w3-p0", s!"printf ready > '{barrier}'\n"]
@@ -941,7 +941,7 @@ private def offlineCapture (f : Fixture) : IO Bool := do
   let path := System.FilePath.mk f.env.dir / s!"{pane.name}.ckpt"
   let before ← readBytes path
   let savedCommand :=
-    (before.bind loadBytes).bind (fun checkpoint => checkpoint.labels.lookup "tmux.saved-command")
+    (before.bind loadBytes).bind (fun checkpoint => checkpoint.fields.lookup "tmux.saved-command")
   let (screenRc, screen, screenErr) ← f.cli #["capture", pane.name]
   let (historyRc, history, historyErr) ← f.cli #["capture", "--history", pane.name]
   let again ←

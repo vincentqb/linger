@@ -143,41 +143,37 @@ example :
      sB.clients.isEmpty && effsB.all (· == .checkpoint)
        && (sB.vt.getRow 0 == sA.vt.getRow 0)) = true := by native_decide
 
-/-- info replies with meta and labels; labels round-trip. -/
+/-- info replies with meta and the record's fields; a description round-trips. -/
 example :
     (let (_, effs) :=
         run
-          [.connected 1, .bytes 1 (encode (.labelSet "env=dev".toUTF8.toList)),
-            .bytes 1 (encode .info)]
+          [.connected 1, .bytes 1 (encode (.describe "dev".toUTF8.toList)), .bytes 1 (encode .info)]
      effs.any
         (fun e =>
           match e with
           | .send 1 (.infoReply bs) =>
             let txt := String.fromUTF8? (ByteArray.mk bs.toArray) |>.getD ""
-            txt.contains "label.env\tdev"
+            txt.contains "description\tdev"
           | _ => false)) =
       true := by
   native_decide
 
-/-- A C1 control in a label (U+009B, the 8-bit CSI) reaches `infoText` as U+FFFD, the
-bytes 239 191 189: `info`, `get` and `ls --porcelain` print these records. -/
+/-- A C1 control in a description (U+009B, the 8-bit CSI) reaches `infoText` as U+FFFD, the
+bytes 239 191 189: `ls --porcelain` prints these records. -/
 example :
-    (let (s, _) := run [.connected 1, .bytes 1 (encode (.labelSet "k=a\u009b31mb".toUTF8.toList))]
+    (let (s, _) := run [.connected 1, .bytes 1 (encode (.describe "a\u009b31mb".toUTF8.toList))]
      let txt := String.fromUTF8? (ByteArray.mk (infoText s).toArray) |>.getD ""
-     txt.contains "label.k\ta\uFFFD31mb" && !txt.contains '\u009b') =
+     txt.contains "description\ta\uFFFD31mb" && !txt.contains '\u009b') =
       true := by
   native_decide
 
-/-- Each label fits an incoming wire frame; their combined info need not. -/
-def largeInfoLabels (count : Nat) : List (String × String) :=
+/-- Each restored field fits an incoming wire frame; their combined info need not. -/
+def largeInfoFields (count : Nat) : List (String × String) :=
   let value := String.ofList (List.replicate (Wire.maxPayload / 2) 'x')
-  (List.range count).map (fun i => (toString i, value))
+  (List.range count).map (fun i => (s!"tmux.{i}", value))
 
-def storeInfoLabels (labels : List (String × String)) : State × List (Effect Plan) :=
-  run
-    (.connected 1 ::
-      labels.map (fun (k, v) => .bytes 1 (encode (.labelSet s!"{k}={v}".toUTF8.toList))))
-    (State.boot (Vt.Vt.init 20 5) [] [("name", "t")])
+def storeInfoFields (fields : List (String × String)) : State × List (Effect Plan) :=
+  run [.connected 1] (State.boot (Vt.Vt.init 20 5) fields [("name", "t")])
 
 def infoReplies (effs : List (Effect Plan)) : List Msg :=
   effs.filterMap
@@ -186,17 +182,16 @@ def infoReplies (effs : List (Effect Plan)) : List Msg :=
       | .send 1 m => some m
       | _ => none)
 
-/-- Two legal labels make an `info` reply longer than one frame may carry. The real
-wire decoder must accept the entire reply, including every byte of both labels. -/
+/-- Two restored fields make an `info` reply longer than one frame may carry. The real
+wire decoder must accept the entire reply, including every byte of both fields. -/
 example :
-    (let labels := largeInfoLabels 2
-     let (s, acks) := storeInfoLabels labels
+    (let fields := largeInfoFields 2
+     let (s, _) := storeInfoFields fields
       let (after, effs) := step s (.bytes 1 (encode .info))
       let msgs := infoReplies effs
       let (dec, received) := Wire.decode (msgs.flatMap encode)
-      labels.all (fun (k, v) => s!"{k}={v}".toUTF8.size ≤ Wire.maxPayload) && s.labels == labels &&
-        acks == List.replicate labels.length (.send 1 .done) &&
-        after.labels == labels &&
+      fields.all (fun (k, v) => s!"{k}={v}".toUTF8.size ≤ Wire.maxPayload) && s.fields == fields &&
+        after.fields == fields &&
         Wire.maxPayload < (infoText s).length &&
         (infoText s).length < infoReplyCap &&
         msgs.length > 2 &&
@@ -213,15 +208,14 @@ example :
       true := by
   native_decide
 
-/-- Many independently accepted labels can exceed the whole-answer policy.
-Refuse that request without sending a prefix, reporting done, or losing labels. -/
+/-- Many restored fields can exceed the whole-answer policy.
+Refuse that request without sending a prefix, reporting done, or losing fields. -/
 example :
-    (let labels := largeInfoLabels 9
-     let (s, acks) := storeInfoLabels labels
+    (let fields := largeInfoFields 9
+     let (s, _) := storeInfoFields fields
       let (after, effs) := step s (.bytes 1 (encode .info))
-      labels.all (fun (k, v) => s!"{k}={v}".toUTF8.size ≤ Wire.maxPayload) && s.labels == labels &&
-        acks == List.replicate labels.length (.send 1 .done) &&
-        after.labels == labels &&
+      fields.all (fun (k, v) => s!"{k}={v}".toUTF8.size ≤ Wire.maxPayload) && s.fields == fields &&
+        after.fields == fields &&
         infoReplyCap < (infoText s).length &&
         (match infoReplies effs with
         | [.err bs] =>
@@ -267,12 +261,11 @@ example :
       true := by
   native_decide
 
-/-! ### `detach-all` and label removal
+/-! ### `detach-all` and describing
 
-`onMsg_detachAll` / `onMsg_labelUnset` / `onMsg_labelClear` pin the effect lists
-as equations; these run the same three verbs through the real decoder so the
-promise is checked end to end, and they are what fails if an arm is rewired
-rather than merely reshaped. -/
+`onMsg_detachAll` / `onMsg_describe` pin the effect lists as equations; these run the same
+verbs through the real decoder so the promise is checked end to end, and they are what fails if
+an arm is rewired rather than merely reshaped. -/
 
 /-- **`detach-all` closes the attached clients and spares a control connection.**
 Clients 1 and 2 attach; client 3 never does — it is the `linger detach` control
@@ -287,15 +280,15 @@ example :
        && effs.contains (.send 3 .done)) = true := by native_decide
 
 /-- A close requested by an attached sender stops the rest of its decoded
-packet before it can change labels, write input or resize the child. -/
+packet before it can describe the session, write input or resize the child. -/
 example :
     (let s := (run [.connected 1, .bytes 1 (encode (.attach .writable 20 5))]).1
      let packet :=
-        encode .detachAll ++ encode (.labelSet "after=detach".toUTF8.toList) ++
+        encode .detachAll ++ encode (.describe "after detach".toUTF8.toList) ++
           encode (.input [0x78]) ++
           encode (.resize 21 6)
       let r := step s (.bytes 1 packet)
-      r.1.labels.isEmpty && r.1.vt.colCount == 20 && r.1.vt.rowCount == 5 &&
+      r.1.fields.isEmpty && r.1.vt.colCount == 20 && r.1.vt.rowCount == 5 &&
         r.2 == [.close 1, .send 1 .done]) =
       true := by
   native_decide
@@ -303,8 +296,8 @@ example :
 /-- Detaching someone else does not stop a control connection's next command. -/
 example :
     (let s := (run [.connected 1, .bytes 1 (encode (.attach .writable 20 5)), .connected 2]).1
-     let r := step s (.bytes 2 (encode .detachAll ++ encode (.labelSet "after=control".toUTF8.toList)))
-     r.1.labels == [("after", "control")] &&
+     let r := step s (.bytes 2 (encode .detachAll ++ encode (.describe "after control".toUTF8.toList)))
+     r.1.fields == [("description", "after control")] &&
        r.2 == [.close 1, .send 2 .done, .send 2 .done]) = true := by
   native_decide
 
@@ -313,9 +306,9 @@ it. -/
 example :
     (let s := (run [.connected 1]).1
      let packet :=
-        encode .kill ++ encode (.labelSet "after=kill".toUTF8.toList) ++ encode (.input [0x78])
+        encode .kill ++ encode (.describe "after kill".toUTF8.toList) ++ encode (.input [0x78])
       let r := step s (.bytes 1 packet)
-      r.1.labels.isEmpty && r.2 == [.stopProgram, .close 1]) =
+      r.1.fields.isEmpty && r.2 == [.stopProgram, .close 1]) =
       true := by
   native_decide
 
@@ -333,36 +326,26 @@ example :
       true := by
   native_decide
 
-/-- **`unset` removes exactly the named key**: `env` goes, `role` stays. A whole-
-store clear would satisfy "env is gone" too, which is why `role` is here. -/
+/-- **`describe` replaces the description and keeps every other field**: the provenance a
+restored checkpoint gave stays, and a second description replaces the first. -/
 example :
     (let (s, _) :=
         run
-          [.connected 1, .bytes 1 (encode (.labelSet "env=dev".toUTF8.toList)),
-            .bytes 1 (encode (.labelSet "role=web".toUTF8.toList)),
-            .bytes 1 (encode (.labelUnset "env".toUTF8.toList))]
-     s.labels == [("role", "web")]) =
+          [.connected 1, .bytes 1 (encode (.describe "first".toUTF8.toList)),
+            .bytes 1 (encode (.describe "second".toUTF8.toList))]
+          (State.boot (Vt.Vt.init 20 5) [("tmux.pane", "0")] [])
+     s.fields == [("tmux.pane", "0"), ("description", "second")]) =
       true := by
   native_decide
 
-/-- **`clear` empties the store.** -/
-example :
-    (let (s, _) :=
-        run
-          [.connected 1, .bytes 1 (encode (.labelSet "env=dev".toUTF8.toList)),
-            .bytes 1 (encode (.labelSet "role=web".toUTF8.toList)), .bytes 1 (encode .labelClear)]
-     s.labels.isEmpty) =
-      true := by
-  native_decide
-
-/-- Unsetting a key that was never set is a no-op, not an error: the store is
-untouched and no `.err` is sent, so `linger unset` is idempotent for a script. -/
+/-- **An empty description clears it**, and only it. -/
 example :
     (let (s, effs) :=
         run
-          [.connected 1, .bytes 1 (encode (.labelSet "env=dev".toUTF8.toList)),
-            .bytes 1 (encode (.labelUnset "nosuch".toUTF8.toList))]
-     s.labels == [("env", "dev")] &&
+          [.connected 1, .bytes 1 (encode (.describe "first".toUTF8.toList)),
+            .bytes 1 (encode (.describe []))]
+          (State.boot (Vt.Vt.init 20 5) [("tmux.pane", "0")] [])
+     s.fields == [("tmux.pane", "0")] &&
         !effs.any
             (fun e =>
               match e with
@@ -371,15 +354,23 @@ example :
       true := by
   native_decide
 
-/-- An unset with an **invalid UTF-8** payload decodes to `""`, which matches no
-key `.labelSet` can store (it rejects an empty key) — so the store survives. This
-is the branch `onMsg_labelUnset`'s `getD ""` exists for. -/
+/-- A description with an **invalid UTF-8** payload decodes to `""`, which clears it: a corrupt
+payload sets no text it did not carry. -/
 example :
     (let (s, _) :=
         run
-          [.connected 1, .bytes 1 (encode (.labelSet "env=dev".toUTF8.toList)),
-            .bytes 1 (encode (.labelUnset [0xFF, 0xFE]))]
-     s.labels == [("env", "dev")]) =
+          [.connected 1, .bytes 1 (encode (.describe "dev".toUTF8.toList)),
+            .bytes 1 (encode (.describe [0xFF, 0xFE]))]
+     s.fields.isEmpty) =
+      true := by
+  native_decide
+
+/-- A booted session keeps only the record's own fields: a label an older linger saved is not
+restored, and is never reported as a field of its own. -/
+example :
+    (let s := State.boot (Vt.Vt.init 20 5) [("pid", "1"), ("description", "d"), ("env", "x")] []
+     s.fields == [("description", "d")] &&
+        !(String.fromUTF8? (ByteArray.mk (infoText s).toArray) |>.getD "").contains "pid\t1") =
       true := by
   native_decide
 
@@ -445,7 +436,7 @@ example :
         behind s2 == 0
         -- and the screen itself is untouched by being looked at
         && s2.vt.grid == s1.vt.grid &&
-        s2.labels == s1.labels) =
+        s2.fields == s1.fields) =
       true := by
   native_decide
 
@@ -711,10 +702,10 @@ example :
       true := by
   native_decide
 
-/-- Quiet label edits are persistent changes even without any new pty output. -/
+/-- Quiet descriptions are persistent changes even without any new pty output. -/
 example :
-    ([Msg.labelSet "a=new".toUTF8.toList, .labelUnset "a".toUTF8.toList, .labelClear].all fun msg =>
-        let s := { s0 with labels := [("a", "old")] }
+    ([Msg.describe "new".toUTF8.toList, .describe []].all fun msg =>
+        let s := { s0 with fields := [("description", "old")] }
         let changed := (onMsg s { id := 1 } msg).1
         (step changed (.tick ckptIntervalMs)).2.contains .checkpoint) =
       true := by
@@ -799,24 +790,24 @@ example :
 /-! ### Listing integrity — the forged listing record
 
 The forged-record attack, as a fixture. `infoText` frames
-records as `k` TAB `v` LF, `.labelSet` applies no filter and `linger set` passes the
-value through — so a label value carrying a newline and a tab would forge an **extra
-record**, including a `status`/`state` pair that `linger list` would then display as the
+records as `k` TAB `v` LF, `.describe` applies no filter and `linger describe` passes the
+text through — so a description carrying a newline and a tab would forge an **extra
+record**, including a `status`/`state` pair that `linger ls` would then display as the
 session's state, if `infoText` let the framing bytes through.
 
 `infoText_records` proves it cannot happen. -/
 
-def forged : State := { s0 with labels := [("x", "a\nstatus\tlive")] }
+def forged : State := { s0 with fields := [("description", "a\nstatus\tlive")] }
 
 /-- The injected controls are replaced by U+FFFD, not dropped. -/
 example : (infoText forged).any (· == 0xEF) = true := by native_decide
 
-/-- **Boot caps restored labels at `maxLabels`**, at the door: `.labelSet` enforces the cap
-per message, and a forged checkpoint's 70-label list cannot boot past it. -/
+/-- **Boot caps restored fields at `maxFields`**, at the door: `.describe` enforces the cap,
+and a forged checkpoint's 70-field list cannot boot past it. -/
 example :
-    (State.boot (Vt.Vt.init 20 5) ((List.range 70).map (fun i => (toString i, "v")))
-          []).labels.length ==
-      maxLabels := by
+    (State.boot (Vt.Vt.init 20 5) ((List.range 70).map (fun i => (s!"tmux.{i}", "v")))
+          []).fields.length ==
+      maxFields := by
   native_decide
 
 /-- Focus reports: a program that enabled focus reporting hears `CSI I` when the first client

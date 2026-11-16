@@ -783,8 +783,8 @@ private def usageChecks (e : Env) : IO Unit := do
           named.all same &&
           named.all (field · "state" == some "live") &&
           named.all (field · "cmd" == some "/bin/cat") &&
-          field (named.getD 1 []) "label.description" == some "first one" &&
-          (field (named.getD 0 []) "label.description").isNone &&
+          field (named.getD 1 []) "description" == some "first one" &&
+          (field (named.getD 0 []) "description").isNone &&
           humanRc == 0 &&
           has human "named-one" &&
           has human "first one" &&
@@ -1378,14 +1378,14 @@ private def statusChecks (e : Env) : IO Unit := do
       "picker redraws changed metadata with unchanged names and preserves query, target and all details"
       fun f => do
       f.listing
-          "name\tbeta\nstatus\tworking\ncmd\tother\nname\talpha\nstatus\tidle\ncmd\tsh\npid\t1\nfg\told\nfgpid\t7\nlabel.description\tbefore\nclients\t1\n"
+          "name\tbeta\nstatus\tworking\ncmd\tother\nname\talpha\nstatus\tidle\ncmd\tsh\npid\t1\nfg\told\nfgpid\t7\ndescription\tbefore\nclients\t1\n"
       withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "a" "a" do
             return false
           let before ← s.capture "metadata-before"
           let start ← s.mark
           f.listing
-              "name\tbeta\nstatus\tworking\ncmd\tother\nname\talpha\nstatus\texited-bad\ncmd\tsh\npid\t2\nfg\tnew\nfgpid\t8\nlabel.description\tafter\nclients\t3\n"
+              "name\tbeta\nstatus\tworking\ncmd\tother\nname\talpha\nstatus\texited-bad\ncmd\tsh\npid\t2\nfg\tnew\nfgpid\t8\ndescription\tafter\nclients\t3\n"
           unless ← s.until "after   new" start do
             return false
           let after ← s.capture "metadata-after"
@@ -1405,7 +1405,7 @@ private def statusChecks (e : Env) : IO Unit := do
       "picker keeps hostile metadata out of terminal controls while retaining ordinary details"
       fun f => do
       f.listing
-          "name\talpha\nstatus\tworking\ncmd\tvi\x1b[31m\u009b31m\nlabel.description\tok\x07\nclients\t2\nname\tbeta\n"
+          "name\talpha\nstatus\tworking\ncmd\tvi\x1b[31m\u009b31m\ndescription\tok\x07\nclients\t2\nname\tbeta\n"
       withPrompt f.picker #[] fun s => do
           let vt ← s.capture "metadata-controls"
           -- beta reports no status, so it asks for someone and comes first
@@ -1780,13 +1780,13 @@ private def refreshChecks (e : Env) : IO Unit := do
       "automatic refresh keeps each column's width, cutting a longer value, until Ctrl-L lays the rows out again"
       fun f => do
       f.listing
-          "name\talpha\npid\t1\ncmd\tsh\nlabel.description\tab\nname\tbeta\npid\t1\ncmd\tsh\nlabel.description\tcd\n"
+          "name\talpha\npid\t1\ncmd\tsh\ndescription\tab\nname\tbeta\npid\t1\ncmd\tsh\ndescription\tcd\n"
       withPrompt f.picker #[] fun s => do
           unless ← s.untilRow "? alpha ab" do
             return false
           let start ← s.mark
           f.listing
-              "name\talpha\npid\t1\ncmd\tsh\nlabel.description\tabcdefgh\nname\tbeta\npid\t1\ncmd\tsh\nlabel.description\tcd\n"
+              "name\talpha\npid\t1\ncmd\tsh\ndescription\tabcdefgh\nname\tbeta\npid\t1\ncmd\tsh\ndescription\tcd\n"
           let kept ← s.untilRow "? alpha a…" start
           let pressed ← s.mark
           s.text "\x0c"
@@ -2510,8 +2510,8 @@ private def savedChecks (e : Env) : IO Unit := do
             return false
           let restoredScreen ← s.until "chosen saved screen"
           let history ← withLaunchLock (owned.out #["capture", "--history", "saved-chosen"])
-          let savedCommand ← withLaunchLock (owned.info "saved-chosen" "label.tmux.saved-command")
-          let capture ← withLaunchLock (owned.info "saved-chosen" "label.tmux.capture")
+          let savedCommand ← withLaunchLock (owned.info "saved-chosen" "tmux.saved-command")
+          let capture ← withLaunchLock (owned.info "saved-chosen" "tmux.capture")
           let start ← s.mark
           s.text "printf 'capture-shell-%s\\n' ready\r"
           let shell ← s.until "capture-shell-ready" start
@@ -2632,7 +2632,7 @@ private def savedChecks (e : Env) : IO Unit := do
               (← beforeAttach s) &&
               (← readText (f.root / "attach-cwd")) == original.toString &&
               saved.map (·.cwd) == some original.toString &&
-              saved.bind (·.labels.lookup "tmux.saved-command") == some originalCommand &&
+              saved.bind (·.fields.lookup "tmux.saved-command") == some originalCommand &&
               (← f.nativeNames) == ["saved-chosen"]
   checkSaved e "recreated-cwd"
       "tmux select final attach recreates a vanished session in the displayed cwd" fun f owned => do

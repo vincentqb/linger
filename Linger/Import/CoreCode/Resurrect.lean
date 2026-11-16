@@ -166,7 +166,7 @@ private def commandNotice (details : Details) : String :=
   if command.isEmpty then ""
   else "\x1b[0m\x1b(B\x0f\x1b[?7h\r\nSaved foreground command: " ++ diagnostic command ++ "\r\n"
 
-/-- The labels that record the pane: its source identity, title and exact commands, and whether
+/-- The provenance fields that record the pane: its source identity, title and exact commands, and whether
 its contents were captured. -/
 def paneLabels (pane : Pane) (contents : Option String) : List (String × String) :=
   [("tmux.session", pane.details.session), ("tmux.window", pane.details.window),
@@ -176,7 +176,7 @@ def paneLabels (pane : Pane) (contents : Option String) : List (String × String
     ("tmux.capture", if contents.isSome then "saved" else "none")]
 
 /-- Seed screen and scrollback through the terminal's public parser, and retain
-exact commands and source identity in labels, with the description the import gives them, the
+exact commands and source identity in provenance fields, with the description the import gives them, the
 window's name (`Checkpoint.importDescription`), which an older import's record also reads with.
 Quiesce captured controls before appending the informational command notice. -/
 def checkpoint (pane : Pane) (contents : Option String) :
@@ -187,7 +187,7 @@ def checkpoint (pane : Pane) (contents : Option String) :
               (captureBytes (contents.getD ""))).quiesce.feed
           (commandNotice pane.details).toUTF8.toList).quiesce,
     cwd := pane.dir,
-    labels :=
+    fields :=
       paneLabels pane contents ++
         Linger.Session.Checkpoint.importDescription (paneLabels pane contents) }
 

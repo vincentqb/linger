@@ -191,16 +191,16 @@ def rObservation : R Observation := fun l => do
   let (foreground, l) ← rOpt rForeground l
   some ({ nowMs, wallS, login, foreground }, l)
 
-/-- The labels or the metadata of a session, as a checkpoint writes its labels. -/
+/-- The record's fields or the metadata of a session, as a checkpoint writes its fields. -/
 def wFields (kvs : List (String × String)) : List UInt8 := wList (wPair wStr wStr) kvs
 
 /-- Inverse of `wFields`. -/
 def rFields : R (List (String × String)) := fun l => rList (rPair rStr rStr) l
 
-/-- The terminal, as the session's checkpoint with no directory and no labels, whose codec keeps
+/-- The terminal, as the session's checkpoint with no directory and no fields, whose codec keeps
 every field of the emulator but the partial parser state. -/
 def wTerminal (vt : Vt.Vt) : List UInt8 :=
-  wBytes (Checkpoint.saveBytes { vt, cwd := "", labels := [] }).data.toList
+  wBytes (Checkpoint.saveBytes { vt, cwd := "", fields := [] }).data.toList
 
 /-- Inverse of `wTerminal` for a terminal whose parser is quiet (`rTerminal_wTerminal`). -/
 def rTerminal : R Vt.Vt := fun l => do
@@ -210,7 +210,7 @@ def rTerminal : R Vt.Vt := fun l => do
 
 /-- The session's state, every field in the order the state declares them. -/
 def wState (s : State) : List UInt8 :=
-  wTerminal s.vt ++ wScan s.scan ++ wList wClient s.clients ++ wFields s.labels ++
+  wTerminal s.vt ++ wScan s.scan ++ wList wClient s.clients ++ wFields s.fields ++
     wFields s.metaKv ++
     wOpt wEnding s.ended ++
     wBool s.dirty ++
@@ -232,7 +232,7 @@ def rState : R State := fun l => do
   let (vt, l) ← rTerminal l
   let (scan, l) ← rScan l
   let (clients, l) ← rList rClient l
-  let (labels, l) ← rFields l
+  let (fields, l) ← rFields l
   let (metaKv, l) ← rFields l
   let (ended, l) ← rOpt rEnding l
   let (dirty, l) ← rBool l
@@ -249,7 +249,7 @@ def rState : R State := fun l => do
   let (lastOutMs, l) ← rOpt rNat l
   let (observed, l) ← rOpt rObservation l
   some
-    ({ vt, scan, clients, labels, metaKv, ended, dirty, lastCkptMs, attachSeq, outSeq, lookSeq,
+    ({ vt, scan, clients, fields, metaKv, ended, dirty, lastCkptMs, attachSeq, outSeq, lookSeq,
         asking, notice, running, finished, tickOutSeq, freshFlag, lastOutMs, observed },
       l)
 

@@ -41,7 +41,8 @@ theorem readU32_writeU32 (n : UInt32) : readU32 (writeU32 n) = n := by
 
 /-- An unassigned tag decodes to `unknown`, carrying its bytes forward untouched:
 the skip-don't-fail half of the round trip, naming the predicate that defines it. The retired tag 3
-is one: the attach of levels 1 and 2 reads as a message this version does not know. -/
+is one: the attach of levels 1 and 2 reads as a message this version does not know, as do the
+retired label requests, tags 11 to 13. -/
 theorem decodeMsg_unknown_of_not_knownTag (t : UInt8) (p : List UInt8) (h : knownTag t = false) :
     decodeMsg t p = .unknown t p := by
   fun_cases decodeMsg t p <;>
@@ -346,19 +347,24 @@ theorem fits_wf (m : Msg) (h : m.Fits) : m.WF := by
   | unknown t p =>
     obtain ⟨short, unassigned⟩ := h
     refine ⟨short, ?_⟩
-    rcases unassigned with rfl | above
+    rcases unassigned with rfl | ⟨low, high⟩ | above
     · exact (by decide : knownTag 3 = false)
-    · have high : ¬t ≤ 20 := by
+    · have inside : ¬(t < 11 ∨ 13 < t) := by
+        simp only [UInt8.lt_iff_toNat_lt, UInt8.reduceToNat, not_or, Nat.not_lt]
+        omega
+      simp only [knownTag, Bool.and_eq_false_iff, decide_eq_false_iff_not]
+      right
+      simpa using inside
+    · have high : ¬t ≤ 21 := by
         simp only [UInt8.le_iff_toNat_le, UInt8.reduceToNat]
         omega
       simp [knownTag, high]
   | input
   | output
   | infoReply
-  | labelSet
-  | labelUnset
   | err
-  | upgrade => exact ⟨h, trivial⟩
+  | upgrade
+  | describe => exact ⟨h, trivial⟩
   | resize
   | attach
   | exited => exact ⟨by simp [Msg.payload, writeU32, maxPayload], trivial⟩

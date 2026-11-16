@@ -1341,7 +1341,7 @@ for tie in \
     || fail "a start took a name outside Start.plan, or a resume started anything but a saved session: $tie"
 done
 for tie in \
-  'private def recoverFor [(]name : String[)] [(]create : Bool[)] : IO Daemon[.]Recovered := do match Linger[.]App[.]Recovery[.]decide create [(]← Resume[.]readCkpt name[)] with [|] [.]fresh => return [.]ok none [|] [.]resume ck => return [.]ok [(]some [(]ck[.]vt, ck[.]cwd, ck[.]labels[)][)] [|] [.]refuse answer =>' \
+  'private def recoverFor [(]name : String[)] [(]create : Bool[)] : IO Daemon[.]Recovered := do match Linger[.]App[.]Recovery[.]decide create [(]← Resume[.]readCkpt name[)] with [|] [.]fresh => return [.]ok none [|] [.]resume ck => return [.]ok [(]some [(]ck[.]vt, ck[.]cwd, ck[.]fields[)][)] [|] [.]refuse answer =>' \
   'match Linger[.]App[.]Recovery[.]decide true file with [|] [.]refuse answer => return some answer'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "a command started from a checkpoint other than as Recovery.decide says: $tie"
@@ -1574,12 +1574,12 @@ for bound in \
     || fail "a byte-array checkpoint reader stopped forwarding its bound: $bound"
 done
 # The checkpoint hooks are `IO`, so no theorem sees them use the proved codec: write the
-# session's terminal and labels, read through the observers the headline theorems name,
+# session's terminal and record fields, read through the observers the headline theorems name,
 # through `saveBytes` (`saveBytes_eq`), replacing the file whole and durably, and hand the file's
 # bytes to `Recovery.decide`, which decodes them with `loadBytes` (`recovery_exact`).
 resume_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/WorldCode/Resume.lean)"
 for tie in \
-  'let ck : Ckpt Terminal[.]Vt[.]Vt := [{] vt := st[.]terminal, cwd, labels := st[.]labelList [}] let bytes := saveBytes ck Os[.]Shell[.]replaceFile path bytes' \
+  'let ck : Ckpt Terminal[.]Vt[.]Vt := [{] vt := st[.]terminal, cwd, fields := st[.]fieldList [}] let bytes := saveBytes ck Os[.]Shell[.]replaceFile path bytes' \
   'if ![(]← System[.]FilePath[.]pathExists path[)] then return none try return some [(]← IO[.]FS[.]readBinFile path[)]'; do
   printf '%s\n' "$resume_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "checkpoint hooks bypassed the proved codec: $tie"

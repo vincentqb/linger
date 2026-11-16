@@ -32,7 +32,7 @@ private def largeScreen (marks : Bool := false) : Vt.Vt :=
 /-- `largeScreen marks` as a checkpoint load returns it, or `none` if loading refuses it. -/
 def acceptedScreen (marks : Bool := false) : Option Vt.Vt :=
   (Checkpoint.loadBytes
-        (Checkpoint.saveBytes { vt := largeScreen marks, cwd := "", labels := [] })).map
+        (Checkpoint.saveBytes { vt := largeScreen marks, cwd := "", fields := [] })).map
     (·.vt)
 
 /-- A small terminal whose title holds an escape, a newline and 9,100 multibyte characters, as a
@@ -43,6 +43,6 @@ def acceptedTitle : Option Vt.Vt :=
       (List.replicate 4095 'α' ++ ['\x1b'] ++ List.replicate 5 '𝄞' ++ ['\n'] ++
         List.replicate 5000 'β')
   let vt := { Vt.Vt.init 20 5 with title }
-  (Checkpoint.loadBytes (Checkpoint.saveBytes { vt, cwd := "", labels := [] })).map (·.vt)
+  (Checkpoint.loadBytes (Checkpoint.saveBytes { vt, cwd := "", fields := [] })).map (·.vt)
 
 end Linger.Session.Tests.Delivery

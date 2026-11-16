@@ -169,8 +169,7 @@ namespace Linger.Selector.Picker.Tests
 -- the command and the description repeat the query; the description, which names the command,
 -- hides it.
 #guard
-  match
-    parseSnapshot "name\taxab\nstatus\tworking\ncmd\tab\nlabel.description\tab\nclients\t2\n" with
+  match parseSnapshot "name\taxab\nstatus\tworking\ncmd\tab\ndescription\tab\nclients\t2\n" with
   | .ok snapshot =>
     let chars :=
       highlightedPresentation snapshot { snapshot.laidOut with nameCol := 8 } "ab"
@@ -184,7 +183,7 @@ namespace Linger.Selector.Picker.Tests
 
 -- The query finds a row by its description as by its name, and the snapshot carries each row's.
 #guard
-  match parseSnapshot "name\twork\nlabel.description\tfixing the parser\nname\tother\n" with
+  match parseSnapshot "name\twork\ndescription\tfixing the parser\nname\tother\n" with
   | .ok snapshot =>
     snapshot.descriptions == [("work", "fixing the parser")] &&
       items snapshot.candidates "parser" false snapshot.descriptions == [.existing "work"] &&

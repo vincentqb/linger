@@ -836,12 +836,12 @@ theorem load_save_live (c : Ckpt Vt.Vt) (h : LiveReachableVt c.vt) :
 
 /-- **A format version 3 checkpoint still loads.** The record version 3 wrote of a state a live
 session can hold, version 4's layout under its own tag, loads to that state with its parser
-quiesced and its labels as they meant then (`readLabels`). -/
+quiesced and its labels as they meant then (`readFields`). -/
 theorem load_saveV3_live (c : Ckpt Vt.Vt) (h : LiveReachableVt c.vt) :
     load (saveV3 c) =
       some
         { c with
-          vt := c.vt.quiesce, labels := readLabels 3 c.labels } := by
+          vt := c.vt.quiesce, fields := readFields 3 c.fields } := by
   rw [show saveV3 c = saveV3 c ++ [] from (List.append_nil _).symm]
   unfold load saveV3
   simp only [List.append_assoc]
@@ -855,13 +855,13 @@ theorem load_saveV3_live (c : Ckpt Vt.Vt) (h : LiveReachableVt c.vt) :
 
 /-- **A format version 2 checkpoint still loads.** The record version 2 wrote of a state a live
 session can hold loads to that state with its parser quiesced, the terminal's own cursor
-shape, which version 2 did not record, and its labels as they meant then (`readLabels`). -/
+shape, which version 2 did not record, and its labels as they meant then (`readFields`). -/
 theorem load_saveV2_live (c : Ckpt Vt.Vt) (h : LiveReachableVt c.vt) :
     load (saveV2 c) =
       some
         { c with
           vt := { c.vt.quiesce with modes := { c.vt.modes with cursorShape := 0 } },
-          labels := readLabels 2 c.labels } := by
+          fields := readFields 2 c.fields } := by
   rw [show saveV2 c = saveV2 c ++ [] from (List.append_nil _).symm]
   unfold load saveV2
   simp only [List.append_assoc]
@@ -874,12 +874,12 @@ theorem load_saveV2_live (c : Ckpt Vt.Vt) (h : LiveReachableVt c.vt) :
 /-- **A format version 1 checkpoint still loads.** The record version 1 wrote of a state a live
 session can hold loads to that state with its parser quiesced, both saved origin modes off, the
 DECSC slot's and the stashed screen's, and the terminal's own cursor shape, none of which
-version 1 recorded, and its labels as they meant then (`readLabels`). -/
+version 1 recorded, and its labels as they meant then (`readFields`). -/
 theorem load_saveV1_live (c : Ckpt Vt.Vt) (h : LiveReachableVt c.vt) :
     load (saveV1 c) =
       some
         { c with
-          labels := readLabels 1 c.labels
+          fields := readFields 1 c.fields
           vt :=
             { c.vt.quiesce with
               modes := { c.vt.modes with cursorShape := 0 },
@@ -1297,7 +1297,7 @@ theorem loadBytes_saveV3_live (c : Ckpt Vt.Vt) (h : LiveReachableVt c.vt) :
     loadBytes ⟨(saveV3 c).toArray⟩ =
       some
         { c with
-          vt := c.vt.quiesce, labels := readLabels 3 c.labels } := by
+          vt := c.vt.quiesce, fields := readFields 3 c.fields } := by
   rw [loadBytes_eq]
   exact load_saveV3_live c h
 

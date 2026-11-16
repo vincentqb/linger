@@ -232,7 +232,7 @@ def Linger.Session.State.terminal : State → Vt.Vt := sorry
 
 def Linger.Session.State.roster : State → List Client := sorry
 
-def Linger.Session.State.labelList : State → List (String × String) := sorry
+def Linger.Session.State.fieldList : State → List (String × String) := sorry
 
 def Linger.Session.State.scanner : State → Mediation.Scan := sorry
 
@@ -595,8 +595,10 @@ an attach or a resize in the read that asked for it, a size with no zero, so a t
 size yet never reaches the pty. Not claimed: which client sizes the session, the newest writable
 one whose terminal has a size, which the session fixtures and the attach suite check.
 `start` takes no name a session holds (`start_plan`); the daemon decides that holding the name,
-which has one owner (`one_owner`). The labels, the boot metadata and the terminal a session
-reports each have one source, and a listing names each row by its socket. A human row reads only
+which has one owner (`one_owner`). The fields of a session's record, its description and an
+import's provenance, change only when a client that may change the session describes it
+(`step_fields_described`); they, the boot metadata and the terminal a session reports each have
+one source, and a listing names each row by its socket. A human row reads only
 the fields `Listing.sources` names (`rowText_sources`): the user's description outranks the
 program's title, and the foreground program, which the operating system reports, shows only when
 that caption does not name it (`caption_precedence`); its glyph and name are never cut, the rest
@@ -644,44 +646,44 @@ theorem one_owner_rejects_socket :
                   s.active b = some right → left.Uses resource → right.Uses resource → a = b := by
   sorry
 
-theorem step_labels_requested (s : State) (ev : Event)
-    (changed : (Session.step s ev).1.labelList ≠ s.labelList) :
+theorem step_fields_described (s : State) (ev : Event)
+    (changed : (Session.step s ev).1.fieldList ≠ s.fieldList) :
     ∃ id chunk c,
       ev = .bytes id chunk ∧
         s.client? id = some c ∧
         (c.attached = false ∨ c.mode = .writable) ∧
-        ∃ m ∈ (c.decoder.feed chunk).2, m.ChangesLabels := by
+        ∃ m ∈ (c.decoder.feed chunk).2, m.Describes := by
   sorry
 
-@[kills step_labels_requested]
-theorem step_labels_requested_rejects_reset :
+@[kills step_fields_described]
+theorem step_fields_described_rejects_reset :
     ¬∀ (s : State) (ev : Event),
         ((fun (s : State) (_ : Event) =>
                   (State.boot s.terminal [] [], ([] : List (Effect Replay.Plan))))
-                s ev).1.labelList ≠
-            s.labelList →
+                s ev).1.fieldList ≠
+            s.fieldList →
           ∃ id chunk c,
             ev = .bytes id chunk ∧
               s.client? id = some c ∧
               (c.attached = false ∨ c.mode = .writable) ∧
-              ∃ m ∈ (c.decoder.feed chunk).2, m.ChangesLabels := by
+              ∃ m ∈ (c.decoder.feed chunk).2, m.Describes := by
   sorry
 
-theorem infoFields_boot (vt : Vt.Vt) (labels metadata : List (String × String)) (evs : List Event) :
+theorem infoFields_boot (vt : Vt.Vt) (fields metadata : List (String × String)) (evs : List Event) :
     ∃ rest,
-      Session.infoFields (Session.trace Session.step (State.boot vt labels metadata) evs).1 =
+      Session.infoFields (Session.trace Session.step (State.boot vt fields metadata) evs).1 =
         metadata ++ rest := by
   sorry
 
 @[kills infoFields_boot]
 theorem infoFields_boot_rejects_reboot :
-    ¬∀ (vt : Vt.Vt) (labels metadata : List (String × String)) (evs : List Event),
+    ¬∀ (vt : Vt.Vt) (fields metadata : List (String × String)) (evs : List Event),
         ∃ rest,
           Session.infoFields
               (Session.trace
                   (fun (_ : State) (_ : Event) =>
                     (State.boot (Vt.Vt.init 1 1) [] [], ([] : List (Effect Replay.Plan))))
-                  (State.boot vt labels metadata) evs).1 =
+                  (State.boot vt fields metadata) evs).1 =
             metadata ++ rest := by
   sorry
 
@@ -738,7 +740,7 @@ theorem run_bytes_isolates_rejects_reset :
 theorem run_readonly (s : State) (id : Nat) (chunks : List (List UInt8)) {c : Client}
     (hc : s.client? id = some c) (attached : c.attached = true) (watcher : c.mode = .readOnly) :
     (Session.trace Session.step s (chunks.map (Event.bytes id))).1.terminal = s.terminal ∧
-      (Session.trace Session.step s (chunks.map (Event.bytes id))).1.labelList = s.labelList ∧
+      (Session.trace Session.step s (chunks.map (Event.bytes id))).1.fieldList = s.fieldList ∧
       ∀ eff ∈ (Session.trace Session.step s (chunks.map (Event.bytes id))).2,
         (∃ m, eff = .send id m) ∨ eff = .close id ∨ eff = .checkpoint := by
   sorry
@@ -756,8 +758,8 @@ theorem run_readonly_rejects_kill :
                   (chunks.map (Event.bytes id))).1.terminal =
               s.terminal ∧
             (Session.trace (fun s _ => (s, ([.stopProgram] : List (Effect Replay.Plan)))) s
-                  (chunks.map (Event.bytes id))).1.labelList =
-              s.labelList ∧
+                  (chunks.map (Event.bytes id))).1.fieldList =
+              s.fieldList ∧
             ∀
               eff ∈
                 (Session.trace (fun s _ => (s, ([.stopProgram] : List (Effect Replay.Plan)))) s
@@ -880,7 +882,7 @@ theorem rowText_sources (width : Option Nat) (layout : Listing.Layout)
     Listing.rowText width layout info = Listing.rowText width layout info' := by sorry
 
 @[kills rowText_sources]
-theorem rowText_sources_rejects_labels :
+theorem rowText_sources_rejects_every_field :
     ¬∀ (width : Option Nat) (layout : Listing.Layout) (info info' : List (String × String)),
         (∀ key ∈ Listing.sources, info.lookup key = info'.lookup key) →
           (fun (_ : Option Nat) (_ : Listing.Layout) (info : List (String × String)) =>
@@ -892,9 +894,9 @@ theorem rowText_sources_rejects_labels :
   sorry
 
 theorem caption_precedence (info : List (String × String)) :
-    ((info.lookup "label.description").getD "" ≠ "" →
-        Listing.caption info = (info.lookup "label.description").getD "") ∧
-      ((info.lookup "label.description").getD "" = "" →
+    ((info.lookup "description").getD "" ≠ "" →
+        Listing.caption info = (info.lookup "description").getD "") ∧
+      ((info.lookup "description").getD "" = "" →
         Listing.caption info = (info.lookup "title").getD "") ∧
       (Listing.program info = "" ∨
         ¬(Listing.command (Listing.program info)).toList <:+: (Listing.caption info).toList) := by
@@ -903,10 +905,10 @@ theorem caption_precedence (info : List (String × String)) :
 @[kills caption_precedence]
 theorem caption_precedence_rejects_title :
     ¬∀ (info : List (String × String)),
-        ((info.lookup "label.description").getD "" ≠ "" →
+        ((info.lookup "description").getD "" ≠ "" →
             (fun (info : List (String × String)) => (info.lookup "title").getD "") info =
-              (info.lookup "label.description").getD "") ∧
-          ((info.lookup "label.description").getD "" = "" →
+              (info.lookup "description").getD "") ∧
+          ((info.lookup "description").getD "" = "" →
             (fun (info : List (String × String)) => (info.lookup "title").getD "") info =
               (info.lookup "title").getD "") ∧
           (Listing.program info = "" ∨
@@ -1650,7 +1652,7 @@ theorem step_kill_stops (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     (healthy : dec.errored = false) :
     (Session.step s (.bytes id chunk)).2 = [.stopProgram, .close id] ∧
       (Session.step s (.bytes id chunk)).1.terminal = s.terminal ∧
-      (Session.step s (.bytes id chunk)).1.labelList = s.labelList := by
+      (Session.step s (.bytes id chunk)).1.fieldList = s.fieldList := by
   sorry
 
 @[kills step_kill_stops]
@@ -1668,8 +1670,8 @@ theorem step_kill_stops_rejects_exit :
                   (.bytes id chunk)).1.terminal =
               s.terminal ∧
             ((fun (s : State) (_ : Event) => (s, ([.exit] : List (Effect Replay.Plan)))) s
-                  (.bytes id chunk)).1.labelList =
-              s.labelList := by
+                  (.bytes id chunk)).1.fieldList =
+              s.fieldList := by
   sorry
 
 theorem step_ended_reports (s : State) (ev : Event) :
@@ -2114,7 +2116,7 @@ theorem step_unknown_refused (s : State) (id : Nat) (chunk : List UInt8) {c : Cl
     (read : c.decoder.feed chunk = (dec, [.unknown tag payload])) (healthy : dec.errored = false) :
     (Session.step s (.bytes id chunk)).2 = [.send id (.err "unknown message".toUTF8.toList)] ∧
       (Session.step s (.bytes id chunk)).1.terminal = s.terminal ∧
-      (Session.step s (.bytes id chunk)).1.labelList = s.labelList := by
+      (Session.step s (.bytes id chunk)).1.fieldList = s.fieldList := by
   sorry
 
 @[kills step_unknown_refused]
@@ -2131,8 +2133,8 @@ theorem step_unknown_refused_rejects_silence :
                   (.bytes id chunk)).1.terminal =
               s.terminal ∧
             ((fun (s : State) (_ : Event) => (s, ([] : List (Effect Replay.Plan)))) s
-                  (.bytes id chunk)).1.labelList =
-              s.labelList := by
+                  (.bytes id chunk)).1.fieldList =
+              s.fieldList := by
   sorry
 
 theorem run_refines {World : Type}
@@ -2172,13 +2174,13 @@ theorem run_refines_rejects_inert :
 theorem run_total_safe {World ε : Type}
     (execute : State → World → (eff : Effect Replay.Plan) → Except ε (World × Driver.Reply eff))
     (hw : Driver.Responds execute) (r : Driver.Result State World) (events : List Event)
-    (hb : Bounds State.roster State.labelList State.scanner r.st)
+    (hb : Bounds State.roster State.fieldList State.scanner r.st)
     (hlive :
       Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
         (Checkpoint.Decoded Checkpoint.loadBytes) r.st.terminal) :
     ∃ out,
       Driver.run execute r events = .ok out ∧
-        Bounds State.roster State.labelList State.scanner out.st ∧
+        Bounds State.roster State.fieldList State.scanner out.st ∧
         Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
           (Checkpoint.Decoded Checkpoint.loadBytes) out.st.terminal := by
   sorry
@@ -2192,7 +2194,7 @@ theorem run_total_safe_rejects_jump :
           ∀ (r : Driver.Result State World) (events : List Event),
             Bounds State.roster
                 (fun st =>
-                  if st.terminal.colCount = 80 then [] else List.replicate (maxLabels + 1) ("", ""))
+                  if st.terminal.colCount = 80 then [] else List.replicate (maxFields + 1) ("", ""))
                 State.scanner r.st →
               Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
                 (Checkpoint.Decoded Checkpoint.loadBytes) r.st.terminal →
@@ -2201,7 +2203,7 @@ theorem run_total_safe_rejects_jump :
                   Bounds State.roster
                     (fun st =>
                       if st.terminal.colCount = 80 then []
-                      else List.replicate (maxLabels + 1) ("", ""))
+                      else List.replicate (maxFields + 1) ("", ""))
                     State.scanner out.st ∧
                   Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
                     (Checkpoint.Decoded Checkpoint.loadBytes) out.st.terminal := by
@@ -2255,7 +2257,7 @@ theorem run_stop_exits_rejects_jump :
 
 /-! ## 6. Bounded and clean
 
-After every batch of events, the driver leaves the session's clients, labels, frame decoders and pty
+After every batch of events, the driver leaves the session's clients, record fields, frame decoders and pty
 scanner within their caps, whatever its effects reply, when its executor answers every effect
 (`run_total_safe`, in part 5); when every effect succeeds, the states it leaves are those of the
 session's trace (`run_refines`, in part 5). The pty's input queue never owes more than its cap, nor
@@ -2365,15 +2367,17 @@ theorem ending_clean_rejects_hangup :
 The terminal package's claims cover every terminal the checkpoint decoder returns
 (`Checkpoint.live_of_decoded`), so any bytes on disk resume a session those claims cover, or are
 refused, and a command never takes bytes that do not decode for no checkpoint: it starts nothing
-over them and leaves them as they are, for `kill` to discard (`recovery_exact`). A crash costs at
-most the changes of the last interval. A session asks for a save within `ckptIntervalMs` of every
+over them and leaves them as they are, for `kill` to discard (`recovery_exact`). A resume gives
+back the saved terminal and the saved record's own fields, its description and an import's
+provenance, but no label an older linger saved (`resume_restores`). A crash costs at most the
+changes of the last interval. A session asks for a save within `ckptIntervalMs` of every
 change no save holds, by the clock its ticks give it (`unsaved_due`); its daemon saves off its loop
 and replaces the checkpoint whole and durably, as the tmux import writes one, so that after a crash
 the file at the path is the last save whose flushes returned, or the one then running, whole
 (`Disk.Durable`, which the resume suite tests by killing a daemon while it saves, and its check once
 both flushes returned); and resuming then gives back that save, never a fresh session
 (`crash_resumes`). A record an older linger wrote reads as it meant then: a tmux import from before
-a row had a description recorded the pane's labels and none, and its record in format 3, the
+a row had a description recorded the pane's provenance and no description, and its record in format 3, the
 layout of today's under the tag 3, reads as the checkpoint today's import writes of the pane, the
 description it gives, the window's name, included (`older_import_described`); a record of today's
 format reads as written (`loadBytes_saveBytes_live`), so a description its user cleared stays
@@ -2414,7 +2418,7 @@ theorem handoff_carries_rejects_rebuilt :
           s.terminal.quiesce = s.terminal →
           Handoff.decode
               ((fun (s : State) (w : Handoff.World) =>
-                  Handoff.encode (State.boot s.terminal s.labelList []) w)
+                  Handoff.encode (State.boot s.terminal s.fieldList []) w)
                 s w) =
             some (s, w) := by
   sorry
@@ -2475,13 +2479,13 @@ theorem resume_restores (c : Checkpoint.Ckpt Vt.Vt)
         (Checkpoint.Decoded Checkpoint.loadBytes) c.vt)
     (metaKv : List (String × String)) :
     (State.boot (bootVt ((Checkpoint.loadBytes (Checkpoint.saveBytes c)).map (·.vt)))
-            (((Checkpoint.loadBytes (Checkpoint.saveBytes c)).map (·.labels)).getD [])
+            (((Checkpoint.loadBytes (Checkpoint.saveBytes c)).map (·.fields)).getD [])
             metaKv).terminal =
         c.vt.quiesce ∧
       (State.boot (bootVt ((Checkpoint.loadBytes (Checkpoint.saveBytes c)).map (·.vt)))
-            (((Checkpoint.loadBytes (Checkpoint.saveBytes c)).map (·.labels)).getD [])
-            metaKv).labelList =
-        c.labels.take maxLabels := by
+            (((Checkpoint.loadBytes (Checkpoint.saveBytes c)).map (·.fields)).getD [])
+            metaKv).fieldList =
+        (c.fields.filter (recordField ·.1)).take maxFields := by
   sorry
 
 @[kills resume_restores]
@@ -2493,15 +2497,15 @@ theorem resume_restores_rejects_fresh :
             (State.boot
                     ((fun (_ : Option Vt.Vt) => Vt.Vt.init 1 1)
                       ((Checkpoint.loadBytes (Checkpoint.saveBytes c)).map (·.vt)))
-                    (((Checkpoint.loadBytes (Checkpoint.saveBytes c)).map (·.labels)).getD [])
+                    (((Checkpoint.loadBytes (Checkpoint.saveBytes c)).map (·.fields)).getD [])
                     metaKv).terminal =
                 c.vt.quiesce ∧
               (State.boot
                     ((fun (_ : Option Vt.Vt) => Vt.Vt.init 1 1)
                       ((Checkpoint.loadBytes (Checkpoint.saveBytes c)).map (·.vt)))
-                    (((Checkpoint.loadBytes (Checkpoint.saveBytes c)).map (·.labels)).getD [])
-                    metaKv).labelList =
-                c.labels.take maxLabels := by
+                    (((Checkpoint.loadBytes (Checkpoint.saveBytes c)).map (·.fields)).getD [])
+                    metaKv).fieldList =
+                (c.fields.filter (recordField ·.1)).take maxFields := by
   sorry
 
 theorem loadBytes_resave {b : ByteArray} {c : Checkpoint.Ckpt Vt.Vt}
@@ -2573,21 +2577,21 @@ theorem crash_resumes_rejects_fresh :
                     synced = false ∧ c = { old with vt := old.vt.quiesce }) := by
   sorry
 
-theorem unsaved_due (vt : Vt.Vt) (labels metaKv : List (String × String)) (pre post : List Event)
+theorem unsaved_due (vt : Vt.Vt) (fields metaKv : List (String × String)) (pre post : List Event)
     (ev : Event) :
-    (Session.step (Session.trace Session.step (State.boot vt labels metaKv) pre).1 ev).1.terminal ≠
-          (Session.trace Session.step (State.boot vt labels metaKv) pre).1.terminal ∨
-        (Session.step (Session.trace Session.step (State.boot vt labels metaKv) pre).1
-              ev).1.labelList ≠
-          (Session.trace Session.step (State.boot vt labels metaKv) pre).1.labelList →
+    (Session.step (Session.trace Session.step (State.boot vt fields metaKv) pre).1 ev).1.terminal ≠
+          (Session.trace Session.step (State.boot vt fields metaKv) pre).1.terminal ∨
+        (Session.step (Session.trace Session.step (State.boot vt fields metaKv) pre).1
+              ev).1.fieldList ≠
+          (Session.trace Session.step (State.boot vt fields metaKv) pre).1.fieldList →
       Effect.checkpoint ∉
-        (Session.trace Session.step (Session.trace Session.step (State.boot vt labels metaKv) pre).1
+        (Session.trace Session.step (Session.trace Session.step (State.boot vt fields metaKv) pre).1
             (ev :: post)).2 →
       ∃ due,
         due ≤ Session.clock pre + ckptIntervalMs ∧
           (∃ wake,
             (Session.trace Session.step
-                    (Session.trace Session.step (State.boot vt labels metaKv) pre).1
+                    (Session.trace Session.step (State.boot vt fields metaKv) pre).1
                     (ev :: post)).1.nextTick =
                 some wake ∧
               wake ≤ due) ∧
@@ -2596,29 +2600,29 @@ theorem unsaved_due (vt : Vt.Vt) (labels metaKv : List (String × String)) (pre 
               Effect.checkpoint ∈
                 (Session.step
                     (Session.trace Session.step
-                        (Session.trace Session.step (State.boot vt labels metaKv) pre).1
+                        (Session.trace Session.step (State.boot vt fields metaKv) pre).1
                         (ev :: post)).1
                     (.tick now)).2 := by
   sorry
 
 @[kills unsaved_due]
 theorem unsaved_due_rejects_never :
-    ¬∀ (vt : Vt.Vt) (labels metaKv : List (String × String)) (pre post : List Event) (ev : Event),
-        (Session.step (Session.trace Session.step (State.boot vt labels metaKv) pre).1
+    ¬∀ (vt : Vt.Vt) (fields metaKv : List (String × String)) (pre post : List Event) (ev : Event),
+        (Session.step (Session.trace Session.step (State.boot vt fields metaKv) pre).1
                   ev).1.terminal ≠
-              (Session.trace Session.step (State.boot vt labels metaKv) pre).1.terminal ∨
-            (Session.step (Session.trace Session.step (State.boot vt labels metaKv) pre).1
-                  ev).1.labelList ≠
-              (Session.trace Session.step (State.boot vt labels metaKv) pre).1.labelList →
+              (Session.trace Session.step (State.boot vt fields metaKv) pre).1.terminal ∨
+            (Session.step (Session.trace Session.step (State.boot vt fields metaKv) pre).1
+                  ev).1.fieldList ≠
+              (Session.trace Session.step (State.boot vt fields metaKv) pre).1.fieldList →
           Effect.checkpoint ∉
             (Session.trace Session.step
-                (Session.trace Session.step (State.boot vt labels metaKv) pre).1 (ev :: post)).2 →
+                (Session.trace Session.step (State.boot vt fields metaKv) pre).1 (ev :: post)).2 →
           ∃ due,
             due ≤ Session.clock pre + ckptIntervalMs ∧
               (∃ wake,
                 (fun (_ : State) => (none : Option Nat))
                       (Session.trace Session.step
-                          (Session.trace Session.step (State.boot vt labels metaKv) pre).1
+                          (Session.trace Session.step (State.boot vt fields metaKv) pre).1
                           (ev :: post)).1 =
                     some wake ∧
                   wake ≤ due) ∧
@@ -2627,18 +2631,18 @@ theorem unsaved_due_rejects_never :
                   Effect.checkpoint ∈
                     (Session.step
                         (Session.trace Session.step
-                            (Session.trace Session.step (State.boot vt labels metaKv) pre).1
+                            (Session.trace Session.step (State.boot vt fields metaKv) pre).1
                             (ev :: post)).1
                         (.tick now)).2 := by
   sorry
 
 theorem checkpoint_metadata (pane : Import.Resurrect.Pane) (contents : Option String) :
     (Import.Resurrect.checkpoint pane contents).cwd = pane.dir ∧
-      (Import.Resurrect.checkpoint pane contents).labels.lookup "tmux.command" =
+      (Import.Resurrect.checkpoint pane contents).fields.lookup "tmux.command" =
         some pane.details.command ∧
-      (Import.Resurrect.checkpoint pane contents).labels.lookup "tmux.saved-command" =
+      (Import.Resurrect.checkpoint pane contents).fields.lookup "tmux.saved-command" =
         some pane.details.savedCommand ∧
-      (Import.Resurrect.checkpoint pane contents).labels.lookup "tmux.capture" =
+      (Import.Resurrect.checkpoint pane contents).fields.lookup "tmux.capture" =
         some (if contents.isSome then "saved" else "none") := by
   sorry
 
@@ -2651,17 +2655,17 @@ theorem checkpoint_metadata_rejects_blank :
             pane.dir ∧
           ((fun (_ : Import.Resurrect.Pane) (_ : Option String) =>
                     (⟨Vt.Vt.init 1 1, "", []⟩ : Checkpoint.Ckpt Vt.Vt))
-                  pane contents).labels.lookup
+                  pane contents).fields.lookup
               "tmux.command" =
             some pane.details.command ∧
           ((fun (_ : Import.Resurrect.Pane) (_ : Option String) =>
                     (⟨Vt.Vt.init 1 1, "", []⟩ : Checkpoint.Ckpt Vt.Vt))
-                  pane contents).labels.lookup
+                  pane contents).fields.lookup
               "tmux.saved-command" =
             some pane.details.savedCommand ∧
           ((fun (_ : Import.Resurrect.Pane) (_ : Option String) =>
                     (⟨Vt.Vt.init 1 1, "", []⟩ : Checkpoint.Ckpt Vt.Vt))
-                  pane contents).labels.lookup
+                  pane contents).fields.lookup
               "tmux.capture" =
             some (if contents.isSome then "saved" else "none") := by
   sorry
@@ -2671,7 +2675,7 @@ theorem older_import_described (pane : Import.Resurrect.Pane) (contents : Option
         ((Checkpoint.saveBytes
               ⟨(Import.Resurrect.checkpoint pane contents).vt,
                 (Import.Resurrect.checkpoint pane contents).cwd,
-                (Import.Resurrect.checkpoint pane contents).labels.filter
+                (Import.Resurrect.checkpoint pane contents).fields.filter
                   (·.1 != "description")⟩).set!
           (4 : Nat) 3) =
       some (Import.Resurrect.checkpoint pane contents) := by
@@ -2682,11 +2686,11 @@ theorem older_import_described_rejects_stored :
     ¬∀ (pane : Import.Resurrect.Pane) (contents : Option String),
         (fun (b : ByteArray) =>
               (Checkpoint.loadBytes b).map fun (c : Checkpoint.Ckpt Vt.Vt) =>
-                (⟨c.vt, c.cwd, c.labels.filter (·.1 != "description")⟩ : Checkpoint.Ckpt Vt.Vt))
+                (⟨c.vt, c.cwd, c.fields.filter (·.1 != "description")⟩ : Checkpoint.Ckpt Vt.Vt))
             ((Checkpoint.saveBytes
                   ⟨(Import.Resurrect.checkpoint pane contents).vt,
                     (Import.Resurrect.checkpoint pane contents).cwd,
-                    (Import.Resurrect.checkpoint pane contents).labels.filter
+                    (Import.Resurrect.checkpoint pane contents).fields.filter
                       (·.1 != "description")⟩).set!
               (4 : Nat) 3) =
           some (Import.Resurrect.checkpoint pane contents) := by

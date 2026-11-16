@@ -84,11 +84,11 @@ theorem rTerminal_wTerminal (vt : Vt.Vt) (live : Vt.LiveReachableVt vt) (quiet :
   unfold rTerminal wTerminal
   rw [rt_bytes]
   have back :
-    (⟨(Checkpoint.saveBytes { vt, cwd := "", labels := [] }).data.toList.toArray⟩ : ByteArray) =
-      Checkpoint.saveBytes { vt, cwd := "", labels := [] } := by
+    (⟨(Checkpoint.saveBytes { vt, cwd := "", fields := [] }).data.toList.toArray⟩ : ByteArray) =
+      Checkpoint.saveBytes { vt, cwd := "", fields := [] } := by
     simp
   simp only [Option.bind_eq_bind, Option.bind_some]
-  rw [back, loadBytes_saveBytes_live { vt, cwd := "", labels := [] } live]
+  rw [back, loadBytes_saveBytes_live { vt, cwd := "", fields := [] } live]
   simp only [Option.bind_some, quiet]
 
 /-- The state of a live session whose terminal's parser is quiet comes back as it was, every

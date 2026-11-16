@@ -35,6 +35,17 @@ example :
       true := by
   native_decide
 
+/-- The label requests of versions before the session record had fields of its own, tags 11 to
+13, are messages this version does not know, so an older client's `set` is refused, never read
+as a description; tag 21 describes the session. -/
+example :
+    ((decode ([11, 3, 0, 0, 0, 107, 61, 118] ++ [12, 1, 0, 0, 0, 107] ++ [13, 0, 0, 0, 0])).2 ==
+        [.unknown 11 [107, 61, 118], .unknown 12 [107], .unknown 13 []]) =
+      true := by
+  native_decide
+
+example : encode (.describe [100]) = [21, 1, 0, 0, 0, 100] := by decide
+
 example :
     ((decode [18, 9, 0, 0, 0, 2, 80, 0, 0, 0, 24, 0, 0, 0]).2 ==
         [.unknown 18 [2, 80, 0, 0, 0, 24, 0, 0, 0]]) =
@@ -80,7 +91,7 @@ frame across boundaries delivers exactly the one-shot decode: same
 messages, same order, clean final state. -/
 example :
     (let bytes := encode (.attach .readOnly 80 24) ++ encode (.input [1, 2, 3])
-                    ++ encode (.labelSet [107, 61, 118]) ++ encode .kill
+                    ++ encode (.describe [107, 61, 118]) ++ encode .kill
      let (d, ms) := Decoder.feedAll {} (chop7 bytes)
      ms == (decode bytes).2 && d.buf.isEmpty && !d.errored) = true := by native_decide
 

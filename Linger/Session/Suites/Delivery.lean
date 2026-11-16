@@ -454,9 +454,9 @@ def closeOrder (dir : String) : IO Unit := do
           { rt with
             st
             conns := [{ fd, replay := some (Replay.start st.vt) }]
-            saveCkpt := fun s => saved.modify (· ++ [s.labels]) }
+            saveCkpt := fun s => saved.modify (· ++ [s.fields]) }
         let detach := Wire.encode .detachAll
-        let later := Wire.encode (.labelSet "after=detach".toUTF8.toList)
+        let later := Wire.encode (.describe "after detach".toUTF8.toList)
         let events :=
           if variant == "packet" then [.bytes id (detach ++ later)]
           else [.bytes (if variant == "other-client" then control else id) detach, .bytes id later]
@@ -464,7 +464,7 @@ def closeOrder (dir : String) : IO Unit := do
         -- saves run on their own thread; wait for them as the daemon does before exiting
         let rt ← finishSaves rt
         expect
-            (rt.st.labels.isEmpty && (← saved.get) == [[]] && (rt.st.client? id).isNone &&
+            (rt.st.fields.isEmpty && (← saved.get) == [[]] && (rt.st.client? id).isNone &&
               (rt.conn? fd).any (·.closing))
             s!"delivery/close-order/{variant}"
 
@@ -474,9 +474,10 @@ def largeBatch (dir : String) : IO Unit :=
   withPair dir "large-batch" (Vt.Vt.init 20 5) fun rt _ fd => do
     let events :=
       List.replicate 100000 (.tick 0) ++
-        [.bytes fd.toNat (Wire.encode (.labelSet "batch=complete".toUTF8.toList))]
+        [.bytes fd.toNat (Wire.encode (.describe "batch complete".toUTF8.toList))]
     let rt ← pump rt events
-    expect (!rt.exiting && rt.st.labels == [("batch", "complete")] && (rt.conn? fd).isSome)
+    expect
+        (!rt.exiting && rt.st.fields == [("description", "batch complete")] && (rt.conn? fd).isSome)
         "delivery/large-batch/reaches-final-command"
 
 /-- A failed send causes logical disconnect; failure of the resulting save
@@ -494,7 +495,7 @@ def failureFeedback (dir : String) : IO Unit :=
     close peer
     let rt ←
       pump rt
-          [.ptyOut [0x41], .bytes fd.toNat (Wire.encode (.labelSet "stale=input".toUTF8.toList))]
+          [.ptyOut [0x41], .bytes fd.toNat (Wire.encode (.describe "stale input".toUTF8.toList))]
     -- the save runs on its own thread, and its failure comes back as the next round's event
     let (rt, failed) ← collectSave rt true
     let rt ← pump rt failed
@@ -503,7 +504,7 @@ def failureFeedback (dir : String) : IO Unit :=
       fields.contains ("clients", "0") && fields.contains ("outseq", "1")
     expect
         (!rt.exiting && rt.conns.isEmpty && (rt.st.client? fd.toNat).isNone &&
-          rt.st.labels.isEmpty &&
+          rt.st.fields.isEmpty &&
           first.length == 1 &&
           first.all correctState &&
           (match failed with

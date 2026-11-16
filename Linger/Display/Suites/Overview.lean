@@ -43,13 +43,12 @@ def present (e : Env) : IO Unit :=
     let (drc, _, _) ← e.cli #["describe", "described", "fixing", "the", "parser"]
     let shown ← waitFor patienceMs (return has (← rowOf e "described") "fixing the parser")
     expect (drc == 0 && shown) "a described session shows its description"
-    expect ((← e.field "described" "label.description") == some "fixing the parser")
+    expect ((← e.field "described" "description") == some "fixing the parser")
         "porcelain carries the description as its label"
     let (crc, _, _) ← e.cli #["describe", "described"]
     let row ← rowOf e "described"
     expect
-        (crc == 0 && !has row "fixing" && row != "" &&
-          (← e.field "described" "label.description").isNone)
+        (crc == 0 && !has row "fixing" && row != "" && (← e.field "described" "description").isNone)
         "describe with no text clears the description"
     let _ ← e.typeIn "sleeper" #["cd", shellQuote dir, "&&", "sleep", "100"]
     let busy ←

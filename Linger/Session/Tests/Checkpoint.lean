@@ -91,7 +91,7 @@ example :
 The existing accepted-state contract has no history-width restriction. -/
 example :
     (let v := { Vt.init 4 2 with sb := { data := #[blankRow 1001 {}], start := 0 } }
-     match load (save { vt := v, cwd := "", labels := [] }) with
+     match load (save { vt := v, cwd := "", fields := [] }) with
       | some c => c.vt.sb.data == v.sb.data
       | none => false) =
       true := by
@@ -101,7 +101,7 @@ example :
 would accept reversed, blanked, or otherwise corrupted rows. -/
 example :
     (let v := (Vt.init 10 2).feedBytes "1\r\n2\r\n3\r\n4\r\n5".toUTF8
-     match load (save { vt := v, cwd := "", labels := [] }) with
+     match load (save { vt := v, cwd := "", fields := [] }) with
       | some ck' =>
         ck'.vt.sb.toList == v.sb.toList &&
           ck'.vt.sb.toList.map (fun r => (r.at 0).base) == ['1', '2', '3']
@@ -117,13 +117,13 @@ example :
         (fun bytes =>
           let v := (Vt.init 4 2).feed bytes
           !(v.pstate == .ground && v.u8need == 0) &&
-            (match load (save { vt := v, cwd := "/tmp/checkpoint", labels := [("k", "v")] }) with
+            (match load (save { vt := v, cwd := "/tmp/checkpoint", fields := [("k", "v")] }) with
             | some c =>
               c.vt.pstate == .ground && c.vt.u8need == 0 && c.vt.u8acc == 0 &&
                 c.vt.grid == v.grid &&
                 c.vt.cursor == v.cursor &&
                 c.cwd == "/tmp/checkpoint" &&
-                c.labels == [("k", "v")]
+                c.fields == [("k", "v")]
             | none => false)) =
       true := by
   native_decide
@@ -131,7 +131,7 @@ example :
 /-- The top-level format is one complete record: even one extra byte, a format
 tag, or a second complete checkpoint must be refused. -/
 example :
-    (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "", labels := [] }
+    (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "", fields := [] }
      [[0], [0xFF], magic, save c].all (fun rest => (load (save c ++ rest)).isNone)) =
       true := by
   native_decide
@@ -154,7 +154,7 @@ example :
 removed in `e1ac562`'s successor; check that commit out if you ever need it), a future
 version byte, and rubbish. A checkpoint is a cache, not a contract. -/
 example :
-    (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "", labels := [] }
+    (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "", fields := [] }
      let body := (save c).drop 5
      (load ([0x4C, 0x5A, 0x4D, 0x58, 1] ++ body)).isNone      -- "LZMX" v1
        && (load ([0x4C, 0x4E, 0x47, 0x52, 5] ++ body)).isNone  -- "LNGR" v5
@@ -165,7 +165,7 @@ example :
 are refused, since version 2 adds a byte after each saved cursor and version 3 one after the
 modes; version 3's tag takes version 4's layout. -/
 example :
-    (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "", labels := [] }
+    (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "", fields := [] }
      (load (legacyMagic ++ (save c).drop 5)).isNone
        && (load (magicV2 ++ (save c).drop 5)).isNone
        && (load (magic ++ (saveV1 c).drop 5)).isNone
@@ -192,7 +192,7 @@ instead of silently patching some other field. -/
 /-- The control. Without it, every refusal below is equally consistent with `load`
 having become unconditionally `none`. -/
 example :
-    (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "/tmp", labels := [("k", "v")] }
+    (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "/tmp", fields := [("k", "v")] }
      (load (save c)).isSome) =
       true := by
   native_decide
@@ -201,7 +201,7 @@ example :
 `init`/`resize`/`feed` path can produce, and the state a decoder that did not validate
 `Good` would build without complaint. Refused. -/
 example :
-    (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "/tmp", labels := [("k", "v")] }
+    (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "/tmp", fields := [("k", "v")] }
      let bytes := save c
      bytes[5]? == some 4                       -- the byte being patched IS `cols`
        && (load (bytes.set 5 0)).isNone) =
@@ -210,7 +210,7 @@ example :
 
 /-- The same at **zero rows**. -/
 example :
-    (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "/tmp", labels := [("k", "v")] }
+    (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "/tmp", fields := [("k", "v")] }
      let bytes := save c
      bytes[6]? == some 2                       -- and this one IS `rows`
        && (load (bytes.set 6 0)).isNone) =
@@ -223,7 +223,7 @@ cast is the reason it matters. Forged here rather than byte-patched because 1001
 LEB128 bytes. -/
 example :
     (let v := { Vt.init 4 2 with cols := 1001 }
-     (load (save { vt := v, cwd := "", labels := [] })).isNone) =
+     (load (save { vt := v, cwd := "", fields := [] })).isNone) =
       true := by
   native_decide
 
@@ -232,7 +232,7 @@ example :
 entirely. -/
 example :
     (let v := { Vt.init 4 2 with cursor := { x := 9, y := 0 } }
-     (load (save { vt := v, cwd := "", labels := [] })).isNone) =
+     (load (save { vt := v, cwd := "", fields := [] })).isNone) =
       true := by
   native_decide
 
@@ -241,7 +241,7 @@ example :
     (let v :=
         { Vt.init 4 2 with
           top := 1, bot := 0 }
-     (load (save { vt := v, cwd := "", labels := [] })).isNone) =
+     (load (save { vt := v, cwd := "", fields := [] })).isNone) =
       true := by
   native_decide
 
@@ -268,7 +268,7 @@ only those clauses would return a screen whose replay is not the screen it came 
 A decoder that checks only `decodedOk` fails this fixture, so it is the one to run first
 against any weakening of the guard. -/
 example :
-    (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "/tmp", labels := [("k", "v")] }
+    (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "/tmp", fields := [("k", "v")] }
      let bytes := save c
      bytes[6]? == some 2                       -- the byte being patched IS `rows`
        && (load (bytes.set 6 3)).isNone) =
@@ -282,7 +282,7 @@ example :
     (let v :=
         { Vt.init 4 3 with
           rows := 2, bot := 1 }
-     (load (save { vt := v, cwd := "", labels := [] })).isNone) =
+     (load (save { vt := v, cwd := "", fields := [] })).isNone) =
       true := by
   native_decide
 
@@ -291,7 +291,7 @@ cannot catch between them, since `wRow` writes each row's length itself. -/
 example :
     (let short : Row := blankRow 3 {}
      let v := { Vt.init 4 2 with grid := #[short, blankRow 4 {}] }
-     (load (save { vt := v, cwd := "", labels := [] })).isNone) =
+     (load (save { vt := v, cwd := "", fields := [] })).isNone) =
       true := by
   native_decide
 
@@ -303,7 +303,7 @@ control codepoint *and* a width no `charWidth` returns. -/
 example :
     (let bad : Row := (blankRow 4 {}).set! 0 { base := '\x0A', marks := [], width := 7, pen := {} }
      let v := { Vt.init 4 2 with grid := #[bad, blankRow 4 {}] }
-     (load (save { vt := v, cwd := "", labels := [] })).isNone) =
+     (load (save { vt := v, cwd := "", fields := [] })).isNone) =
       true := by
   native_decide
 
@@ -314,7 +314,7 @@ and why the door has to refuse what a file can still name. -/
 example :
     (let bad : Row := (blankRow 4 {}).set! 1 { base := '中', marks := [], width := 2, pen := {} }
      let v := { Vt.init 4 2 with grid := #[bad, blankRow 4 {}] }
-     (load (save { vt := v, cwd := "", labels := [] })).isNone) =
+     (load (save { vt := v, cwd := "", fields := [] })).isNone) =
       true := by
   native_decide
 
@@ -324,7 +324,7 @@ screen in `altGrid`, and `Render.screens_paint_alt` paints it, so a bad one is t
 defect one indirection away. -/
 example :
     (let v := { Vt.init 4 2 with altGrid := some (#[blankRow 4 {}], { cur := { x := 0, y := 0 } }) }
-     (load (save { vt := v, cwd := "", labels := [] })).isNone) =
+     (load (save { vt := v, cwd := "", fields := [] })).isNone) =
       true := by
   native_decide
 
@@ -333,7 +333,7 @@ can name a ruler of any length. `Render.restore_tabs_any` needs it to be the wid
 screen (`Resume.resume_tabs_of_load` is what that buys), and `Renderable` does not carry it. -/
 example :
     (let v := { Vt.init 4 2 with tabs := #[false, false] }
-     (load (save { vt := v, cwd := "", labels := [] })).isNone) =
+     (load (save { vt := v, cwd := "", fields := [] })).isNone) =
       true := by
   native_decide
 
@@ -347,7 +347,7 @@ Fed 5 lines into a 10×2 screen and then resized to 6 wide: the ring rows are 10
 screen is 6, and the checkpoint loads. -/
 example :
     (let v := ((Vt.init 10 2).feedBytes "1\r\n2\r\n3\r\n4\r\n5".toUTF8).resize 6 2
-     match load (save { vt := v, cwd := "", labels := [] }) with
+     match load (save { vt := v, cwd := "", fields := [] }) with
       | some ck' => ck'.vt.sb.toList.any (fun r => r.size != 6) && ck'.vt.colCount == 6
       | none => false) =
       true := by
@@ -373,7 +373,7 @@ example :
                 some (Array.replicate 3 (blankRow 4 {}), { cur := { x := 1, pending := true } }) },
             { Vt.init 4 3 with
               top := 1, bot := 1 }].all
-        fun (v : Vt) => (load (save { vt := v, cwd := "", labels := [] })).isNone) =
+        fun (v : Vt) => (load (save { vt := v, cwd := "", fields := [] })).isNone) =
       true := by
   native_decide
 
@@ -389,7 +389,7 @@ example :
                 some (Array.replicate 3 (blankRow 4 {}), { cur := { x := 3, pending := true } }) },
             { Vt.init 4 3 with
               top := 1, bot := 2 }].all
-        fun (v : Vt) => (load (save { vt := v, cwd := "", labels := [] })).isSome) =
+        fun (v : Vt) => (load (save { vt := v, cwd := "", fields := [] })).isSome) =
       true := by
   native_decide
 
@@ -415,7 +415,7 @@ def golden : Ckpt Vt.Vt :=
         ("\x1b[0;1;3;5;9;38;5;3;48;2;1;2;3mA\x1b[0;2;3;7;9mB\x1b[0;4;5;7;9mC\x1b[0m" ++
             "\x1b[?1h\x1b[?2004h\x1b[?1004h\x1b[?1002h\x1b[?1006h\x1b[?25l\x1b[4h\x1b=\x1b[5 q" ++
             "\x1b[2;1H\x1b7\x1b[1;2H\x1b]2;t\x07\x1b(0").toUTF8
-    cwd := "/c", labels := [("k", "v")] }
+    cwd := "/c", fields := [("k", "v")] }
 
 /-- The record with the terminal's own cursor shape: what its version 1 and 2 records load to,
 since neither format saved a shape. -/
@@ -460,15 +460,15 @@ A version 4 record without one reads without one, as does an earlier record with
 one included, and an earlier record of a session no import made or of a window with no name. -/
 example :
     (let tmux := [("tmux.session", "s"), ("tmux.window", "1"), ("tmux.window-title", "w")]
-     let read (bytes : List UInt8) := (loadBytes ⟨bytes.toArray⟩).map (·.labels)
-      let old : Ckpt Vt.Vt := { golden with labels := tmux }
-      let mine : Ckpt Vt.Vt := { golden with labels := tmux ++ [("description", "")] }
-      let blank : Ckpt Vt.Vt := { golden with labels := [("tmux.window-title", "")] }
+     let read (bytes : List UInt8) := (loadBytes ⟨bytes.toArray⟩).map (·.fields)
+      let old : Ckpt Vt.Vt := { golden with fields := tmux }
+      let mine : Ckpt Vt.Vt := { golden with fields := tmux ++ [("description", "")] }
+      let blank : Ckpt Vt.Vt := { golden with fields := [("tmux.window-title", "")] }
       [saveV1 old, saveV2 old, saveV3 old].all (read · == some (tmux ++ [("description", "w")])) &&
         read (save old) == some tmux &&
-        read (saveV3 mine) == some mine.labels &&
-        read (saveV3 golden) == some golden.labels &&
-        read (saveV3 blank) == some blank.labels) =
+        read (saveV3 mine) == some mine.fields &&
+        read (saveV3 golden) == some golden.fields &&
+        read (saveV3 blank) == some blank.fields) =
       true := by
   native_decide
 
@@ -509,7 +509,7 @@ example :
 /-- The DECSC slot and the stashed main screen both saved under origin mode, which is off again
 on the alternate screen. -/
 def originGolden : Ckpt Vt.Vt :=
-  { vt := (Vt.init 3 2).feedBytes "\x1b[?6h\x1b[?1049h\x1b[?6l".toUTF8, cwd := "", labels := [] }
+  { vt := (Vt.init 3 2).feedBytes "\x1b[?6h\x1b[?1049h\x1b[?6l".toUTF8, cwd := "", fields := [] }
 
 /-- Its bytes. -/
 def originBytes : List UInt8 :=
@@ -545,7 +545,7 @@ def rich : Ckpt Vt.Vt :=
   { vt :=
       (Vt.init 130 3).feedBytes
         "\x1b]2;tïtle\x07\x1b[38;5;200;48;2;1;2;3;1;4m中éx\x1b[0m\r\nok\x1b[?1049hALT".toUTF8
-    cwd := "/tmp/ü", labels := [("k", "v"), ("ключ", "значение")] }
+    cwd := "/tmp/ü", fields := [("k", "v"), ("ключ", "значение")] }
 
 /-- The control: the emulator produced each screen part named above, and the byte-array writer
 and reader round-trip the record. `save` writes every decoded field. -/

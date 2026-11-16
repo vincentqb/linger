@@ -18,7 +18,7 @@ example (s : State) : List Client × Mediation.Scan := (s.clients, s.scan)
 
 -- The observations the headline theorems name.
 example (s : State) : Vt.Vt × List Client × List (String × String) × Mediation.Scan :=
-  (s.terminal, s.roster, s.labelList, s.scanner)
+  (s.terminal, s.roster, s.fieldList, s.scanner)
 
 /-- constructor for `StateRec` is marked as private -/
 #guard_msgs (error, substring := true) in

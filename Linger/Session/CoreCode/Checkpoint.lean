@@ -29,7 +29,7 @@ import all Terminal.CoreCode.Vt
 /-! # Linger.Session.Checkpoint — the reboot-resume codec
 
 Serializes the resumable part of a session — screen, scrollback,
-cursor, pen, modes, title, labels, and working directory — to bytes
+cursor, pen, modes, title, record fields, and working directory — to bytes
 and back. The parser state is reset on load.
 
 The checkpoint round trip, which recovery rests on (`loadBytes_saveBytes_live`,
@@ -57,9 +57,15 @@ the stashed main screen; version 2 records still load with the terminal's own sh
 Version 4 keeps version 3's layout and changes what the labels mean: a version 4 record holds
 the labels as the session last had them, so a description it lacks is one nobody gave or one
 its user cleared. A record of an earlier version reads as it meant when it was written
-(`readLabels`): one a tmux import made before a row had a description holds the import's labels
+(`readFields`): one a tmux import made before a row had a description holds the import's labels
 and none, and it reads with the description today's import gives those labels
 (`importDescription`). A daemon that resumes it saves version 4, so a later clear lasts.
+
+The labels a record holds are the fields of the session's record since generic labels were
+removed: its description and the `tmux.` fields a tmux import records of its pane. The layout is
+the same, so the version stays 4: a record an older linger wrote may hold labels of any key,
+which load as they were written, and a resume restores only the record's own fields of them
+(`State.boot`, `recordField`), the description and the provenance.
 -/
 
 namespace Linger.Session.Checkpoint
@@ -448,25 +454,25 @@ def magicV2 : List UInt8 := [0x4C, 0x4E, 0x47, 0x52, 2] -- "LNGR" v2
 /-- Format version 1's tag, which `load` still reads and `save` never writes. -/
 def legacyMagic : List UInt8 := [0x4C, 0x4E, 0x47, 0x52, 1] -- "LNGR" v1
 
-/-- The checkpoint record: `magic`, then the terminal, the working directory and the labels.
+/-- The checkpoint record: `magic`, then the terminal, the working directory and the fields.
 Loading the record of a live state returns it with its parser quiesced (`load_save_live`). -/
 def save (c : Ckpt Vt.Vt) : List UInt8 :=
-  magic ++ wVt c.vt ++ wStr c.cwd ++ wList (wPair wStr wStr) c.labels
+  magic ++ wVt c.vt ++ wStr c.cwd ++ wList (wPair wStr wStr) c.fields
 
 /-- The record format version 3 wrote: version 4's layout under its own tag. Never written; it
 states what an old checkpoint is (`load_saveV3_live`). -/
 def saveV3 (c : Ckpt Vt.Vt) : List UInt8 :=
-  magicV3 ++ wVt c.vt 3 ++ wStr c.cwd ++ wList (wPair wStr wStr) c.labels
+  magicV3 ++ wVt c.vt 3 ++ wStr c.cwd ++ wList (wPair wStr wStr) c.fields
 
 /-- The record format version 2 wrote: no cursor shape. Never written; it states what an old
 checkpoint is (`load_saveV2_live`). -/
 def saveV2 (c : Ckpt Vt.Vt) : List UInt8 :=
-  magicV2 ++ wVt c.vt 2 ++ wStr c.cwd ++ wList (wPair wStr wStr) c.labels
+  magicV2 ++ wVt c.vt 2 ++ wStr c.cwd ++ wList (wPair wStr wStr) c.fields
 
 /-- The record format version 1 wrote: no cursor shape, and no origin mode with the DECSC slot or
 the stashed screen. Never written; it states what an old checkpoint is (`load_saveV1_live`). -/
 def saveV1 (c : Ckpt Vt.Vt) : List UInt8 :=
-  legacyMagic ++ wVt c.vt 1 ++ wStr c.cwd ++ wList (wPair wStr wStr) c.labels
+  legacyMagic ++ wVt c.vt 1 ++ wStr c.cwd ++ wList (wPair wStr wStr) c.fields
 
 /-- Strip the format tag, and say which format version it is: 4, 3, 2 or 1. A **named stage**
 rather than the check inlined in `load`: with the decision inline, `load_save`'s round-trip
@@ -485,19 +491,19 @@ def stripMagic (l : List UInt8) : Option (Nat × List UInt8) :=
       | some rest => some (2, rest)
       | none => (legacyMagic.isPrefixOf? l).map (1, ·)
 
-/-- The description a tmux import gives a session whose labels are `labels`: the window's name,
-which tmux shows, from the label `tmux.window-title` when it is not empty, and none otherwise. -/
+/-- The description a tmux import gives a session whose fields are `labels`: the window's name,
+which tmux shows, from the field `tmux.window-title` when it is not empty, and none otherwise. -/
 public def importDescription (labels : List (String × String)) : List (String × String) :=
   match labels.lookup "tmux.window-title" with
   | some title => if title.isEmpty then [] else [("description", title)]
   | none => []
 
-/-- The labels a record of format `version` holds, as they meant when it was written. Version 4
+/-- The fields a record of format `version` holds, as they meant when it was written. Version 4
 records them as the session last had them. An earlier record that has no description reads with
 the description the import gives its labels, none for a session no import made: an import before
 a row had a description gave none, and no earlier format tells a cleared description from one
 never given. -/
-def readLabels (version : Nat) (labels : List (String × String)) : List (String × String) :=
+def readFields (version : Nat) (labels : List (String × String)) : List (String × String) :=
   if version < 4 && (labels.lookup "description").isNone then labels ++ importDescription labels
   else labels
 
@@ -509,7 +515,7 @@ def load (l : List UInt8) : Option (Ckpt Vt.Vt) := do
   let (cwd, rest) ← rStr rest
   let (labels, rest) ← rList (rPair rStr rStr) rest
   if rest.isEmpty then
-    some { vt, cwd, labels := readLabels version labels }
+    some { vt, cwd, fields := readFields version labels }
   else
     none
 
@@ -585,7 +591,7 @@ public def saveBytes (c : Ckpt Vt.Vt) : ByteArray :=
     (wSaved v.saved ++ wStr v.title ++ wBool v.g0Line ++ wBool v.g1Line ++ wBool v.shiftOut ++
         wBool v.bell ++
         wStr c.cwd ++
-        wList (wPair wStr wStr) c.labels).toByteArray
+        wList (wPair wStr wStr) c.fields).toByteArray
 
 /-! ## Reading from a byte array
 
@@ -856,7 +862,7 @@ public def loadBytes (b : ByteArray) : Option (Ckpt Vt.Vt) := do
   let (cwd, i) ← rStrB b i
   let (labels, i) ← rListB (rPairB rStrB rStrB) b i
   if b.size ≤ i then
-    some { vt, cwd, labels := readLabels version labels }
+    some { vt, cwd, fields := readFields version labels }
   else
     none
 

@@ -19,7 +19,7 @@ label with an ESC — the injection a hostile porcelain or a crafted checkpoint
 name could attempt. -/
 def hostile : List (String × String) :=
   [("name", "x"), ("status", "idle"), ("pid", "1"), ("cmd", "vi\x1b[31m\tm\ny"),
-    ("fg", "vi\x1b[31m\tm\ny"), ("label.description", "b\x1bc"), ("clients", "2")]
+    ("fg", "vi\x1b[31m\tm\ny"), ("description", "b\x1bc"), ("clients", "2")]
 
 -- C1 metadata is text too; selectors and listings must not emit a CSI codepoint.
 example :
@@ -72,7 +72,7 @@ def present : List (String × String) :=
     ("clients", "1"), ("label.owner", "me")]
 
 -- The row shows the foreground program, its directory, how long ago it printed and its watcher,
--- and neither the pid, the start command nor another label.
+-- and neither the pid, the start command nor another field.
 example :
     String.ofList (alone none (atHome "/home/u" present)) =
       "⣀ work vim notes.md  ~/src  6m  +1" := by
@@ -83,7 +83,7 @@ example :
     String.ofList (alone none (present ++ [("title", "notes.md - VIM - vim")])) =
         "⣀ work notes.md - VIM - vim  /home/u/src  6m  +1" ∧
       String.ofList
-          (alone none (("label.description", "fixing the parser") :: present ++ [("title", "t")])) =
+          (alone none (("description", "fixing the parser") :: present ++ [("title", "t")])) =
         "⣀ work fixing the parser  vim notes.md  /home/u/src  6m  +1" := by
   native_decide
 
@@ -166,7 +166,7 @@ example :
 /-- A session whose program asked, with the text of its notification, as a daemon reports it. -/
 def asking : List (String × String) :=
   [("name", "agent"), ("pid", "10"), ("status", "asks-you"), ("login", "true"),
-    ("label.description", "fix parser"), ("notice", "edit src/Foo.lean?"), ("fg", "claude"),
+    ("description", "fix parser"), ("notice", "edit src/Foo.lean?"), ("fg", "claude"),
     ("fgpid", "22"), ("fgdir", "/home/u/src"), ("idle", "120")]
 
 -- While it asks, the row shows the notification's text right after the caption; once it no longer
@@ -184,7 +184,7 @@ example :
 /-- A shell at its prompt whose last command ended while nobody looked, as a daemon reports it. -/
 def ended : List (String × String) :=
   [("name", "build"), ("pid", "10"), ("status", "wants-you"), ("login", "true"),
-    ("label.description", "fix parser"), ("lastcmd", "make test"), ("lastexit", "2"), ("fg", "zsh"),
+    ("description", "fix parser"), ("lastcmd", "make test"), ("lastexit", "2"), ("fg", "zsh"),
     ("fgpid", "10"), ("fgdir", "/home/u/src"), ("idle", "5")]
 
 -- The row shows how the command ended right after the caption, its line and its status, or the
@@ -202,9 +202,8 @@ example :
 -- each field at the same display column.
 example :
     let rows :=
-      [[("name", "a"), ("status", "idle"), ("label.description", "漢字"), ("fg", "vim"),
-          ("pid", "1")],
-        [("name", "longer"), ("status", "idle"), ("label.description", "abcdefgh"), ("fg", "vi"),
+      [[("name", "a"), ("status", "idle"), ("description", "漢字"), ("fg", "vim"), ("pid", "1")],
+        [("name", "longer"), ("status", "idle"), ("description", "abcdefgh"), ("fg", "vi"),
           ("pid", "1")]]
     rows.map (fun r => String.ofList (rowText none (layoutOf rows) r)) =
       ["⣀ a      漢字      vim", "⣀ longer abcdefgh  vi"] := by

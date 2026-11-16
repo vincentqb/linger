@@ -39,7 +39,7 @@ def run : IO UInt32 :=
       let (waitRc, _, _) ← e.cli #["wait", "missing name"]
       expect (waitRc == 2) "wait validates names even when no session exists"
       let (describeRc, _, _) ← e.cli #["describe", "a b", "text"]
-      expect (describeRc == 2 && (← e.info "a_b" "label.description").isNone)
+      expect (describeRc == 2 && (← e.info "a_b" "description").isNone)
           "describe validates its target before changing any session"
       let vt := (Terminal.Vt.Vt.init 20 2).feedBytes "old\r\nmiddle\r\nscreen".toUTF8
       let bytes := Linger.Session.Checkpoint.saveBytes ⟨vt, e.dir, [("saved", "yes")]⟩

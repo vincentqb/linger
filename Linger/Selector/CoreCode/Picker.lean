@@ -86,10 +86,10 @@ def Snapshot.keepColumns (snapshot : Snapshot) (kept : Option Linger.Display.Lis
         | some layout => { layout with nameCol := max layout.nameCol snapshot.laidOut.nameCol }
         | none => snapshot.laidOut) }
 
-/-- Each target's description: the label `description` of its row. -/
+/-- Each target's description: the field `description` of its row. -/
 def Snapshot.descriptions (snapshot : Snapshot) : List (String × String) :=
   snapshot.candidates.filterMap fun target =>
-    ((snapshot.row target).lookup "label.description").map (target, ·)
+    ((snapshot.row target).lookup "description").map (target, ·)
 
 /-- The snapshot whose rows show a foreground directory under `home` with `~`, as `ls` shows
 it. -/

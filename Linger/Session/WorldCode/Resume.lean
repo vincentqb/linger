@@ -20,7 +20,7 @@ namespace Linger.Session.Shell.Resume
 open Linger.Session.Checkpoint (Ckpt saveBytes)
 open Linger.Session (State)
 
-/-- The checkpoint hook of one daemon: write the session's terminal state, labels and working
+/-- The checkpoint hook of one daemon: write the session's terminal state, record fields and working
 directory to its checkpoint, replacing the file whole and durably (`Os.Shell.replaceFile`): a
 crash leaves the previous checkpoint or this one, and this one once the hook returns. The
 directory is the program's live cwd when readable; else the last one this hook read, as for the
@@ -42,7 +42,7 @@ def saver (name : String) : IO (State → IO Unit) := do
       lastDir.set live
     let known ← lastDir.get
     let cwd := if known.isEmpty then (st.metaKv.lookup "start_dir").getD "" else known
-    let ck : Ckpt Terminal.Vt.Vt := { vt := st.terminal, cwd, labels := st.labelList }
+    let ck : Ckpt Terminal.Vt.Vt := { vt := st.terminal, cwd, fields := st.fieldList }
     let bytes := saveBytes ck
     Os.Shell.replaceFile path bytes
 

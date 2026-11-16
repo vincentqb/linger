@@ -12,7 +12,7 @@ events and effects, and the end record a name keeps), what a command answers for
 session ends, what a session hears of its shell's commands from the shell's marks, the caps its
 state keeps and how long its changes may go unsaved, the time its
 events tell it, and predicates over the session's operations, which they take as parameters:
-which messages fit a frame, change the labels or look at the session, and what a decoder reads from
+which messages fit a frame, describe or look at the session, and what a decoder reads from
 a chunked stream, the bounds a state
 keeps, the events a session handles when every effect succeeds, the reachable states of the
 daemon's byte queues, and a model of how daemons and offline readers claim a session's
@@ -95,11 +95,10 @@ def Commands.hear (c : Commands) : Terminal.Mediation.Mark → Commands
     | none => c
 
 /-- What a connection may do, as it asks when it attaches: type into the session, or only watch
-it. A connection that never attached, as `send`, `kill` and the label commands open, is
-writable. -/
+it. A connection that never attached, as `send`, `kill` and `describe` open, is writable. -/
 inductive Mode where
   /-- Its keystrokes reach the program, and it may end the session, disconnect every client and
-  change the labels. -/
+  describe the session. -/
   | writable
   /-- It watches: its keystrokes are dropped, and its requests to change the session refused. -/
   | readOnly
@@ -274,7 +273,7 @@ inductive Msg where
   | kill
   /-- client → daemon: describe yourself (one-shot). -/
   | info
-  /-- daemon → client: `k\tv\n` lines (fields + labels). -/
+  /-- daemon → client: `k\tv\n` lines, one per field of the session's record. -/
   | infoReply (bytes : List UInt8)
   /-- client → daemon: send scrollback and the screen as output frames, then `done`. -/
   | history
@@ -283,12 +282,6 @@ inductive Msg where
   | exited (status : UInt32)
   /-- client → daemon: hold this connection open until the child exits. -/
   | wait
-  /-- client → daemon: set one `k=v` label. -/
-  | labelSet (kv : List UInt8)
-  /-- client → daemon: remove one label by key. -/
-  | labelUnset (k : List UInt8)
-  /-- client → daemon: remove all labels. -/
-  | labelClear
   /-- daemon → client: end of a request/reply exchange. -/
   | done
   /-- daemon → client: request failed, human-readable reason. -/
@@ -306,6 +299,9 @@ inductive Msg where
   /-- client → daemon: replace your image with the program at this path, which carries the
   session over without ending it (`linger upgrade`). -/
   | upgrade (exe : List UInt8)
+  /-- client → daemon: describe the session with this text, or give it no description when the
+  text is empty (`linger describe`). -/
+  | describe (text : List UInt8)
   /-- any tag this version does not know: skipped, never fatal. -/
   | unknown (tag : UInt8) (payload : List UInt8)
   deriving Repr, DecidableEq, Inhabited
@@ -320,19 +316,21 @@ structure Decoder where
   deriving Repr, DecidableEq, Inhabited
 
 /-- A message the encoder may send: its bytes fit one frame's payload, and an `unknown` message
-carries a tag this version leaves unassigned, 3, the attach of levels 1 and 2, or one above 20,
-so that it cannot read back as a known one. -/
+carries a tag this version leaves unassigned, 3, the attach of levels 1 and 2, 11 to 13, the
+label requests of versions before the session record had fields of its own, or one above 21, so
+that it cannot read back as a known one. -/
 @[expose]
 def Msg.Fits : Msg → Prop
-  | .input bytes | .output bytes | .infoReply bytes | .labelSet bytes | .labelUnset bytes |
-    .err bytes | .upgrade bytes => bytes.length ≤ maxPayload
-  | .unknown tag payload => payload.length ≤ maxPayload ∧ (tag = 3 ∨ 20 < tag.toNat)
+  | .input bytes | .output bytes | .infoReply bytes | .describe bytes | .err bytes |
+    .upgrade bytes => bytes.length ≤ maxPayload
+  | .unknown tag payload =>
+    payload.length ≤ maxPayload ∧ (tag = 3 ∨ (11 ≤ tag.toNat ∧ tag.toNat ≤ 13) ∨ 21 < tag.toNat)
   | _ => True
 
-/-- A request to change a session's labels: set one, remove one, or remove them all. -/
+/-- A request to change a session's description, the one field of its record a client sets. -/
 @[expose]
-def Msg.ChangesLabels : Msg → Prop
-  | .labelSet _ | .labelUnset _ | .labelClear => True
+def Msg.Describes : Msg → Prop
+  | .describe _ => True
   | _ => False
 
 /-- A request that looks at the session: an attach, which shows its screen, or a capture of
@@ -365,10 +363,17 @@ stops accepting at the same count. -/
 @[expose]
 def maxClients : Nat := 16
 
-/-- Most labels a session holds: setting one more is refused, and booting keeps only the
-first this many restored labels. -/
+/-- Most fields a session's record holds of its own, its description and an import's
+provenance: describing a session past it is refused, and booting keeps only the first this many
+restored fields. -/
 @[expose]
-def maxLabels : Nat := 64
+def maxFields : Nat := 64
+
+/-- The keys of the fields a session's record holds of its own: `description`, which only
+`describe` sets, and the `tmux.` fields with which a tmux import records the pane it came from,
+which only the import sets. -/
+@[expose]
+def recordField (key : String) : Bool := key == "description" || key.startsWith "tmux."
 
 /-- How long a session's changes may go unsaved: a session asks for a checkpoint save no later
 than this after the first change no save holds, and saves on its own at most once in it. A
@@ -561,15 +566,15 @@ output frames and without repaints. -/
 def without {S E Plan : Type} (drop : Effect Plan → Bool) (step : S → E → S × List (Effect Plan))
     (s : S) (ev : E) : S × List (Effect Plan) := ((step s ev).1, (step s ev).2.filter (!drop ·))
 
-/-- The session bounds, read through a state's client roster, labels and pty scanner: the
-roster and the label store within their caps, every client's frame decoder healthy and
+/-- The session bounds, read through a state's client roster, record fields and pty scanner: the
+roster and the fields within their caps, every client's frame decoder healthy and
 holding at most one frame, and the scanner within its caps. -/
-structure Bounds {S : Type} (roster : S → List Client) (labels : S → List (String × String))
+structure Bounds {S : Type} (roster : S → List Client) (fields : S → List (String × String))
     (scanner : S → Terminal.Mediation.Scan) (s : S) : Prop where
   /-- At most `maxClients` clients. -/
   clientsLe : (roster s).length ≤ maxClients
-  /-- At most `maxLabels` labels. -/
-  labelsLe : (labels s).length ≤ maxLabels
+  /-- At most `maxFields` fields. -/
+  fieldsLe : (fields s).length ≤ maxFields
   /-- Every client's decoder is healthy and holds at most one frame. -/
   decOk : ∀ c ∈ roster s, c.decoder.errored = false ∧ c.decoder.buf.length ≤ 4 + Wire.maxPayload
   /-- The pty scanner is within its caps. -/
@@ -753,15 +758,15 @@ end Linger.Session.Driver
 namespace Linger.Session.Checkpoint
 
 /-- What a checkpoint holds, given the terminal type: the terminal, the working directory and
-the labels. It derives no `Inhabited`: a default terminal is a choice, not a state the
+the fields of the session's record. It derives no `Inhabited`: a default terminal is a choice, not a state the
 emulator reaches. -/
 structure Ckpt (V : Type) where
   /-- The terminal state; its parser state is not saved. -/
   vt : V
   /-- The directory the restored session's child starts in. -/
   cwd : String
-  /-- The session's labels, as key/value pairs. -/
-  labels : List (String × String)
+  /-- The fields of the session's record, as key/value pairs whose keys are `recordField`s. -/
+  fields : List (String × String)
 
 /-- `v` is the terminal of a checkpoint `load` returns for some bytes: a terminal a resumed
 session can start from. -/

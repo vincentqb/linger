@@ -1126,7 +1126,7 @@ structure Request where
   tell : Start.Report → IO Unit
 
 /-- What a daemon may start from, as its command decided from the name's checkpoint
-(`Linger.App.Recovery.decide`): the saved terminal, directory and labels to resume, `none` for a
+(`Linger.App.Recovery.decide`): the saved terminal, directory and record fields to resume, `none` for a
 new session, or, when it may do neither, the status its command answers and why. -/
 abbrev Recovered : Type :=
   Except (UInt8 × String) (Option (Terminal.Vt.Vt × String × List (String × String)))
@@ -1316,7 +1316,7 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
           throw
               (IO.userError
                 s!"session '{name}' cannot resume: its directory {dir} is gone, and HOME is unset")
-      let restore := saved.map (fun (vt, _, labels) => (vt, labels))
+      let restore := saved.map (fun (vt, _, fields) => (vt, fields))
       -- The socket lock excludes another cooperating listener, even if connect
       -- failed for a reason other than a stale socket. Never unlink the lock inode.
       try

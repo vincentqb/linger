@@ -43,10 +43,12 @@ private def readU32 (l : List UInt8) : UInt32 :=
 
 Tag 3 was the attach of levels 1 and 2, which carried only a size and made a client that gave
 none read-only. It is retired, so this version reads it as a message it does not know, and
-refuses it, as an older daemon refuses tag 18, the attach that carries a mode. -/
+refuses it, as an older daemon refuses tag 18, the attach that carries a mode. Tags 11 to 13 set,
+removed and cleared labels before the session record had fields of its own; they are retired too,
+and tag 21 describes the session. -/
 
-/-- A message's frame tag: 0 to 20 for the assigned messages, but 3, which is retired, and an
-`unknown` message's own tag. -/
+/-- A message's frame tag: 0 to 21 for the assigned messages, but 3 and 11 to 13, which are
+retired, and an `unknown` message's own tag. -/
 private def Msg.tag : Msg → UInt8
   | .input _ => 0
   | .output _ => 1
@@ -59,19 +61,17 @@ private def Msg.tag : Msg → UInt8
   | .history => 8
   | .exited _ => 9
   | .wait => 10
-  | .labelSet _ => 11
-  | .labelUnset _ => 12
-  | .labelClear => 13
   | .done => 14
   | .err _ => 15
   | .screen => 16
   | .ended _ => 17
   | .saved _ => 19
   | .upgrade _ => 20
+  | .describe _ => 21
   | .unknown t _ => t
 
 /-- Tags with an assigned meaning in this version. -/
-private def knownTag (t : UInt8) : Bool := t ≤ 20 && t != 3
+private def knownTag (t : UInt8) : Bool := t ≤ 21 && t != 3 && (t < 11 || 13 < t)
 
 /-- A mode as one byte: 0 writable, 1 read-only. `readMode` inverts it (`readMode_modeByte`). -/
 def modeByte : Mode → UInt8
@@ -102,13 +102,13 @@ def readOutcome : List UInt8 → Outcome
 `writeU32`, after an attach's mode byte, an ending's two bytes, a signal's number, or nothing.
 `decodeMsg` recovers a well-formed message from its tag and payload (`decodeMsg_roundtrip`). -/
 private def Msg.payload : Msg → List UInt8
-  | .input b | .output b | .infoReply b | .err b | .labelSet b | .labelUnset b | .upgrade b => b
+  | .input b | .output b | .infoReply b | .err b | .upgrade b | .describe b => b
   | .resize c r => writeU32 c ++ writeU32 r
   | .attach m c r => modeByte m :: (writeU32 c ++ writeU32 r)
   | .exited s => writeU32 s
   | .ended o => outcomeBytes o
   | .saved signal => [signal]
-  | .detachAll | .kill | .info | .history | .wait | .labelClear | .done | .screen => []
+  | .detachAll | .kill | .info | .history | .wait | .done | .screen => []
   | .unknown _ p => p
 
 /-- The attach a tag-18 payload carries: its mode byte, then the size, or `unknown` when the
@@ -143,24 +143,20 @@ private def decodeMsg (tag : UInt8) (p : List UInt8) : Msg :=
                   else
                     if tag = 10 then .wait
                     else
-                      if tag = 11 then .labelSet p
+                      if tag = 14 then .done
                       else
-                        if tag = 12 then .labelUnset p
+                        if tag = 15 then .err p
                         else
-                          if tag = 13 then .labelClear
+                          if tag = 16 then .screen
                           else
-                            if tag = 14 then .done
+                            if tag = 17 then .ended (readOutcome p)
                             else
-                              if tag = 15 then .err p
+                              if tag = 18 then decodeAttach p
                               else
-                                if tag = 16 then .screen
+                                if tag = 19 then .saved (p.headD 0)
                                 else
-                                  if tag = 17 then .ended (readOutcome p)
-                                  else
-                                    if tag = 18 then decodeAttach p
-                                    else
-                                      if tag = 19 then .saved (p.headD 0)
-                                      else if tag = 20 then .upgrade p else .unknown tag p
+                                  if tag = 20 then .upgrade p
+                                  else if tag = 21 then .describe p else .unknown tag p
 
 /-- A message the encoder may legally emit: payload within `maxPayload`, and
 `unknown` only for genuinely unassigned tags (an `unknown` wearing a

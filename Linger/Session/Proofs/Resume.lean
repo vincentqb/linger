@@ -124,7 +124,7 @@ example :
     ∃ c : Ckpt Vt.Vt,
       c.vt.pstate = .ground ∧
         c.vt.u8need = 0 ∧ c.vt.u8acc = 0 ∧ Vt.Good c.vt ∧ Vt.Renderable c.vt ∧ Vt.TabsOk c.vt :=
-  ⟨{ vt := Vt.Vt.init 80 24, cwd := "", labels := [] }, rfl, rfl, rfl, Vt.good_init 80 24,
+  ⟨{ vt := Vt.Vt.init 80 24, cwd := "", fields := [] }, rfl, rfl, rfl, Vt.good_init 80 24,
     Vt.renderable_init 80 24, Vt.tabsOk_init 80 24⟩
 
 /-- **Resume, the tab ruler.** A quiescent checkpoint comes back as the same record, and
@@ -149,7 +149,7 @@ theorem resume_tabs (c : Ckpt Vt.Vt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8ne
 the case a hypothesis `0 < rows - 1` would exclude — the grid of an 80×1 session is reproduced. -/
 example :
     ((Vt.Vt.init 80 1).feed (Render.restore (Vt.Vt.init 80 1))).grid = (Vt.Vt.init 80 1).grid :=
-  (resume_grid { vt := Vt.Vt.init 80 1, cwd := "", labels := [] } rfl rfl rfl (Vt.good_init 80 1)
+  (resume_grid { vt := Vt.Vt.init 80 1, cwd := "", fields := [] } rfl rfl rfl (Vt.good_init 80 1)
       (Vt.renderable_init 80 1) (Vt.tabsOk_init 80 1)).2
 
 /-- **Resume, the scrollback.** A quiescent checkpoint comes back as the same record, and

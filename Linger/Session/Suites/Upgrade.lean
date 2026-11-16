@@ -186,7 +186,7 @@ def run : IO UInt32 :=
         s!"the daemon runs the binary that asked ({image})"
     expect (!(← System.FilePath.pathExists s!"{e.dir}/logs/u.handoff"))
         "the new image removes the handoff it took"
-    expect ((← e.info "u" "label.description") == some "carried over")
+    expect ((← e.info "u" "description") == some "carried over")
         "the session's description is carried over"
     let (sendAfterRc, _, _) ← e.cli #["send", "c", "after\n"]
     let echoed ←
