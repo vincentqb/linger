@@ -9,13 +9,14 @@ public import Linger.Session.CoreSpec
 
 public section
 
-/-! Pure tmux-resurrect interchange and import planning.
+/-! Pure tmux-resurrect reading, the rows of saved panes and their import.
 
 Pane records supply identity, directory, title and command information. Captured
 contents and a command notice seed a checkpoint; commands never become executable arguments.
 The caller must preflight every directory it will import before performing effects.
-Planning uses an explicit snapshot of existing names; it does not claim atomic
-creation or protection from concurrent same-name creators.
+Which panes are listed, what an attach writes and what a kill leaves are decided from linger's
+records of the names (`listed`, `adopt`, `dismiss`); the caller reads those records holding the
+name's locks.
 -/
 
 namespace Linger.Import.Resurrect
@@ -191,39 +192,43 @@ def checkpoint (pane : Pane) (contents : Option String) :
       paneLabels pane contents ++
         Linger.Session.Checkpoint.importDescription (paneLabels pane contents) }
 
-/-- One ordered catalog for human listing and the selector. Display the saved
-foreground command line, falling back to its name. Display text is printable;
-action metadata stays exact until the `IO` boundary encodes it. -/
-def catalogRows (content : String) (panes : List Pane) : List (List (String × String)) :=
-  let rows := (content.splitOn "\n").map (·.splitOn "\t")
-  panes.map fun pane =>
-    let details := (preparePane content panes pane).details
-    let fields := rows[pane.line - 1]?.getD []
-    let session := fields[1]?.getD ""
-    let window := fields[2]?.getD ""
-    let record :=
-      rows.find? fun fields =>
-        fields[0]? == some "window" && fields[1]? == some session && fields[2]? == some window
-    let rawTitle := (record.getD [])[3]?.getD ""
-    let title := (rawTitle.dropPrefix ":").toString
-    let context := if title.isEmpty then s!"{session}:{window}" else s!"{session}:{window} {title}"
-    let command := if details.savedCommand.isEmpty then details.command else details.savedCommand
-    let description :=
-      if command.isEmpty then s!"{context}  ·  {pane.dir}"
-      else s!"{context}  ·  {pane.dir}  ·  {command}"
-    [("name", pane.name), ("status", Linger.Display.Status.name .resumable),
-      ("cmd", diagnostic description), ("directory", pane.dir), ("line", toString pane.line),
-      ("session", details.session), ("window", details.window), ("pane", details.index),
-      ("title", details.title), ("command", details.command),
-      ("saved-command", details.savedCommand), ("window-title", details.windowTitle),
-      ("cols", toString details.cols), ("rows", toString details.rows)]
+/-- The value `source` takes in a row of a saved tmux pane, which marks it a row of a source
+linger only reads. -/
+def sourceName : String := "tmux"
 
-/-- Revalidate the exact displayed action data after transport. Never normalize a
-target or execute a command from a save; absent or hostile identities fail closed. -/
-def selectedPane (name dir : String) (line : Nat) (details : Details := {}) : Option Pane :=
-  if Linger.Target.Name.sanitize name == name && !dir.contains '\x00' then
-    some { name, dir, line, details }
-  else none
+/-- The listing row of a saved tmux pane no record names, as `ls` and the chooser list it: its
+name, the status `~` and the state of a saved session, since an attach resumes it, the `source`
+that marks it, the description an import gives it (`Checkpoint.importDescription`), its
+directory and the provenance fields an import records but whether its contents were captured,
+which only an import reads. Every value is printable (`diagnostic`), so no value ends a field of
+the porcelain. -/
+def sourceRow (pane : Pane) : List (String × String) :=
+  let labels := (paneLabels pane none).filter (·.1 != "tmux.capture")
+  [("name", pane.name), ("state", "resumable"), ("status", Linger.Display.Status.name .resumable),
+      ("source", sourceName)] ++
+    ((Linger.Session.Checkpoint.importDescription labels ++ [("directory", pane.dir)] ++ labels).map
+      fun (key, value) => (key, diagnostic value))
+
+/-- The panes of a save that `ls` and the chooser list: those no record of linger's names, in
+the save's order (`listed_unrecorded`). -/
+def listed (records : Linger.Session.Records) (panes : List Pane) : List Pane :=
+  panes.filter fun pane => !records.holds pane.name
+
+/-- What an attach or a resume of a saved pane writes: the checkpoint an import gives the pane
+(`checkpoint`) when no record names it, and nothing otherwise, so it never replaces a record
+(`adopt_exclusive`). -/
+def adopt (records : Linger.Session.Records) (pane : Pane) (contents : Option String) :
+    Option (Linger.Session.Checkpoint.Ckpt Terminal.Vt.Vt) :=
+  if records.holds pane.name then none else some (checkpoint pane contents)
+
+/-- The end record a kill of a saved pane leaves its name: the one a kill leaves a session whose
+program its SIGHUP ended, so `wait` answers 129 for it as for any session a kill ended. -/
+def dismissal : Linger.Session.Record := .ended (.signaled 1)
+
+/-- The records a kill of the saved pane `name` leaves: an end record for the name, and nothing
+else (`dismiss_hides`). -/
+def dismiss (records : Linger.Session.Records) (name : String) : Linger.Session.Records :=
+  { records with endings := name :: records.endings }
 
 /-- Literal absolute directories that survive save/restore field handling. -/
 private def representableDir (dir : String) : Bool :=
@@ -250,9 +255,5 @@ def renderSave (fields : List (String × String)) : Except String String :=
     | .ok panes =>
       if common panes == fields then .ok content
       else .error "generated tmux save changed session identity or cwd"
-
-/-- Skip existing names, preserving whole records and their order. -/
-def plan (existing : List String) (panes : List Pane) : List Pane :=
-  panes.filter (fun pane => !existing.contains pane.name)
 
 end Linger.Import.Resurrect

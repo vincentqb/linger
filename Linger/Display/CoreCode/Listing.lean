@@ -173,17 +173,19 @@ def endingText (info : List (String × String)) : Option String :=
 
 /-- What a row says of a session that is not running: that it ended, and how, or that it is
 resumable, and which signal stopped its daemon when one saved it (the `saved` field
-`Session.endingFields` writes); `(busy)` for a local daemon that did not answer, which carries
-no `pid` and no `cmd`; and nothing for a running session. -/
+`Session.endingFields` writes), or, for a row of a source linger only reads, which source saved
+it, as `(saved by tmux)`; `(busy)` for a local daemon that did not answer, which carries no `pid`
+and no `cmd`; and nothing for a running session. -/
 def stateText (info : List (String × String)) : String :=
   let st := Status.ofName (look info "status")
   if look info "state" == "resumable" then
     if st == .exitedOk || st == .exitedBad then
       "ended" ++ ((endingText info).map (s!" ({·})")).getD ""
     else
-      match info.lookup "saved" with
-      | some signal => s!"(resumable, saved by signal {signal})"
-      | none => "(resumable)"
+      match info.lookup "saved", info.lookup "source" with
+      | some signal, _ => s!"(resumable, saved by signal {signal})"
+      | none, some source => s!"(saved by {source})"
+      | none, none => "(resumable)"
   else
     if st == .unknown && (look info "pid").isEmpty && (look info "cmd").isEmpty then "(busy)"
     else ""

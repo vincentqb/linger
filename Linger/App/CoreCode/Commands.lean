@@ -23,9 +23,7 @@ def table : List Command :=
   [{ word := "attach", op := .attach, args := "[--read-only] [name] [command...]",
      summary := "Choose, create or attach to a session" },
     { word := "ls", op := .list, args := "[-r [hosts] | name...] [--porcelain]",
-      summary := "List sessions, or --summary attention counts" },
-    { word := "tmux", op := .tmux, args := "<command> [SAVE]",
-      summary := "Saved tmux panes; see tmux help" },
+      summary := "List sessions and tmux panes; or --summary, --resurrect" },
     { word := "start", op := .start, args := "<name> <program> [args...]",
       summary := "Start a program, exactly, in a new session" },
     { word := "resume", op := .resume, args := "<name>",
@@ -35,7 +33,7 @@ def table : List Command :=
     { word := "detach", op := .detach, args := "<name>",
       summary := "Detach all clients from a session" },
     { word := "kill", op := .kill, args := "<name>",
-      summary := "End a session, or discard a saved or ended one" },
+      summary := "End a session, or discard a saved one or tmux pane" },
     { word := "rename", op := .rename, args := "<name> <new-name>",
       summary := "Give a session a new name" },
     { word := "capture", op := .capture, args := "[--history] <name>",
@@ -55,6 +53,19 @@ def helpOption : String := "--help"
 /-- The option that prints linger's version and the state paths. -/
 def versionOption : String := "--version"
 
+/-- What to use instead of the removed `tmux` command whose next word is `sub`: `ls` lists the
+latest save's panes no record names, an attach resumes one and a kill hides one, and
+`ls --resurrect` writes the sessions as a save, to standard output. -/
+def tmuxAdvice (sub : String) : String :=
+  match sub with
+  | "ls" => "use ls, which lists the panes of the latest tmux-resurrect save"
+  | "select" => "use attach, whose chooser lists the panes of the latest tmux-resurrect save"
+  | "import" => "use attach NAME or resume NAME on a pane ls lists"
+  | "export" => "use ls --resurrect, which writes the save to standard output"
+  | _ =>
+    "tmux saves are read in place: ls lists their panes, attach NAME resumes one, kill NAME \
+      hides one, and ls --resurrect writes a save to standard output"
+
 /-- Words of removed commands and spellings, each with what to use instead. A removed word names
 no command (`retired_free`), so it never comes back meaning something else. -/
 def retired : List (String × String) :=
@@ -68,7 +79,8 @@ def retired : List (String × String) :=
     ("get", "use ls NAME --porcelain, which reports the description"),
     ("g", "use ls NAME --porcelain, which reports the description"), ("set", labels),
     ("unset", labels), ("un", labels), ("clear", labels), ("cl", labels), ("help", "use --help"),
-    ("h", "use --help"), ("-h", "use --help"), ("version", "use --version"), ("v", "use --version")]
+    ("h", "use --help"), ("-h", "use --help"), ("version", "use --version"), ("v", "use --version"),
+    ("tmux", tmuxAdvice "")]
 
 /-- The command a word names, if any: the row whose word it is. -/
 def lookup (word : String) : Option Command := table.find? fun command => command.word == word

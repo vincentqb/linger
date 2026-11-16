@@ -1,28 +1,29 @@
 module
 
 public import Linger.Os.CoreSpec
-import Linger.Os.CoreCode.Answer
+public import Linger.Session.CoreSpec
 import Linger.Import.CoreCode.Resurrect
 import Linger.Session.CoreCode.Checkpoint
 import Os.WorldCode
-import Linger.Display.CoreCode.Listing
+import Linger.Display.CoreCode.View
 import Linger.Session.WorldCode.Paths
 import Linger.Session.WorldCode.Names
 import Linger.Session.WorldCode.Resume
+import Linger.Session.WorldCode.Record
 import Linger.Session.WorldCode.Inventory
 import Os.WorldCode.Command
-import Linger.Target.CoreCode.Remote
-import Linger.Selector.WorldCode
-import Linger.Selector.CoreCode.Picker
 import Std.Async.System
-import Linger.Os.CoreCode.Env
 
 public section
 
-/-! tmux-resurrect interchange. Pure parsing and export policy live in
-`Linger.Import.Resurrect`. An import writes one checkpoint per pane and starts nothing: attach or
-resume runs a fresh shell on a pane's contents when someone asks for it. Exports publish current
-native names and directories atomically. -/
+/-! # Linger.Import.Shell — the latest tmux-resurrect save, read in place
+
+A tmux-resurrect save is a source linger reads and never writes: nothing here creates, moves or
+deletes a file in tmux's directory. Its panes are listed while linger keeps no record of their
+names (`Resurrect.listed`), an attach or a resume of one writes its checkpoint where no record is
+(`Resurrect.adopt`), and a kill of one writes the end record a kill leaves (`Resurrect.dismiss`),
+each decided holding the name's locks; the rest of linger then treats the name as any other. An
+export writes the sessions' names and directories as a save, to standard output only. -/
 
 namespace Linger.Import.Shell
 
@@ -49,71 +50,21 @@ private def resolveRelative (origin : System.FilePath) (path : String) : IO Stri
       throw error
   return resolved.toString
 
-/-- Check every directory before the first session creation. Core IO provides
-the access check; the import command has no concurrent cwd-changing tasks. -/
-private def preflight (origin : System.FilePath) (panes : List Pane) : IO Unit := do
-  for pane in panes do
-    unless ← (System.FilePath.mk pane.dir).isDir do
-      throw (IO.userError s!"working directory not found at line {pane.line}: {pane.dir}")
-    try
-      IO.Process.setCurrentDir pane.dir
-    catch _ =>
-      throw (IO.userError s!"working directory not accessible at line {pane.line}: {pane.dir}")
-    finally
-      IO.Process.setCurrentDir origin
-
-/-- Freeze physical home and state paths for import children.
-These commands have no concurrent environment users.
-Restore the caller's environment even when a subprocess fails. -/
-private def inContext {α : Type} (action : System.FilePath → String → IO α) : IO α := do
+/-- The invocation's directory and the home directory a save's `~` stands for: `HOME`, resolved
+from the invocation's directory, or the account's when `HOME` is unset or empty. -/
+private def context : IO (System.FilePath × String) := do
   let origin ← IO.currentDir
-  let home ←
-    match (← IO.getEnv "HOME").filter (!·.isEmpty) with
-    | some value =>
-      resolveRelative origin value
+  match (← IO.getEnv "HOME").filter (!·.isEmpty) with
+  | some value =>
+    return (origin, ← resolveRelative origin value)
+  | none =>
+    -- Read the account record directly: shell expansion of ~ with HOME absent
+    -- is not portable, and getHomeDir may still observe an empty HOME.
+    match (← Std.Async.System.getCurrentUser).homeDir.filter (·.isAbsolute) with
+    | some home =>
+      return (origin, home.toString)
     | none =>
-      -- Read the account record directly: shell expansion of ~ with HOME absent
-      -- is not portable, and getHomeDir may still observe an empty HOME.
-      match (← Std.Async.System.getCurrentUser).homeDir.filter (·.isAbsolute) with
-      | some home =>
-        pure home.toString
-      | none =>
-        throw (IO.userError "could not determine the account home directory")
-  let mut env : Array (String × Option String) := #[("HOME", some home)]
-  for key in ["LINGER_DIR", "XDG_RUNTIME_DIR", "XDG_STATE_HOME"] do
-    if let some value← IO.getEnv key then
-      if key == "LINGER_DIR" || !value.isEmpty then
-        env := env.push (key, some (← resolveRelative origin value))
-  let previous ← env.mapM fun (key, _) => return (key, ← IO.getEnv key)
-  let set := fun (key, value) =>
-    match value with
-    | some value => Std.Async.System.setEnvVar key value
-    | none => Std.Async.System.unsetEnvVar key
-  try
-    env.forM set
-    action origin home
-  finally
-    previous.forM set
-
-/-- Exclusive temporary creation protects a previous file even if a stale
-temporary exists. Linking publishes a complete new export without overwriting
-any destination. -/
-private def publish (path : System.FilePath) (content : String) : IO Unit := do
-  let tmp := System.FilePath.mk s!"{path}.linger-{← Os.Shell.getpid}-{← IO.rand 0 0xFFFFFFFF}.tmp"
-  let handle ← IO.FS.Handle.mk tmp .writeNew
-  try
-    Os.Shell.chmod tmp.toString 0o600
-    handle.putStr content
-    handle.flush
-    IO.FS.hardLink tmp path
-  finally
-    try
-      IO.FS.removeFile tmp
-    catch
-    | .noFileOrDirectory .. =>
-      pure ()
-    | error =>
-      throw error
+      throw (IO.userError "could not determine the account home directory")
 
 /-- Query an existing server only. A missing tmux or server leaves default
 discovery available. Poll for one second, then force-retire the owned process group. -/
@@ -138,74 +89,61 @@ private def configuredDirectory : IO (Option String) := do
         return if dir.isEmpty then none else some dir
       unless ← Os.Shell.nap deadline 10 do
         break
-    throw (IO.userError "tmux configuration query timed out; pass a save file explicitly")
+    throw (IO.userError "tmux configuration query timed out")
   finally
     Command.stop pending
 
-/-- An explicit file wins. Otherwise consult tmux's effective directory without
-evaluating configuration files, then the conventional legacy and XDG locations. -/
-private def savePath (origin : System.FilePath) (home : String) (file : Option String) :
-    IO System.FilePath := do
+/-- Where the latest save is, as tmux-resurrect keeps it: `last` in tmux's effective
+`@resurrect-dir`, asked of a running server without evaluating configuration files, else in the
+legacy `~/.tmux/resurrect`, when that has one, else in `$XDG_DATA_HOME/tmux/resurrect`. -/
+private def savePath (origin : System.FilePath) (home : String) : IO System.FilePath := do
   let path ←
-    match file with
-    | some path =>
-      pure path
-    | none =>
-      if let some dir← configuredDirectory then
-        let dir :=
-          if dir == "~" then home
-          else if dir.startsWith "~/" then home ++ (dir.drop 1).toString else dir
-        pure (System.FilePath.mk dir / "last").toString
+    if let some dir← configuredDirectory then
+      let dir :=
+        if dir == "~" then home
+        else if dir.startsWith "~/" then home ++ (dir.drop 1).toString else dir
+      pure (System.FilePath.mk dir / "last").toString
+    else
+      let legacy := System.FilePath.mk s!"{home}/.tmux/resurrect/last"
+      if ← legacy.pathExists then
+        pure legacy.toString
       else
-        let legacy := System.FilePath.mk s!"{home}/.tmux/resurrect/last"
-        if ← legacy.pathExists then
-          pure legacy.toString
-        else
-          let data := (← IO.getEnv "XDG_DATA_HOME").filter (!·.isEmpty)
-          pure
-              (System.FilePath.mk (data.getD s!"{home}/.local/share") /
-                  "tmux/resurrect/last").toString
+        let data := (← IO.getEnv "XDG_DATA_HOME").filter (!·.isEmpty)
+        pure
+            (System.FilePath.mk (data.getD s!"{home}/.local/share") /
+                "tmux/resurrect/last").toString
   let path := System.FilePath.mk path
   return if path.isAbsolute then path else origin / path
 
+/-- A save as read: the physical path of its file and its panes. -/
 private structure Save where
   path : System.FilePath
-  modified : String
-  content : String
   panes : List Pane
 
-/-- Read and validate a single resolved file. Relative saved directories remain
-relative to the invocation, and are frozen before the picker changes anything. -/
-private def readSave (origin : System.FilePath) (home : String) (file : Option String) : IO Save :=
-  do
-  let save ← savePath origin home file
+/-- Read and validate the latest save, `none` when there is none. Relative saved directories are
+taken from the invocation's directory. -/
+private def readSave (origin : System.FilePath) (home : String) : IO (Option Save) := do
+  let save ← savePath origin home
   let metadata ← save.metadata.toBaseIO
   unless metadata.toOption.any (·.type == .file) do
-    throw (IO.userError s!"save not found: {save}")
+    return none
   let path ← IO.FS.realPath save
-  let metadata ← path.metadata
   let content ← IO.FS.readFile path
   let panes ← IO.ofExcept (parseSave home content)
   let panes :=
     panes.map fun pane =>
       if pane.dir.isEmpty || (System.FilePath.mk pane.dir).isAbsolute then pane
       else { pane with dir := (origin / pane.dir).toString }
-  let panes := panes.map (preparePane content panes)
-  let timestamp := Std.Time.Timestamp.ofSecondsSinceUnixEpoch (.ofInt metadata.modified.sec)
-  let modified := (Std.Time.DateTime.ofTimestamp timestamp .UTC).toISO8601String
-  return { path, modified, content, panes }
+  return some { path, panes := panes.map (preparePane content panes) }
 
-/-- A capture archive belongs only to the save reached by the adjacent `last`.
-Its physical path and revision travel with the selector's displayed snapshot. -/
+/-- A capture archive belongs only to the save reached by the adjacent `last`, as it stood when
+it was read: its physical path, modification time, size and members. -/
 private structure Archive where
   path : System.FilePath
   save : System.FilePath
   modified : IO.FS.SystemTime
   byteSize : UInt64
   members : List String
-
-private def archiveRevision (archive : Archive) : String :=
-  s!"{archive.modified.sec}:{archive.modified.nsec}:{archive.byteSize}"
 
 private def latestSave (save : System.FilePath) : IO Bool := do
   let last := save.parent.getD "." / "last"
@@ -280,143 +218,100 @@ private def capturedPane (archive : Option Archive) (pane : Pane) : IO (Option S
   | _ =>
     throw (IO.userError s!"duplicate pane capture: {pane.name}")
 
-/-- Publish an imported checkpoint only while owning both session locks. Existing
-sockets and checkpoints win, including a concurrently created session. The checkpoint is written
-as a daemon saves one, whole, durably and readable by its owner alone (`Os.Shell.replaceFile`):
-a crash leaves no checkpoint or this one, never part of it. -/
-private def seedPane (pane : Pane) (contents : Option String) : IO Bool := do
-  let id := (← Names.claim pane.name).id
-  Paths.withSessionLock id do
-      let path ← Paths.ckptPath id
-      let socket ← Paths.socketPath id
-      if (← (System.FilePath.mk path).pathExists) || (← (System.FilePath.mk socket).pathExists) then
-        return false
-      Os.Shell.replaceFile path (Linger.Session.Checkpoint.saveBytes (checkpoint pane contents))
-      return true
+/-- What linger keeps of `name`: an entry of the names directory that names it or leads to it,
+and, since with no entry a name keys its session's files itself (`Names.resolve`), its socket,
+its checkpoint and its end record, each present or not. A caller that decides from it holds the
+name's locks. -/
+private def recordsOf (name : String) : IO Linger.Session.Records := do
+  let has := fun (path : String) => System.FilePath.pathExists path
+  let only := fun (present : Bool) => if present then [name] else []
+  let table ← Names.load
+  return { sockets := only (← has (← Paths.socketPath name)),
+           checkpoints := only (← has (← Paths.ckptPath name)),
+           endings := only (← has (← Paths.recordPath name)),
+           entries := only (table.any fun (entry, id) => entry == name || id == name) }
 
-/-- Both bulk import and individual selection preflight before effects, then
-skip existing identities. Each new pane becomes a saved session: its checkpoint holds the pane's
-contents and directory, and no program starts until an attach or a resume names it, which runs
-a fresh shell there. -/
-private def createPanes (executable : String) (origin : System.FilePath) (panes : List Pane)
-    (archive : IO (Option Archive)) : IO Unit := do
-  preflight origin panes
-  let listing ← IO.Process.output { cmd := executable, args := #["ls", "--porcelain"] }
-  unless listing.exitCode == 0 do
-    throw (IO.userError "could not list existing linger sessions")
-  let existing := (Linger.Target.Remote.parse listing.stdout).map (·.name)
-  let archive ←
-    if (plan existing panes).isEmpty then
-      pure none
-    else
-      archive
-  for pane in plan existing panes do
-    let contents ← capturedPane archive pane
-    discard <| seedPane pane contents
+/-- The latest save's file and panes, `none` when there is no save, or when it cannot be read or
+does not parse, which this says on standard error: what linger does with its own sessions never
+depends on a foreign save. -/
+private def latest : IO (Option (System.FilePath × List Pane)) := do
+  let read : IO (Option (System.FilePath × List Pane)) := do
+    let (origin, home) ← context
+    return (← readSave origin home).map fun save => (save.path, save.panes)
+  match ← read.toBaseIO with
+  | .ok found =>
+    return found
+  | .error error =>
+    IO.eprintln s!"linger: could not read the tmux-resurrect save: {diagnostic (toString error)}"
+    return none
 
-private def importSave (executable : String) (file : Option String) : IO Unit :=
-  inContext fun origin home => do
-    let save ← readSave origin home file
-    createPanes executable origin save.panes (readArchive save.path)
+/-- The listing rows of the latest save's panes that `records` does not name
+(`Resurrect.listed`), in name order (`View.byName`), each marked with its source
+(`Resurrect.sourceRow`). No save, or one that cannot be read, lists none. -/
+def sourceRows (records : Linger.Session.Records) : IO (List (List (String × String))) := do
+  let some (_, panes) ← latest | return []
+  return (Linger.Display.View.byName (·.name) (listed records panes)).map sourceRow
 
-private def listSave (file : Option String) (porcelain : Bool) : IO Unit :=
-  inContext fun origin home => do
-    let save ← readSave origin home file
-    let rows := catalogRows save.content save.panes
-    let archive ← readArchive save.path
-    let out ← IO.getStdout
-    if porcelain then
-      out.putStr s!"source\t{diagnostic save.path.toString}\nsaved\t{save.modified}\n\n"
-      for row in rows do
-        for (key, value) in row do
-          -- String-literal framing preserves control characters in action data.
-          let value :=
-            if
-                ["directory", "session", "window", "pane", "title", "command", "saved-command",
-                      "window-title"].contains
-                  key then
-              value.quote
-            else diagnostic value
-          out.putStr s!"{key}\t{value}\n"
-        if let some archive := archive then
-          out.putStr s!"archive\t{archive.path.toString.quote}\n"
-          out.putStr s!"archive-save\t{archive.save.toString.quote}\n"
-          out.putStr s!"archive-revision\t{archiveRevision archive}\n"
-        out.putStr "\n"
-    else
-      out.putStr s!"tmux save · {save.modified}\n{diagnostic save.path.toString}\n\n"
-      out.flush
-      let withColor :=
-        Linger.Os.Env.withColor (← (← IO.getStdout).isTty) (← IO.getEnv "NO_COLOR")
-          (← IO.getEnv "TERM")
-      Os.Shell.writeAll Os.Shell.stdoutFd
-          (ByteArray.mk (Linger.Display.Listing.terminalListing withColor none rows).toArray)
+/-- The latest save's pane named `name`, if any. -/
+private def paneNamed (name : String) : IO (Option Pane) := do
+  return (← latest).bind fun (_, panes) => panes.find? (·.name == name)
 
-/-- Act on the selected snapshot's exact directory, never on a reread of `last`.
-Resolve default discovery once per visit; the picker follows that path on refresh. A cancellation
-ends the selection with `cancelled`, and a signal of `Os.Shell.handbackSignals` with `stopped` and
-the first that came (`Os.Shell.watching`), once the visit, or the attach that owns the terminal
-meanwhile, has handed the terminal back; a listing that fails ends it with the answer its exit
-status gives (`Answer.ofCode`). -/
-private def selectSave (executable : String) (file : Option String) : IO Linger.Os.Answer :=
-  inContext fun origin home => do
-    let path ← savePath origin home file
-    Os.Shell.watching Os.Shell.handbackSignals Linger.Os.Answer.stopped fun stops => do
-        while true do
-          match
+/-- The listing row of the latest save's pane `name`, while no record names it. -/
+def sourceRow? (name : String) : IO (Option (List (String × String))) := do
+  let some pane ← paneNamed name | return none
+  if (← recordsOf name).holds name then
+    return none
+  return some (sourceRow pane)
+
+/-- What an attach or a resume of a name did with the latest save's pane of that name. -/
+inductive Adopted where
+  /-- The save has no pane of the name, or a record names it, so the save was not read. -/
+  | none
+  /-- The pane's checkpoint was written, so the name is a saved session to resume. -/
+  | written
+  /-- A record named the pane by the time the name's locks were held, so nothing was written. -/
+  | recorded
+
+/-- An attach or a resume of `name`, when no record names it and the latest save has a pane of
+that name: write the pane's checkpoint, with its captured contents, holding the name's locks, as
+`Resurrect.adopt` decides from the name's records there, and only where no file is
+(`Os.Shell.createFile`), so it never replaces a record. A name a record names reads no save. -/
+def adopt (name : String) : IO Adopted := do
+  if (← recordsOf name).holds name then
+    return .none
+  let some found ← latest | return .none
+  let (save, panes) := found
+  let some pane := panes.find? (·.name == name) | return .none
+  let contents ← capturedPane (← readArchive save) pane
+  Paths.withSessionLock name do
+      match Linger.Import.Resurrect.adopt (← recordsOf name) pane contents with
+      | none =>
+        return .recorded
+      | some ck =>
+        if
             ←
-              Linger.Selector.Shell.choose executable (some path.toString) (heard :=
-                  stops.came) with
-          | .cancel =>
-            return .cancelled
-          | .stopped signal =>
-            return .stopped signal
-          | .failed status stderr =>
-            if !stderr.isEmpty then
-              IO.eprint stderr
-            return Linger.Os.Answer.ofCode status
-          | .attach target displayed =>
-            unless displayed.candidates.contains target do
-              throw (IO.userError "selected pane was absent from the displayed save")
-            let row := displayed.row target
-            -- `decodeStrLit` tolerates malformed literals; accept only the canonical encoding.
-            let some dir :=
-              (row.lookup "directory").bind fun value =>
-                (Lean.Syntax.decodeStrLit value).filter (·.quote == value)
-              | throw (IO.userError "selected pane has no directory")
-            let some line := (row.lookup "line").bind String.toNat?
-              | throw (IO.userError "selected pane has no source line")
-            let text := fun key =>
-              (row.lookup key).bind fun value =>
-                (Lean.Syntax.decodeStrLit value).filter (·.quote == value)
-            let details : Details :=
-              { session := (text "session").getD "", window := (text "window").getD "",
-                index := (text "pane").getD "", title := (text "title").getD "",
-                command := (text "command").getD "", savedCommand := (text "saved-command").getD "",
-                windowTitle := (text "window-title").getD "",
-                cols := ((row.lookup "cols").bind String.toNat?).getD 80,
-                rows := ((row.lookup "rows").bind String.toNat?).getD 24 }
-            let some pane := selectedPane target dir line details
-              | throw (IO.userError "invalid selected pane")
-            let archive := do
-              let some save := text "archive-save" | return none
-              let found ← readArchive save
-              let some found := found
-                | throw (IO.userError "pane capture archive changed; refresh the saved panes")
-              unless
-                text "archive" == some found.path.toString &&
-                  row.lookup "archive-revision" == some (archiveRevision found) do
-                throw (IO.userError "pane capture archive changed; refresh the saved panes")
-              return some found
-            createPanes executable origin [pane] archive
-            let child ←
-              IO.Process.spawn
-                  { cmd := executable, args := Linger.Selector.Shell.attachArgs pane.name,
-                    cwd := some (System.FilePath.mk pane.dir) }
-            discard child.wait
-            if let some signal← stops.came then
-              return .stopped signal
-        return .done
+              Os.Shell.createFile (← Paths.ckptPath name)
+                  (Linger.Session.Checkpoint.saveBytes ck) then
+          return .written
+        return .recorded
+
+/-- A kill of `name`, when no record names it and the latest save has a pane of that name: write
+the end record a kill leaves (`Resurrect.dismissal`) and nothing else, holding the name's locks,
+as `Resurrect.dismiss` models, so the pane is not listed again. `false`, writing nothing, when
+the save has no such pane or a record names it by then. -/
+def dismiss (name : String) : IO Bool := do
+  if (← recordsOf name).holds name then
+    return false
+  let some _ ← paneNamed name | return false
+  Paths.withSessionLock name do
+      let records ← recordsOf name
+      if records.holds name then
+        return false
+      -- the end records `dismiss` adds: the name's
+      for ended in (Linger.Import.Resurrect.dismiss records name).endings do
+        unless records.endings.contains ended do
+          Record.save ended dismissal
+      return true
 
 /-- A failed live observation must not export a stale startup directory.
 Checkpoint decoding supplies the cwd for resumable sessions. -/
@@ -445,53 +340,10 @@ private def snapshot : IO (List (String × String)) := do
         throw (IO.userError s!"could not read working directory for session: {name}")
       return (name, (← IO.FS.realPath dir).toString)
 
-/-- Observe the same native namespace as listing, including its no-HOME fallback,
-and export only the current names and directories. -/
-private def writeSave (path : String) (capture : IO (List (String × String)) := snapshot) :
-    IO Unit := do
-  let fields ← capture
-  let content ← IO.ofExcept (renderSave fields)
-  publish path content
-
-private def usage : String :=
-  "ls [--porcelain] [SAVE]  List panes from a saved snapshot
-select [SAVE]            Choose a saved pane; start a fresh shell if needed
-import [SAVE]            Save each pane as a session; attach runs a fresh shell on it
-export SAVE              Save session names and directories to a new file"
-
-/-- The caller supplies its absolute executable path for every listing and run. Help answers
-`done`, a command line it does not take `usage`, a command that fails `notDone`, saying why, and
-`select` how its selection ended. -/
-def run (executable : String) (args : List String) : IO Linger.Os.Answer := do
-  if args.isEmpty || args == ["help"] || args == ["--help"] || args == ["-h"] then
-    IO.println usage
-    return .done
-  let command := args.headD ""
-  unless ["ls", "select", "import", "export"].contains command do
-    IO.eprintln usage
-    return .usage
-  let porcelain := command == "ls" && args[1]? == some "--porcelain"
-  let paths := if porcelain then args.drop 2 else args.tail
-  if
-      paths.length > 1 || (command == "export" && paths.isEmpty) ||
-        paths.any (fun path => path.isEmpty || path.startsWith "-") then
-    IO.eprintln s!"usage: linger tmux {command} {if command == "export" then "SAVE" else "[SAVE]"}"
-    return .usage
-  try
-    match command with
-    | "ls" =>
-      listSave paths.head? porcelain;
-      return .done
-    | "select" =>
-      selectSave executable paths.head?
-    | "import" =>
-      importSave executable paths.head?;
-      return .done
-    | _ =>
-      writeSave (paths.headD "");
-      return .done
-  catch e =>
-    IO.eprintln s!"linger tmux {command}: {diagnostic (toString e)}"
-    return .notDone
+/-- `ls --resurrect`: the local sessions' names and directories, as `ls` lists them, written to
+standard output as a tmux-resurrect save, with one window and pane a session (`renderSave`).
+linger writes no file. -/
+def exportSave : IO Unit := do
+  IO.print (← IO.ofExcept (renderSave (← snapshot)))
 
 end Linger.Import.Shell

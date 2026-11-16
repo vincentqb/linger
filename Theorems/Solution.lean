@@ -1214,37 +1214,78 @@ theorem usageLine_exact_rejects_bare :
   intro h
   exact absurd (h { word := "ls", op := .list, args := "", summary := "" }) (by decide)
 
-theorem plan_exact (existing : List String) (panes : List Import.Resurrect.Pane)
+theorem listed_unrecorded (records : Session.Records) (panes : List Import.Resurrect.Pane)
     (pane : Import.Resurrect.Pane) :
-    pane ∈ Import.Resurrect.plan existing panes ↔ pane ∈ panes ∧ pane.name ∉ existing :=
-  Import.Resurrect.mem_plan existing panes pane
+    pane ∈ Import.Resurrect.listed records panes ↔ pane ∈ panes ∧ records.holds pane.name = false :=
+  Import.Resurrect.mem_listed records panes pane
 
-theorem plan_exact_rejects_all :
-    ¬∀ (existing : List String) (panes : List Import.Resurrect.Pane) (pane : Import.Resurrect.Pane),
+theorem listed_unrecorded_rejects_never :
+    ¬∀ (records : Session.Records) (panes : List Import.Resurrect.Pane)
+        (pane : Import.Resurrect.Pane),
         pane ∈
-            (fun (_ : List String) (panes : List Import.Resurrect.Pane) => panes) existing panes ↔
-          pane ∈ panes ∧ pane.name ∉ existing := by
+            (fun (_ : Session.Records) (_ : List Import.Resurrect.Pane) =>
+                ([] : List Import.Resurrect.Pane))
+              records panes ↔
+          pane ∈ panes ∧ records.holds pane.name = false := by
   intro h
-  have kept :=
-    (h ["a"] [{ name := "a", dir := "", line := 0 }] { name := "a", dir := "", line := 0 }).mp
-      (by simp)
-  exact absurd kept.2 (by simp)
+  have :=
+    (h ⟨[], [], [], []⟩ [{ name := "a", dir := "", line := 0 }]
+          { name := "a", dir := "", line := 0 }).mpr
+      ⟨by simp, by decide⟩
+  simp at this
 
-theorem plan_again_empty (existing : List String) (panes made : List Import.Resurrect.Pane)
-    (first : made = Import.Resurrect.plan existing panes) :
-    Import.Resurrect.plan (existing ++ made.map (·.name)) panes = [] := by
-  rw [first]
-  exact Import.Resurrect.plan_sequential_idempotent existing panes
+theorem adopt_exclusive (records : Session.Records) (pane : Import.Resurrect.Pane)
+    (contents : Option String) :
+    Import.Resurrect.adopt records pane contents =
+      if records.holds pane.name then none else some (Import.Resurrect.checkpoint pane contents) :=
+  Import.Resurrect.adopt_eq records pane contents
 
-theorem plan_again_empty_rejects_all :
-    ¬∀ (existing : List String) (panes made : List Import.Resurrect.Pane),
-        made =
-            (fun (_ : List String) (panes : List Import.Resurrect.Pane) => panes) existing panes →
-          (fun (_ : List String) (panes : List Import.Resurrect.Pane) => panes)
-              (existing ++ made.map (·.name)) panes =
-            [] := by
+theorem adopt_exclusive_rejects_overwrite :
+    ¬∀ (records : Session.Records) (pane : Import.Resurrect.Pane) (contents : Option String),
+        (fun (_ : Session.Records) (pane : Import.Resurrect.Pane) (contents : Option String) =>
+              some (Import.Resurrect.checkpoint pane contents))
+            records pane contents =
+          if records.holds pane.name then none
+          else some (Import.Resurrect.checkpoint pane contents) := by
   intro h
-  exact absurd (h [] [{ name := "a", dir := "", line := 0 }] _ rfl) (by simp)
+  have := h ⟨["a"], [], [], []⟩ { name := "a", dir := "", line := 0 } none
+  simp [Session.Records.holds] at this
+
+theorem dismiss_hides (records later : Session.Records) (pane : Import.Resurrect.Pane)
+    (panes : List Import.Resurrect.Pane)
+    (kept : ∀ name ∈ (Import.Resurrect.dismiss records pane.name).endings, name ∈ later.endings) :
+    (Import.Resurrect.dismiss records pane.name).sockets = records.sockets ∧
+      (Import.Resurrect.dismiss records pane.name).checkpoints = records.checkpoints ∧
+      (∀ name,
+        name ∈ (Import.Resurrect.dismiss records pane.name).endings ↔
+          name = pane.name ∨ name ∈ records.endings) ∧
+      pane ∉ Import.Resurrect.listed later panes :=
+  Import.Resurrect.dismiss_hides records later pane panes kept
+
+theorem dismiss_hides_rejects_memory :
+    ¬∀ (records later : Session.Records) (pane : Import.Resurrect.Pane)
+        (panes : List Import.Resurrect.Pane),
+        (∀
+            name ∈
+              ((fun (records : Session.Records) (_ : String) => records) records pane.name).endings,
+            name ∈ later.endings) →
+          ((fun (records : Session.Records) (_ : String) => records) records pane.name).sockets =
+              records.sockets ∧
+            ((fun (records : Session.Records) (_ : String) => records) records
+                  pane.name).checkpoints =
+              records.checkpoints ∧
+            (∀ name,
+              name ∈
+                  ((fun (records : Session.Records) (_ : String) => records) records
+                      pane.name).endings ↔
+                name = pane.name ∨ name ∈ records.endings) ∧
+            pane ∉ Import.Resurrect.listed later panes := by
+  intro h
+  have :=
+    ((h ⟨[], [], [], []⟩ ⟨[], [], [], []⟩ { name := "a", dir := "", line := 0 } [] (by simp)).2.2.1
+          "a").mpr
+      (Or.inl rfl)
+  simp at this
 
 theorem check_eq_some_iff (s result : String) :
     Name.check s = some result ↔ result = s ∧ Name.Valid s := Name.check_eq_some_iff s result

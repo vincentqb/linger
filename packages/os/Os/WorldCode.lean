@@ -287,6 +287,40 @@ def replaceFile (path : String) (bytes : ByteArray) : IO Unit := do
   let dir := ((System.FilePath.mk path).parent.map (·.toString)).getD ""
   let _ ← fsyncPath (if dir.isEmpty then "." else dir) (directory := true)
 
+/-- Create the file at `path` holding `bytes`, whole and durably, readable by its owner alone,
+only where no file is: write them to a temporary sibling that names this process and a random
+number, made 0600 before a byte goes in, flush it (`fsyncPath`), link it at `path`, which the
+file system refuses when a file is there, remove the sibling and flush the directory. `true`
+once created; `false` when a file was at `path`, which stays as it was. Any other failure throws
+and leaves `path` as it was. -/
+def createFile (path : String) (bytes : ByteArray) : IO Bool := do
+  let tmp := s!"{path}.{← IO.Process.getPID}-{← IO.rand 0 0xFFFFFFFF}.new"
+  IO.FS.withFile tmp .writeNew fun handle => do
+      IO.Prim.setAccessRights tmp 0o600
+      handle.write bytes
+  let link : IO Bool := do
+    let _ ← fsyncPath tmp
+    match ← (IO.FS.hardLink tmp path).toBaseIO with
+    | .ok () =>
+      pure true
+    | .error (.alreadyExists ..) =>
+      pure false
+    | .error error =>
+      throw error
+  let linked ←
+    try
+      link
+    finally
+      match ← (IO.FS.removeFile tmp).toBaseIO with
+      | .ok () | .error (.noFileOrDirectory ..) =>
+        pure ()
+      | .error error =>
+        throw error
+  if linked then
+    let dir := ((System.FilePath.mk path).parent.map (·.toString)).getD ""
+    let _ ← fsyncPath (if dir.isEmpty then "." else dir) (directory := true)
+  return linked
+
 /-- Double-fork + setsid + exec, with stdin on /dev/null and stdout and stderr appended
 to `logPath` (created 0600), or on /dev/null when it is empty, every signal at its default
 action but SIGHUP, which it ignores, none blocked and no other descriptor open, so the program

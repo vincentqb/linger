@@ -9,9 +9,8 @@ import all Linger.Session.Proofs.Checkpoint
 
 /-! Kernel-checked importer contracts.
 
-The planner sees one existing-name snapshot. Sequential idempotence assumes that
-the next snapshot includes every planned name; it says nothing about concurrent
-creation or whether a caller successfully creates sessions or enters directories.
+Which panes are listed, what an attach writes and what a kill leaves follow from the records
+the caller read; that it read them holding the name's locks is the caller's.
 -/
 
 namespace Linger.Import.Resurrect
@@ -39,97 +38,6 @@ theorem diagnostic_eq_self (message : String)
           intro c hc
           simp [h c hc])
     _ = _ := List.map_id _
-
-/-- Browsing preserves the complete name/cwd projection, including order and
-multiplicity, independently of every display-only source field. -/
-theorem catalogRows_common (content : String) (panes : List Pane) :
-    (catalogRows content panes).map (fun row => (row.lookup "name", row.lookup "directory")) =
-      (common panes).map (fun field => (some field.1, some field.2)) := by
-  simp only [catalogRows, common, List.map_map]
-  rfl
-
-/-- A catalog row retains the source line used to diagnose an import failure. -/
-theorem catalogRows_lines (content : String) (panes : List Pane) :
-    (catalogRows content panes).map (fun row => row.lookup "line") =
-      panes.map (fun pane => some (toString pane.line)) := by
-  simp only [catalogRows, List.map_map]
-  rfl
-
-/-- Saved panes use the shared resumable badge, independently of saved commands
-or whatever state the live tmux server has reached since the save. -/
-theorem catalogRows_status (content : String) (panes : List Pane) (row : List (String × String))
-    (member : row ∈ catalogRows content panes) :
-    row.lookup "status" = some (Linger.Display.Status.name .resumable) := by
-  unfold catalogRows at member
-  obtain ⟨pane, _, rfl⟩ := List.mem_map.mp member
-  rfl
-
-/-- Window titles, directories and commands cannot introduce terminal controls
-into the human description, even though action metadata remains unmodified. -/
-theorem catalogRows_printable (content : String) (panes : List Pane) (row : List (String × String))
-    (member : row ∈ catalogRows content panes) (text : String)
-    (description : row.lookup "cmd" = some text) (c : Char) (character : c ∈ text.toList) :
-    32 ≤ c.toNat ∧ (c.toNat < 127 ∨ 160 ≤ c.toNat) := by
-  unfold catalogRows at member
-  obtain ⟨pane, _, rfl⟩ := List.mem_map.mp member
-  simp only [List.lookup_cons, beq_self_eq_true] at description
-  change some (diagnostic _) = some text at description
-  cases description
-  exact diagnostic_printable _ c character
-
-/-- Every description ends with the printable saved foreground command line,
-falling back to the command name when the line is unavailable. -/
-theorem catalogRows_command (content : String) (panes : List Pane) (row : List (String × String))
-    (member : row ∈ catalogRows content panes) (command savedCommand text : String)
-    (commandField : row.lookup "command" = some command)
-    (savedField : row.lookup "saved-command" = some savedCommand)
-    (description : row.lookup "cmd" = some text) :
-    List.IsSuffix (diagnostic (if savedCommand.isEmpty then command else savedCommand)).toList
-      text.toList := by
-  unfold catalogRows at member
-  obtain ⟨pane, _, rfl⟩ := List.mem_map.mp member
-  change some (preparePane content panes pane).details.command = some command at commandField
-  change
-    some (preparePane content panes pane).details.savedCommand = some savedCommand at savedField
-  cases commandField
-  cases savedField
-  simp only [List.lookup_cons, beq_self_eq_true] at description
-  change some (diagnostic _) = some text at description
-  cases description
-  let foreground :=
-    if (preparePane content panes pane).details.savedCommand.isEmpty then
-      (preparePane content panes pane).details.command
-    else (preparePane content panes pane).details.savedCommand
-  change
-    List.IsSuffix (diagnostic foreground).toList
-      (diagnostic (if foreground.isEmpty then _ else _)).toList
-  by_cases empty : foreground.isEmpty = true
-  · have blank : foreground = "" := String.isEmpty_iff.mp empty
-    simp [blank, diagnostic]
-  · simp only [empty, Bool.false_eq_true, ite_false]
-    change List.IsSuffix (diagnostic foreground).toList (diagnostic (_ ++ foreground)).toList
-    simp only [diagnostic, String.toList_map, String.toList_append, List.map_append]
-    exact List.suffix_append _ _
-
-/-- A successful selection has exactly the displayed identity, directory and
-source line; canonicalization is a guard, never a retargeting operation. -/
-theorem selectedPane_exact (name dir : String) (line : Nat)
-    (canonical : Linger.Target.Name.sanitize name = name) (nulFree : dir.contains '\x00' = false) :
-    selectedPane name dir line = some { name, dir, line } := by
-  simp [selectedPane, canonical, nulFree]
-
-/-- Transported selection data cannot bypass the session-name or NUL guards. -/
-theorem selectedPane_valid (name dir : String) (line : Nat) (pane : Pane)
-    (selected : selectedPane name dir line = some pane) :
-    pane = { name, dir, line } ∧
-      Linger.Target.Name.Valid pane.name ∧ pane.dir.contains '\x00' = false := by
-  unfold selectedPane at selected
-  split at selected
-  · rename_i guard
-    simp only [Bool.and_eq_true, beq_iff_eq, Bool.not_eq_true'] at guard
-    cases selected
-    exact ⟨rfl, (Linger.Target.Name.sanitize_eq_self_iff name).mp guard.1, guard.2⟩
-  · cases selected
 
 /-- Common fields retain multiplicity and order while discarding line numbers. -/
 theorem common_cons (pane : Pane) (panes : List Pane) :
@@ -432,13 +340,6 @@ theorem checkpoint_metadata (pane : Pane) (contents : Option String) :
         some (if contents.isSome then "saved" else "none") := by
   exact ⟨rfl, rfl, rfl, rfl⟩
 
-/-- Selection carries the displayed pane metadata through the same exact-name
-and NUL-free-directory guards as ordinary saved selections. -/
-theorem selectedPane_metadata (name dir : String) (line : Nat) (details : Details)
-    (canonical : Linger.Target.Name.sanitize name = name) (nulFree : dir.contains '\x00' = false) :
-    selectedPane name dir line details = some { name, dir, line, details } := by
-  simp [selectedPane, canonical, nulFree]
-
 /-- A non-pane row contributes no pane, whatever its remaining fields contain. -/
 theorem parseRow_other (home : String) (line : Nat) (fields : List String)
     (ignored : fields.head? ≠ some "pane") : parseRow home line fields = .ok none := by
@@ -631,37 +532,32 @@ theorem renderSave_roundtrip (home : String) (fields : List (String × String)) 
   obtain ⟨panes, parsed, same⟩ := renderSave_checked fields content h
   exact ⟨panes, parseSave_home_independent home content panes parsed, same⟩
 
-/-- Membership pins every output field to one unmodified source record. -/
-theorem mem_plan (existing : List String) (panes : List Pane) (pane : Pane) :
-    pane ∈ plan existing panes ↔ pane ∈ panes ∧ pane.name ∉ existing := by simp [plan]
+/-- A pane is listed exactly when it is one of the save's and no record names it. -/
+theorem mem_listed (records : Linger.Session.Records) (panes : List Pane) (pane : Pane) :
+    pane ∈ listed records panes ↔ pane ∈ panes ∧ records.holds pane.name = false := by
+  simp [listed]
 
-/-- Filtering never reorders or modifies records. -/
-theorem plan_panes (existing : List String) (panes : List Pane) :
-    plan existing panes = panes.filter (fun pane => !existing.contains pane.name) := by rfl
+/-- Listing keeps the save's panes in its order and leaves them as they are. -/
+theorem listed_sublist (records : Linger.Session.Records) (panes : List Pane) :
+    List.Sublist (listed records panes) panes :=
+  List.filter_sublist
 
-theorem plan_order (existing : List String) (panes : List Pane) :
-    List.Sublist (plan existing panes) panes := by
-  rw [plan_panes]
-  exact List.filter_sublist
+/-- An attach writes the pane's checkpoint only when no record names it. -/
+theorem adopt_eq (records : Linger.Session.Records) (pane : Pane) (contents : Option String) :
+    adopt records pane contents =
+      if records.holds pane.name then none else some (checkpoint pane contents) := rfl
 
-/-- The planner requires distinct input names; successful parsing supplies that premise. -/
-theorem plan_names_unique (existing : List String) (panes : List Pane)
-    (distinct : (panes.map Pane.name).Nodup) : ((plan existing panes).map Pane.name).Nodup :=
-  ((plan_order existing panes).map Pane.name).nodup distinct
-
-/-- A subsequent snapshot containing every planned identity yields no actions,
-without a distinctness premise. -/
-theorem plan_sequential_idempotent (existing : List String) (panes : List Pane) :
-    plan (existing ++ (plan existing panes).map Pane.name) panes = [] := by
-  apply List.eq_nil_iff_forall_not_mem.mpr
-  intro pane h
-  obtain ⟨hp, hn⟩ := (mem_plan _ _ pane).mp h
-  apply hn
-  by_cases he : pane.name ∈ existing
-  · exact List.mem_append_left _ he
-  · apply List.mem_append_right
-    apply List.mem_map.mpr
-    refine ⟨pane, ?_, rfl⟩
-    exact (mem_plan _ _ _).mpr ⟨hp, he⟩
+/-- A kill of a pane adds its end record, and the pane is not listed while that record is kept. -/
+theorem dismiss_hides (records later : Linger.Session.Records) (pane : Pane) (panes : List Pane)
+    (kept : ∀ name ∈ (dismiss records pane.name).endings, name ∈ later.endings) :
+    (dismiss records pane.name).sockets = records.sockets ∧
+      (dismiss records pane.name).checkpoints = records.checkpoints ∧
+      (∀ name,
+          name ∈ (dismiss records pane.name).endings ↔ name = pane.name ∨ name ∈ records.endings) ∧
+      pane ∉ listed later panes := by
+  refine ⟨rfl, rfl, fun name => by simp [dismiss], fun member => ?_⟩
+  have recorded : pane.name ∈ later.endings := kept pane.name (by simp [dismiss])
+  have := ((mem_listed later panes pane).mp member).2
+  simp [Linger.Session.Records.holds, recorded] at this
 
 end Linger.Import.Resurrect

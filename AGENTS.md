@@ -69,8 +69,8 @@ or `WorldCode`, as the Lean Software Challenge reads it, and any other module is
 - `Linger/Selector/`: interactive selection: `Key` bindings of the `input` package's keys and
   the `Picker`, which ranks names with the `fuzzy` package; `WorldCode.lean` runs the picker on
   a terminal.
-- `Linger/Import/`: importing tmux-resurrect saves: the `Resurrect` policy, and `WorldCode.lean`
-  runs it.
+- `Linger/Import/`: the latest tmux-resurrect save, a source linger reads and never writes: the
+  `Resurrect` policy, and `WorldCode.lean` reads it for `ls`, an attach and a kill.
 - `Linger/App/`: the command line: the `Entry` route and, in `WorldCode.lean`, the commands;
   `WorldCode/Main.lean` holds `main`.
 - `Challenge.lean`: the program parts headline theorems name, declared as holes, and the
@@ -165,7 +165,7 @@ size: Lean erases proofs regardless of file placement.
   must say, linger's own word keeps one meaning: a status glyph or a porcelain name never takes
   a second subject.
 - Read SHELL, HOME for remote hosts and for a resume, and LINGER_NO_DETACH_KEY once, and
-  NO_COLOR and TERM once for each of `ls`, `tmux ls` and the chooser, into the pure policies of
+  NO_COLOR and TERM once for each of `ls` and the chooser, into the pure policies of
   `Linger/Os/CoreCode/Env.lean`, which `scripts/gates.sh` ties to each read, and run every
   variable the program reads unset and empty in a suite.
 - Raw OS access belongs in the `os` package: `packages/os/Os/` and `packages/os/c/shim.c`.

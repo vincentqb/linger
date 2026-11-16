@@ -50,6 +50,18 @@ the session was created. A new session's ID is its name; a name whose ID a renam
 holds gets a fresh one. `rename` refuses a name a live, saved or ended session has, and a session
 an older linger started until `linger upgrade` moves it onto this one.
 
+## tmux-resurrect saves
+
+linger reads the latest tmux-resurrect save where tmux-resurrect keeps it, and never writes,
+moves or deletes anything there. `linger ls` and the chooser list each of its panes as `~`,
+`(saved by tmux)`, after your saved sessions, while linger has no session, checkpoint or ending
+under the pane's name; `linger ls --porcelain` gives those rows the field `source`, `tmux`.
+`linger attach NAME`, or `linger resume NAME`, starts a fresh shell in the pane's directory on
+its saved screen, and never runs its saved command; a name that is already a session's stays
+that session's. `linger kill NAME` hides the pane for good, recording the ending a kill leaves.
+`linger ls --resurrect` writes your sessions' names and directories as a save, to standard output
+only.
+
 ## Remote hosts
 
 Every command takes a `name@host` target, and `linger ls -r` and the chooser also list the

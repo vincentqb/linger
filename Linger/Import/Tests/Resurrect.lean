@@ -13,56 +13,47 @@ meta import Terminal.CoreCode.Render
 
 namespace Linger.Import.Resurrect.Tests
 
--- Commands are inspection data; each pane keeps its own title and command.
+-- A saved pane's row carries its provenance, the window's name as its description and its
+-- source, and every value is printable, so none ends a porcelain field.
 #guard
   let text :=
     "pane\tdesk\t2\t1\t:*\t1\tEditor\t:/one\t1\tvi\t:vi 'draft.txt'\n" ++
-      "pane\tdesk\t2\t1\t:*\t2\tBuild\t:/two\t0\tmake\t:make check\n" ++
-      "pane\tdesk\t2\t1\t:*\t3\tEmpty\t:/three\t0\t\t:\n"
-  match parseSave "" text with
-  | .error _ => false
-  | .ok panes =>
-    let rows := catalogRows text panes
-    rows.map (fun row => row.lookup "title") == [some "Editor", some "Build", some "Empty"] &&
-      rows.map (fun row => row.lookup "command") == [some "vi", some "make", some ""] &&
-      rows.map (fun row => row.lookup "saved-command") ==
-        [some "vi 'draft.txt'", some "make check", some ""] &&
-      rows.map (fun row => row.lookup "cmd") ==
-        [some "desk:2  ·  /one  ·  vi 'draft.txt'", some "desk:2  ·  /two  ·  make check",
-          some "desk:2  ·  /three"]
-
--- Browsing uses original window context and pane order. Display text is safe,
--- while the action fields retain exact paths and source lines.
-#guard
-  let text :=
-    "pane\tdesk\t2\t1\t:*\t1\tunused\t:/tmp/é space\r\x1b\t1\tvi\t:never run this\x1b[2J\u009d\n" ++
       "window\tdesk\t2\t:editor\x1b[31m\t1\t:*\n" ++
-      "pane\tdesk\t1\t0\t:\t0\tunused\t:/other\t0\tsh\t:\n" ++
-      "window\tdesk\t1\t:shell"
+      "pane\tdesk\t2\t1\t:*\t2\tBuild\t:/tmp/é space\r\x1b\t0\tmake\t:make check\x07\n"
   match parseSave "" text with
   | .error _ => false
   | .ok panes =>
-    let rows := catalogRows text panes
-    rows.map (fun row => row.lookup "name") == [some "desk-w2-p1", some "desk-w1-p0"] &&
-      rows.map (fun row => row.lookup "directory") == [some "/tmp/é space\r\x1b", some "/other"] &&
-      rows.map (fun row => row.lookup "line") == [some "1", some "3"] &&
-      rows.all (fun row => row.lookup "status" == some (Linger.Display.Status.name .resumable)) &&
-      rows.map (fun row => row.lookup "cmd") ==
-        [some "desk:2 editor?[31m  ·  /tmp/é space??  ·  never run this?[2J?",
-          some "desk:1 shell  ·  /other  ·  sh"] &&
-      (rows.head?.bind (·.lookup "saved-command")) == some "never run this\x1b[2J\u009d"
+    let rows := panes.map (sourceRow ∘ preparePane text panes)
+    rows.map (·.lookup "name") == [some "desk-w2-p1", some "desk-w2-p2"] &&
+      rows.all
+        (fun row =>
+          row.lookup "status" == some (Linger.Display.Status.name .resumable) &&
+            row.lookup "state" == some "resumable" &&
+            row.lookup "source" == some sourceName &&
+            row.lookup "description" == some "editor?[31m" &&
+            (row.lookup "tmux.capture").isNone) &&
+      rows.map (·.lookup "directory") == [some "/one", some "/tmp/é space??"] &&
+      rows.map (·.lookup "tmux.saved-command") == [some "vi 'draft.txt'", some "make check?"] &&
+      rows.all (·.all fun (_, value) => value.toList.all fun c => 32 ≤ c.toNat)
 
+-- A pane is listed while no socket, checkpoint, end record or names entry names it, in the
+-- save's order.
 #guard
-  let pane : Pane := { name := "desk-w0-p0", dir := "/exact path\n\r\x1b", line := 3 }
-  selectedPane pane.name pane.dir pane.line == some pane &&
-    (catalogRows "unrelated display metadata" [pane]).head?.bind (·.lookup "directory") ==
-      some pane.dir
+  let panes : List Pane := ["a", "b", "c", "e", "d"].map fun name => { name, dir := "/", line := 1 }
+  (listed { sockets := ["a"], checkpoints := ["b"], endings := ["c"], entries := ["e"] } panes).map
+        (·.name) ==
+      ["d"] &&
+    (listed { sockets := [], checkpoints := [], endings := [] } panes).map (·.name) ==
+      ["a", "b", "c", "e", "d"]
 
+-- An attach writes nothing over a record, and a kill adds the name's end record alone.
 #guard
-  ["", ".hidden", "bad/name", "bad name", String.ofList (List.replicate 81 'x')].all fun name =>
-    (selectedPane name "/tmp" 1).isNone
-
-#guard (selectedPane "valid" "/bad\x00dir" 1).isNone
+  let pane : Pane := { name := "a", dir := "/", line := 1 }
+  (adopt { sockets := [], checkpoints := [], endings := ["a"] } pane none).isNone &&
+    (adopt { sockets := [], checkpoints := [], endings := ["b"] } pane none).isSome &&
+    dismiss { sockets := ["x"], checkpoints := ["y"], endings := ["z"] } "a" ==
+      { sockets := ["x"], checkpoints := ["y"], endings := ["a", "z"] } &&
+    dismissal == .ended (.signaled 1)
 
 -- The reserved tmux session name carries native identity without a comment row.
 #guard
@@ -350,18 +341,6 @@ namespace Linger.Import.Resurrect.Tests
         "pane\td\t0\t\t\t1\t\t:/tmp\t\t\t:ignored\x00command") with
   | .error error => error == "malformed pane record at line 2"
   | .ok _ => false
-
--- Skipping a middle record preserves the directories, line numbers and order.
-#guard
-  plan ["b"]
-      [{ name := "a", dir := "/a", line := 1 }, { name := "b", dir := "/b", line := 2 },
-        { name := "c", dir := "/c", line := 3 }] ==
-    [{ name := "a", dir := "/a", line := 1 }, { name := "c", dir := "/c", line := 3 }]
-
-#guard
-  plan ["a", "b"]
-      [{ name := "a", dir := "/a", line := 1 }, { name := "b", dir := "/b", line := 2 }] ==
-    []
 
 -- Layout leaves match numeric pane order, even when saved rows are out of order.
 #guard

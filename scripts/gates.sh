@@ -432,7 +432,7 @@ shell_all="$(module_imports '*.lean' | awk -F: "$IMPORT_AWK"'
   printf '%s\n' "$shell_all" >&2
   fail "import all Os.WorldCode grants the private bindings of Os.WorldSpec: import it plainly"; }
 import_closure packages/os/Os/WorldCode/Command.lean 'import Os.WorldCode;'
-import_closure Linger/Import/WorldCode.lean 'public import Linger.Os.CoreSpec;import Linger.Os.CoreCode.Answer;import Linger.Import.CoreCode.Resurrect;import Linger.Session.CoreCode.Checkpoint;import Os.WorldCode;import Linger.Display.CoreCode.Listing;import Linger.Session.WorldCode.Paths;import Linger.Session.WorldCode.Names;import Linger.Session.WorldCode.Resume;import Linger.Session.WorldCode.Inventory;import Os.WorldCode.Command;import Linger.Target.CoreCode.Remote;import Linger.Selector.WorldCode;import Linger.Selector.CoreCode.Picker;import Std.Async.System;import Linger.Os.CoreCode.Env;'
+import_closure Linger/Import/WorldCode.lean 'public import Linger.Os.CoreSpec;public import Linger.Session.CoreSpec;import Linger.Import.CoreCode.Resurrect;import Linger.Session.CoreCode.Checkpoint;import Os.WorldCode;import Linger.Display.CoreCode.View;import Linger.Session.WorldCode.Paths;import Linger.Session.WorldCode.Names;import Linger.Session.WorldCode.Resume;import Linger.Session.WorldCode.Record;import Linger.Session.WorldCode.Inventory;import Os.WorldCode.Command;import Std.Async.System;'
 import_closure Linger/Selector/WorldCode.lean \
   'public import Linger.Selector.CoreSpec;public import Linger.Os.CoreSpec;import Linger.Os.CoreCode.Answer;import Linger.Selector.CoreCode.Picker;import Os.WorldCode;import Linger.Target.CoreCode.Remote;import Terminal.CoreCode.Title;import Os.WorldCode.Command;import Linger.Display.CoreCode.View;import Std.Data.HashMap.Basic;import Linger.Display.CoreCode.Status;import Linger.Selector.CoreCode.Key;import Linger.Selector.CoreCode.Fetch;import Input.CoreCode;import Linger.Os.CoreCode.Env;'
 import_closure Linger/App/WorldCode/Main.lean \
@@ -519,8 +519,7 @@ entry_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/WorldCode/Main.lean
 for tie in \
   'def main [(]args : List String[)] : IO UInt32 := do let answer : Linger[.]Os[.]Answer ← try match Linger[.]App[.]Entry[.]route args with' \
   '[|] [.]selector readOnly => Linger[.]Selector[.]Shell[.]run [(]← IO[.]appPath[)][.]toString Linger[.]Session[.]Shell[.]Names[.]nameOf readOnly' \
-  '[|] [.]tmux rest => Linger[.]Import[.]Shell[.]run [(]← IO[.]appPath[)][.]toString rest' \
-  '[|] [.]session argv => Linger[.]App[.]Shell[.]main argv' \
+  '[|] [.]session argv => Linger[.]App[.]Shell[.]main source argv' \
   '[|] [.]malformed => IO[.]eprintln "linger: malformed encoded command line" pure [.]usage' \
   'catch e => IO[.]eprintln s!"linger: [{]e[}]" pure [.]notDone if let [.]stopped signal := answer then try Os[.]Shell[.]raiseSignal signal catch _ => pure [(][)] return answer[.]code'; do
   printf '%s\n' "$entry_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
@@ -530,8 +529,8 @@ done
   || fail "Linger/App/WorldCode/Main.lean returns other than through its one exit, the code of its route's answer"
 
 # Every exit is an answer: `main` exits with the code of the answer its route gives (above), and
-# the executors it routes to answer in `Linger.Os.Answer`, the selector and the tmux interchange
-# as the session commands do. So in the command shells a function that yields a process status,
+# the executors it routes to answer in `Linger.Os.Answer`, the selector as the session commands
+# do. So in the command shells a function that yields a process status,
 # one declared to return an answer, or a `UInt32` or `UInt8` as `main` and `IO.Process.exit` take,
 # returns no literal number; `IO.Process.exit` takes only an answer's code; and a daemon reports
 # why a program did not start with an answer's code, which its command exits with. Other numbers
@@ -568,8 +567,8 @@ shell_paths="$(git ls-files -- 'Linger/*/WorldCode.lean' 'Linger/*/WorldCode/*')
 [ -n "$shell_paths" ] || fail "no command shells found"
 # shellcheck disable=SC2086  # one tracked path per word
 status_lines="$(awk "$STATUS_AWK" $shell_paths /dev/null)"
-# The reader must find what `main` and the two executors below the command line yield.
-for entry in 'Linger/App/WorldCode/Main.lean:^def main ' 'Linger/Selector/WorldCode.lean:^def run ' 'Linger/Import/WorldCode.lean:^def run '; do
+# The reader must find what `main` and the executor below the command line yield.
+for entry in 'Linger/App/WorldCode/Main.lean:^def main ' 'Linger/Selector/WorldCode.lean:^def run '; do
   entry_line="$(grep -n "${entry#*:}" "${entry%%:*}" | cut -d: -f1)"
   printf '%s\n' "$status_lines" | grep -qx "${entry%%:*}:${entry_line:-none}" \
     || fail "the reader of the shell headers no longer finds the process status that ${entry%%:*} yields"
@@ -587,55 +586,34 @@ status_bad="$(
   printf '%s\n' "$status_bad" >&2
   fail "a literal exit status in a command shell: answer with a Linger.Os.Answer and exit with its code"; }
 
-# The proof covers the returned parser/plan values. These call-site gates make
-# bypassing them a reviewable change; IO tests check preflight/failure ordering
-# and actual argv. As with the runtime ties below, this is not an IO theorem.
-code_grep '^[[:space:]]+IO[.]eprintln s!"linger tmux [{]command[}]: [{]diagnostic [(]toString e[)][}]"$' Linger/Import/WorldCode.lean >/dev/null \
-  || fail "tmux commands no longer display the proved control-free diagnostic"
+# A tmux-resurrect save is a source linger reads and never writes (`listed_unrecorded`,
+# `adopt_exclusive`, `dismiss_hides`). These call-site gates tie its reader to the proved parser,
+# the listing to `Resurrect.listed`, an attach's checkpoint to `Resurrect.adopt` and an exclusive
+# create, holding the name's locks, and a kill's end record to `Resurrect.dismiss`; and the module
+# names no call that writes, moves or deletes a file. Linger.Import.Suites.Interop hashes tmux's
+# directory around every command, and is no IO theorem.
 code_grep '^[[:space:]]+let content ← IO[.]FS[.]readFile path$' Linger/Import/WorldCode.lean >/dev/null \
-  || fail "tmux catalog no longer reads the complete resolved save before parsing"
+  || fail "the save reader no longer reads the complete resolved save before parsing"
 code_grep '^[[:space:]]+let panes ← IO[.]ofExcept [(]parseSave home content[)]$' Linger/Import/WorldCode.lean >/dev/null \
-  || fail "tmux catalog no longer consumes the proved whole-save parser"
-code_grep '^[[:space:]]+for pane in plan existing panes do$' Linger/Import/WorldCode.lean >/dev/null \
-  || fail "importer no longer iterates the proved import plan"
+  || fail "the save reader no longer consumes the proved whole-save parser"
 import_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Import/WorldCode.lean)"
-# An import only writes: it names no command that would start a session's program.
+# Adopting a pane only writes: it names no command that would start a session's program.
 ! code_grep '"(resume|start)"' Linger/Import/WorldCode.lean \
-  || fail "the importer starts a program; an import writes checkpoints only"
-printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])[|] "import" => importSave executable paths[.]head[?]; return [.]done([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
-  || fail "importer no longer forwards the entry point executable"
-code_grep '^[[:space:]]+let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]] [}]$' Linger/Import/WorldCode.lean >/dev/null \
-  || fail "importer no longer lists with the supplied executable"
-# Native listing observes the caller's checkpoint namespace, including its
-# no-HOME `/tmp` fallback. Only those fields reach the checked serializer.
-printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])private def writeSave [(]path : String[)] [(]capture : IO [(]List [(]String × String[)][)] := snapshot[)] : IO Unit := do let fields ← capture let content ← IO[.]ofExcept [(]renderSave fields[)] publish path content([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
-  || fail "exporter bypasses the current native snapshot, checked serializer or exclusive publication"
-printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])[|] _ => writeSave [(]paths[.]headD ""[)]; return [.]done([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
-  || fail "export command bypasses its native snapshot"
-# Both views consume the same ordered catalog. Display strings are scrubbed;
-# action fields have string-literal framing so display cleanup cannot retarget them.
-# Acceptance must use the displayed snapshot, then pass its exact validated
-# record to the shared creation executor. A suite checks the save-refresh race.
+  || fail "the save reader starts a program; an attach of a pane writes its checkpoint only"
+! code_grep '(IO[.]FS[.](writeFile|writeBinFile|removeFile|removeDir|removeDirAll|rename|createDir|createDirAll|hardLink|withFile|Handle[.]mk)|Os[.]Shell[.](replaceFile|chmod)|setAccessRights)' Linger/Import/WorldCode.lean \
+  || fail "the save reader names a call that writes, moves or deletes a file; it writes only a checkpoint (Os.Shell.createFile) and an end record (Record.save)"
 for tie in \
-  'let save ← readSave origin home file let rows := catalogRows save[.]content save[.]panes' \
-  'let value := if [[]"directory", "session", "window", "pane", "title", "command", "saved-command", "window-title"[]][.]contains key then value[.]quote else diagnostic value' \
-  'Os[.]Shell[.]writeAll Os[.]Shell[.]stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor none rows[)][.]toArray[)]' \
-  'let save ← readSave origin home file createPanes executable origin save[.]panes [(]readArchive save[.]path[)]' \
-  'let path ← savePath origin home file Os[.]Shell[.]watching Os[.]Shell[.]handbackSignals Linger[.]Os[.]Answer[.]stopped fun stops => do while true do match ← Linger[.]Selector[.]Shell[.]choose executable [(]some path[.]toString[)] [(]heard := stops[.]came[)] with' \
-  '[|] [.]attach target displayed => unless displayed[.]candidates[.]contains target do throw [(]IO[.]userError "selected pane was absent from the displayed save"[)] let row := displayed[.]row target' \
-  'let some dir := [(]row[.]lookup "directory"[)][.]bind fun value => [(]Lean[.]Syntax[.]decodeStrLit value[)][.]filter [(]·[.]quote == value[)] [|] throw [(]IO[.]userError "selected pane has no directory"[)]' \
-  'let some pane := selectedPane target dir line details [|] throw [(]IO[.]userError "invalid selected pane"[)]' \
-  'createPanes executable origin [[]pane[]] archive let child ← IO[.]Process[.]spawn [{] cmd := executable, args := Linger[.]Selector[.]Shell[.]attachArgs pane[.]name, cwd := some [(]System[.]FilePath[.]mk pane[.]dir[)] [}] discard child[.]wait if let some signal[[:space:]]*← stops[.]came then return [.]stopped signal' \
-  'let panes := panes[.]map [(]preparePane content panes[)]' \
-  'let archive ← if [(]plan existing panes[)][.]isEmpty then pure none else archive for pane in plan existing panes do let contents ← capturedPane archive pane discard <[|] seedPane pane contents' \
-  'preflight origin panes let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]] [}]'; do
+  'def exportSave : IO Unit := do IO[.]print [(]← IO[.]ofExcept [(]renderSave [(]← snapshot[)][)][)]' \
+  'let some [(]_, panes[)] ← latest [|] return [[][]] return [(]Linger[.]Display[.]View[.]byName [(]·[.]name[)] [(]listed records panes[)][)][.]map sourceRow' \
+  'let contents ← capturedPane [(]← readArchive save[)] pane Paths[.]withSessionLock name do match Linger[.]Import[.]Resurrect[.]adopt [(]← recordsOf name[)] pane contents with [|] none => return [.]recorded [|] some ck => if ← Os[.]Shell[.]createFile [(]← Paths[.]ckptPath name[)] [(]Linger[.]Session[.]Checkpoint[.]saveBytes ck[)] then return [.]written return [.]recorded' \
+  'Paths[.]withSessionLock name do let records ← recordsOf name if records[.]holds name then return false' \
+  'for ended in [(]Linger[.]Import[.]Resurrect[.]dismiss records name[)][.]endings do unless records[.]endings[.]contains ended do Record[.]save ended dismissal return true' \
+  'let panes := panes[.]map fun pane => if pane[.]dir[.]isEmpty [|][|] [(]System[.]FilePath[.]mk pane[.]dir[)][.]isAbsolute then pane else [{] pane with dir := [(]origin / pane[.]dir[)][.]toString [}] return some [{] path, panes := panes[.]map [(]preparePane content panes[)] [}]'; do
   printf '%s\n' "$import_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
-    || fail "tmux browser lost its catalog, displayed selection or preflight contract: $tie"
+    || fail "the save reader lost its proved listing, adoption, dismissal or export: $tie"
 done
 # Captures belong to the adjacent latest save only. Freeze their revision across
-# display and acceptance, read the exact proved member to stdout, then publish
-# the proved checkpoint while owning both identity locks, whole and durably as a
-# daemon's saves are (`Os.Shell.replaceFile`). No saved command is run.
+# reading and extraction, and read the exact proved member to stdout. No saved command is run.
 for tie in \
   'unless ← latestSave save do return none' \
   'metadata[.]byteSize[.]toNat ≤ 64 [*] 1024 [*] 1024' \
@@ -643,29 +621,23 @@ for tie in \
   'let some member := contentMember pane [|] throw [(]IO[.]userError "invalid pane capture identity"[)] checkArchive archive match archive[.]members[.]filter [(]· == member[)] with' \
   'let text ← archiveOutput #[[]"-xOzf", archive[.]path[.]toString, "--", member[]] captureLimit checkArchive archive return some text' \
   'metadata[.]type == [.]file && metadata[.]modified == archive[.]modified && metadata[.]byteSize == archive[.]byteSize && [(]← latestSave archive[.]save[)]' \
-  'unless text "archive" == some found[.]path[.]toString && row[.]lookup "archive-revision" == some [(]archiveRevision found[)] do throw [(]IO[.]userError "pane capture archive changed; refresh the saved panes"[)]' \
-  'private def seedPane [(]pane : Pane[)] [(]contents : Option String[)] : IO Bool := do let id := [(]← Names[.]claim pane[.]name[)][.]id Paths[.]withSessionLock id do' \
-  'if [(]← [(]System[.]FilePath[.]mk path[)][.]pathExists[)] [|][|] [(]← [(]System[.]FilePath[.]mk socket[)][.]pathExists[)] then return false' \
-  'then return false Os[.]Shell[.]replaceFile path [(]Linger[.]Session[.]Checkpoint[.]saveBytes [(]checkpoint pane contents[)][)] return true' \
   'pending[.]set [(]some [(]← Command[.]startLimited "tar" args limit[)][)] let deadline := [(]← Os[.]Shell[.]monotonicMs[)] [+] 5000' \
   'throw [(]IO[.]userError "pane capture archive timed out"[)] finally Command[.]stop pending'; do
   printf '%s\n' "$import_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
-    || fail "tmux capture import lost its bounded reader, frozen archive or checkpoint contract: $tie"
+    || fail "a pane's capture lost its bounded reader or frozen archive: $tie"
 done
 # Configuration lookup has one polling deadline and an owned subprocess.
-# Cleanup force-retires that group. Explicit files never need tmux,
-# and selection discovers the default only once before refreshing. Preserve
-# its lookup spelling: readSave resolves the current symlink target each time.
+# Cleanup force-retires that group. readSave resolves the current symlink target each time.
 for tie in \
   'Command[.]start "tmux" #[[]"show-options", "-gqv", "@resurrect-dir"[]]' \
   'let deadline := [(]← Os[.]Shell[.]monotonicMs[)] [+] 1000 repeat' \
-  'unless ← Os[.]Shell[.]nap deadline 10 do break throw [(]IO[.]userError "tmux configuration query timed out; pass a save file explicitly"[)]' \
+  'unless ← Os[.]Shell[.]nap deadline 10 do break throw [(]IO[.]userError "tmux configuration query timed out"[)]' \
   'finally Command[.]stop pending' \
-  'match file with [|] some path => pure path [|] none => if let some dir[[:space:]]*← configuredDirectory then' \
+  'let path ← if let some dir[[:space:]]*← configuredDirectory then' \
   'let path := System[.]FilePath[.]mk path return if path[.]isAbsolute then path else origin / path' \
-  'let path ← IO[.]FS[.]realPath save let metadata ← path[.]metadata let content ← IO[.]FS[.]readFile path'; do
+  'let path ← IO[.]FS[.]realPath save let content ← IO[.]FS[.]readFile path'; do
   printf '%s\n' "$import_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
-    || fail "tmux discovery lost its explicit path, polling deadline or child cleanup: $tie"
+    || fail "tmux discovery lost its polling deadline or child cleanup: $tie"
 done
 
 # Selector and decoder proofs concern pure values. Tie each IO consumer to the
@@ -681,11 +653,11 @@ done
 for tie in \
   'let listed ← IO[.]ofExcept [(]Linger[.]Selector[.]Picker[.]parseSnapshot result[.]stdout[)]' \
   'let incoming := if full then listed else listed[.]withRemote lastFull' \
-  'let mut state := Linger[.]Selector[.]Picker[.]init [[]] [(]!savedTmux && !readOnly[)]' \
+  'let mut state := Linger[.]Selector[.]Picker[.]init [[]] !readOnly' \
   'let mut decoder := Input[.]init' \
   'let mut remoteDue := true' \
   'remoteDue := Linger[.]Selector[.]Picker[.]fetch remoteDue [(][.]key key[)]' \
-  'full := savedTmux [|][|] remoteDue' \
+  'full := remoteDue' \
   'remoteDue := Linger[.]Selector[.]Picker[.]fetch remoteDue [.]list' \
   'let fds := #[[]stdinFd[]]' \
   'let events := #[[]POLLIN[]]' \
@@ -709,12 +681,12 @@ picker_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Selector/WorldCode.lea
 for tie in \
   'for byte in bytes do let [(]next, emitted[)] := Input[.]feed decoder byte decoder := next keys := keys [+][+] [(]emitted[.]filterMap Linger[.]Selector[.]Key[.]ofInput[)][.]toArray else if Input[.]pending decoder && [(]← monotonicMs[)] - lastInput ≥ 150 then let [(]next, emitted[)] := Input[.]flush decoder decoder := next keys := [(]emitted[.]filterMap Linger[.]Selector[.]Key[.]ofInput[)][.]toArray for key in keys do' \
   'let incomingStatuses := statusesOf incoming let ordered := Linger[.]Display[.]View[.]sort [(]incomingStatuses[.]getD · [.]unknown[)] incoming[.]candidates let next := if loaded then Linger[.]Selector[.]Picker[.]relist state sorting ordered incoming[.]descriptions else Linger[.]Selector[.]Picker[.]enter state left focus ordered incoming[.]descriptions let atHome := [(]incoming[.]atHome home[)][.]keepColumns [(]if loaded && !sorting then snapshot[.]layout else none[)] let now ← monotonicMs let age := fetched[.]map fun start => [(]now - start[)] / 1000 dirty := dirty [|][|] !loaded [|][|] next != state [|][|] atHome != snapshot [|][|] age != remoteAge state := next snapshot := atHome statuses := incomingStatuses remoteAge := age loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
-  'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let rows := Linger[.]Selector[.]Picker[.]frameRows state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor savedTmux remoteAge current[.]1[.]toNat current[.]2[.]toNat let frame := match shown with [|] some before => if current == size then Linger[.]Selector[.]Picker[.]update before rows else Linger[.]Selector[.]Picker[.]frame state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor savedTmux remoteAge current[.]1[.]toNat current[.]2[.]toNat [|] none => Linger[.]Selector[.]Picker[.]frame state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor savedTmux remoteAge current[.]1[.]toNat current[.]2[.]toNat if !frame[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk frame[.]toArray[)] shown := some rows size := current dirty := false let ready ← poll fds events 50' \
+  'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let rows := Linger[.]Selector[.]Picker[.]frameRows state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor false remoteAge current[.]1[.]toNat current[.]2[.]toNat let frame := match shown with [|] some before => if current == size then Linger[.]Selector[.]Picker[.]update before rows else Linger[.]Selector[.]Picker[.]frame state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor false remoteAge current[.]1[.]toNat current[.]2[.]toNat [|] none => Linger[.]Selector[.]Picker[.]frame state snapshot [(]statuses[.]getD · [.]unknown[)] loaded withColor false remoteAge current[.]1[.]toNat current[.]2[.]toNat if !frame[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk frame[.]toArray[)] shown := some rows size := current dirty := false let ready ← poll fds events 50' \
   'for key in keys do remoteDue := Linger[.]Selector[.]Picker[.]fetch remoteDue [(][.]key key[)] if key == [.]refresh then shown := none dirty := true state := Linger[.]Selector[.]Picker[.]relist state true [(]Linger[.]Display[.]View[.]sort [(]statuses[.]getD · [.]unknown[)] state[.]candidates[)] state[.]descriptions snapshot := snapshot[.]keepColumns none sortNext := true if !loaded && key == [.]accept then continue match Linger[.]Selector[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target [{] snapshot with candidates := state[.]candidates [}] [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Os[.]Shell[.]Command[.]poll pending then' \
-  'if full then lastFull := listed fetched := if savedTmux then none else some started let incoming := if full then listed else listed[.]withRemote lastFull' \
-  'nextListing := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]remoteDue [|][|] [(]← monotonicMs[)] ≥ nextListing[)] then full := savedTmux [|][|] remoteDue remoteDue := Linger[.]Selector[.]Picker[.]fetch remoteDue [.]list let args := if full then fullArgs else #[[]"ls", "--porcelain"[]] started ← monotonicMs sorting := sortNext sortNext := false pending[.]set [(]some [(]← Os[.]Shell[.]Command[.]start executable args[)][)] return [.]cancel finally' \
-  'finally Os[.]Shell[.]Command[.]stop pending [(]if savedTmux then 0 else 1000[)]' \
-  'let fullArgs := if savedTmux then #[[]"tmux", "ls", "--porcelain"[]] [+][+] save[.]toArray else #[[]"ls", "-r", "--porcelain"[]]' \
+  'if full then lastFull := listed fetched := some started let incoming := if full then listed else listed[.]withRemote lastFull' \
+  'nextListing := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]remoteDue [|][|] [(]← monotonicMs[)] ≥ nextListing[)] then full := remoteDue remoteDue := Linger[.]Selector[.]Picker[.]fetch remoteDue [.]list let args := if full then fullArgs else #[[]"ls", "--porcelain"[]] started ← monotonicMs sorting := sortNext sortNext := false pending[.]set [(]some [(]← Os[.]Shell[.]Command[.]start executable args[)][)] return [.]cancel finally' \
+  'finally Os[.]Shell[.]Command[.]stop pending 1000' \
+  'let fullArgs := #[[]"ls", "-r", "--porcelain"[]]' \
   'let mut focus ← [(]Linger[.]Os[.]Env[.]inSession [(]← IO[.]getEnv "LINGER_SESSION"[)][)][.]bindM nameOf' \
   'match ← choose executable [(]readOnly := readOnly[)] [(]heard := stops[.]came[)] [(]left := left[)] [(]focus := focus[)] with' \
   '[|] [.]attach target displayed => left := displayed[.]candidates focus := some target let child' \
@@ -729,7 +701,7 @@ done
 # queries remote hosts is set only where it starts and only from what Picker.fetch says of the
 # events since the chooser opened.
 [ -z "$(code_grep '(^|[^[:alnum:]_.])(full|remoteDue)[[:space:]]*:=' Linger/Selector/WorldCode.lean \
-    | grep -v -F -e 'let mut full := true' -e 'full := savedTmux || remoteDue' \
+    | grep -v -F -e 'let mut full := true' -e 'full := remoteDue' \
       -e 'let mut remoteDue := true' -e 'remoteDue := Linger.Selector.Picker.fetch remoteDue ')" ] \
   || fail "the chooser decides a remote query outside Picker.fetch, which only its opening and the refresh key make due"
 # Terminal loops and remote discovery own helpers through this one executor. Reap only
@@ -759,7 +731,7 @@ cli_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/WorldCode.lean)"
 for tie in \
   'match Linger[.]Target[.]Remote[.]checkHosts hosts with [|] [.]ok l => return l[.]map fun host => [(]host, Linger[.]Target[.]Remote[.]transportFor config host[)] [|] [.]error e => throw [(]IO[.]userError e[)]' \
   'for [(][(]host, _[)], output[)] in remotes[.]zip remote[.]toList do match output with [|] none => rows := rows [+][+] [[][[][(]"host", host[)], [(]"status", Linger[.]Display[.]Status[.]name [.]unknown[)][]][]] [|] some output => for row in Linger[.]Target[.]Remote[.]parse output do' \
-  '[|] some [(]porcelain, remoteFlag, [[][]][)] => cmdList porcelain [(]← resolveRemotes remoteFlag[)]' \
+  '[|] some [(]porcelain, remoteFlag, [[][]][)] => cmdList source porcelain [(]← resolveRemotes remoteFlag[)]' \
   'let withColor := Linger[.]Os[.]Env[.]withColor [(]← [(]← IO[.]getStdout[)][.]isTty[)] [(]← IO[.]getEnv "NO_COLOR"[)] [(]← IO[.]getEnv "TERM"[)] let named := rows[.]map fun info => match info[.]lookup "name", info[.]lookup "host" with [|] none, some host => [(]"name", "@" [+][+] host[)] :: info [|] _, _ => info let ordered := Linger[.]Display[.]View[.]sort [(]fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD ""[)][)] named let width ← humanWidth let home ← accountHome writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor width [(]ordered[.]map [(]Linger[.]Display[.]Listing[.]atHome home[)][)][)][.]toArray[)]' \
   'def summaryText : IO String := do let rows ← localRows [(]some [(][(]← monotonicMs[)] [+] 250[)][)] [(]statusOnly := true[)] return Linger[.]Display[.]Status[.]summary [(]rows[.]map fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD "unknown"[)][)]' \
   'def cmdSummary : IO Answer := do let summary ← summaryText if !summary[.]isEmpty then IO[.]println summary return [.]done' \
@@ -811,20 +783,19 @@ for var in SHELL LINGER_NO_DETACH_KEY LINGER_SESSION; do
   [ "$(code_count "getEnv \"$var\"" 'Linger/*' 'packages/*')" -eq 1 ] \
     || fail "$var is read more than once or not at all; read it once, into its Env policy"
 done
-# Linger colors its own listings exactly where Env.withColor allows it (withColor_iff): `ls`,
-# `tmux ls` and the chooser each read whether standard output is a terminal, NO_COLOR and TERM
-# once, into it. A NO_COLOR of any nonempty value turns color off, as no-color.org says, and an
+# Linger colors its own listings exactly where Env.withColor allows it (withColor_iff): `ls` and
+# the chooser each read whether standard output is a terminal, NO_COLOR and TERM once, into it. A NO_COLOR of any nonempty value turns color off, as no-color.org says, and an
 # unset, empty or `dumb` TERM names no terminal that takes escape sequences.
 # Linger.App.Suites.Manager runs each with NO_COLOR unset, empty and set and with TERM unset,
-# empty and `dumb`, and `ls` and `tmux ls` redirected.
+# empty and `dumb`, and `ls` redirected, listing a saved session and a saved tmux pane.
 color_read='let withColor := Linger[.]Os[.]Env[.]withColor [(]← [(]← IO[.]getStdout[)][.]isTty[)] [(]← IO[.]getEnv "NO_COLOR"[)] [(]← IO[.]getEnv "TERM"[)]'
-for code in "$cli_code" "$import_code" "$picker_code"; do
+for code in "$cli_code" "$picker_code"; do
   printf '%s\n' "$code" | CG_RE="(^|[[:space:]])$color_read([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
-    || fail "ls, tmux ls or the chooser colors its output outside Env.withColor: $color_read"
+    || fail "ls or the chooser colors its output outside Env.withColor: $color_read"
 done
 for var in NO_COLOR TERM; do
-  [ "$(code_count "getEnv \"$var\"" 'Linger/*' 'packages/*')" -eq 3 ] \
-    || fail "$var is read other than once for each of ls, tmux ls and the chooser, into Env.withColor"
+  [ "$(code_count "getEnv \"$var\"" 'Linger/*' 'packages/*')" -eq 2 ] \
+    || fail "$var is read other than once for each of ls and the chooser, into Env.withColor"
 done
 # Discovery keeps bounded ownership until completion. Remote signal handlers
 # are installed before spawning the transports' isolated groups, so cancelling the chooser
@@ -1262,7 +1233,7 @@ done
 # A command line reaches its operation only through the command table (`commands_minimal`): the
 # session CLI looks up its first word and performs that row's `Op`, and no pattern of its own
 # names a command word, which would be a second spelling no headline sees.
-printf '%s\n' "$cli_code" | CG_RE='(^|[[:space:]])match Linger[.]App[.]Commands[.]lookup word with [|] some command => runOp command[.]op args[.]tail([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+printf '%s\n' "$cli_code" | CG_RE='(^|[[:space:]])match Linger[.]App[.]Commands[.]lookup word with [|] some command => runOp source command[.]op args[.]tail([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "the session CLI no longer dispatches through Commands.lookup to the row's Op"
 ! code_grep '^[[:space:]]*[|] [[]?"[a-z][a-z-]*"' Linger/App/WorldCode.lean \
   || fail "a command word is matched outside the command table (Commands.lookup)"
@@ -1277,7 +1248,7 @@ for tie in \
   '[|] cmd :: argv => let child ← IO[.]Process[.]spawn [{] cmd, args := argv[.]toArray, stdin := [.]inherit [}] try return [.]program [(]← child[.]wait[)] finally if interactive then writeAll stdoutFd [(]ByteArray[.]mk Terminal[.]Render[.]leaveAnsi[.]toArray[)]' \
   'let readOnly := args[.]head[?] == some "--read-only" let args := if readOnly then args[.]tail else args let some [(]name, cmd[)] := Linger[.]Target[.]Remote[.]targetArgs args [|]' \
   'let history := args[.]head[?] == some "--history" let args := if history then args[.]tail else args let some [(]name, [[][]][)] := Linger[.]Target[.]Remote[.]targetArgs args [|]' \
-  'if readOnly then withSession "attach" name cmd [(]cmdAttach · cmd true[)] [[]"--read-only"[]] else withNew "attach" name cmd [(]cmdAttach · cmd false[)]' \
+  'if readOnly then withSession "attach" name cmd [(]cmdAttach source · cmd true[)] [[]"--read-only"[]] else withNew "attach" name cmd [(]cmdAttach source · cmd false[)]' \
   'withSession "capture" name [[][]] [(]cmdRead · [(]if history then [.]history else [.]screen[)] [(]if history then Terminal[.]Render[.]history else Terminal[.]Render[.]screenText[)][)] [(]if history then [[]"--history"[]] else [[][]][)]'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "command transport lost exact targets, argv, stdin or terminal ownership: $tie"
@@ -1976,7 +1947,6 @@ $timers"
 #     the terminal's width;
 #     `capture` of a saved session (`screenText` or `history`, as `cmdRead`'s caller passes,
 #     rendered at the plan's `render` step and written at its `write` step, tied above).
-#   Import/WorldCode: `tmux ls` (`terminalListing`).
 #   Selector/WorldCode: taking the terminal (`enterAnsi`) and naming it, the window size, the frame
 #     (`frame`, the first, after a resize and on the refresh key, or the `update` between the
 #     `frameRows` of two frames of one size), giving the terminal back (`exitAnsi`) and clearing
@@ -1992,7 +1962,6 @@ expected_term_writes='Linger/App/WorldCode.lean: writeAll stdoutFd (ByteArray.mk
 Linger/App/WorldCode.lean: let (cols, _) ← winsizeGet stdoutFd
 Linger/App/WorldCode.lean: writeAll stdoutFd
 Linger/App/WorldCode.lean: writeAll stdoutFd (ByteArray.mk bytes.toArray)
-Linger/Import/WorldCode.lean: Os.Shell.writeAll Os.Shell.stdoutFd
 Linger/Selector/WorldCode.lean: writeAll stdoutFd (ByteArray.mk Linger.Selector.Picker.enterAnsi.toArray)
 Linger/Selector/WorldCode.lean: writeAll stdoutFd (ByteArray.mk (Terminal.Title.ansi "linger").toArray)
 Linger/Selector/WorldCode.lean: let current ← winsizeGet stdoutFd

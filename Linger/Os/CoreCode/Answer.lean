@@ -7,7 +7,7 @@ public section
 /-! # Linger.Os.Answer — the exit statuses of linger's commands
 
 **One vocabulary.** Every command answers with an `Answer` and exits with its code (`code`), the
-session commands, the selector and the tmux interchange alike: each of linger's own answers has
+session commands and the selector alike: each of linger's own answers has
 one code, the one `linger --help` lists for it (`legend`), a signal's status says which signal, as
 a shell reports it, and a program's status passes through. Help lists each of linger's answers
 once (`listed`). -/

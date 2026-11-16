@@ -97,7 +97,7 @@ fidelity beyond linger's own terminal model, which stands in for every receiver;
 title content and the saved cursor slot, which fixtures cover; processes or images, since
 recovery restores screens; that an exit status tells linger's answers from a program's, since a
 program may exit with any status, as with `timeout` and `env`, so that the porcelain output is
-the exact channel; for tmux imports, captures other than the latest save's archive;
+the exact channel; for a saved tmux pane, captures other than the latest save's archive;
 and that an imported pane's saved command never runs, which a gate checks. -/
 
 public section
@@ -361,8 +361,14 @@ def Linger.Selector.Picker.enterAnsi : List UInt8 := sorry
 
 def Linger.Selector.Picker.exitAnsi : List UInt8 := sorry
 
-def Linger.Import.Resurrect.plan :
-    List String → List Import.Resurrect.Pane → List Import.Resurrect.Pane := sorry
+def Linger.Import.Resurrect.listed :
+    Session.Records → List Import.Resurrect.Pane → List Import.Resurrect.Pane := sorry
+
+def Linger.Import.Resurrect.adopt :
+    Session.Records → Import.Resurrect.Pane → Option String → Option (Checkpoint.Ckpt Vt.Vt) :=
+  sorry
+
+def Linger.Import.Resurrect.dismiss : Session.Records → String → Session.Records := sorry
 
 def Linger.Import.Resurrect.captureLimit : Nat := sorry
 
@@ -1319,7 +1325,18 @@ only for an `Op`, so adding one changes `Op`, and with it what linger claims. A 
 no command (`retired_free`). Not claimed: that the session CLI dispatches each command line
 through `lookup` to its row's operation, which its IO code does and the manager suite checks,
 with a removed word refused with what to use instead; nor that each option is one parameter of
-one operation with one spelling, which the suites check. -/
+one operation with one spelling, which the suites check.
+
+A tmux-resurrect save is a source linger reads and never writes. Its panes are rows of `ls` and
+the chooser exactly while linger keeps no record of their names, no socket, checkpoint, end
+record or names entry that names them or leads to them (`listed_unrecorded`), so whether a pane was dealt with is read from the records linger
+already keeps. An attach or a resume of such a pane writes its checkpoint only while no record
+names it, and otherwise writes nothing, so it never replaces a record (`adopt_exclusive`). A kill
+of one writes the end record a kill leaves and nothing else, so the pane stays hidden while the
+end records are kept (`dismiss_hides`), which no command removes. Not claimed: that the IO code
+decides each of these holding the name's locks and creates the checkpoint only where no file is,
+which the interop suite checks, and that linger writes, moves or deletes nothing in tmux's
+directory, which the interop suite checks by hashing it around every command. -/
 
 theorem route_exact (args : List String) :
     App.Entry.route args =
@@ -1411,30 +1428,70 @@ theorem usageLine_exact_rejects_bare :
           else s!"usage: linger {command.word} {command.args}" := by
   sorry
 
-theorem plan_exact (existing : List String) (panes : List Import.Resurrect.Pane)
+theorem listed_unrecorded (records : Session.Records) (panes : List Import.Resurrect.Pane)
     (pane : Import.Resurrect.Pane) :
-    pane ∈ Import.Resurrect.plan existing panes ↔ pane ∈ panes ∧ pane.name ∉ existing := by sorry
-
-@[kills plan_exact]
-theorem plan_exact_rejects_all :
-    ¬∀ (existing : List String) (panes : List Import.Resurrect.Pane) (pane : Import.Resurrect.Pane),
-        pane ∈
-            (fun (_ : List String) (panes : List Import.Resurrect.Pane) => panes) existing panes ↔
-          pane ∈ panes ∧ pane.name ∉ existing := by
+    pane ∈ Import.Resurrect.listed records panes ↔
+      pane ∈ panes ∧ records.holds pane.name = false := by
   sorry
 
-theorem plan_again_empty (existing : List String) (panes made : List Import.Resurrect.Pane)
-    (first : made = Import.Resurrect.plan existing panes) :
-    Import.Resurrect.plan (existing ++ made.map (·.name)) panes = [] := by sorry
+@[kills listed_unrecorded]
+theorem listed_unrecorded_rejects_never :
+    ¬∀ (records : Session.Records) (panes : List Import.Resurrect.Pane)
+        (pane : Import.Resurrect.Pane),
+        pane ∈
+            (fun (_ : Session.Records) (_ : List Import.Resurrect.Pane) =>
+                ([] : List Import.Resurrect.Pane))
+              records panes ↔
+          pane ∈ panes ∧ records.holds pane.name = false := by
+  sorry
 
-@[kills plan_again_empty]
-theorem plan_again_empty_rejects_all :
-    ¬∀ (existing : List String) (panes made : List Import.Resurrect.Pane),
-        made =
-            (fun (_ : List String) (panes : List Import.Resurrect.Pane) => panes) existing panes →
-          (fun (_ : List String) (panes : List Import.Resurrect.Pane) => panes)
-              (existing ++ made.map (·.name)) panes =
-            [] := by
+theorem adopt_exclusive (records : Session.Records) (pane : Import.Resurrect.Pane)
+    (contents : Option String) :
+    Import.Resurrect.adopt records pane contents =
+      if records.holds pane.name then none
+      else some (Import.Resurrect.checkpoint pane contents) := by
+  sorry
+
+@[kills adopt_exclusive]
+theorem adopt_exclusive_rejects_overwrite :
+    ¬∀ (records : Session.Records) (pane : Import.Resurrect.Pane) (contents : Option String),
+        (fun (_ : Session.Records) (pane : Import.Resurrect.Pane) (contents : Option String) =>
+              some (Import.Resurrect.checkpoint pane contents))
+            records pane contents =
+          if records.holds pane.name then none
+          else some (Import.Resurrect.checkpoint pane contents) := by
+  sorry
+
+theorem dismiss_hides (records later : Session.Records) (pane : Import.Resurrect.Pane)
+    (panes : List Import.Resurrect.Pane)
+    (kept : ∀ name ∈ (Import.Resurrect.dismiss records pane.name).endings, name ∈ later.endings) :
+    (Import.Resurrect.dismiss records pane.name).sockets = records.sockets ∧
+      (Import.Resurrect.dismiss records pane.name).checkpoints = records.checkpoints ∧
+      (∀ name,
+        name ∈ (Import.Resurrect.dismiss records pane.name).endings ↔
+          name = pane.name ∨ name ∈ records.endings) ∧
+      pane ∉ Import.Resurrect.listed later panes := by
+  sorry
+
+@[kills dismiss_hides]
+theorem dismiss_hides_rejects_memory :
+    ¬∀ (records later : Session.Records) (pane : Import.Resurrect.Pane)
+        (panes : List Import.Resurrect.Pane),
+        (∀
+            name ∈
+              ((fun (records : Session.Records) (_ : String) => records) records pane.name).endings,
+            name ∈ later.endings) →
+          ((fun (records : Session.Records) (_ : String) => records) records pane.name).sockets =
+              records.sockets ∧
+            ((fun (records : Session.Records) (_ : String) => records) records
+                  pane.name).checkpoints =
+              records.checkpoints ∧
+            (∀ name,
+              name ∈
+                  ((fun (records : Session.Records) (_ : String) => records) records
+                      pane.name).endings ↔
+                name = pane.name ∨ name ∈ records.endings) ∧
+            pane ∉ Import.Resurrect.listed later panes := by
   sorry
 
 theorem check_eq_some_iff (s result : String) :
@@ -1759,7 +1816,7 @@ record says, for a saved session `saved` with the signal that stopped its daemon
 its program, and that it could not find out only when that is so: the program's ending is unknown,
 or the name stays held, with no daemon answering, from the look that first found it so for longer
 than a daemon's ending lasts. Every command answers with one of the answers `Os.Answer` names, the
-operating system's vocabulary, the selector and the tmux interchange as the session commands do,
+operating system's vocabulary, the selector as the session commands do,
 and exits with its code (`code_documented`); help lists each of linger's own once, and no status a
 signal or a program gives (`listed_once`). A signal's status says which signal, whatever it
 stopped: a program it killed, a command it stopped and a session whose daemon it stopped each
@@ -1772,7 +1829,7 @@ answer comes within the client's wait and that the refusal names the session and
 the attach suite checks against a level-2 daemon, one that reports no level and one that never
 answers; that a daemon hears a stop signal, which the operating system delivers through the daemon's
 signal pipe and the resume suite checks, and when it cannot make the pipe takes its default action;
-that an attached client, the chooser, the tmux browser and `ls -r`, given SIGTERM, SIGHUP or SIGINT,
+that an attached client, the chooser and `ls -r`, given SIGTERM, SIGHUP or SIGINT,
 hand their terminal back or retire their transports and answer `stopped` with the first that came,
 however late in their cleanup it came, and that `main` then ends the process by that signal, as a
 program that does not catch it ends, which the attach, manager and remote suites check, and the
@@ -2520,7 +2577,7 @@ back the saved terminal and the saved record's own fields, its description and a
 provenance, but no label an older linger saved (`resume_restores`). A crash costs at most the
 changes of the last interval. A session asks for a save within `ckptIntervalMs` of every
 change no save holds, by the clock its ticks give it (`unsaved_due`); its daemon saves off its loop
-and replaces the checkpoint whole and durably, as the tmux import writes one, so that after a crash
+and replaces the checkpoint whole and durably, so that after a crash
 the file at the path is the last save whose flushes returned, or the one then running, whole
 (`Disk.Durable`, which the resume suite tests by killing a daemon while it saves, and its check once
 both flushes returned); and resuming then gives back that save, never a fresh session
@@ -2851,7 +2908,7 @@ line breaks, tabs and a short list of control sequences, none of which asks the 
 reply, resets it or erases its scrollback. A gate lists every write to standard output in the
 program with whose bytes it writes: a printer `writes_clean` names, or the session's own bytes,
 its output and the repaint of its screen, which the terminal package's headlines describe.
-Linger's listings, those of `ls`, `tmux ls` and the chooser, are in color exactly when they go to
+Linger's listings, those of `ls` and the chooser, are in color exactly when they go to
 a terminal, NO_COLOR is unset or empty, as no-color.org reads it, and TERM names a terminal other
 than `dumb`, which takes no escape sequences (`withColor_iff`); a gate ties each to
 `Os.Env.withColor` of whether standard output is a terminal, NO_COLOR and TERM, each read once.

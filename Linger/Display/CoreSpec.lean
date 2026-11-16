@@ -116,7 +116,8 @@ inductive Row where
 
 /-- The fields of a listing record a human row reads, each from its one source: the socket's
 name; the status and how a saved session ended, from the caller and the name's end record;
-`pid` and `cmd`, which tell a busy daemon or a peer's row; the description, which only the user
+`pid` and `cmd`, which tell a busy daemon or a peer's row; `source`, which marks a row a source
+linger only reads, as a saved tmux pane's, gives; the description, which only the user
 sets, as the field `description`; the title, which the session's program gave its window, and the
 text of its last notification since the session was last looked at; the command line and exit
 status of the last command that finished since then, as its shell's marks reported them; the
@@ -125,8 +126,9 @@ reports; the seconds since the program last wrote; and the watchers. No other fi
 a human row shows. -/
 @[expose]
 def sources : List String :=
-  ["name", "status", "state", "saved", "signal", "outcome", "exit", "pid", "cmd", "description",
-    "title", "notice", "lastcmd", "lastexit", "login", "fg", "fgpid", "fgdir", "idle", "clients"]
+  ["name", "status", "state", "saved", "signal", "outcome", "exit", "pid", "cmd", "source",
+    "description", "title", "notice", "lastcmd", "lastexit", "login", "fg", "fgpid", "fgdir",
+    "idle", "clients"]
 
 /-- How a view lays out its rows, one field to a column: the name column's width, then the width of
 each later column, the caption, the foreground program, its directory, the age and the watchers,
@@ -152,8 +154,8 @@ directory, which the caption may already hold; the age, which a printing session
 watchers. -/
 @[expose]
 def cellSources : List (List String) :=
-  [["status", "state", "saved", "signal", "outcome", "exit", "pid", "cmd", "description", "title",
-      "notice", "lastcmd", "lastexit"],
+  [["status", "state", "saved", "signal", "outcome", "exit", "pid", "cmd", "source", "description",
+      "title", "notice", "lastcmd", "lastexit"],
     ["fg", "login", "fgpid", "pid", "cmd", "description", "title"],
     ["fgdir", "description", "title"], ["status", "idle"], ["clients"]]
 

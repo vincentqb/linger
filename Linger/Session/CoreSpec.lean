@@ -144,6 +144,28 @@ def Ending.answer : Ending → Os.Answer
   | .program outcome => outcome.answer
   | .saved signal => .saved signal
 
+/-- What linger keeps of its sessions, by the key each file is kept under: one fact a file, a
+live session's socket, a saved session's checkpoint and the end record of the last session to
+hold a key, each keyed by the session's ID, which also marks a saved tmux pane as dealt with,
+and the names directory's entries, each a name and the ID it leads to. -/
+structure Records where
+  /-- The IDs of the sockets in the runtime directory. -/
+  sockets : List String
+  /-- The IDs of the checkpoints in the state directory. -/
+  checkpoints : List String
+  /-- The IDs of the end records in the state directory. -/
+  endings : List String
+  /-- The names of the names directory's entries and the IDs they lead to. -/
+  entries : List String := []
+  deriving Repr, DecidableEq
+
+/-- Whether linger keeps a record of `key`, a name or an ID: its socket, its checkpoint, its end
+record, or an entry of the names directory that names it or leads to it. -/
+@[expose]
+def Records.holds (r : Records) (key : String) : Bool :=
+  r.sockets.contains key || r.checkpoints.contains key || r.endings.contains key ||
+    r.entries.contains key
+
 end Linger.Session
 
 namespace Linger.Session.Start

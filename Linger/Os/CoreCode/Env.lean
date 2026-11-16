@@ -5,8 +5,8 @@ public section
 /-! # Linger.Os.Env — what an environment value means
 
 The runtime reads SHELL, LINGER_NO_DETACH_KEY, the chooser's LINGER_SESSION, the remotes
-file's HOME and a resume's HOME once each, and NO_COLOR and TERM once for each listing that may color, those of `ls` and
-`tmux ls` and the chooser's, and passes the result here, so what an unset or empty value means
+file's HOME and a resume's HOME once each, and NO_COLOR and TERM once for each listing that may
+color, those of `ls` and the chooser's, and passes the result here, so what an unset or empty value means
 is a pure decision with a theorem (`Linger/Os/Proofs/Env.lean`). The suites run the program with
 both.
 -/

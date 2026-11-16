@@ -95,7 +95,8 @@ def checkSpelling (path : String) : IO Unit := do
         throw (IO.userError "session name differs from an existing filename's spelling")
 
 /-- A session ID as a directory listing spells it, which is the spelling on disk, so its
-paths need no `checkSpelling`. Only `listSocketNames` and `listCkptNames` make one. -/
+paths need no `checkSpelling`. Only `listSocketNames`, `listCkptNames` and `listRecordNames` make
+one. -/
 structure Listed where private mk ::
   /-- The ID, spelled as on disk. -/
   name : String
@@ -270,5 +271,10 @@ def listSocketNames : IO (List Listed) := do
 /-- Checkpoint IDs (resumable sessions after a reboot). -/
 def listCkptNames : IO (List Listed) := do
   listNames (← stateDir) ".ckpt"
+
+/-- The names of end records, each the last session to hold its name, or a saved tmux pane a
+kill hid. -/
+def listRecordNames : IO (List Listed) := do
+  listNames (← stateDir) ".end"
 
 end Linger.Session.Shell.Paths

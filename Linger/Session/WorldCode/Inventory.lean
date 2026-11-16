@@ -19,8 +19,8 @@ public section
 One info conversation per live socket under an absolute deadline, a bounded number at once,
 and a failed-connect socket removed only under its name lock; then each checkpoint whose
 name no live session confirmed. A summary asks only the daemons whose end record does not say
-what they saw. The listing, the prompt summary, `get` and the tmux importer all read sessions
-through this module. -/
+what they saw. The listing, the prompt summary, `ls NAME` and `ls --resurrect` all read
+sessions through this module. -/
 
 namespace Linger.Session.Shell.Inventory
 

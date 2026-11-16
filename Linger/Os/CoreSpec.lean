@@ -6,8 +6,8 @@ public section
 
 The answers a command gives, as its exit status gives them: an answer of linger's own, the
 signal that stopped it or the session it attached to or waited for, or the status of the program
-the command waited for. An exit status is the operating system's, and the selector and the tmux
-interchange answer as the session commands do, so the answers sit in the bottom layer, where
+the command waited for. An exit status is the operating system's, and the selector answers as
+the session commands do, so the answers sit in the bottom layer, where
 every component that answers can name them; and the codes linger gave before a status said which
 signal it stood for, which the kills put in place of the program's. -/
 

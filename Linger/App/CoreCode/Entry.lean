@@ -14,7 +14,6 @@ private def plain (args : List String) : Route :=
   | [] => .session ["--help"]
   | ["attach"] => .selector false
   | ["attach", "--read-only"] => .selector true
-  | "tmux" :: rest => .tmux rest
   | _ => .session args
 
 /-- Bare invocation explains the CLI; named commands choose their executor. An encoded command

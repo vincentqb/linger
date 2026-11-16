@@ -253,12 +253,23 @@ def Env.make (slug : String) : IO Env := do
   IO.FS.createDirAll (System.FilePath.mk dir)
   return { bin, dir }
 
-/-- `extraEnv` for `spawnPty`: the state dir plus a predictable shell. -/
-def Env.ptyEnv (e : Env) : Array String := #[s!"LINGER_DIR={e.dir}", "SHELL=/bin/sh"]
+/-- Where a suite's linger looks for a tmux-resurrect save, so that it never lists the user's: the
+tmux server it asks for its directory is one at a socket in the suite's directory that nothing
+creates, as `TMUX` names it, so tmux neither reaches a server nor creates its own directory, and
+the data directory is `data` there, which a suite that tests saves fills. A legacy
+`~/.tmux/resurrect/last` the user has would still be read, and only read. -/
+def Env.sourceEnv (e : Env) : Array (String × String) :=
+  #[("TMUX", s!"{e.dir}/no-tmux-server,0,0"), ("XDG_DATA_HOME", s!"{e.dir}/data")]
+
+/-- `extraEnv` for `spawnPty`: the state dir plus a predictable shell and the suite's own
+tmux-resurrect source (`sourceEnv`). -/
+def Env.ptyEnv (e : Env) : Array String :=
+  #[s!"LINGER_DIR={e.dir}", "SHELL=/bin/sh"] ++ e.sourceEnv.map fun (k, v) => s!"{k}={v}"
 
 /-- …and the same for `IO.Process.output`, which wants pairs. -/
 def Env.procEnv (e : Env) : Array (String × Option String) :=
-  #[("LINGER_DIR", some e.dir), ("SHELL", some "/bin/sh")]
+  #[("LINGER_DIR", some e.dir), ("SHELL", some "/bin/sh")] ++
+    e.sourceEnv.map fun (k, v) => (k, some v)
 
 /-- A live pty client: the child's pid and our end of its terminal. -/
 structure Client where

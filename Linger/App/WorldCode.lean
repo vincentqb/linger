@@ -15,6 +15,7 @@ import Linger.Display.CoreCode.View
 import Linger.Os.CoreCode.Answer
 import Linger.App.CoreCode.Capture
 public import Linger.Os.CoreSpec
+public import Linger.Session.CoreSpec
 import Linger.App.CoreCode.Recovery
 import Linger.App.CoreCode.Commands
 import Linger.App.CoreCode.Wait
@@ -46,6 +47,29 @@ open Os.Shell
 open Linger.Session.Wire (Msg)
 open Linger.Os (Answer)
 
+/-- A source of saved sessions linger reads and never writes, a tmux-resurrect save, as `main`
+supplies it: the session library imports no reader of one. `rows` lists its panes no record of
+`Records` names, `row` the pane of a name no record names, `adopt` writes a pane's checkpoint
+where no record is, answering whether a record named the pane by then, so that nothing was
+written, `dismiss` writes the end record a kill leaves for a pane no record names, answering
+whether it did, and `writeSave` writes the sessions as a save to standard output. -/
+structure Source where
+  /-- The listing rows of the panes no record names. -/
+  rows : Linger.Session.Records → IO (List (List (String × String)))
+  /-- The listing row of the pane of a name no record names. -/
+  row : String → IO (Option (List (String × String)))
+  /-- Write the pane's checkpoint where no record is: whether a record named it by then. -/
+  adopt : String → IO Bool
+  /-- Write the end record a kill leaves for a pane no record names: whether it did. -/
+  dismiss : String → IO Bool
+  /-- Write the local sessions' names and directories as a save to standard output. -/
+  writeSave : IO Unit
+
+/-- No source: no pane is listed, adopted or dismissed, and an export writes nothing. -/
+def Source.none : Source :=
+  { rows := fun _ => pure [], row := fun _ => pure Option.none, adopt := fun _ => pure false,
+    dismiss := fun _ => pure false, writeSave := pure () }
+
 /-- One line per command, from the command table, printed by help and bare invocation, or to
 stderr when `overview` cannot parse the arguments as listing options. -/
 private def usage : String := Linger.App.Commands.helpText
@@ -58,9 +82,15 @@ private def usageError (word : String) : IO Answer := do
   return .usage
 
 /-- A removed command's word: what to use instead (`Commands.retired`), and the answer
-`usage`. -/
-private def retiredCommand (word : String) : IO Answer := do
-  if let some advice := Linger.App.Commands.retired.lookup word then
+`usage`; for `tmux`, what to use instead of the command its next word, `rest`'s first, named
+(`Commands.tmuxAdvice`). -/
+private def retiredCommand (word : String) (rest : List String) : IO Answer := do
+  if word == "tmux" then
+    let sub := rest.headD ""
+    let spelled :=
+      if ["ls", "select", "import", "export"].contains sub then s!"tmux {sub}" else "tmux"
+    IO.eprintln s!"linger: {spelled} was removed: {Linger.App.Commands.tmuxAdvice sub}"
+  else if let some advice := Linger.App.Commands.retired.lookup word then
     IO.eprintln s!"linger: {word} was removed: {advice}"
   return .usage
 
@@ -419,12 +449,22 @@ private def resumeStatus (s : Names.Ref) (log : String) (waited : Waited) : IO A
         (see {log})"
       return .failed
 
+/-- Before an attach or a resume of `name` with no daemon: write the latest tmux-resurrect save's
+pane of that name as its checkpoint when no record names it (`Source.adopt`), so the
+command resumes it as a saved session; a name a record came to name meanwhile keeps it, and the
+command goes on with the session that is there, saying so. -/
+private def adoptPane (source : Source) (name : String) : IO Unit := do
+  if ← source.adopt name then
+    IO.eprintln s!"linger: session '{name}' exists; using it, not the saved tmux pane"
+
 /-- `resume`: run a saved session's program again, an ended session's included, in its saved
 directory and on its last screen, without attaching, and return once it runs. A live session is
-left as it is, and a name no session holds starts nothing (`Start.resumePlan`); the daemon decides
-again holding the name. A daemon that does not answer within `startWaitMs` starts nothing, and
+left as it is, a name no record names resumes the latest tmux-resurrect save's pane of that name
+(`adoptPane`), and any other name no session holds starts nothing (`Start.resumePlan`); the
+daemon decides again holding the name. A daemon that does not answer within `startWaitMs` starts nothing, and
 `resume` says so, `timedOut`. -/
-private def cmdResume (s : Names.Ref) : IO Answer := do
+private def cmdResume (source : Source) (s : Names.Ref) : IO Answer := do
+  adoptPane source s.name
   let live ←
     match ← Client.connect s.id with
     | some fd =>
@@ -804,9 +844,11 @@ both resources and displayed after releasing them, under the status the listing 
 (`visitOffline`): a session whose program ended is a result, which either mode shows, then tells
 how it ended and discards once the viewer leaves, since it has been seen; read-only attachment
 views any other saved session, and writable attachment keeps the create/resume path for it. Either
-refuses a checkpoint that does not decode, which stays as it is (`Recovery.decide`). Live titles
-sample `summaryText` in this process. -/
-private def cmdAttach (s : Names.Ref) (cmd : List String) (readOnly : Bool) : IO Answer := do
+refuses a checkpoint that does not decode, which stays as it is (`Recovery.decide`). A writable
+attach to a name no record names resumes the latest tmux-resurrect save's pane of that name
+(`adoptPane`). Live titles sample `summaryText` in this process. -/
+private def cmdAttach (source : Source) (s : Names.Ref) (cmd : List String) (readOnly : Bool) :
+    IO Answer := do
   let result : Except Answer Client.Outcome ←
     if readOnly then
       match ← Client.connect s.id with
@@ -828,6 +870,7 @@ private def cmdAttach (s : Names.Ref) (cmd : List String) (readOnly : Bool) : IO
       | some fd =>
         attachSpoken s.name fd false
       | none =>
+        adoptPane source s.name
         match ← (visitOffline s false).toBaseIO with
         | .ok (.ok (some outcome)) =>
           pure (.ok outcome)
@@ -913,14 +956,15 @@ private def printRows (porcelain : Bool) (rows : List (List (String × String)))
           (Linger.Display.Listing.terminalListing withColor width
               (ordered.map (Linger.Display.Listing.atHome home))).toArray)
 
-/-- `ls`: local rows, then each remote host's rows named `name@host`, printed as
-`k<TAB>v` records separated by blank lines (`porcelain`) or as the terminal listing.
+/-- `ls`: local rows, then each remote host's rows named `name@host`, then the rows of the latest
+tmux-resurrect save's panes no record names (`Source.rows`), printed as `k<TAB>v`
+records separated by blank lines (`porcelain`) or as the terminal listing.
 Remote rows keep only name, command, state and status, as the host's linger reports them; a host
 that does not answer within the bounded wait is one record, its `host` with the status `?` no
 answer gives, which the terminal listing names `@host`. Answers `stopped`, with the signal, when
 a signal stops it while it queries remote hosts. -/
-private def cmdList (porcelain : Bool) (remotes : List (String × Linger.Target.Remote.Transport)) :
-    IO Answer := do
+private def cmdList (source : Source) (porcelain : Bool)
+    (remotes : List (String × Linger.Target.Remote.Transport)) : IO Answer := do
   let (locals, remote) ←
     if remotes.isEmpty then
       pure (← localRows, (.ok #[] : Except UInt8 (Array (Option String))))
@@ -957,7 +1001,12 @@ private def cmdList (porcelain : Bool) (remotes : List (String × Linger.Target.
                 ("status",
                   Linger.Display.Status.name
                     (Linger.Display.Listing.rowStatus (.remote row.live row.status)))]]
-  printRows porcelain rows
+  let records : Linger.Session.Records :=
+    { sockets := (← Paths.listSocketNames).map (·.name),
+      checkpoints := (← Paths.listCkptNames).map (·.name),
+      endings := (← Paths.listRecordNames).map (·.name),
+      entries := (← Names.load).flatMap fun (name, id) => [name, id] }
+  printRows porcelain (rows ++ (← source.rows records))
   return .done
 
 /-- Parse the listing's arguments: an optional `--porcelain`, and either `-r` with its hosts or
@@ -1319,10 +1368,12 @@ private def discardSaved (name : String) : IO (Except String Bool) := do
 /-- `kill`: end the session and return once it has ended. Its daemon stops the program (SIGHUP to
 its terminal session, then SIGKILL after a second), tells whoever is attached or waiting how it
 ended, records that and gives the name up. With no daemon, a saved session is discarded instead,
-an ended one included, whose end record stays for `wait` and `ls`. No session answers
+an ended one included, whose end record stays for `wait` and `ls`, and a name no record names
+whose pane the latest tmux-resurrect save has gets the end record a kill leaves, which hides the
+pane (`Source.dismiss`). No session answers
 `notFound`; a refusal, a name another process holds, or a session that has not ended within
 `Wait.heldNameMs`, prints a diagnostic and answers `notDone`. -/
-private def cmdKill (s : Names.Ref) : IO Answer := do
+private def cmdKill (source : Source) (s : Names.Ref) : IO Answer := do
   match ← Client.oneShot s.id .kill with
   | some (.refused why) =>
     IO.eprintln s!"linger: {why}"
@@ -1347,6 +1398,8 @@ private def cmdKill (s : Names.Ref) : IO Answer := do
     | .ok true =>
       return .done
     | .ok false =>
+      if ← source.dismiss s.name then
+        return .done
       noSession s.name
     | .error why =>
       IO.eprintln s!"linger: {why}"
@@ -1473,10 +1526,12 @@ private def worse (a b : Answer) : Answer := if a.code < b.code then b else a
 /-- `ls name...`: the named sessions' listing rows, as `ls` lists them, in the order named in
 `porcelain` records, each a session's fields as its daemon reports them, then its name, state
 and status; with no daemon or checkpoint for a name, its name and how the last session to hold it
-ended (`Session.endingFields`), from its end record. A `name@host` target is listed by its host's
+ended (`Session.endingFields`), from its end record, or with no record of it, the row of the
+latest tmux-resurrect save's pane of that name. A `name@host` target is listed by its host's
 linger. A name no session has taken answers `notFound`; one another process holds with no daemon
 answering prints why and answers `notDone`. -/
-private def cmdListNamed (porcelain : Bool) (names : List String) : IO Answer := do
+private def cmdListNamed (source : Source) (porcelain : Bool) (names : List String) : IO Answer :=
+  do
   let some targets := names.mapM Linger.Target.Remote.parseTarget | invalidTarget
   let rows ←
     localRows (only :=
@@ -1504,8 +1559,12 @@ private def cmdListNamed (porcelain : Bool) (names : List String) : IO Answer :=
           | some (.recorded (some ending)) =>
             pure (some (("name", target.name) :: Linger.Session.endingFields ending))
           | some (.recorded none) =>
-            answer := worse answer (← noSession target.name)
-            pure none
+            match ← source.row target.name with
+            | some row =>
+              pure (some row)
+            | none =>
+              answer := worse answer (← noSession target.name)
+              pure none
           | some (.held why) =>
             IO.eprintln s!"linger: no answer for '{target.name}': {why}"
             answer := worse answer .notDone
@@ -1519,21 +1578,25 @@ private def cmdListNamed (porcelain : Bool) (names : List String) : IO Answer :=
     printRows false shown
   return answer
 
-/-- `ls`'s arguments: `--summary` alone, or a listing of every session, the remote hosts' too
+/-- `ls`'s arguments: `--summary` alone, `--resurrect` alone, which writes the sessions as a
+tmux-resurrect save to standard output, or a listing of every session, the remote hosts' too
 with `-r`, or of the named ones, as records with `--porcelain`. Any other is a usage error. -/
-private def listArgs (args : List String) : IO Answer := do
+private def listArgs (source : Source) (args : List String) : IO Answer := do
   if args == ["--summary"] then
     return ← cmdSummary
+  if args == ["--resurrect"] then
+    source.writeSave
+    return .done
   match parseLs args with
   | some (porcelain, remoteFlag, []) =>
-    cmdList porcelain (← resolveRemotes remoteFlag)
+    cmdList source porcelain (← resolveRemotes remoteFlag)
   | some (porcelain, _, names) =>
-    cmdListNamed porcelain names
+    cmdListNamed source porcelain names
   | none =>
     usageError "ls"
 
 /-- An optional `--read-only`, then the target as `Remote.targetArgs` reads it. -/
-private def attachArgs (args : List String) : IO Answer := do
+private def attachArgs (source : Source) (args : List String) : IO Answer := do
   let readOnly := args.head? == some "--read-only"
   let args := if readOnly then args.tail else args
   let some (name, cmd) := Linger.Target.Remote.targetArgs args |
@@ -1543,9 +1606,9 @@ private def attachArgs (args : List String) : IO Answer := do
     IO.eprintln "linger: read-only attach does not accept a command"
     return .usage
   if readOnly then
-    withSession "attach" name cmd (cmdAttach · cmd true) ["--read-only"]
+    withSession "attach" name cmd (cmdAttach source · cmd true) ["--read-only"]
   else
-    withNew "attach" name cmd (cmdAttach · cmd false)
+    withNew "attach" name cmd (cmdAttach source · cmd false)
 
 private def captureArgs (args : List String) : IO Answer := do
   let history := args.head? == some "--history"
@@ -1604,12 +1667,13 @@ private def cmdUpgrade (names : List String) : IO Answer := do
 /-- Perform `op` with the words after its command's word, and give its answer: `usage` for words
 the operation does not take, otherwise the operation's own. Each operation has its one command
 (`Commands.table`), and this is the one place a command line reaches it. -/
-private def runOp (op : Linger.App.Commands.Op) (args : List String) : IO Answer := do
+private def runOp (source : Source) (op : Linger.App.Commands.Op) (args : List String) :
+    IO Answer := do
   match op, args with
   | .upgrade, names =>
     cmdUpgrade names
   | .resume, [name] =>
-    withSession "resume" name [] cmdResume
+    withSession "resume" name [] (cmdResume source)
   | .resume, _ =>
     usageError "resume"
   | .start, name :: argv =>
@@ -1619,7 +1683,7 @@ private def runOp (op : Linger.App.Commands.Op) (args : List String) : IO Answer
   | .start, [] =>
     usageError "start"
   | .attach, rest =>
-    attachArgs rest
+    attachArgs source rest
   | .send, name :: text =>
     if text.isEmpty then
       return ← usageError "send"
@@ -1635,7 +1699,7 @@ private def runOp (op : Linger.App.Commands.Op) (args : List String) : IO Answer
   | .detach, _ =>
     usageError "detach"
   | .kill, [name] =>
-    withSession "kill" name [] cmdKill
+    withSession "kill" name [] (cmdKill source)
   | .kill, _ =>
     usageError "kill"
   | .rename, [old, new] =>
@@ -1674,10 +1738,7 @@ private def runOp (op : Linger.App.Commands.Op) (args : List String) : IO Answer
   | .describe, [] =>
     usageError "describe"
   | .list, rest =>
-    listArgs rest
-  | .tmux, _ =>
-    -- `Entry.route` hands every `tmux` command line to save interchange before this CLI
-    usageError "tmux"
+    listArgs source rest
 
 /-- Run one session command and give its answer, whose code is its exit status: `usage` for a
 usage error or invalid target, otherwise the verb's own. The program's two options, `--help` and
@@ -1685,7 +1746,7 @@ usage error or invalid target, otherwise the verb's own. The program's two optio
 its operation (`runOp`), a removed one's, which says what to use instead (`Commands.retired`), or
 a usage error. `main` routes interactive selection and tmux interchange elsewhere; `__daemon`
 runs a session's daemon in this process. -/
-def main (args : List String) : IO Answer := do
+def main (source : Source) (args : List String) : IO Answer := do
   match args with
   | "__daemon" :: id :: name :: cwd :: cmd =>
     Daemon.serve id name cwd cmd (← Resume.saver id) (Resume.dropCkpt id) (recoverFor { name, id })
@@ -1718,10 +1779,10 @@ def main (args : List String) : IO Answer := do
     let word := args.headD ""
     match Linger.App.Commands.lookup word with
     | some command =>
-      runOp command.op args.tail
+      runOp source command.op args.tail
     | none =>
       if (Linger.App.Commands.retired.lookup word).isSome then
-        retiredCommand word
+        retiredCommand word args.tail
       else
         IO.eprintln usage
         return .usage

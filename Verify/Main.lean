@@ -99,8 +99,6 @@ def main (args : List String) : IO UInt32 := do
     Linger.Session.Suites.Delivery.serveProbe dir
   | "--manager-probe" :: rest =>
     Linger.App.Suites.Manager.probe rest
-  | "--import-probe" :: rest =>
-    Linger.Import.Suites.Recipes.importProbe rest
   | ["--runner-probe", dir, name] =>
     Verify.Ci.runnerProbe dir name
   | "--suites" :: entries =>

@@ -62,7 +62,7 @@ private def statusesOf (snapshot : Linger.Selector.Picker.Snapshot) :
 /-- Own raw mode and at most one listing for one selection visit. Keys always
 act on the displayed snapshot, which is returned on acceptance; a completed
 replacement is applied afterward and rendered before polling again.
-Saved-tmux and read-only visits have no creation choice. The first listing is cancellable too.
+A read-only visit has no creation choice. The first listing is cancellable too.
 A native visit queries remote hosts only when remote rows are due (`fetch_follows_events`): when
 it opens, and at once after the refresh key, or once the listing running then ends. Its other
 listings, one each second, list local rows alone and keep the remote rows the last remote query
@@ -77,15 +77,11 @@ the view it returns from, `left`, where they were, and the cursor on `focus`, th
 returns from or the one it was opened inside, while the listing has it (`Picker.enter`). Native listings get a cooperative stop so they can
 retire the transports' isolated groups. Once `heard` says which watched signal came, the visit
 ends on the cancellation's path, as `stopped` with that signal. -/
-def choose (executable : String) (save : Option String := none) (readOnly : Bool := false)
-    (heard : IO (Option UInt8) := pure none) (left : List String := [])
-    (focus : Option String := none) : IO Choice := do
-  let savedTmux := save.isSome
+def choose (executable : String) (readOnly : Bool := false) (heard : IO (Option UInt8) := pure none)
+    (left : List String := []) (focus : Option String := none) : IO Choice := do
   unless (← stdinIsTty) && (← (← IO.getStdout).isTty) do
     throw (IO.userError "the picker needs terminal input and output")
-  let fullArgs :=
-    if savedTmux then #["tmux", "ls", "--porcelain"] ++ save.toArray
-    else #["ls", "-r", "--porcelain"]
+  let fullArgs := #["ls", "-r", "--porcelain"]
   let pending ← IO.mkRef (none : Option Os.Shell.Command.Job)
   let withColor :=
     Linger.Os.Env.withColor (← (← IO.getStdout).isTty) (← IO.getEnv "NO_COLOR") (← IO.getEnv "TERM")
@@ -96,7 +92,7 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
     writeAll stdoutFd (ByteArray.mk (Terminal.Title.ansi "linger").toArray)
     let fds := #[stdinFd]
     let events := #[POLLIN]
-    let mut state := Linger.Selector.Picker.init [] (!savedTmux && !readOnly)
+    let mut state := Linger.Selector.Picker.init [] !readOnly
     let mut snapshot : Linger.Selector.Picker.Snapshot := {}
     let mut statuses : Std.HashMap String Linger.Display.Status.Status := {}
     let mut loaded := false
@@ -122,17 +118,17 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
       if dirty || current != size then
         let rows :=
           Linger.Selector.Picker.frameRows state snapshot (statuses.getD · .unknown) loaded
-            withColor savedTmux remoteAge current.1.toNat current.2.toNat
+            withColor false remoteAge current.1.toNat current.2.toNat
         let frame :=
           match shown with
           | some before =>
             if current == size then Linger.Selector.Picker.update before rows
             else
               Linger.Selector.Picker.frame state snapshot (statuses.getD · .unknown) loaded
-                withColor savedTmux remoteAge current.1.toNat current.2.toNat
+                withColor false remoteAge current.1.toNat current.2.toNat
           | none =>
             Linger.Selector.Picker.frame state snapshot (statuses.getD · .unknown) loaded withColor
-              savedTmux remoteAge current.1.toNat current.2.toNat
+              false remoteAge current.1.toNat current.2.toNat
         if !frame.isEmpty then
           writeAll stdoutFd (ByteArray.mk frame.toArray)
         shown := some rows
@@ -187,7 +183,7 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
         let listed ← IO.ofExcept (Linger.Selector.Picker.parseSnapshot result.stdout)
         if full then
           lastFull := listed
-          fetched := if savedTmux then none else some started
+          fetched := some started
         let incoming := if full then listed else listed.withRemote lastFull
         -- what asks for someone first, as `ls` lists it (`View.sort`), when the visit opens and
         -- after the refresh key, and otherwise the rows shown where they are (`Picker.relist`);
@@ -213,7 +209,7 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
         loaded := true
         nextListing := (← monotonicMs) + 1000
       if (← pending.get).isNone && (remoteDue || (← monotonicMs) ≥ nextListing) then
-        full := savedTmux || remoteDue
+        full := remoteDue
         remoteDue := Linger.Selector.Picker.fetch remoteDue .list
         let args := if full then fullArgs else #["ls", "--porcelain"]
         started ← monotonicMs
@@ -229,7 +225,7 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
       finally
         termRestore stdinFd saved
     finally
-      Os.Shell.Command.stop pending (if savedTmux then 0 else 1000)
+      Os.Shell.Command.stop pending 1000
 
 /-- The exact attach argv for a chosen target. Its operands are the ones the attach
 parser reads back as `target` (`targetArgs_targetOperands`). -/
