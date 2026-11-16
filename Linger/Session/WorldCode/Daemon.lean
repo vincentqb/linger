@@ -1329,7 +1329,7 @@ def serve (id name : String) (cwd : String) (argv : List String) (saveCkpt : Sta
                 s!"session '{name}' cannot resume: its directory {dir} is gone, and HOME is unset")
       let restore := saved.map (fun (vt, _, fields) => (vt, fields))
       -- The socket lock excludes another cooperating listener, even if connect
-      -- failed for a reason other than a stale socket. Never unlink the lock inode.
+      -- failed for a reason other than a stale socket. Only a holder deletes a lock file.
       try
         IO.FS.removeFile sockPath
       catch _ =>

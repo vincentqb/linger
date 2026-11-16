@@ -128,9 +128,11 @@ end Linger.Session.Driver
 
 namespace Linger.Session.Claim
 
-/-- The operating system grants a lock only when no process holds it, as `flock` does on a lock
-file that is never unlinked or replaced. Two processes holding one lock file's lock at once
-falsify it. -/
+/-- The operating system grants a lock only when no process holds it, as `flock` does on the file
+a lock file's path names, when only a holder deletes that file and a process that locks a file
+then checks that the path still names it, and locks the path's file again when not
+(`Os.Shell.flock`, which `Os.Lock.Tells` lets tell them apart). Two processes holding the lock
+of the file one path names at once falsify it. -/
 WorldClaim Exclusive (grant : State → Nat → Nat → Bool) :=
   ∀ s actor resource, grant s actor resource = true → s.locks resource = none
 

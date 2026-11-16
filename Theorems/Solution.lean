@@ -1229,7 +1229,7 @@ theorem listed_unrecorded_rejects_never :
           pane ∈ panes ∧ records.holds pane.name = false := by
   intro h
   have :=
-    (h ⟨[], [], [], []⟩ [{ name := "a", dir := "", line := 0 }]
+    (h ⟨[], [], [], [], []⟩ [{ name := "a", dir := "", line := 0 }]
           { name := "a", dir := "", line := 0 }).mpr
       ⟨by simp, by decide⟩
   simp at this
@@ -1248,7 +1248,7 @@ theorem adopt_exclusive_rejects_overwrite :
           if records.holds pane.name then none
           else some (Import.Resurrect.checkpoint pane contents) := by
   intro h
-  have := h ⟨["a"], [], [], []⟩ { name := "a", dir := "", line := 0 } none
+  have := h ⟨["a"], [], [], [], []⟩ { name := "a", dir := "", line := 0 } none
   simp [Session.Records.holds] at this
 
 theorem dismiss_hides (records later : Session.Records) (pane : Import.Resurrect.Pane)
@@ -1282,7 +1282,8 @@ theorem dismiss_hides_rejects_memory :
             pane ∉ Import.Resurrect.listed later panes := by
   intro h
   have :=
-    ((h ⟨[], [], [], []⟩ ⟨[], [], [], []⟩ { name := "a", dir := "", line := 0 } [] (by simp)).2.2.1
+    ((h ⟨[], [], [], [], []⟩ ⟨[], [], [], [], []⟩ { name := "a", dir := "", line := 0 } []
+              (by simp)).2.2.1
           "a").mpr
       (Or.inl rfl)
   simp at this
@@ -2383,6 +2384,39 @@ theorem run_stop_exits_rejects_jump :
       (by
         rw [stops]; simp)
   simp [Driver.jump] at jumped
+
+theorem locks_named (records : Session.Records) (name : String)
+    (before : ∀ held ∈ records.locks, held = name ∨ records.holds held = true) :
+    (Session.Locks.release records name).sockets = records.sockets ∧
+      (Session.Locks.release records name).checkpoints = records.checkpoints ∧
+      (Session.Locks.release records name).endings = records.endings ∧
+      (∀ held ∈ records.locks,
+        records.holds held = true → held ∈ (Session.Locks.release records name).locks) ∧
+      ∀ held ∈ (Session.Locks.release records name).locks,
+        (Session.Locks.release records name).holds held = true :=
+  Session.Locks.release_named records name before
+
+theorem locks_named_rejects_kept :
+    ¬∀ (records : Session.Records) (name : String),
+        (∀ held ∈ records.locks, held = name ∨ records.holds held = true) →
+          ((fun (records : Session.Records) (_ : String) => records) records name).sockets =
+              records.sockets ∧
+            ((fun (records : Session.Records) (_ : String) => records) records name).checkpoints =
+              records.checkpoints ∧
+            ((fun (records : Session.Records) (_ : String) => records) records name).endings =
+              records.endings ∧
+            (∀ held ∈ records.locks,
+              records.holds held = true →
+                held ∈
+                  ((fun (records : Session.Records) (_ : String) => records) records name).locks) ∧
+            ∀ held ∈ ((fun (records : Session.Records) (_ : String) => records) records name).locks,
+              ((fun (records : Session.Records) (_ : String) => records) records name).holds held =
+                true := by
+  intro h
+  have :=
+    (h { sockets := [], checkpoints := [], endings := [], locks := ["a"] } "a" (by simp)).2.2.2.2
+      "a" (by simp)
+  simp [Session.Records.holds] at this
 
 theorem reachableIn_bound {cap : Nat} {b : Buf.Buf}
     (h : Buf.InputReach Buf.Buf.empty Buf.bufOffer Buf.bufAdvance cap b) : Buf.owedLen b ≤ cap :=

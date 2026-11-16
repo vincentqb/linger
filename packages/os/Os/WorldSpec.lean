@@ -17,8 +17,10 @@ the C call never sees. `Linger.Os.Suites.Shim` and the live suites exercise thos
 The world claim `Wait.Lasts` says that a sleep lasts at least as long as it was asked to, which
 the bounded waits of `Os.Shell.nap` rest on, `Exec.Keeps` that an exec keeps the process, its
 children and the descriptors it does not close, which an upgrade of a session's daemon rests on,
-and `Place.NoReplace` that a link or a rename that may not replace never replaces a name, which
-the names of sessions rest on. -/
+`Place.NoReplace` that a link or a rename that may not replace never replaces a name, which the
+names of sessions rest on, and `Lock.Tells` that `fstat` and `stat` tell the file a descriptor
+holds from the one a path names, which a lock that its holder may delete rests on
+(`Os.Shell.flock`). -/
 
 namespace Os.Boundary
 
@@ -75,6 +77,9 @@ private opaque linkNew (src dst : @& String) : IO Bool
 
 @[extern "linger_rename_new"]
 private opaque renameNew (src dst : @& String) : IO Bool
+
+@[extern "linger_names_held"]
+private opaque namesHeld (fd : UInt32) (path : @& String) : IO Bool
 
 @[extern "linger_fsync_path"]
 private opaque fsyncPath (path : @& String) (directory : Bool) : IO Bool
@@ -164,3 +169,16 @@ WorldClaim NoReplace
             ∀ other, other ≠ src → other ≠ dst → after other = names other
 
 end Os.Place
+
+namespace Os.Lock
+
+/-- `fstat` and `stat` tell the file a descriptor holds from the one a path names: `reads named`
+is what `Os.Shell.namesHeld` answers of a descriptor that holds a file open and a path, when the
+path names that file (`named`) and when it names another file or none, as once the file was
+unlinked and another created there. A file a descriptor holds open keeps its device and inode
+numbers, which no other file has while it is open, so the answer is true exactly when the path
+names the held file. A path that names the held file and reads false, or names another or none
+and reads true, falsifies it. -/
+WorldClaim Tells (reads : Bool → Bool) := ∀ named, reads named = named
+
+end Os.Lock

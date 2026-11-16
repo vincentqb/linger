@@ -168,7 +168,8 @@ private def queryInfos (names : Array Paths.Listed) (deadline : Nat) (retainUnav
       discard <| IO.wait task
 
 /-- Remove a failed-connect socket only while holding its name lock. `false`
-means another owner holds the lock or the probe itself failed; both fail closed. -/
+means another owner holds the lock or the probe itself failed; both fail closed. With the socket
+gone, its name's lock files go too when nothing else names it (`Paths.Listed.withSessionLock`). -/
 private def removeStaleSocket (n : Paths.Listed) : IO Bool := do
   try
     n.withLock do
@@ -176,9 +177,24 @@ private def removeStaleSocket (n : Paths.Listed) : IO Bool := do
           IO.FS.removeFile (← n.socketPath)
         catch _ =>
           pure ()
-        return true
+    try
+      n.withSessionLock (pure ())
+    catch _ =>
+      pure ()
+    return true
   catch _ =>
     return false
+
+/-- Let go of the locks of every name with a lock file but no socket, checkpoint or end record,
+which deletes their files (`Paths.Listed.withSessionLock`), as a crash or an older linger may
+have left them; a name another process holds keeps its lock files. -/
+private def sweepLocks (named : List String) : IO Unit := do
+  for listed in ← Paths.listLockNames do
+    unless named.contains listed.name do
+      try
+        listed.withSessionLock (pure ())
+      catch _ =>
+        pure ()
 
 /-- A saved session's listing row and the fields it adds, from reading its name's end record:
 ended, with the status a shell reports and how its program ended (`Session.outcomeFields`),
@@ -217,7 +233,9 @@ in the names table, read once (`Names.nameOf`), never by the ID; an ID no name l
 listed. A saved session is listed as its end record says (`savedRow`), read while holding its
 ID. With `statusOnly`, as for a summary, a row carries only its status, and a live session whose
 end record says what its daemon saw is read from the record without waking the daemon
-(`rowStatus_published`). With `only`, just the rows of the names it holds. -/
+(`rowStatus_published`). With `only`, just the rows of the names it holds. A listing of every row
+also lets go of the locks of every ID nothing names, which deletes their lock files
+(`sweepLocks`). -/
 def localRows (stopAt : Option Nat := none) (statusOnly : Bool := false)
     (only : Option (List String) := none) : IO (List (List (String × String))) := do
   let deadline := stopAt.getD ((← monotonicMs) + 2000)
@@ -283,6 +301,9 @@ def localRows (stopAt : Option Nat := none) (statusOnly : Bool := false)
             | some loaded =>
               let (row, ending) := savedRow loaded
               savedFields row ending]
+  if only.isNone && !statusOnly then
+    let kept := (← Paths.listSocketNames) ++ (← Paths.listCkptNames) ++ (← Paths.listRecordNames)
+    sweepLocks (kept.map (·.name) ++ table.map (·.2))
   return rows
 
 end Linger.Session.Shell.Inventory

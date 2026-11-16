@@ -7,12 +7,14 @@ import SoftwareChallenge.Commands
 /-! # The checks of the OS boundary's world claims
 
 `Os.Wait.Lasts` says that a sleep lasts at least as long as it was asked to, `Os.Exec.Keeps`
-that an exec keeps the process, its children and the descriptors it does not close, and
-`Os.Place.NoReplace` that a link or a rename that may not replace never replaces a name. Each
-claim takes the behaviour it constrains as a parameter, which no Lean term computes: `slept`,
-`execd` and `placedBy` name them, and the checks observe them, by sleeping and reading the
-monotonic clock around each sleep, by running a process that execs, and by placing names in a
-directory of their own, eight at once onto one. No program module imports this one. -/
+that an exec keeps the process, its children and the descriptors it does not close,
+`Os.Place.NoReplace` that a link or a rename that may not replace never replaces a name, and
+`Os.Lock.Tells` that `fstat` and `stat` tell the file a descriptor holds from the one a path
+names. Each claim takes the behaviour it constrains as a parameter, which no Lean term computes:
+`slept`, `execd`, `placedBy` and `told` name them, and the checks observe them, by sleeping and
+reading the monotonic clock around each sleep, by running a process that execs, by placing names
+in a directory of their own, eight at once onto one, and by locking, deleting and creating lock
+files. No program module imports this one. -/
 
 namespace Os.Checks
 
@@ -113,5 +115,52 @@ Check Os.Place.NoReplace placedBy := do
           not the file of {winner}, whose rename alone succeeded")
       | _ =>
         throw (IO.userError s!"of eight renames at once onto one free name, {winners} succeeded")
+
+/-- What `Os.Shell.namesHeld` answers of a descriptor that holds a file open and a path, when the
+path names that file and when it names another or none: the observation `Os.Lock.Tells`
+constrains. It has no body; the check below observes it. -/
+opaque told : Bool → Bool
+
+-- `fstat` and `stat` tell a held file from the one a path names, round after round: a locked file
+-- the path names reads true; once its holder deleted it the path names none, and once another
+-- file is created there, another, and both read false while the descriptor holds the first; the
+-- path's new file, locked, reads true, and while it is held no second lock of the path is granted.
+Check Os.Lock.Tells told := do
+  let dir ← IO.FS.createTempDir
+  try
+    let path := (dir / "check.lock").toString
+    for round in [0:16] do
+      let first ← Os.Shell.flock path
+      unless first ≥ 0 do
+        throw (IO.userError s!"round {round}: a fresh lock file was not granted")
+      let held := first.toUInt64.toUInt32
+      try
+        unless ← Os.Shell.namesHeld held path do
+          throw (IO.userError s!"round {round}: a locked file the path names reads as another")
+        Os.Shell.unlinkHeld held path
+        if ← Os.Shell.namesHeld held path then
+          throw (IO.userError s!"round {round}: a deleted lock file reads as the path's")
+        let second ← Os.Shell.flock path
+        unless second ≥ 0 do
+          throw (IO.userError s!"round {round}: the path's new file was not granted")
+        let fresh := second.toUInt64.toUInt32
+        try
+          if ← Os.Shell.namesHeld held path then
+            throw
+                (IO.userError
+                  s!"round {round}: a file created after a delete reads as the held one")
+          unless ← Os.Shell.namesHeld fresh path do
+            throw (IO.userError s!"round {round}: the path's new file reads as another")
+          let third ← Os.Shell.flock path
+          if third ≥ 0 then
+            Os.Shell.close third.toUInt64.toUInt32
+            throw (IO.userError s!"round {round}: a second lock of a held path was granted")
+        finally
+          Os.Shell.unlinkHeld fresh path
+          Os.Shell.close fresh
+      finally
+        Os.Shell.close held
+  finally
+    IO.FS.removeDirAll dir
 
 end Os.Checks

@@ -217,6 +217,8 @@ def Linger.Session.State.boot : Vt.Vt → List (String × String) → List (Stri
 
 def Linger.Session.Claim.enters : Bool → Bool → Bool := sorry
 
+def Linger.Session.Locks.release : Session.Records → String → Session.Records := sorry
+
 def Linger.Session.ending : List (UInt32 × Nat) := sorry
 
 def Linger.Session.drainTimeoutMs : Nat := sorry
@@ -2478,7 +2480,53 @@ of the processes of the terminal session its signals reach, none still runs once
 its check and the attach suite test and a process stuck in the kernel falsifies). Not claimed: how
 many pty resizes a read asks for while its sender stays attached; and the processes linger's signals
 miss, as the claim's comment names them: one that left the terminal session with `setsid`, one of
-another user and one forked after the daemon looked. -/
+another user and one forked after the daemon looked.
+
+State is bounded by what it means: every file in linger's state is one fact, a session's socket
+or checkpoint or an ID's end record, or a names entry, and a lock file means nothing of its own.
+A process that held an ID's locks deletes their files, still holding them, as it lets them go,
+when no socket, checkpoint or end record has the ID and no names entry leads to it, and keeps
+every other lock file, so after any command every lock file names a session or an ending, when
+only the command's ID named nothing before (`locks_named`); the names lock, `names/.lock`, names
+no session, and its holder deletes it as it lets it go. A deleted lock file excludes as one kept: only a holder deletes one, and a
+process that locks a file checks that the path still names it, locking the path's file again when
+not (`Os.Shell.flock`), which `fstat` and `stat` tell apart (`Os.Lock.Tells`), so `Claim.Exclusive`
+holds of the lock of the file a path names and a name keeps one owner (`one_owner`). End records
+are not bounded: one is kept for each name a session ended under or a kill hid a saved tmux pane
+under, so `wait` answers and the pane stays hidden, and the lock files are bounded by them. Not
+claimed: that each command lets its locks go as `Locks.release` says, which the identity suite
+checks, nor that a crash or a SIGKILL leaves no lock file, which the next command on the name or
+the next listing deletes. -/
+
+theorem locks_named (records : Session.Records) (name : String)
+    (before : ∀ held ∈ records.locks, held = name ∨ records.holds held = true) :
+    (Session.Locks.release records name).sockets = records.sockets ∧
+      (Session.Locks.release records name).checkpoints = records.checkpoints ∧
+      (Session.Locks.release records name).endings = records.endings ∧
+      (∀ held ∈ records.locks,
+        records.holds held = true → held ∈ (Session.Locks.release records name).locks) ∧
+      ∀ held ∈ (Session.Locks.release records name).locks,
+        (Session.Locks.release records name).holds held = true := by
+  sorry
+
+@[kills locks_named]
+theorem locks_named_rejects_kept :
+    ¬∀ (records : Session.Records) (name : String),
+        (∀ held ∈ records.locks, held = name ∨ records.holds held = true) →
+          ((fun (records : Session.Records) (_ : String) => records) records name).sockets =
+              records.sockets ∧
+            ((fun (records : Session.Records) (_ : String) => records) records name).checkpoints =
+              records.checkpoints ∧
+            ((fun (records : Session.Records) (_ : String) => records) records name).endings =
+              records.endings ∧
+            (∀ held ∈ records.locks,
+              records.holds held = true →
+                held ∈
+                  ((fun (records : Session.Records) (_ : String) => records) records name).locks) ∧
+            ∀ held ∈ ((fun (records : Session.Records) (_ : String) => records) records name).locks,
+              ((fun (records : Session.Records) (_ : String) => records) records name).holds held =
+                true := by
+  sorry
 
 theorem reachableIn_bound {cap : Nat} {b : Buf.Buf}
     (h : Buf.InputReach Buf.Buf.empty Buf.bufOffer Buf.bufAdvance cap b) : Buf.owedLen b ≤ cap := by

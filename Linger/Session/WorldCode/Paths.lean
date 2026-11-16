@@ -95,8 +95,7 @@ def checkSpelling (path : String) : IO Unit := do
         throw (IO.userError "session name differs from an existing filename's spelling")
 
 /-- A session ID as a directory listing spells it, which is the spelling on disk, so its
-paths need no `checkSpelling`. Only `listSocketNames`, `listCkptNames` and `listRecordNames` make
-one. -/
+paths need no `checkSpelling`. Only the listings below make one. -/
 structure Listed where private mk ::
   /-- The ID, spelled as on disk. -/
   name : String
@@ -129,14 +128,14 @@ def ckptPath (name : String) : IO String := do
 def recordPath (name : String) : IO String := do
   namedPath (← stateDir) name ".end"
 
-/-- Name-ownership lock (see `Os.Shell.flock`). Lives beside the
-socket: same directory lifetime, same 0700 permissions. Never
-unlinked — a lock file that gets unlinked stops being a lock. -/
+/-- Name-ownership lock (see `Os.Shell.flock`). Lives beside the socket: same directory
+lifetime, same 0700 permissions. Its holder deletes it, holding it, once no record names the
+name (`Locks.release`); `Os.Shell.flock` checks that the path still names the file it locked. -/
 def lockPath (name : String) : IO String := do
   namedPath (← socketDir) name ".lock"
 
-/-- Persistent checkpoint ownership, independent of the runtime directory.
-Keep these lock inodes across daemon exits and reboots; never unlink them. -/
+/-- Persistent checkpoint ownership, independent of the runtime directory. Its holder deletes it,
+holding it, once no record names the name, as `lockPath`'s. -/
 private def stateLockPath (name : String) : IO String := do
   namedPath ((← stateDir) ++ "/.locks") name ".lock"
 
@@ -194,13 +193,41 @@ private def withLockRetrying {α : Type} (path : String) (retry : IO Bool) (acti
   finally
     Os.Shell.close fd
 
+/-- Whether an entry of the names directory, `names/` in `stateDir`, leads to `id`: a file there
+that holds it, as `Linger.Session.Shell.Names` writes each entry. A file that cannot be read
+leads nowhere. -/
+private def entryLeadsTo (id : String) : IO Bool := do
+  let dir := (← stateDir) ++ "/names"
+  if !(← System.FilePath.isDir dir) then
+    return false
+  for entry in ← System.FilePath.readDir dir do
+    if !entry.fileName.startsWith "." then
+      if let .ok text← (IO.FS.readFile entry.path).toBaseIO then
+        if text.trimAscii.toString == id then
+          return true
+  return false
+
+/-- Whether the lock files of an ID go as a process that holds them lets them go: whether no
+socket, checkpoint or end record has it, at the paths `socket`, `checkpoint` and `ending`, and no
+names entry leads to it, as `Locks.release` decides of the ID's lock file. -/
+private def lockFilesGo (name socket checkpoint ending : String) : IO Bool := do
+  let only := fun (present : Bool) => if present then [name] else []
+  let records : Linger.Session.Records :=
+    { sockets := only (← System.FilePath.pathExists socket),
+      checkpoints := only (← System.FilePath.pathExists checkpoint),
+      endings := only (← System.FilePath.pathExists ending), entries := only (← entryLeadsTo name),
+      locks := [name] }
+  return !(Linger.Session.Locks.release records name).locks.contains name
+
 /-- Act as the session's owner: take the socket lock at `socket`, then the checkpoint lock at
 the path `checkpoint` gives, and run `action` only when `Claim.enters` says a process holding
 them may, which `Claim.Reachable` models, with the descriptors that hold them. Both locks are let
 go after the action, in reverse order, whatever it does; the checkpoint lock is tried only once
-the socket lock is taken. -/
+the socket lock is taken. Holding each, a process first deletes its file when `release` says no
+record names the name (`Os.Shell.unlinkHeld`), so every lock file names a session or an ending
+(`locks_named`). -/
 private def withOwnership {α : Type} (socket : String) (checkpoint : IO String) (retry : IO Bool)
-    (listed : Bool) (action : List UInt32 → IO α) : IO α := do
+    (listed : Bool) (release : IO Bool) (action : List UInt32 → IO α) : IO α := do
   let held ← acquire socket retry listed
   try
     let (state, refused) ←
@@ -217,27 +244,39 @@ private def withOwnership {α : Type} (socket : String) (checkpoint : IO String)
       action (held.toList ++ state.toList)
     finally
       if let some fd := state then
-        Os.Shell.close fd
+        try
+          if ← release then
+            Os.Shell.unlinkHeld fd refused
+        finally
+          Os.Shell.close fd
   finally
     if let some fd := held then
-      Os.Shell.close fd
+      try
+        if ← release then
+          Os.Shell.unlinkHeld fd socket
+      finally
+        Os.Shell.close fd
 
 /-- One attempt: a held lock fails at once. Only a starting daemon retries. -/
 def withLock {α : Type} (path : String) (action : IO α) : IO α :=
   withLockRetrying path (pure false) action
+
+/-- Whether the lock files of `name` go as their holder lets them go (`lockFilesGo`). -/
+private def release (name : String) : IO Bool := do
+  lockFilesGo name (← socketPath name) (← ckptPath name) (← recordPath name)
 
 /-- All daemon lifetimes and offline reads take both locks in the same order.
 Either shared socket storage or shared checkpoint storage excludes another owner.
 `retry` applies to both acquisitions. -/
 def withSessionLockRetrying {α : Type} (name : String) (retry : IO Bool) (action : IO α) : IO α :=
   do
-  withOwnership (← lockPath name) (stateLockPath name) retry false fun _ => action
+  withOwnership (← lockPath name) (stateLockPath name) retry false (release name) fun _ => action
 
 /-- `withSessionLockRetrying`, giving the action the descriptors that hold the two locks, as a
 daemon that upgrades keeps them open for the image that replaces it. -/
 def withSessionLockHeld {α : Type} (name : String) (retry : IO Bool) (action : List UInt32 → IO α) :
     IO α := do
-  withOwnership (← lockPath name) (stateLockPath name) retry false action
+  withOwnership (← lockPath name) (stateLockPath name) retry false (release name) action
 
 /-- Both locks, one attempt each: every offline reader. -/
 def withSessionLock {α : Type} (name : String) (action : IO α) : IO α :=
@@ -255,7 +294,11 @@ def Listed.withSessionLock {α : Type} (n : Listed) (action : IO α) : IO α := 
         let locks := (← stateDir) ++ "/.locks"
         ensureDir locks
         pathIn locks n.name ".lock" true)
-      (pure false) true fun _ => action
+      (pure false) true
+      (do
+        lockFilesGo n.name (← pathIn (← socketDir) n.name ".sock" true)
+            (← pathIn (← stateDir) n.name ".ckpt" true) (← pathIn (← stateDir) n.name ".end" true))
+      fun _ => action
 
 /-- Valid session IDs among `dir`'s entries ending in `suffix`, as the directory spells them. -/
 private def listNames (dir suffix : String) : IO (List Listed) := do
@@ -276,5 +319,17 @@ def listCkptNames : IO (List Listed) := do
 kill hid. -/
 def listRecordNames : IO (List Listed) := do
   listNames (← stateDir) ".end"
+
+/-- The names of lock files, in the runtime directory and in the state directory's `.locks`, once
+each; a directory that is not there holds none, and is not made. -/
+def listLockNames : IO (List Listed) := do
+  let inDir := fun (dir : String) => do
+    if ← System.FilePath.isDir dir then
+      listNames dir ".lock"
+    else
+      pure []
+  let runtime ← inDir (← socketDir)
+  let state ← inDir ((← stateDir) ++ "/.locks")
+  return runtime ++ state.filter fun n => !runtime.any (·.name == n.name)
 
 end Linger.Session.Shell.Paths

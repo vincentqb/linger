@@ -232,15 +232,52 @@ descriptor exhaustion, throw. The accepted fd is close-on-exec and blocking on e
 platform; callers that poll it set nonblocking. -/
 def accept (fd : UInt32) : IO Int64 := Boundary.accept fd
 
-/-- Exclusive non-blocking `flock` on a lock file, created 0600 if missing; `≥ 0` is the
-held fd (close-on-exec), `-1` means another process holds it, and other open or lock
-failures throw. Chosen over an `O_EXCL`/`mkdir` lock because the kernel releases it
-when the holder dies — no staleness timeout to invent, nothing left behind by a
-SIGKILL or a power cut. Keep the fd open for the lifetime of the lock, and never
-unlink the lock file. -/
+/-- Whether `path` names the file the descriptor `fd` holds open, as `fstat` and `stat` report
+their device and inode numbers (the world claim `Os.Lock.Tells`); `false` when the path names
+another file or none. Other failures throw. -/
+def namesHeld (fd : UInt32) (path : String) : IO Bool := do
+  checkCString "namesHeld path" path
+  Boundary.namesHeld fd path
+
+/-- How many times `flock` locks a file it then finds the path no longer names, as when its
+holder deleted it meanwhile, before it answers that another process holds the lock. -/
+def lockAttempts : Nat := 8
+
+/-- The exclusive non-blocking lock of the lock file at `path`, created 0600 if missing: `≥ 0` is
+the held fd (close-on-exec) of the file the path names, `-1` means another process holds it, and
+other open or lock failures throw. Chosen over an `O_EXCL`/`mkdir` lock because the kernel
+releases it when the holder dies — no staleness timeout to invent, nothing left behind by a
+SIGKILL or a power cut. The kernel locks a file, not a path, and a holder may delete the lock
+file (`unlinkHeld`), so once it holds a file's lock this checks that the path still names that
+file (`namesHeld`), and locks the path's file again when not, as many as `lockAttempts` times:
+while a process holds the lock of the file the path names, no other process deletes or replaces
+it, since only a holder deletes it, so no two processes hold the lock of the file a path names.
+Keep the fd open for the lifetime of the lock. -/
 def flock (path : String) : IO Int64 := do
   checkCString "flock path" path
-  Boundary.flock path
+  for _ in [0:lockAttempts] do
+    let fd ← Boundary.flock path
+    if fd < 0 then
+      return fd
+    let held := fd.toUInt64.toUInt32
+    let named ←
+      try
+        namesHeld held path
+      catch error =>
+        Boundary.close held
+        throw error
+    if named then
+      return fd
+    Boundary.close held
+  return -1
+
+/-- Delete the lock file at `path` while holding its lock as `fd`, which `flock` gave for that
+path: only a holder deletes a lock file, so a process that locked the file meanwhile finds the
+path no longer names it and locks the path's file again (`flock`). A path that no longer names
+the held file is left as it is. The caller then closes `fd`, which lets the lock go. -/
+def unlinkHeld (fd : UInt32) (path : String) : IO Unit := do
+  if ← namesHeld fd path then
+    IO.FS.removeFile path
 
 /-- Make the name `dst` name the file `src` names, as link(2) does, only while `dst` names
 nothing: `true` once it does, `false` when `dst` names something, which stays as it is

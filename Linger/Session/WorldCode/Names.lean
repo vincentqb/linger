@@ -16,7 +16,7 @@ rewritten. A start places an entry by linking a temporary file that holds the ID
 moves one with a rename that may not replace, so neither ever replaces a name
 (`Os.Place.NoReplace`): of a start and a rename onto one name, at once, exactly one places it
 (`Names.call_second_fails`). A fresh ID is claimed by creating its persistent checkpoint lock the
-same way, and that lock is never removed, so no two sessions ever share an ID. Renames, and the
+same way, and that lock stays while a record or an entry names the ID (`Locks.release`). Renames, and the
 removal of an entry whose session is gone, hold the names lock, `names/.lock`; a start needs no
 lock to place an entry, since it places one only where none is. -/
 
@@ -101,7 +101,7 @@ private def place (op : Linger.Session.Names.Op) (src dst : String) : IO Bool :=
 
 /-- Draw a fresh ID, a dot and 16 hexadecimal digits of the operating system's randomness, and
 claim it by creating its persistent checkpoint lock as an entry is created (`place .create`), which
-no other start can create again and nothing removes; a drawn ID whose lock exists is drawn again, eight times at
+no other start can create while it stays, as it does while an entry leads to its ID; a drawn ID whose lock exists is drawn again, eight times at
 most. -/
 private def mint : IO String := do
   let locks := (← Paths.stateDir) ++ "/.locks"
@@ -169,7 +169,9 @@ def claim (name : String) : IO Ref := do
     throw (IO.userError s!"session '{name}' could not be given an ID")
 
 /-- Run `action` holding the names lock, `names/.lock`, which every rename and every removal of
-an entry holds; one held by another rename is tried again for up to a second. -/
+an entry holds; one held by another rename is tried again for up to a second. Its holder deletes
+the lock file as it lets it go, since it names no session (`Os.Shell.unlinkHeld`), and the next
+holder creates it again (`Os.Shell.flock`). -/
 def withLock {α : Type} (action : IO α) : IO α := do
   let dir ← namesDir
   Paths.ensureDir dir
@@ -186,6 +188,10 @@ def withLock {α : Type} (action : IO α) : IO α := do
   try
     action
   finally
-    Os.Shell.close held
+    -- the names lock names no session: its holder deletes it as it lets it go (`locks_named`)
+    try
+      Os.Shell.unlinkHeld held path
+    finally
+      Os.Shell.close held
 
 end Linger.Session.Shell.Names

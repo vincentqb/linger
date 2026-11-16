@@ -147,7 +147,8 @@ def Ending.answer : Ending → Os.Answer
 /-- What linger keeps of its sessions, by the key each file is kept under: one fact a file, a
 live session's socket, a saved session's checkpoint and the end record of the last session to
 hold a key, each keyed by the session's ID, which also marks a saved tmux pane as dealt with,
-and the names directory's entries, each a name and the ID it leads to. -/
+the names directory's entries, each a name and the ID it leads to, and the lock files a process
+takes to act on an ID, which mean nothing of their own. -/
 structure Records where
   /-- The IDs of the sockets in the runtime directory. -/
   sockets : List String
@@ -157,6 +158,8 @@ structure Records where
   endings : List String
   /-- The names of the names directory's entries and the IDs they lead to. -/
   entries : List String := []
+  /-- The names of the lock files, in the runtime directory and the state directory's `.locks`. -/
+  locks : List String := []
   deriving Repr, DecidableEq
 
 /-- Whether linger keeps a record of `key`, a name or an ID: its socket, its checkpoint, its end

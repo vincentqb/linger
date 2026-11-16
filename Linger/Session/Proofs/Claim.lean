@@ -99,3 +99,29 @@ theorem claim_free {grant : State → Nat → Nat → Bool}
     hboth.next (.enter both actor lease idle (by simp [enters, both, first, put, Ne.symm distinct]))
 
 end Linger.Session.Claim
+
+namespace Linger.Session.Locks
+
+/-- Letting a name's locks go changes no record, keeps the lock file of every name a record
+names, and leaves every lock file naming a session or an ending when only that name's lock file
+named nothing before. -/
+theorem release_named (records : Linger.Session.Records) (name : String)
+    (before : ∀ held ∈ records.locks, held = name ∨ records.holds held = true) :
+    (release records name).sockets = records.sockets ∧
+      (release records name).checkpoints = records.checkpoints ∧
+      (release records name).endings = records.endings ∧
+      (∀ held ∈ records.locks, records.holds held = true → held ∈ (release records name).locks) ∧
+      ∀ held ∈ (release records name).locks, (release records name).holds held = true := by
+  refine ⟨rfl, rfl, rfl, fun held member holds => ?_, fun held member => ?_⟩
+  · simp [release, member, holds]
+  · simp only [release, List.mem_filter, Bool.or_eq_true, bne_iff_ne, ne_eq] at member
+    obtain ⟨member, kept⟩ := member
+    have named : records.holds held = true := by
+      rcases before held member with same | holds
+      · rcases kept with other | holds
+        · exact absurd same other
+        · exact holds
+      · exact holds
+    simpa [release, Linger.Session.Records.holds] using named
+
+end Linger.Session.Locks

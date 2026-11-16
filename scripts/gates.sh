@@ -967,7 +967,9 @@ code_grep "$VT_ALL_RE" '*.lean' \
 # behind sysctl, as a row shows what runs in a session; Lean core has neither. 29: link(2) and
 # a rename that may not replace (renameat2 RENAME_NOREPLACE, renamex_np RENAME_EXCL), which
 # place a session's name only where none is (`Os.Place.NoReplace`); Lean core's rename replaces.
-SHIM_CAP=29
+# 30: whether a path names the file a descriptor holds (fstat and stat), so that a lock file's
+# holder may delete it (`Os.Lock.Tells`); Lean core reads neither inode number.
+SHIM_CAP=30
 shim_n="$(code_count 'LEAN_EXPORT' 'packages/os/c/shim.c')"
 [ "$shim_n" -le "$SHIM_CAP" ] \
   || fail "shim grew to $shim_n wrappers (cap $SHIM_CAP); justify the new syscall and bump the cap"
@@ -1279,10 +1281,13 @@ for tie in \
   'def logPath [(]name : String[)] : IO String := do namedPath [(][(]← stateDir[)] [+][+] "/logs"[)] name "[.]log"' \
   'def acquire [(]path : String[)] [(]retry : IO Bool[)] [(]listed : Bool[)] : IO [(]Option UInt32[)] := do let mut fd ← Os[.]Shell[.]flock path while fd < 0 do unless ← retry do break fd ← Os[.]Shell[.]flock path if fd < 0 then return none let held := fd[.]toUInt64[.]toUInt32 unless listed do try checkSpelling path catch err => Os[.]Shell[.]close held throw err return some held' \
   'def withLockRetrying [{]α : Type[}] [(]path : String[)] [(]retry : IO Bool[)] [(]action : IO α[)] [(]listed : Bool := false[)] : IO α := do let some fd ← acquire path retry listed [|] throw [(]IO[.]userError s!"session is owned by another process [(][{]path[}][)]"[)] try action finally Os[.]Shell[.]close fd' \
-  'def withOwnership [{]α : Type[}] [(]socket : String[)] [(]checkpoint : IO String[)] [(]retry : IO Bool[)] [(]listed : Bool[)] [(]action : List UInt32 → IO α[)] : IO α := do let held ← acquire socket retry listed try let [(]state, refused[)] ← match held with [|] none => pure [(]none, socket[)] [|] some _ => do let path ← checkpoint pure [(]← acquire path retry listed, path[)] try unless Claim[.]enters held[.]isSome state[.]isSome do throw [(]IO[.]userError s!"session is owned by another process [(][{]refused[}][)]"[)] action [(]held[.]toList [+][+] state[.]toList[)] finally if let some fd := state then Os[.]Shell[.]close fd finally if let some fd := held then Os[.]Shell[.]close fd' \  'def Listed[.]withLock [{]α : Type[}] [(]n : Listed[)] [(]action : IO α[)] : IO α := do withLockRetrying [(]← pathIn [(]← socketDir[)] n[.]name "[.]lock" true[)] [(]pure false[)] action [(]listed := true[)]' \  'def Listed[.]withSessionLock [{]α : Type[}] [(]n : Listed[)] [(]action : IO α[)] : IO α := do withOwnership [(]← pathIn [(]← socketDir[)] n[.]name "[.]lock" true[)] [(]do let locks := [(]← stateDir[)] [+][+] "/[.]locks" ensureDir locks pathIn locks n[.]name "[.]lock" true[)] [(]pure false[)] true fun _ => action' \
+  'def withOwnership [{]α : Type[}] [(]socket : String[)] [(]checkpoint : IO String[)] [(]retry : IO Bool[)] [(]listed : Bool[)] [(]release : IO Bool[)] [(]action : List UInt32 → IO α[)] : IO α := do let held ← acquire socket retry listed try let [(]state, refused[)] ← match held with [|] none => pure [(]none, socket[)] [|] some _ => do let path ← checkpoint pure [(]← acquire path retry listed, path[)] try unless Claim[.]enters held[.]isSome state[.]isSome do throw [(]IO[.]userError s!"session is owned by another process [(][{]refused[}][)]"[)] action [(]held[.]toList [+][+] state[.]toList[)] finally if let some fd := state then try if ← release then Os[.]Shell[.]unlinkHeld fd refused finally Os[.]Shell[.]close fd finally if let some fd := held then try if ← release then Os[.]Shell[.]unlinkHeld fd socket finally Os[.]Shell[.]close fd' \
+  'def Listed[.]withLock [{]α : Type[}] [(]n : Listed[)] [(]action : IO α[)] : IO α := do withLockRetrying [(]← pathIn [(]← socketDir[)] n[.]name "[.]lock" true[)] [(]pure false[)] action [(]listed := true[)]' \
+  'def Listed[.]withSessionLock [{]α : Type[}] [(]n : Listed[)] [(]action : IO α[)] : IO α := do withOwnership [(]← pathIn [(]← socketDir[)] n[.]name "[.]lock" true[)] [(]do let locks := [(]← stateDir[)] [+][+] "/[.]locks" ensureDir locks pathIn locks n[.]name "[.]lock" true[)] [(]pure false[)] true [(]do lockFilesGo n[.]name [(]← pathIn [(]← socketDir[)] n[.]name "[.]sock" true[)] [(]← pathIn [(]← stateDir[)] n[.]name "[.]ckpt" true[)] [(]← pathIn [(]← stateDir[)] n[.]name "[.]end" true[)][)] fun _ => action' \
+  'def lockFilesGo [(]name socket checkpoint ending : String[)] : IO Bool := do let only := fun [(]present : Bool[)] => if present then [[]name[]] else [[][]] let records : Linger[.]Session[.]Records := [{] sockets := only [(]← System[.]FilePath[.]pathExists socket[)], checkpoints := only [(]← System[.]FilePath[.]pathExists checkpoint[)], endings := only [(]← System[.]FilePath[.]pathExists ending[)], entries := only [(]← entryLeadsTo name[)], locks := [[]name[]] [}] return ![(]Linger[.]Session[.]Locks[.]release records name[)][.]locks[.]contains name' \
   'def withLock [{]α : Type[}] [(]path : String[)] [(]action : IO α[)] : IO α := withLockRetrying path [(]pure false[)] action' \
-  'def withSessionLockRetrying [{]α : Type[}] [(]name : String[)] [(]retry : IO Bool[)] [(]action : IO α[)] : IO α := do withOwnership [(]← lockPath name[)] [(]stateLockPath name[)] retry false fun _ => action' \
-  'def withSessionLockHeld [{]α : Type[}] [(]name : String[)] [(]retry : IO Bool[)] [(]action : List UInt32 → IO α[)] : IO α := do withOwnership [(]← lockPath name[)] [(]stateLockPath name[)] retry false action' \
+  'def withSessionLockRetrying [{]α : Type[}] [(]name : String[)] [(]retry : IO Bool[)] [(]action : IO α[)] : IO α := do withOwnership [(]← lockPath name[)] [(]stateLockPath name[)] retry false [(]release name[)] fun _ => action' \
+  'def withSessionLockHeld [{]α : Type[}] [(]name : String[)] [(]retry : IO Bool[)] [(]action : List UInt32 → IO α[)] : IO α := do withOwnership [(]← lockPath name[)] [(]stateLockPath name[)] retry false [(]release name[)] action' \
   'def withSessionLock [{]α : Type[}] [(]name : String[)] [(]action : IO α[)] : IO α := withSessionLockRetrying name [(]pure false[)] action'; do
   printf '%s\n' "$paths_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "session paths or lifetime locking bypassed their contract: $tie"
@@ -1296,8 +1301,12 @@ for tie in \
   printf '%s\n' "$paths_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "session listing must check every directory entry with Names.validKey: $tie"
 done
+# A lock file is deleted only by its holder, through `Os.Shell.unlinkHeld`, which deletes it only
+# while the path names the held file, as `withOwnership` lets the locks go (`locks_named`).
 ! code_grep 'removeFile|rename' Linger/Session/WorldCode/Paths.lean \
-  || fail "lock path construction and acquisition must never unlink or replace a lock inode"
+  || fail "lock path construction and acquisition must delete a lock file only through Os.Shell.unlinkHeld"
+[ "$(code_count 'Os[.]Shell[.]unlinkHeld' Linger/Session/WorldCode/Paths.lean)" -eq 2 ] \
+  || fail "a lock file is deleted other than by its holder as withOwnership lets each lock go"
 printf '%s\n' "$client_code" | CG_RE='(^|[[:space:]])try Paths[.]checkSpelling path return some fd catch err => close fd throw err([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "successful connects must reject case-folded aliases and close on failure"
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])IO Unit := do let deadline := [(]← monotonicMs[)] [+] claimWaitMs let reported ← IO[.]mkRef false let retry := claimRetry name [(]← Paths[.]socketPath id[)] deadline reported Paths[.]withSessionLockHeld id retry fun locks => do ignoreSighup unless [(]← Names[.]resolve name[)] == some id do([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \

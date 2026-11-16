@@ -278,8 +278,8 @@ shim_out="$logs/shim.out"
   || { tail -25 "$shim_out"; fail "lingertest"; }
 tail -1 "$shim_out" | grep -q '^ALL PASS$' || fail "lingertest"
 shim_n="$(grep -c '^PASS ' "$shim_out")"
-[ "$shim_n" -eq 87 ] \
-  || fail "lingertest ran $shim_n checks (expected exactly 87)"
+[ "$shim_n" -eq 89 ] \
+  || fail "lingertest ran $shim_n checks (expected exactly 89)"
 
 # Keep one real session in another state directory through every suite. A suite
 # may clean up its own Env, never the user's process namespace. State directories hold
@@ -299,7 +299,7 @@ LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger start "$sentinel_name" sleep
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger ls "$sentinel_name" --porcelain \
   | grep -qx 'state	live' || fail "sentinel session did not start"
 # A suite changes only the directories it creates, never one a plain `linger` here uses, which
-# holds the user's own sessions and whose lock files are never removed. linger names those
+# holds the user's own sessions, whose lock files only their holder removes. linger names those
 # directories itself, with LINGER_DIR unset and with every variable they follow unset, as a
 # check of the defaults runs: each one's listing, or its absence, must be the same after the
 # live suites as before. A session the user starts or ends meanwhile, or another checkout's
@@ -341,7 +341,7 @@ fi
 ./.lake/build/bin/suites --suites \
   manager:155 delivery:38 attach:83 agent:69:$agent_skips \
   resume:44:$resume_skips watch:52 title:18:$title_skips graphics:9 robust:35:$robust_skips \
-  interop:65 recipes:24 status:35 terminal:14 overview:23 remote:74 shells:5 identity:24 \
+  interop:65 recipes:24 status:35 terminal:14 overview:23 remote:74 shells:5 identity:31 \
   quiet:7:$quiet_skips upgrade:13:$upgrade_skips rename:14 \
   || fail "live suites (see $logs/linger-*.out)"
 defaults_after="$(default_listing)"

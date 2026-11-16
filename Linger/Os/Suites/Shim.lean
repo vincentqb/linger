@@ -538,6 +538,27 @@ def testCStringInputs : IO Unit :=
               let fd ← flock ((dir / "lock").toString ++ suffix)
               if fd ≥ 0 then
                 Os.Shell.close fd.toUInt64.toUInt32)
+    let lockPath := (dir / "protocol.lock").toString
+    let first ← flock lockPath
+    if first ≥ 0 then
+      let held := first.toUInt64.toUInt32
+      try
+        check "namesHeld rejects a NUL path" (← throws (namesHeld held (lockPath ++ suffix)))
+        let named ← namesHeld held lockPath
+        unlinkHeld held lockPath
+        let second ← flock lockPath
+        let fresh := second.toUInt64.toUInt32
+        check
+            "a lock file its holder deleted is locked afresh at its path, which names the new one alone"
+            (named && second ≥ 0 && !(← namesHeld held lockPath) && (← namesHeld fresh lockPath) &&
+              (← flock lockPath) < 0)
+        if second ≥ 0 then
+          unlinkHeld fresh lockPath
+          Os.Shell.close fresh
+      finally
+        Os.Shell.close held
+    else
+      check "a fresh lock file is granted" false
     let file := (dir / "mode").toString
     IO.FS.writeFile file ""
     check "linkNew and renameNew reject a NUL path"

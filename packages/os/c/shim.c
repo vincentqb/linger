@@ -29,6 +29,7 @@
 #include <sys/file.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/wait.h>
@@ -733,16 +734,17 @@ LEAN_EXPORT lean_obj_res linger_accept(uint32_t fd) {
 }
 
 /* linger_flock : @& String -> IO Int64
- * Exclusive, non-blocking lock on `path` (created 0600). Returns the
- * held fd (>= 0) or -1 if someone else holds it.
+ * Exclusive, non-blocking lock on the file at `path` (created 0600). Returns
+ * the held fd (>= 0) or -1 if someone else holds it.
  *
  * flock, not an O_EXCL/mkdir lock file: the kernel releases it when the
  * holder dies or the fd closes, so a SIGKILLed or power-cut daemon
  * leaves nothing stale behind and no staleness timeout has to be
  * invented. The caller must keep the fd open for as long as it wants
- * the lock, and must NOT unlink the lock file -- unlinking would let a
- * second process create a fresh inode and lock that while we still hold
- * the old one. */
+ * the lock. The lock is the inode's, not the path's: a holder may unlink
+ * the file, after which another process creates and locks a fresh one, so
+ * a caller that wants the path's lock checks, once it holds this one, that
+ * the path still names the file it locked (linger_names_held). */
 LEAN_EXPORT lean_obj_res linger_flock(b_lean_obj_arg path) {
     int fd = open(lean_string_cstr(path), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
     if (fd < 0) return io_err("open(lockfile)");
@@ -755,6 +757,21 @@ LEAN_EXPORT lean_obj_res linger_flock(b_lean_obj_arg path) {
         return io_err_code("flock", e);
     }
     return lean_io_result_mk_ok(lean_box_uint64((uint64_t)(int64_t)fd));
+}
+
+/* linger_names_held : UInt32 -> @& String -> IO Bool
+ * Whether `path` names the file `fd` holds open: fstat(fd) and stat(path)
+ * report the same device and inode. A path that names nothing (ENOENT,
+ * ENOTDIR) names another file; any other failure is an error. */
+LEAN_EXPORT lean_obj_res linger_names_held(uint32_t fd, b_lean_obj_arg path) {
+    struct stat held, named;
+    if (fstat((int)fd, &held) < 0) return io_err("fstat(lock)");
+    if (stat(lean_string_cstr(path), &named) < 0) {
+        if (errno == ENOENT || errno == ENOTDIR) return lean_io_result_mk_ok(lean_box(0));
+        return io_err("stat(lock)");
+    }
+    int same = held.st_dev == named.st_dev && held.st_ino == named.st_ino;
+    return lean_io_result_mk_ok(lean_box(same ? 1 : 0));
 }
 
 /* -------------------------------------------------------------------- */

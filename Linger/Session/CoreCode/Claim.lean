@@ -1,8 +1,10 @@
 module
 
+public import Linger.Session.CoreSpec
+
 public section
 
-/-! # Linger.Session.Claim — whether a process may act as a session's owner
+/-! # Linger.Session.Claim — whether a process may act as a session's owner, and its lock files
 
 A daemon, or an offline reader, takes the session's socket lock and then its checkpoint lock,
 and acts as the session's owner only when `enters` lets it: when it holds both.
@@ -17,3 +19,13 @@ namespace Linger.Session.Claim
 def enters (socket checkpoint : Bool) : Bool := socket && checkpoint
 
 end Linger.Session.Claim
+
+namespace Linger.Session.Locks
+
+/-- What a process that held `name`'s locks leaves of its lock files as it lets them go: it
+deletes them, holding them, when no socket, checkpoint or end record names the name, and keeps
+every other lock file (`locks_named`). -/
+def release (records : Linger.Session.Records) (name : String) : Linger.Session.Records :=
+  { records with locks := records.locks.filter fun held => held != name || records.holds held }
+
+end Linger.Session.Locks

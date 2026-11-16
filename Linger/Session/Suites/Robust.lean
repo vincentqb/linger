@@ -721,8 +721,8 @@ def run : IO UInt32 :=
     expect (owners == 1) s!"exactly one daemon owns the name (got {owners})"
     expect (shells == 1) s!"exactly one shell (got {shells})"
     expect ((← e.cli #["send", claim, "echo y\n"]).1 == 0) "the surviving session is reachable"
-    -- lock files are deliberately never unlinked (unlinking defeats flock), so
-    -- earlier sessions leave theirs behind; ours must be among them. Listed BEFORE
+    -- a lock file stays while a record names its name, as this session's checkpoint does,
+    -- so ours must be among them. Listed BEFORE
     -- the flock probe, because `flock` opens the path with O_CREAT and would make
     -- the presence half of this check true by having run it.
     let locks ← e.dirNames ".lock"
