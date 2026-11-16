@@ -50,6 +50,16 @@
 #if defined(__linux__) && !defined(SYS_close_range)
 #define SYS_close_range 436 /* Linux 5.9; the same number on x86-64 and arm64 */
 #endif
+#ifndef SYS_renameat2
+#if defined(__x86_64__)
+#define SYS_renameat2 316 /* Linux 3.15 */
+#elif defined(__aarch64__)
+#define SYS_renameat2 276
+#endif
+#endif
+#ifndef RENAME_NOREPLACE
+#define RENAME_NOREPLACE (1 << 0) /* <linux/fs.h>, which glibc before 2.28 does not pass on */
+#endif
 #endif
 
 /* Hold the Lean poll bits to the ABI on each supported platform. */
@@ -782,6 +792,37 @@ LEAN_EXPORT lean_obj_res linger_fsync_path(b_lean_obj_arg path, uint8_t director
     if (r == 0) return lean_io_result_mk_ok(lean_box(1));
     if (directory && e == EINVAL) return lean_io_result_mk_ok(lean_box(0));
     return io_err_code("fsync", e);
+}
+
+/* -------------------------------------------------------------------- */
+/* names placed without replacing                                        */
+
+/* linger_link_new : @& String -> @& String -> IO Bool
+ * link(2) the name `dst` to the file `src` names: true once linked, false
+ * when `dst` already names something (EEXIST), which link never replaces. */
+LEAN_EXPORT lean_obj_res linger_link_new(b_lean_obj_arg src, b_lean_obj_arg dst) {
+    if (link(lean_string_cstr(src), lean_string_cstr(dst)) == 0)
+        return lean_io_result_mk_ok(lean_box(1));
+    if (errno == EEXIST) return lean_io_result_mk_ok(lean_box(0));
+    return io_err("link");
+}
+
+/* linger_rename_new : @& String -> @& String -> IO Bool
+ * Rename `src` to `dst` in one step, only while `dst` names nothing:
+ * renameat2(RENAME_NOREPLACE) on Linux, renamex_np(RENAME_EXCL) on macOS.
+ * true once renamed, false when `dst` already names something (EEXIST). A
+ * file system that cannot rename without replacing answers EINVAL on Linux
+ * and ENOTSUP on macOS, an error like any other, never a plain rename. */
+LEAN_EXPORT lean_obj_res linger_rename_new(b_lean_obj_arg src, b_lean_obj_arg dst) {
+#ifdef __APPLE__
+    int r = renamex_np(lean_string_cstr(src), lean_string_cstr(dst), RENAME_EXCL);
+#else
+    long r = syscall(SYS_renameat2, AT_FDCWD, lean_string_cstr(src), AT_FDCWD,
+                     lean_string_cstr(dst), RENAME_NOREPLACE);
+#endif
+    if (r == 0) return lean_io_result_mk_ok(lean_box(1));
+    if (errno == EEXIST) return lean_io_result_mk_ok(lean_box(0));
+    return io_err("rename(no replace)");
 }
 
 /* -------------------------------------------------------------------- */

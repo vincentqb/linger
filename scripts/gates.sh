@@ -993,8 +993,10 @@ code_grep "$VT_ALL_RE" '*.lean' \
 # deliberate, reviewable act — the checkpoint for "does this genuinely
 # need a syscall wrapper, or does Lean core already have it?". 26: a pty's
 # foreground group (tcgetpgrp) and a process's words, which macOS keeps only
-# behind sysctl, as a row shows what runs in a session; Lean core has neither.
-SHIM_CAP=27
+# behind sysctl, as a row shows what runs in a session; Lean core has neither. 29: link(2) and
+# a rename that may not replace (renameat2 RENAME_NOREPLACE, renamex_np RENAME_EXCL), which
+# place a session's name only where none is (`Os.Place.NoReplace`); Lean core's rename replaces.
+SHIM_CAP=29
 shim_n="$(code_count 'LEAN_EXPORT' 'packages/os/c/shim.c')"
 [ "$shim_n" -le "$SHIM_CAP" ] \
   || fail "shim grew to $shim_n wrappers (cap $SHIM_CAP); justify the new syscall and bump the cap"

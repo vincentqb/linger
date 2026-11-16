@@ -540,6 +540,9 @@ def testCStringInputs : IO Unit :=
                 Os.Shell.close fd.toUInt64.toUInt32)
     let file := (dir / "mode").toString
     IO.FS.writeFile file ""
+    check "linkNew and renameNew reject a NUL path"
+        ((← throws (linkNew file ((dir / "linked").toString ++ suffix))) &&
+          (← throws (renameNew (file ++ suffix) (dir / "renamed").toString)))
     check "chmod rejects a NUL path" (← throws (chmod (file ++ suffix) 0o600))
     check "fsyncPath rejects a NUL path" (← throws (fsyncPath (file ++ suffix)))
     for (kind, prog, args, logPath) in
@@ -585,6 +588,27 @@ def testDurable : IO Unit :=
         let _ ← IO.wait flushing
         pure false
     check "fsyncPath refuses a FIFO without waiting for a writer" (made.exitCode == 0 && refused)
+
+/-- `linkNew` and `renameNew` place a name only where none is: onto a name that names a file both
+answer `false` and leave both names as they were; onto a free one a link leaves both names naming
+the file, and a rename only the new one. -/
+def testPlace : IO Unit :=
+  IO.FS.withTempDir fun dir => do
+    let at_ (name : String) := (dir / name).toString
+    let read (name : String) : IO (Option String) := do
+      if ← (dir / name).pathExists then
+        return some (← IO.FS.readFile (dir / name))
+      return none
+    IO.FS.writeFile (dir / "a") "a"
+    IO.FS.writeFile (dir / "b") "b"
+    let linked ← linkNew (at_ "a") (at_ "b")
+    let renamed ← renameNew (at_ "a") (at_ "b")
+    check "linkNew and renameNew onto a name that names a file replace nothing"
+        (!linked && !renamed && (← read "a") == some "a" && (← read "b") == some "b")
+    check "linkNew onto a free name leaves both names naming the file"
+        ((← linkNew (at_ "a") (at_ "c")) && (← read "a") == some "a" && (← read "c") == some "a")
+    check "renameNew onto a free name moves the name"
+        ((← renameNew (at_ "c") (at_ "d")) && (← read "c") == none && (← read "d") == some "a")
 
 /-- The public UInt32 dimensions must fit the kernel's unsigned-short fields
 without wrapping. Zero retains POSIX's unspecified-size meaning. -/
@@ -730,6 +754,7 @@ public def main (args : List String) : IO UInt32 := do
   testWinsizeBounds
   testDeepCwd
   testDurable
+  testPlace
   testWaits
   testExecFails
   testSignalPipe

@@ -86,8 +86,8 @@ or `WorldCode`, as the Lean Software Challenge reads it, and any other module is
   matcher (namespace `Fuzzy`), `input`, the bounded terminal key decoder (`Input`), `terminal`,
   the VT toolkit (`Terminal`): the emulator `Vt`, `Render`, streaming `Replay`, child-facing
   `Mediation` and safe `Title` updates, and `os`, the operating system (`Os`): `WorldSpec.lean`
-  holds the foreign declarations and the world claims the bounded waits and an upgrade's exec
-  rest on, `c/shim.c` the
+  holds the foreign declarations and the world claims the bounded waits, an upgrade's exec and
+  the names of sessions rest on, `c/shim.c` the
   C they bind, `WorldCode.lean` the checked surface callers use, `CoreCode/Wait.lean` the
   bounded wait and `CoreCode/Write.lean` what a full write does after each attempt. The `os`
   library compiles each module to a shared library too, so a check can reach the shim. Linger's
@@ -170,7 +170,7 @@ size: Lean erases proofs regardless of file placement.
   variable the program reads unset and empty in a suite.
 - Raw OS access belongs in the `os` package: `packages/os/Os/` and `packages/os/c/shim.c`.
   Every `@[extern]` declaration stays private in `packages/os/Os/WorldSpec.lean`, which declares
-  nothing else but the world claims the waits and the exec rest on, and
+  nothing else but the world claims the waits, the exec and the names rest on, and
   `packages/os/Os/WorldCode.lean`, the one
   module that imports all of it, wraps each one in `Os.Shell`: it is the surface callers use.
   Keep the shim to syscalls and errno.

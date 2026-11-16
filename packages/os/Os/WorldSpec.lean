@@ -4,7 +4,7 @@ import SoftwareChallenge.Commands
 
 public section
 
-/-! # The foreign declarations, and the world claim the waits rest on
+/-! # The foreign declarations, and the world claims the waits, the exec and the names rest on
 
 Every `@[extern]` in the program, each bound 1:1 to a wrapper in `packages/os/c/shim.c` (syscall +
 errno only; object arguments are borrowed `@&`, so the shim never manages refcounts).
@@ -15,8 +15,10 @@ A binding that signals or waits for a process takes a proof that its pid is a re
 the C call never sees. `Linger.Os.Suites.Shim` and the live suites exercise those contracts.
 
 The world claim `Wait.Lasts` says that a sleep lasts at least as long as it was asked to, which
-the bounded waits of `Os.Shell.nap` rest on, and `Exec.Keeps` that an exec keeps the process, its
-children and the descriptors it does not close, which an upgrade of a session's daemon rests on. -/
+the bounded waits of `Os.Shell.nap` rest on, `Exec.Keeps` that an exec keeps the process, its
+children and the descriptors it does not close, which an upgrade of a session's daemon rests on,
+and `Place.NoReplace` that a link or a rename that may not replace never replaces a name, which
+the names of sessions rest on. -/
 
 namespace Os.Boundary
 
@@ -67,6 +69,12 @@ private opaque accept (fd : UInt32) : IO Int64
 
 @[extern "linger_flock"]
 private opaque flock (path : @& String) : IO Int64
+
+@[extern "linger_link_new"]
+private opaque linkNew (src dst : @& String) : IO Bool
+
+@[extern "linger_rename_new"]
+private opaque renameNew (src dst : @& String) : IO Bool
 
 @[extern "linger_fsync_path"]
 private opaque fsyncPath (path : @& String) (directory : Bool) : IO Bool
@@ -131,3 +139,28 @@ WorldClaim Keeps (exec : Nat → List Nat → List Nat → Nat × List Nat × Li
   ∀ pid children kept, exec pid children kept = (pid, children, kept)
 
 end Os.Exec
+
+namespace Os.Place
+
+/-- A link (`Os.Shell.linkNew`), or a rename that may not replace (`Os.Shell.renameNew`), never
+replaces what a name names. `placed rename names src dst` is what the names of a directory name
+once linger placed `src`'s file at `dst`, linking it or, with `rename`, renaming it, from what
+they named before, `names`: each name the file it names, or `none`; and `none` when the call
+failed. Onto a name that names a file it fails, changing nothing. When it succeeds, `dst` names
+the file `src` named, a rename leaves `src` naming nothing, and no other name changes. Two
+processes that place onto one name at once therefore leave it naming the first one's file, and
+the second fails. A call that succeeds while `dst` names a file, or that leaves `dst` naming
+another file, falsifies it. A file system that cannot rename without replacing fails every
+rename, which the claim allows. -/
+WorldClaim NoReplace
+  (placed : Bool → (String → Option Nat) → String → String → Option (String → Option Nat)) :=
+  ∀ rename names src dst,
+    ((names dst).isSome → placed rename names src dst = none) ∧
+      ∀ after,
+        placed rename names src dst = some after →
+          src ≠ dst ∧
+            after dst = names src ∧
+            after src = (if rename then none else names src) ∧
+            ∀ other, other ≠ src → other ≠ dst → after other = names other
+
+end Os.Place

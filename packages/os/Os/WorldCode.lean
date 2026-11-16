@@ -242,6 +242,24 @@ def flock (path : String) : IO Int64 := do
   checkCString "flock path" path
   Boundary.flock path
 
+/-- Make the name `dst` name the file `src` names, as link(2) does, only while `dst` names
+nothing: `true` once it does, `false` when `dst` names something, which stays as it is
+(`Os.Place.NoReplace`). Any other failure throws. -/
+def linkNew (src dst : String) : IO Bool := do
+  checkCString "linkNew source" src
+  checkCString "linkNew destination" dst
+  Boundary.linkNew src dst
+
+/-- Rename `src` to `dst` in one step, only while `dst` names nothing: `true` once renamed,
+`false` when `dst` names something, which stays as it is, as `src` does (`Os.Place.NoReplace`).
+That is renameat2(2) with `RENAME_NOREPLACE` on Linux and renamex_np(2) with `RENAME_EXCL` on
+macOS. A file system that cannot rename without replacing throws, as does any other failure;
+neither falls back to a rename that replaces. -/
+def renameNew (src dst : String) : IO Bool := do
+  checkCString "renameNew source" src
+  checkCString "renameNew destination" dst
+  Boundary.renameNew src dst
+
 /-- Ask the device to keep what the file system holds of the file at `path`, or with
 `directory` of the directory there, which must be one: open it read-only, flush it and close
 it. That is fsync(2), and on macOS fcntl(F_FULLFSYNC), since fsync there leaves the data in the
