@@ -339,7 +339,7 @@ else
 fi
 # shellcheck disable=SC2086  # each skip count is a number
 ./.lake/build/bin/suites --suites \
-  manager:155 delivery:38 attach:83 agent:69:$agent_skips \
+  manager:155 delivery:38 attach:85 agent:69:$agent_skips \
   resume:44:$resume_skips watch:52 title:18:$title_skips graphics:9 robust:35:$robust_skips \
   interop:65 recipes:24 status:37 terminal:14 overview:23 remote:74 shells:5 identity:31 \
   quiet:7:$quiet_skips upgrade:13:$upgrade_skips rename:14 \

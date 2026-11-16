@@ -4,7 +4,7 @@ public import Verify.Harness
 import Terminal.CoreCode.Mediation
 import Terminal.CoreCode.Title
 import Linger.Display.CoreCode.Title
-import Linger.Session.WorldCode.Client
+public import Linger.Session.WorldCode.Client
 
 public section
 
@@ -92,7 +92,8 @@ private def counter (path : String) : IO Nat := do
 waits for `release-failure` and fails, later ones wait for `release-valid` and report
 one unread session. File gates keep each state observable without racing the
 one-second interval; every finished sample, failed or not, is counted. -/
-def fixtureSample (dir : String) : IO String := do
+def fixtureSample (dir : String) (_ : Option (List (String × Linger.Display.Status.Status))) :
+    IO Linger.Session.Shell.Client.Sample := do
   let serial := (← counter s!"{dir}/sample-count") + 1
   IO.FS.writeFile s!"{dir}/sample-count" (toString serial)
   try
@@ -101,7 +102,7 @@ def fixtureSample (dir : String) : IO String := do
       throw (IO.userError "the fixture never released this title sample")
     if serial == 1 then
       throw (IO.userError "fixture title sample failure")
-    return Linger.Display.Status.summary [.wantsYou]
+    return { summary := Linger.Display.Status.summary [.wantsYou], statuses := [], alerts := [] }
   finally
     IO.FS.writeFile s!"{dir}/sample-finished" (toString serial)
 

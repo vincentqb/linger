@@ -748,7 +748,7 @@ done
 # attach's own connection, within the one-shot reply budget, that it speaks this version's
 # protocol (`admits_level`); the chooser runs `linger attach`. Linger.Session.Suites.Attach checks
 # the refusals against older daemons' answers and against silence.
-tie='let heard ← [(]Inventory[.]readInfo fd [(]some [(][(]← monotonicMs[)] [+] Client[.]replySilenceMs[.]toNatClampNeg[)][)][)][.]toBaseIO let level := [(]heard[.]toOption[.]bind [(]·[.]lookup "protocol"[)][)][.]bind String[.]toNat[?] if Linger[.]Session[.]Wire[.]admits level then return [.]ok [(]← Client[.]attach name fd summaryText readOnly[)] close fd'
+tie='let heard ← [(]Inventory[.]readInfo fd [(]some [(][(]← monotonicMs[)] [+] Client[.]replySilenceMs[.]toNatClampNeg[)][)][)][.]toBaseIO let level := [(]heard[.]toOption[.]bind [(]·[.]lookup "protocol"[)][)][.]bind String[.]toNat[?] if Linger[.]Session[.]Wire[.]admits level then return [.]ok [(]← Client[.]attach name fd [(]attentionSample name[)] readOnly[)] close fd'
 printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
   || fail "an attach bypasses its daemon's protocol level (Wire.admits): $tie"
 [ "$(code_count 'Client[.]attach([^[:alnum:]_]|$)' Linger/App/WorldCode.lean)" -eq 1 ] \
@@ -832,16 +832,18 @@ code_grep '^[[:space:]]+let r ← unixConnect path nonblocking$' Linger/Session/
 # observer. Observe raw application bytes only, reassert repeated OSC titles,
 # and defer every injected title until the parser and UTF-8 decoder are idle.
 # Attention is sampled in the client's process, one task at a time, and an
-# outstanding sample is joined after the socket closes. Linger.Display.Suites.Title checks that an
+# outstanding sample is joined after the socket closes; a sample's notifications are written
+# only between the program's sequences. Linger.Display.Suites.Title checks that an
 # idle client reaps no children and that detach joins a held sample.
 client_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/WorldCode/Client.lean)"
 for tie in \
   'let mut observer := Terminal[.]Vt[.]Vt[.]init 1 1' \
-  'while !leaving do if let some task[[:space:]]*← pending[.]get then if ← IO[.]hasFinished task then pending[.]set none let fresh := match ← IO[.]wait task with [|] [.]ok text => text [|] [.]error _ => String[.]singleton [(]Linger[.]Display[.]Status[.]icon [.]unknown[)] titleDirty := titleDirty [|][|] fresh != summary summary := fresh nextSummary := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextSummary then pending[.]set [(]some [(]← IO[.]asTask sample Task[.]Priority[.]dedicated[)][)] let revs ← poll #[[]stdinFd, fd[]] #[[]POLLIN, POLLIN[]] 200' \
+  'while !leaving do if let some task[[:space:]]*← pending[.]get then if ← IO[.]hasFinished task then pending[.]set none let fresh ← match ← IO[.]wait task with [|] [.]ok sampled => previous := some sampled[.]statuses alerts := [(]alerts [+][+] sampled[.]alerts[)][.]take alertCap pure sampled[.]summary [|] [.]error _ => pure [(]String[.]singleton [(]Linger[.]Display[.]Status[.]icon [.]unknown[)][)] titleDirty := titleDirty [|][|] fresh != summary summary := fresh nextSummary := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextSummary then pending[.]set [(]some [(]← IO[.]asTask [(]sample previous[)] Task[.]Priority[.]dedicated[)][)] let revs ← poll #[[]stdinFd, fd[]] #[[]POLLIN, POLLIN[]] 200' \
   'writeAll stdoutFd [(]ByteArray[.]mk payload[.]toArray[)] observer := observer[.]observe payload receivedOutput := true' \
   'if receivedOutput && titleDirty && !leaving then let title := Linger[.]Display[.]Title[.]compose name observer[.]windowTitle summary Terminal[.]Title[.]maxChars let bytes := Terminal[.]Title[.]update observer title if !bytes[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] titleDirty := false' \
   'try writeAll stdoutFd [(]ByteArray[.]mk Terminal[.]Render[.]leaveAnsi[.]toArray[)] finally termRestore stdinFd saved return result finally close fd' \
-  'def attach [(]name : String[)] [(]fd : UInt32[)] [(]sample : IO String[)] [(]readOnly : Bool := false[)] : IO Outcome := do let pending ← IO[.]mkRef [(]none : Option [(]Task [(]Except IO[.]Error String[)][)][)] try converse name fd sample readOnly pending finally if let some task[[:space:]]*← pending[.]get then discard <[|] IO[.]wait task'; do
+  'if !alerts[.]isEmpty && observer[.]atBoundary && !leaving then for alert in alerts do writeAll stdoutFd [(]ByteArray[.]mk alert[.]toArray[)] alerts := [[][]]' \
+  'def attach [(]name : String[)] [(]fd : UInt32[)] [(]sample : Option [(]List [(]String × Linger[.]Display[.]Status[.]Status[)][)] → IO Sample[)] [(]readOnly : Bool := false[)] : IO Outcome := do let pending ← IO[.]mkRef [(]none : Option [(]Task [(]Except IO[.]Error Sample[)][)][)] try converse name fd sample readOnly pending finally if let some task[[:space:]]*← pending[.]get then discard <[|] IO[.]wait task'; do
   printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "attached title lost its observer, sampler or handback contract: $tie"
 done
@@ -1966,7 +1968,8 @@ $timers"
 #     its title.
 #   Session/WorldCode/Client: a one-shot reply, which is the daemon's `infoText`, `screenText` or
 #     `history` in frames; a saved view's repaint (the session's), title (`Title.update`) and
-#     handback; an attach's output (the session's), title and handback.
+#     handback; an attach's output (the session's), title, notifications of other sessions' asks
+#     (`Alert.notification`) and handback.
 term_writes="$(code_grep 'stdoutFd' 'Linger/*.lean' \
     ':!Linger/*/Suites/*' ':!Linger/*/Proofs/*' ':!Linger/*/Tests/*' \
     'packages/*.lean' ':!packages/*/Suites/*' ':!packages/*/Proofs/*' ':!packages/*/Tests/*' \
@@ -1987,6 +1990,7 @@ Linger/Session/WorldCode/Client.lean: writeAll stdoutFd (ByteArray.mk (Terminal.
 Linger/Session/WorldCode/Client.lean: writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
 Linger/Session/WorldCode/Client.lean: writeAll stdoutFd (ByteArray.mk payload.toArray)
 Linger/Session/WorldCode/Client.lean: writeAll stdoutFd (ByteArray.mk bytes.toArray)
+Linger/Session/WorldCode/Client.lean: writeAll stdoutFd (ByteArray.mk alert.toArray)
 Linger/Session/WorldCode/Client.lean: writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
 packages/os/Os/WorldCode.lean: def stdoutFd : UInt32 := 1'
 [ "$term_writes" = "$expected_term_writes" ] \

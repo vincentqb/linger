@@ -203,6 +203,8 @@ inductive Piece where
   | shiftIn
   /-- `ESC [ 0 SP q` (DECSCUSR 0): the terminal's own cursor shape. -/
   | shapeDefault
+  /-- `ESC ] 9 ;`, a desktop notification's text, `ESC \`. -/
+  | notify (cs : List Char)
   deriving DecidableEq, Repr
 
 /-- A piece's bytes. -/
@@ -221,8 +223,9 @@ def Piece.bytes : Piece → List UInt8
   | .ascii g1 => [0x1B, if g1 then 0x29 else 0x28, 0x42]
   | .shiftIn => [0x0F]
   | .shapeDefault => [0x1B, 0x5B, 0x30, 0x20, 0x71]
+  | .notify cs => [0x1B, 0x5D, 0x39, 0x3B] ++ cs.flatMap String.utf8EncodeChar ++ [0x1B, 0x5C]
 
-/-- The pieces linger may write. Text and titles are printable. A control sequence selects
+/-- The pieces linger may write. Text, titles and notifications are printable. A control sequence selects
 graphic rendition (`m`), moves the cursor (`H`), sets the scroll region (`r`), erases the screen
 but not its scrollback (`J` with parameters at most 2), resets a mode (`l`), or sets DEC private
 mode 7 (autowrap), 25 (cursor shown), 1049 (alternate screen) or 2004 (bracketed paste) (`h`).
@@ -237,7 +240,7 @@ def Piece.Ok : Piece → Prop
     (priv = false ∧
         (final = 0x6D ∨ final = 0x48 ∨ final = 0x72 ∨ (final = 0x4A ∧ ∀ n ∈ params, n ≤ 2))) ∨
       final = 0x6C ∨ (final = 0x68 ∧ priv = true ∧ ∀ n ∈ params, n ∈ [7, 25, 1049, 2004])
-  | .title cs => ∀ c ∈ cs, Printable c
+  | .title cs | .notify cs => ∀ c ∈ cs, Printable c
   | .esc final => final = 0x5C ∨ final = 0x3E
   | .lf | .cr | .tab | .ascii _ | .shiftIn | .shapeDefault => True
 
@@ -302,3 +305,27 @@ def View.doneAboveLive {α : Type} (status : α → Status.Status) (rows : List 
     fun place => rows.filter fun x => place.contains (status x)
 
 end Linger.Display
+
+namespace Linger.Display.Alert
+
+open Linger.Display.Status (Status)
+
+/-- A wrong alert: one for every session that asks in each sample, the first included, whether
+or not it asked before, and never for the attached session. The headline that an alert fires once
+per change into asking is shown to reject it. -/
+@[expose]
+def everySample (_ : Option (List (String × Status))) (current : List (String × Status))
+    (own : String) : List String :=
+  (current.filter fun row => row.2 == .asks && row.1 != own).map (·.1)
+
+/-- A wrong alert: one for every session that changed into asking since the previous sample, the
+attached session included, whose own bell its terminal already hears. The headline that an
+alert never names the attached session is shown to reject it. -/
+@[expose]
+def withSelf (previous : Option (List (String × Status))) (current : List (String × Status))
+    (_ : String) : List String :=
+  match previous with
+  | none => []
+  | some before => (current.filter fun row => row.2 == .asks && !before.contains row).map (·.1)
+
+end Linger.Display.Alert

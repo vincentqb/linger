@@ -259,13 +259,31 @@ def viewSaved (name : String) (snapshot : Terminal.Vt.Vt) (status : Linger.Displ
       finally
         termRestore stdinFd saved
 
+/-- What one attention sample tells an attached client: the summary its title shows, each local
+session's status, from which the next sample tells what changed, and the desktop notifications
+to write to its terminal (`Display.Alert.announce`). -/
+structure Sample where
+  /-- The attention summary over every local session. -/
+  summary : String
+  /-- Each local session's name and status. -/
+  statuses : List (String × Linger.Display.Status.Status)
+  /-- The notifications of the sessions that changed into asking since the previous sample. -/
+  alerts : List (List UInt8)
+
+/-- The most notifications a client holds while its terminal is inside a sequence of the program's
+own, which a notification must not interrupt: one sample's worth of sessions is rarely more. -/
+def alertCap : Nat := 16
+
 /-- One attach conversation; it owns the socket. `sample` computes the title's
-attention summary on its own task, one second after the previous sample completed;
-a failed sample shows the unknown icon. A signal of `handbackSignals` ends it as a detach does,
+attention summary on its own task, one second after the previous sample completed, from the
+statuses of the previous successful sample, `none` for the first; a failed sample shows the
+unknown icon. The notifications a sample brings are written whole, once the terminal is between
+the program's sequences, as a title is (`Terminal.Title.update`), at most `alertCap` held. A signal of `handbackSignals` ends it as a detach does,
 the terminal handed back on the same path, and it answers `stopped` with the first that came,
 even during the handback (`watching`). -/
-private def converse (name : String) (fd : UInt32) (sample : IO String) (readOnly : Bool)
-    (pending : IO.Ref (Option (Task (Except IO.Error String)))) : IO Outcome := do
+private def converse (name : String) (fd : UInt32)
+    (sample : Option (List (String × Linger.Display.Status.Status)) → IO Sample) (readOnly : Bool)
+    (pending : IO.Ref (Option (Task (Except IO.Error Sample)))) : IO Outcome := do
   try
     watching handbackSignals Outcome.stopped fun stops => do
         let detachEnabled :=
@@ -285,20 +303,26 @@ private def converse (name : String) (fd : UInt32) (sample : IO String) (readOnl
         let mut observer := Terminal.Vt.Vt.init 1 1
         let mut receivedOutput := false
         let mut titleDirty := false
+        let mut previous : Option (List (String × Linger.Display.Status.Status)) := none
+        let mut alerts : List (List UInt8) := []
         try
           while !leaving do
             if let some task← pending.get then
               if ← IO.hasFinished task then
                 pending.set none
-                let fresh :=
+                let fresh ←
                   match ← IO.wait task with
-                  | .ok text => text
-                  | .error _ => String.singleton (Linger.Display.Status.icon .unknown)
+                  | .ok sampled =>
+                    previous := some sampled.statuses
+                    alerts := (alerts ++ sampled.alerts).take alertCap
+                    pure sampled.summary
+                  | .error _ =>
+                    pure (String.singleton (Linger.Display.Status.icon .unknown))
                 titleDirty := titleDirty || fresh != summary
                 summary := fresh
                 nextSummary := (← monotonicMs) + 1000
             if (← pending.get).isNone && (← monotonicMs) ≥ nextSummary then
-              pending.set (some (← IO.asTask sample Task.Priority.dedicated))
+              pending.set (some (← IO.asTask (sample previous) Task.Priority.dedicated))
             let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] 200
             if let some signal← stops.came then
               result := .stopped signal
@@ -364,6 +388,10 @@ private def converse (name : String) (fd : UInt32) (sample : IO String) (readOnl
               if !bytes.isEmpty then
                 writeAll stdoutFd (ByteArray.mk bytes.toArray)
                 titleDirty := false
+            if !alerts.isEmpty && observer.atBoundary && !leaving then
+              for alert in alerts do
+                writeAll stdoutFd (ByteArray.mk alert.toArray)
+              alerts := []
         finally
           -- These cleanups are nested, not sequential: a broken stdout must not
           -- prevent termios restoration, and neither failure may leak the socket.
@@ -377,11 +405,13 @@ private def converse (name : String) (fd : UInt32) (sample : IO String) (readOnl
 
 /-- Interactive attach. `readOnly` attaches read-only: output mirrors, keyboard is not
 forwarded, detach key still works. The title appends
-`sample`'s attention summary. An outstanding sample is joined after the socket
-closes, so the daemon sees a detach at once and no sample outlives the attachment. -/
-def attach (name : String) (fd : UInt32) (sample : IO String) (readOnly : Bool := false) :
-    IO Outcome := do
-  let pending ← IO.mkRef (none : Option (Task (Except IO.Error String)))
+`sample`'s attention summary, and the terminal hears its notifications. An outstanding sample is
+joined after the socket closes, so the daemon sees a detach at once and no sample outlives the
+attachment. -/
+def attach (name : String) (fd : UInt32)
+    (sample : Option (List (String × Linger.Display.Status.Status)) → IO Sample)
+    (readOnly : Bool := false) : IO Outcome := do
+  let pending ← IO.mkRef (none : Option (Task (Except IO.Error Sample)))
   try
     converse name fd sample readOnly pending
   finally

@@ -5,6 +5,7 @@ public import Linger.App.CoreCode.Commands
 public import Linger.App.CoreCode.Entry
 public import Linger.App.CoreCode.Recovery
 public import Linger.App.CoreCode.Wait
+public import Linger.Display.CoreCode.Alert
 public import Linger.Display.CoreCode.Listing
 public import Linger.Display.CoreCode.Status
 public import Linger.Display.CoreCode.View
@@ -39,6 +40,7 @@ import all Linger.App.Proofs.Entry
 import all Linger.App.Proofs.Recovery
 import all Linger.App.Proofs.Wait
 import Linger.Display.Proofs.Clean
+import all Linger.Display.Proofs.Alert
 import all Linger.Display.Proofs.Listing
 import all Linger.Display.Proofs.Status
 import all Linger.Display.Proofs.View
@@ -2987,7 +2989,9 @@ theorem writes_clean :
       (∀ v title, Display.Clean (Terminal.Title.update v title)) ∧
       (∀ v, Display.Clean (Terminal.Render.screenText v)) ∧
       (∀ v, Display.Clean (Terminal.Render.history v)) ∧
-      (∀ s, Display.Clean (Session.infoText s)) ∧ Display.Clean Terminal.Render.leaveAnsi := by
+      (∀ s, Display.Clean (Session.infoText s)) ∧
+      (∀ name notice, Display.Clean (Display.Alert.notification name notice)) ∧
+      Display.Clean Terminal.Render.leaveAnsi := by
   have info (s : State) : Display.Clean (Session.infoText s) := by
     obtain ⟨cs, text, safe⟩ := infoText_text s
     rw [text]
@@ -2999,7 +3003,7 @@ theorem writes_clean :
     ⟨Display.terminalListing_clean, Selector.Picker.frame_clean, Selector.Picker.frameRows_clean,
       Selector.Picker.update_clean, Selector.Picker.enterAnsi_clean, Selector.Picker.exitAnsi_clean,
       Display.title_ansi_clean, Display.title_update_clean, Display.screenText_clean,
-      Display.history_clean, info, Display.leaveAnsi_clean⟩
+      Display.history_clean, info, Display.Alert.notification_clean, Display.leaveAnsi_clean⟩
 
 theorem writes_clean_rejects_reset :
     ¬((∀ withColor width rows,
@@ -3026,7 +3030,9 @@ theorem writes_clean_rejects_reset :
         (∀ v title, Display.Clean (Terminal.Title.update v title)) ∧
         (∀ v, Display.Clean (Terminal.Render.screenText v)) ∧
         (∀ v, Display.Clean (Terminal.Render.history v)) ∧
-        (∀ s, Display.Clean (Session.infoText s)) ∧ Display.Clean Terminal.Render.leaveAnsi) :=
+        (∀ s, Display.Clean (Session.infoText s)) ∧
+        (∀ name notice, Display.Clean (Display.Alert.notification name notice)) ∧
+        Display.Clean Terminal.Render.leaveAnsi) :=
   fun h => Display.not_clean_reset (h.1 true none [])
 
 theorem withColor_iff (terminal : Bool) (noColor term : Option String) :
@@ -3582,6 +3588,36 @@ theorem compose_attention_last_rejects_first :
             (if summary.isEmpty then "" else " · " ++ summary) := by
   intro h
   exact absurd (h "" "" "x" 0) (by decide)
+
+theorem announce_changes (before current : List (String × Status.Status)) (own name : String) :
+    Alert.announce none current own = [] ∧
+      (name ∈ Alert.announce (some before) current own ↔
+        name ≠ own ∧ (name, Status.Status.asks) ∈ current ∧ (name, Status.Status.asks) ∉ before) ∧
+      ((current.map (·.1)).Nodup → (Alert.announce (some before) current own).Nodup) :=
+  ⟨Alert.announce_first current own, Alert.mem_announce before current own name,
+    Alert.announce_nodup before current own⟩
+
+theorem announce_changes_rejects_every_sample :
+    ¬∀ (before current : List (String × Status.Status)) (own name : String),
+        Alert.everySample none current own = [] ∧
+          (name ∈ Alert.everySample (some before) current own ↔
+            name ≠ own ∧
+              (name, Status.Status.asks) ∈ current ∧ (name, Status.Status.asks) ∉ before) ∧
+          ((current.map (·.1)).Nodup → (Alert.everySample (some before) current own).Nodup) := by
+  intro h
+  have := (h [] [("b", .asks)] "a" "b").1
+  simp [Alert.everySample] at this
+
+theorem announce_changes_rejects_self :
+    ¬∀ (before current : List (String × Status.Status)) (own name : String),
+        Alert.withSelf none current own = [] ∧
+          (name ∈ Alert.withSelf (some before) current own ↔
+            name ≠ own ∧
+              (name, Status.Status.asks) ∈ current ∧ (name, Status.Status.asks) ∉ before) ∧
+          ((current.map (·.1)).Nodup → (Alert.withSelf (some before) current own).Nodup) := by
+  intro h
+  have := ((h [] [("a", .asks)] "a" "a").2.1).mp (by simp [Alert.withSelf])
+  exact this.1 rfl
 
 theorem sort_attention_first {α : Type} (status : α → Status.Status) (rows : List α) :
     (View.sort status rows).Perm rows ∧

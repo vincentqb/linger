@@ -243,5 +243,6 @@ theorem not_clean_reset : ¬Clean [0x1B, 0x63] := by
     | ascii g1 => cases g1 <;> simp [Piece.bytes] at eq
     | shiftIn => simp [Piece.bytes] at eq
     | shapeDefault => simp [Piece.bytes] at eq
+    | notify cs => simp [Piece.bytes] at eq
 
 end Linger.Display

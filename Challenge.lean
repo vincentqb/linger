@@ -69,7 +69,10 @@ running session's row keeps its place whether it is printing or quiet. Output is
 window of three seconds from the poll round that saw it (`Session.workingMs`), so a program that
 redraws more often, as `top` does, reads `⣷` at every poll round of every redraw, and once it
 stops, it reads quiet from the round a working window after its last redraw, for which its
-session sets a tick (`steady_working`). Within a place a view keeps the listing's order,
+session sets a tick (`steady_working`). A client attached to one session tells its terminal, with
+one OSC 9 desktop notification, of each other local session that changed into asking between two
+of the samples its title takes, and of none on the first, whose asks the title counts
+(`announce_changes`). Within a place a view keeps the listing's order,
 and a listing orders names as people read them: a total order (`before_total`) that puts names
 differing only in one number in the order of that number, `w2` before `w10` (`before_number`). A session
 asks exactly while its program has rung the bell or posted a notification since the session was
@@ -212,6 +215,12 @@ def Linger.Display.View.groups : List String → List (String × Nat) := sorry
 def Linger.Display.View.hidden : List String → Nat × List (String × Nat) := sorry
 
 def Linger.Display.Title.compose : String → String → String → Nat → String := sorry
+
+def Linger.Display.Alert.announce :
+    Option (List (String × Status.Status)) → List (String × Status.Status) → String → List String :=
+  sorry
+
+def Linger.Display.Alert.notification : String → String → List UInt8 := sorry
 
 /-! ### Sessions -/
 
@@ -3034,7 +3043,9 @@ theorem writes_clean :
       (∀ v title, Display.Clean (Terminal.Title.update v title)) ∧
       (∀ v, Display.Clean (Terminal.Render.screenText v)) ∧
       (∀ v, Display.Clean (Terminal.Render.history v)) ∧
-      (∀ s, Display.Clean (Session.infoText s)) ∧ Display.Clean Terminal.Render.leaveAnsi := by
+      (∀ s, Display.Clean (Session.infoText s)) ∧
+      (∀ name notice, Display.Clean (Display.Alert.notification name notice)) ∧
+      Display.Clean Terminal.Render.leaveAnsi := by
   sorry
 
 @[kills writes_clean]
@@ -3063,7 +3074,9 @@ theorem writes_clean_rejects_reset :
         (∀ v title, Display.Clean (Terminal.Title.update v title)) ∧
         (∀ v, Display.Clean (Terminal.Render.screenText v)) ∧
         (∀ v, Display.Clean (Terminal.Render.history v)) ∧
-        (∀ s, Display.Clean (Session.infoText s)) ∧ Display.Clean Terminal.Render.leaveAnsi) := by
+        (∀ s, Display.Clean (Session.infoText s)) ∧
+        (∀ name notice, Display.Clean (Display.Alert.notification name notice)) ∧
+        Display.Clean Terminal.Render.leaveAnsi) := by
   sorry
 
 theorem withColor_iff (terminal : Bool) (noColor term : Option String) :
@@ -3599,6 +3612,33 @@ theorem compose_attention_last_rejects_first :
               session application ""
               (capacity - (if summary.isEmpty then "" else " · " ++ summary).length) ++
             (if summary.isEmpty then "" else " · " ++ summary) := by
+  sorry
+
+theorem announce_changes (before current : List (String × Status.Status)) (own name : String) :
+    Alert.announce none current own = [] ∧
+      (name ∈ Alert.announce (some before) current own ↔
+        name ≠ own ∧ (name, Status.Status.asks) ∈ current ∧ (name, Status.Status.asks) ∉ before) ∧
+      ((current.map (·.1)).Nodup → (Alert.announce (some before) current own).Nodup) := by
+  sorry
+
+@[kills announce_changes]
+theorem announce_changes_rejects_every_sample :
+    ¬∀ (before current : List (String × Status.Status)) (own name : String),
+        Alert.everySample none current own = [] ∧
+          (name ∈ Alert.everySample (some before) current own ↔
+            name ≠ own ∧
+              (name, Status.Status.asks) ∈ current ∧ (name, Status.Status.asks) ∉ before) ∧
+          ((current.map (·.1)).Nodup → (Alert.everySample (some before) current own).Nodup) := by
+  sorry
+
+@[kills announce_changes]
+theorem announce_changes_rejects_self :
+    ¬∀ (before current : List (String × Status.Status)) (own name : String),
+        Alert.withSelf none current own = [] ∧
+          (name ∈ Alert.withSelf (some before) current own ↔
+            name ≠ own ∧
+              (name, Status.Status.asks) ∈ current ∧ (name, Status.Status.asks) ∉ before) ∧
+          ((current.map (·.1)).Nodup → (Alert.withSelf (some before) current own).Nodup) := by
   sorry
 
 theorem sort_attention_first {α : Type} (status : α → Status.Status) (rows : List α) :

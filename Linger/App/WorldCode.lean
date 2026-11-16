@@ -26,6 +26,7 @@ import Linger.Session.CoreCode.Handoff
 import Terminal.CoreCode.Mediation
 import Std.Async.Signal
 import Linger.Display.CoreCode.Status
+import Linger.Display.CoreCode.Alert
 
 public section
 
@@ -726,6 +727,29 @@ private def summaryText : IO String := do
   return Linger.Display.Status.summary
       (rows.map fun info => Linger.Display.Status.ofName ((info.lookup "status").getD "unknown"))
 
+/-- One attention sample for a client attached to `own`: the summary `summaryText` gives, each
+local session's status, and a notification for each session that changed into asking since
+`previous`, other than `own` (`Alert.announce`), with its notification's text, which only those
+sessions are asked for, or `bell`. -/
+private def attentionSample (own : String)
+    (previous : Option (List (String × Linger.Display.Status.Status))) : IO Client.Sample := do
+  let rows ← localRows (some ((← monotonicMs) + 250)) (statusOnly := true)
+  let statuses :=
+    rows.map fun info =>
+      ((info.lookup "name").getD "",
+        Linger.Display.Status.ofName ((info.lookup "status").getD "unknown"))
+  let announced := Linger.Display.Alert.announce previous statuses own
+  let told ←
+    if announced.isEmpty then
+      pure []
+    else
+      localRows (some ((← monotonicMs) + 250)) (only := some announced)
+  let alerts :=
+    announced.map fun name =>
+      Linger.Display.Alert.notification name
+        (((told.find? (·.lookup "name" == some name)).bind (·.lookup "notice")).getD "")
+  return { summary := Linger.Display.Status.summary (statuses.map (·.2)), statuses, alerts }
+
 /-- `ls --summary`: print `summaryText`, or nothing when no local session needs
 attention; `done` either way. -/
 private def cmdSummary : IO Answer := do
@@ -754,7 +778,7 @@ private def attachSpoken (name : String) (fd : UInt32) (readOnly : Bool) :
     (Inventory.readInfo fd (some ((← monotonicMs) + Client.replySilenceMs.toNatClampNeg))).toBaseIO
   let level := (heard.toOption.bind (·.lookup "protocol")).bind String.toNat?
   if Linger.Session.Wire.admits level then
-    return .ok (← Client.attach name fd summaryText readOnly)
+    return .ok (← Client.attach name fd (attentionSample name) readOnly)
   close fd
   match heard, level with
   | .error why, _ =>
@@ -846,7 +870,7 @@ how it ended and discards once the viewer leaves, since it has been seen; read-o
 views any other saved session, and writable attachment keeps the create/resume path for it. Either
 refuses a checkpoint that does not decode, which stays as it is (`Recovery.decide`). A writable
 attach to a name no record names resumes the latest tmux-resurrect save's pane of that name
-(`adoptPane`). Live titles sample `summaryText` in this process. -/
+(`adoptPane`). Live titles sample `attentionSample` in this process. -/
 private def cmdAttach (source : Source) (s : Names.Ref) (cmd : List String) (readOnly : Bool) :
     IO Answer := do
   let result : Except Answer Client.Outcome ←

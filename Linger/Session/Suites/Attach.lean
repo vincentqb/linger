@@ -2,6 +2,8 @@ module
 
 public import Verify.Harness
 import Linger.App.CoreCode.Wait
+import Linger.Display.CoreCode.Alert
+import Linger.Display.CoreCode.Status
 import Linger.Session.WorldCode.Client
 import Linger.Session.WorldCode.Daemon
 import Linger.Session.CoreCode.Checkpoint
@@ -422,11 +424,69 @@ def olderDaemonChecks (e : Env) : IO Unit := do
         catch _ =>
           pure ()
 
+/-- How many times `needle` occurs in `hay`, counting overlapping occurrences. -/
+private def occurrences (needle : List UInt8) : List UInt8 → Nat
+  | [] => 0
+  | hay@(_ :: rest) => (if needle.isPrefixOf hay then 1 else 0) + occurrences needle rest
+
+/-- A client attached to one session tells its terminal, with one OSC 9 desktop notification,
+`<name>: <its notification's text, or bell>`, when another local session changes into asking: once
+per change into asking, so again only after a look cleared the ask and the session asked anew;
+never for its own session, whose bell its terminal hears as it rings; and never for a session that
+already asked when it attached, which its title counts from the first sample. -/
+def alertChecks (e : Env) : IO Unit := do
+  let asks := Linger.Display.Status.name .asks
+  let _ ← e.typeIn "alert-early" #["printf", "'\\a'"]
+  let _ ← e.typeIn "alert-other" #["true"]
+  let early ← waitFor patienceMs (return (← e.field "alert-early" "status") == some asks)
+  let c ← e.spawn #["attach", "alert-own"] 80 24
+  let out ← IO.mkRef ByteArray.empty
+  try
+    let attached ← waitFor patienceMs (return (← e.info "alert-own" "clients") == some "1")
+    -- the title counts the early ask once the first sample is in: from then on, an ask is news
+    let counted := Linger.Display.Status.summary [.asks]
+    c.type "echo own-$((1+1))\r"
+    let titled ← c.awaitText out (hasText · counted)
+    c.type "printf '\\a'; echo own-$((2+2))\r"
+    let rang ← c.awaitText out (hasText · "own-4")
+    let _ ← e.cli #["send", "alert-other", "printf '\\a'\n"]
+    let told := Linger.Display.Alert.notification "alert-other" ""
+    let once ← c.awaitText out (hasBytes · told)
+    -- three more samples, in which a repeat would show
+    let _ ← c.awaitText out (fun _ => false) (ms := 3500)
+    let first := (← out.get).toList
+    let osc9 := [0x1B, 0x5D, 0x39, 0x3B]
+    expect
+        (early && attached && titled && rang && once && occurrences osc9 first == 1 &&
+          occurrences told first == 1)
+        s!"an attached client tells its terminal once that another session asks, and never of its \
+          own or of one that asked before it attached ({occurrences osc9 first} notifications)"
+    -- a look clears the ask; asking anew is a new change into asking
+    let _ ← e.cli #["capture", "alert-other"]
+    let cleared ← waitFor patienceMs (return (← e.field "alert-other" "status") != some asks)
+    -- the client samples the cleared ask before the next one, as its title shows, which counts
+    -- the early ask alone again: an ask cleared and raised again between two samples is no
+    -- change the samples show
+    let mark := (← out.get).size
+    let resampled ← c.awaitText out (hasText · counted) (start := mark)
+    let _ ← e.cli #["send", "alert-other", "printf '\\033]9;review ready\\033\\\\'\n"]
+    let again := Linger.Display.Alert.notification "alert-other" "review ready"
+    let anew ← c.awaitText out (hasBytes · again)
+    let _ ← c.awaitText out (fun _ => false) (ms := 2500)
+    let all := (← out.get).toList
+    expect (cleared && resampled && anew && occurrences osc9 all == 2 && occurrences again all == 1)
+        s!"an ask after a look is told again, with its notification's text \
+          ({occurrences osc9 all} notifications)"
+  finally
+    c.bye
+  e.killAll #["alert-early", "alert-other", "alert-own"]
+
 /-- The attach suite: attach, detach, reattach, mirroring, waiting, hand-back and
-scrollback, the refusal of a daemon an older linger started, and that nothing of an ended
+scrollback, the alerts of another session's ask, the refusal of a daemon an older linger started, and that nothing of an ended
 session's terminal session outlives it. -/
 def run : IO UInt32 :=
   Env.suite "attach" fun e => do
+    alertChecks e
     sigkillChecks
     closeFeedback e
     focusChecks e
