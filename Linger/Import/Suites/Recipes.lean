@@ -8,14 +8,14 @@ import Linger.Target.CoreCode.Name
 
 public section
 
-/-! # Linger.Import.Suites.Recipes — native launch settings, fish prompt and the default save
+/-! # Linger.Import.Suites.Recipes — native launch settings, fish and zsh prompts and the default save
 
 `ls` lists the panes of the latest tmux-resurrect save, found where tmux-resurrect keeps it, and
 `resume` runs a fresh shell on one. This suite drives the actual CLI against real daemons and
 synthetic saves at the default locations.
 Native configuration assertions inspect their effective settings; they do not
 claim to launch or exercise any terminal GUI. The prompt checks execute the
-native example in fish with recorded command calls.
+native examples in fish and zsh with recorded command calls.
 -/
 
 namespace Linger.Import.Suites.Recipes
@@ -182,6 +182,132 @@ source "$argv[1]"; or exit 98
         prompt.stderr.isEmpty)
       "fish prompt composes with real linger ls --summary in an empty session directory"
 
+/-- The zsh recipe, checked as the fish one is: it only wires a native prompt to the CLI, through
+`precmd`. The recorder supplies already rendered bytes; all assertions and case selection stay in
+Lean. A draw runs the `precmd` hooks in order, as zsh does before each prompt, then expands
+`RPROMPT`, as zsh's `PROMPT_SUBST` does, which a command substitution leaves without the summary's
+line feed. -/
+private def zshPromptChecks (e : Env) (home data : String) : IO Unit := do
+  let recipe := (← IO.currentDir) / "recipes" / "zsh_prompt.zsh"
+  let settings ← recipeLines recipe "#"
+  expect
+      (settings ==
+        ["linger_attention_sample() {", "local last_status=$?", "linger_attention=",
+          "(( $+commands[linger] )) && linger_attention=$(command linger ls --summary 2>/dev/null)",
+          "return $last_status", "}", "autoload -Uz add-zsh-hook",
+          "add-zsh-hook precmd linger_attention_sample", "setopt prompt_subst",
+          "RPROMPT+='${linger_attention}'"])
+      "zsh prompt delegates the standard attention suffix to linger ls --summary"
+  let root := System.FilePath.mk e.dir / "zsh prompt"
+  let bin := root / "bin"
+  let emptyPath := root / "empty"
+  let callsFile := root / "calls"
+  IO.FS.createDirAll bin
+  IO.FS.createDirAll emptyPath
+  let env :=
+    e.procEnv ++
+      #[("HOME", some home), ("ZDOTDIR", some (root / "config").toString),
+        ("XDG_DATA_HOME", some data), ("ZSH_PROMPT_CALLS", some callsFile.toString)]
+  -- Resolve zsh before restricting PATH; none of this adds a runtime dependency.
+  let found ←
+    IO.Process.output { cmd := "zsh", args := #["-f", "-c", "print -r -- $commands[zsh]"], env }
+  let zsh := found.stdout.trimAscii.toString
+  unless found.exitCode == 0 && !zsh.isEmpty do
+    throw (IO.userError "could not resolve zsh for the native prompt checks")
+  IO.FS.writeFile (bin / "linger")
+      r#"#!/bin/sh
+printf 'CALL\000' >> "$ZSH_PROMPT_CALLS"
+printf '%s\000' "$@" >> "$ZSH_PROMPT_CALLS"
+printf '\n' >> "$ZSH_PROMPT_CALLS"
+printf '%s' "$ZSH_PROMPT_STDOUT"
+printf '%s' "$ZSH_PROMPT_STDERR" >&2
+exit "$ZSH_PROMPT_RC"
+"#
+  Os.Shell.chmod (bin / "linger").toString 0o700
+  let setup :=
+    r#"PROMPT='LEFT'
+title_hook() {
+  local last_status=$?
+  print -rn -- 'TITLE'
+  print -r -- 'TITLE' >> "$ZSH_PROMPT_CALLS"
+  return $last_status
+}
+precmd_functions=(title_hook)
+linger() {
+  print -rn -- 'SHADOW'
+  return 97
+}
+prompt_probe_previous() {
+  return $ZSH_PROMPT_PREVIOUS
+}
+prompt_status() {
+  return $1
+}
+source "$1" || exit 98
+"#
+  -- each hook hears the last command's status, as zsh gives it; the title hook is not the
+  -- recipe's, and the recipe must not call it
+  let drawOnce :=
+    "prompt_probe_previous\ndrawn=$?\nfor hook in $precmd_functions; do\n" ++
+      "  [[ $hook == title_hook ]] && continue\n  prompt_status $drawn\n  $hook\n  drawn=$?\n" ++
+      "done\nprint -rnP -- \"$RPROMPT\"\n"
+  let draw := drawOnce ++ "exit $drawn\n"
+  let invoke := fun (path : System.FilePath) (body text err rc previous : String) => do
+    IO.FS.writeFile callsFile ""
+    let out ←
+      IO.Process.output
+          { cmd := zsh, args := #["-f", "-c", setup ++ body, "zsh", recipe.toString],
+            env :=
+              env ++
+                #[("PATH", some path.toString), ("ZSH_PROMPT_STDOUT", some text),
+                  ("ZSH_PROMPT_STDERR", some err), ("ZSH_PROMPT_RC", some rc),
+                  ("ZSH_PROMPT_PREVIOUS", some previous)] }
+    return (out, ← IO.FS.readFile callsFile)
+  let (loaded, calls) ←
+    invoke bin
+        "print -rnP -- \"$PROMPT\"\ntitle_hook\n[[ ${precmd_functions[1]} == title_hook ]] || exit 9\n"
+        "" "" "0" "0"
+  expect
+      (loaded.exitCode == 0 && loaded.stdout == "LEFTTITLE" && loaded.stderr.isEmpty &&
+        calls == "TITLE\n")
+      "zsh recipe preserves the left prompt and title hook and samples nothing when sourced"
+  let attention :=
+    Linger.Display.Status.summary [.wantsYou, .unknown, .exitedBad, .wantsYou, .working] ++ "\n"
+  let unknown := Linger.Display.Status.summary [.unknown] ++ "\n"
+  let shown := fun (text : String) =>
+    String.ofList (text.toList.reverse.dropWhile (· == '\n')).reverse
+  for (context, contextSetup) in
+    [("outside", "unset LINGER_SESSION\n"), ("inside", "export LINGER_SESSION=work\n")] do
+    for (label, text, err, rc, previous) in
+      [("attention", attention, "hidden diagnostic\n", "0", "23"), ("empty", "", "", "0", "0"),
+        ("failure", "", "status unavailable\n", "7", "42")] do
+      let (out, calls) ← invoke bin (contextSetup ++ draw) text err rc previous
+      expect
+          (out.exitCode.toNat == previous.toNat?.getD 99 && out.stdout == shown text &&
+            out.stderr.isEmpty &&
+            calls == call ["ls", "--summary"])
+          s!"zsh attention keeps shared bytes and status without calling the title hook ({label}, {context})"
+  let (missing, calls) ← invoke emptyPath draw "" "" "0" "19"
+  expect
+      (missing.exitCode == 19 && missing.stdout.isEmpty && missing.stderr.isEmpty && calls.isEmpty)
+      "zsh prompt is quiet and preserves status when linger is absent from PATH"
+  let redraw := drawOnce ++ "export ZSH_PROMPT_STDOUT='" ++ unknown ++ "'\n" ++ draw
+  let (out, calls) ← invoke bin redraw attention "" "0" "23"
+  expect
+      (out.exitCode == 23 && out.stdout == shown attention ++ shown unknown && out.stderr.isEmpty &&
+        calls == call ["ls", "--summary"] ++ call ["ls", "--summary"])
+      "zsh prompt samples again on each redraw without retaining old counts"
+  -- Check the real command as well as the prompt, since prompt stderr suppression
+  -- must not conceal a missing CLI route.
+  let actual ← IO.Process.output { cmd := e.bin, args := #["ls", "--summary"], env }
+  let (prompt, _) ← invoke ((System.FilePath.mk e.bin).parent.getD root) draw "" "" "0" "23"
+  expect
+      (actual.exitCode == 0 && actual.stdout.isEmpty && actual.stderr.isEmpty &&
+        prompt.exitCode == 23 &&
+        prompt.stdout.isEmpty &&
+        prompt.stderr.isEmpty)
+      "zsh prompt composes with real linger ls --summary in an empty session directory"
+
 /-- tmux-resurrect prefixes the saved directory and full command with `:` and
 escapes spaces in the directory field. The other fields are present only to
 exercise the real eleven-field pane shape. -/
@@ -244,7 +370,8 @@ def sourceNames (listing : String) : List String :=
     if fields.lookup "source" == some Linger.Import.Resurrect.sourceName then fields.lookup "name"
     else none
 
-/-- The recipes suite: native launch settings, the fish prompt and the saved tmux panes `ls` lists. -/
+/-- The recipes suite: native launch settings, the fish and zsh prompts and the saved tmux panes `ls`
+lists. -/
 def run : IO UInt32 :=
   Env.suite "recipes" fun e => do
     let e := { e with bin := (← IO.getEnv "LINGER_EXE").getD e.bin }
@@ -255,6 +382,7 @@ def run : IO UInt32 :=
     IO.FS.createDirAll data
     configChecks
     fishPromptChecks e home.toString data.toString
+    zshPromptChecks e home.toString data.toString
     -- Default path, escaped cwd, and ignored saved command.
     let defaultDir := root / "work space"
     let defaultSource := root / "default-source"

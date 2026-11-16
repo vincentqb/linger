@@ -9,6 +9,7 @@ configuration. Terminals need `linger` on PATH or an absolute executable path.
 | kitty | [kitty.conf](kitty.conf) |
 | WezTerm | [wezterm.lua](wezterm.lua) |
 | Fish attention counts | [fish_prompt.fish](fish_prompt.fish) |
+| Zsh attention counts | [zsh_prompt.zsh](zsh_prompt.zsh) |
 | SSH keepalives | [ssh_config](ssh_config) |
 
 Run `linger --help` for session commands; `linger ls` also lists the latest tmux-resurrect

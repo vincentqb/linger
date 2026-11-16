@@ -92,6 +92,7 @@ jobs:
           if [ "$RUNNER_OS" = Linux ]; then
             packages=()
             command -v fish >/dev/null || packages+=(fish)
+            command -v zsh >/dev/null || packages+=(zsh)
             command -v clang >/dev/null || packages+=(clang)
             if [ "${#packages[@]}" -gt 0 ]; then
               # Hosted images already carry indexes; refresh only if stale.
