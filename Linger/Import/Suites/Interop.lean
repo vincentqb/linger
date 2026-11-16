@@ -1,6 +1,7 @@
 module
 
 import Linger.Import.Suites.Recipes
+import Linger.Os.CoreCode.Answer
 import Linger.Session.CoreCode.Checkpoint
 import all Linger.Import.WorldCode
 
@@ -439,17 +440,19 @@ private def adoptExclusive (f : Fixture) : IO Bool := do
   return killed == 0 && unchanged && rc == 0 && here && labels.isNone && goneRc == 127 &&
       !(← (System.FilePath.mk f.env.dir / "gone-w0-p0.ckpt").pathExists)
 
-/-- A kill of a saved pane writes the end record a kill leaves and nothing else, so `wait` answers
-for it as for a session a kill ended, and the pane stays hidden, even once the save is written
-again; a kill of a name neither linger nor the save knows finds nothing. -/
+/-- A kill of a saved pane writes an end record and nothing else, which says only that the pane
+was dismissed, so `wait` answers for it, as before the kill, that no session has the name, and no
+signal; the pane stays hidden, even once the save is written again; a kill of a name neither
+linger nor the save knows finds nothing. -/
 private def killDismisses (f : Fixture) : IO Bool := do
   let text := paneLine "dismissed" "0" "0" (f.root / "home").toString ""
   f.writeSave text
   let before ← namesIn (System.FilePath.mk f.env.dir)
+  let (waitBefore, _, _) ← f.cli #["wait", "dismissed-w0-p0"]
   let (rc, _, err) ← f.cli #["kill", "dismissed-w0-p0"]
   let after ← namesIn (System.FilePath.mk f.env.dir)
   let written := after.filter (!before.contains ·)
-  let (waitRc, _, _) ← f.cli #["wait", "dismissed-w0-p0"]
+  let (waitRc, _, waitErr) ← f.cli #["wait", "dismissed-w0-p0"]
   let (_, out, _) ← f.cli #["ls", "--porcelain"]
   f.writeSave text
   let (_, again, _) ← f.cli #["ls", "--porcelain"]
@@ -458,7 +461,9 @@ private def killDismisses (f : Fixture) : IO Bool := do
       written.all
         (fun name => name == "dismissed-w0-p0.end" || name.endsWith ".lock" || name == ".locks") &&
       written.contains "dismissed-w0-p0.end" &&
-      waitRc == 129 &&
+      waitBefore == (Linger.Os.Answer.code .notFound) &&
+      waitRc == (Linger.Os.Answer.code .notFound) &&
+      has waitErr "dismissed" &&
       sourceNames out == [] &&
       sourceNames again == [] &&
       unknownRc == 127 &&
@@ -1229,7 +1234,7 @@ def runWith (binary : String) : IO UInt32 := do
         ("saved panes sort last within the saved status", sourceLast),
         ("an attach of a saved pane resumes it as a fresh shell in its directory", attachPane),
         ("an attach or a resume never replaces a record of the pane's name", adoptExclusive),
-        ("a kill of a saved pane leaves only the end record a kill leaves, and hides it for good",
+        ("a kill of a saved pane leaves only an end record that says it was dismissed, and hides it for good",
           killDismisses),
         ("every removed tmux spelling is refused, naming what to use instead", retiredSpellings),
         ("a configured directory with no last lists no pane, without falling back or scanning history",

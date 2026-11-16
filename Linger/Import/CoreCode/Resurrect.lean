@@ -221,9 +221,10 @@ def adopt (records : Linger.Session.Records) (pane : Pane) (contents : Option St
     Option (Linger.Session.Checkpoint.Ckpt Terminal.Vt.Vt) :=
   if records.holds pane.name then none else some (checkpoint pane contents)
 
-/-- The end record a kill of a saved pane leaves its name: the one a kill leaves a session whose
-program its SIGHUP ended, so `wait` answers 129 for it as for any session a kill ended. -/
-def dismissal : Linger.Session.Record := .ended (.signaled 1)
+/-- The end record a kill of a saved pane leaves its name: that the pane was dismissed, and
+nothing ended, since linger never ran it, so `wait` answers that no session has the name, as it
+did before the kill (`dismissal_happened`). -/
+def dismissal : Linger.Session.Record := .dismissed
 
 /-- The records a kill of the saved pane `name` leaves: an end record for the name, and nothing
 else (`dismiss_hides`). -/

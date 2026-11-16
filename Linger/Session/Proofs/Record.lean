@@ -22,6 +22,7 @@ theorem decode_encode (r : Record) : decode (encode r) = some r := by
       cases fresh <;> cases unseen <;> cases asks <;> rfl
   | ended outcome => cases outcome <;> rfl
   | saved signal => rfl
+  | dismissed => rfl
 
 /-- Each of the eight answers to a daemon's three questions has its own byte. -/
 theorem seenByte_injective (a b : Seen) (h : seenByte a = seenByte b) : a = b := by
@@ -66,6 +67,7 @@ theorem answer_record (ending : Ending) : answer (some (encode ending.record)) =
   cases ending with
   | program outcome => exact answer_ended outcome
   | saved signal => exact answer_saved signal
+  | dismissed => rfl
 
 /-- Any record file answers, even one that is no record: once a session has taken the name, a
 reader always hears something. -/
@@ -94,6 +96,7 @@ theorem settled_answer {file : Option (List UInt8)} {known : Option Ending}
       | running seen => simp [hd] at h
       | ended outcome => simp_all
       | saved signal => simp_all
+      | dismissed => simp_all
 
 /-- Only a running record, or bytes that are no record, needs the name held to read. -/
 theorem settled_eq_none {file : Option (List UInt8)} (h : settled file = none) :

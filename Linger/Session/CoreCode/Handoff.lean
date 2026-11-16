@@ -64,16 +64,19 @@ def rOutcome : R Outcome := fun l =>
   | 2 :: rest => some (.unknown, rest)
   | _ => none
 
-/-- How a session ended: its kind, then the program's ending or the signal. -/
+/-- How a session ended: its kind, then the program's ending or the signal; 2 alone for a dismissed
+tmux pane, which no daemon carries. -/
 def wEnding : Ending → List UInt8
   | .program outcome => 0 :: wOutcome outcome
   | .saved signal => [1, signal]
+  | .dismissed => [2]
 
 /-- Inverse of `wEnding`. -/
 def rEnding : R Ending := fun l =>
   match l with
   | 0 :: rest => (rOutcome rest).map fun (o, rest) => (.program o, rest)
   | 1 :: signal :: rest => some (.saved signal, rest)
+  | 2 :: rest => some (.dismissed, rest)
   | _ => none
 
 /-- A client's mode, as the wire writes it: 0 writable, 1 read-only. -/

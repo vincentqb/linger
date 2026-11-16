@@ -37,6 +37,7 @@ theorem ending_failed (e : Linger.Session.Ending) : e.answer = .failed ↔ e = .
   cases e with
   | program o => simp [Linger.Session.Ending.answer, outcome_failed]
   | saved signal => simp [Linger.Session.Ending.answer]
+  | dismissed => simp [Linger.Session.Ending.answer]
 
 /-- **`wait` could not find out only when that is so**: the ending is unknown, or the name has
 stayed held, with no daemon answering, for `heldNameMs` since the look that first found it so.

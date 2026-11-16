@@ -1191,9 +1191,11 @@ private def cmdSendStdin (s : Names.Ref) : IO Answer := do
       close fd
 
 /-- Say on stderr how the session ended when a signal killed its program, how its program ended
-is unknown, or a signal to its daemon saved it; an exit status says the rest. -/
+is unknown, or a signal to its daemon saved it, and that no session has the name when a kill
+dismissed its tmux pane; an exit status says the rest. -/
 private def sayEnding (name : String) : Linger.Session.Ending → IO Unit
   | .program (.exited _) => pure ()
+  | .dismissed => IO.eprintln s!"linger: no session '{name}' (a kill dismissed its tmux pane)"
   | .program outcome =>
     IO.eprintln s!"linger: session '{name}' ended ({(Client.Ending.outcome outcome).describe})"
   | .saved signal =>

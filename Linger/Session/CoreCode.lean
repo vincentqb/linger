@@ -303,10 +303,11 @@ def outcomeFields : Outcome → List (String × String)
 /-- How `info` reports how a session ended: its program's ending as `outcomeFields` reports it, or,
 for a session a signal to its daemon saved, `saved` with that signal's number and no `exit`,
 since its program has no status to report, so no saved session reads as an ending of its
-program (`endingFields_injective`). -/
+program (`endingFields_injective`), and nothing for a dismissed tmux pane, which no program ran. -/
 def endingFields : Ending → List (String × String)
   | .program outcome => outcomeFields outcome
   | .saved signal => [("saved", toString signal.toNat)]
+  | .dismissed => []
 
 /-- How `info` reports the title the session's program last gave its window: `title`, when it
 gave a nonempty one. -/

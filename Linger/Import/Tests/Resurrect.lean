@@ -53,7 +53,7 @@ namespace Linger.Import.Resurrect.Tests
     (adopt { sockets := [], checkpoints := [], endings := ["b"] } pane none).isSome &&
     dismiss { sockets := ["x"], checkpoints := ["y"], endings := ["z"] } "a" ==
       { sockets := ["x"], checkpoints := ["y"], endings := ["a", "z"] } &&
-    dismissal == .ended (.signaled 1)
+    dismissal == .dismissed
 
 -- The reserved tmux session name carries native identity without a comment row.
 #guard

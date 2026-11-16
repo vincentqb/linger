@@ -62,9 +62,10 @@ then it stopped, `⣀` nothing new since you looked, `✓` ended with status 0, 
 way, `~` saved with no daemon and `?` no answer; a program waiting for you outranks one printing,
 and titles and `ls --summary` count `⚑`, `⣿`, `✗` and `?`. Its section follows the ten parts, with
 the titles, listings and selector views that show statuses: a view ranks rows by what needs you
-to act, `⚑`, then `✗` and `?`, then `⣿`, first, then the running sessions, then `✓` and `~`, so
-no row that ended well or can only be resumed sits above a live one, and a running session's row
-keeps its place whether it is printing or quiet. Within a place a view keeps the listing's order,
+to act, `⚑`, then `✗` and `?`, then `⣿`, first, then by where the session is in its life, the
+running sessions, then the saved ones, `~`, then the ended ones, `✓` (`sort_two_keys`), so no row
+that ended well or can only be resumed sits above a live one, a finished session comes last, and a
+running session's row keeps its place whether it is printing or quiet. Within a place a view keeps the listing's order,
 and a listing orders names as people read them: a total order (`before_total`) that puts names
 differing only in one number in the order of that number, `w2` before `w10` (`before_number`). A session
 asks exactly while its program has rung the bell or posted a notification since the session was
@@ -371,6 +372,8 @@ def Linger.Import.Resurrect.adopt :
   sorry
 
 def Linger.Import.Resurrect.dismiss : Session.Records → String → Session.Records := sorry
+
+def Linger.Import.Resurrect.dismissal : Session.Record := sorry
 
 def Linger.Import.Resurrect.captureLimit : Nat := sorry
 
@@ -1334,8 +1337,10 @@ the chooser exactly while linger keeps no record of their names, no socket, chec
 record or names entry that names them or leads to them (`listed_unrecorded`), so whether a pane was dealt with is read from the records linger
 already keeps. An attach or a resume of such a pane writes its checkpoint only while no record
 names it, and otherwise writes nothing, so it never replaces a record (`adopt_exclusive`). A kill
-of one writes the end record a kill leaves and nothing else, so the pane stays hidden while the
-end records are kept (`dismiss_hides`), which no command removes. Not claimed: that the IO code
+of one writes an end record and nothing else, so the pane stays hidden while the end records are
+kept (`dismiss_hides`), which no command removes, and that record says only what happened: a kill
+dismissed a pane linger never ran, so nothing ended, and `wait` answers for the name, as before
+the kill, that no session has it (`dismissal_happened`). Not claimed: that the IO code
 decides each of these holding the name's locks and creates the checkpoint only where no file is,
 which the interop suite checks, and that linger writes, moves or deletes nothing in tmux's
 directory, which the interop suite checks by hashing it around every command. -/
@@ -1494,6 +1499,27 @@ theorem dismiss_hides_rejects_memory :
                       pane.name).endings ↔
                 name = pane.name ∨ name ∈ records.endings) ∧
             pane ∉ Import.Resurrect.listed later panes := by
+  sorry
+
+theorem dismissal_happened (afterSave : List UInt8 → Option (List UInt8))
+    (kept : Record.Kept afterSave) (deadline heldSince : Option Nat) (now : Nat) :
+    Record.answer (afterSave (Record.encode Import.Resurrect.dismissal)) = some .dismissed ∧
+      Wait.decide deadline heldSince now
+          (.recorded (Record.answer (afterSave (Record.encode Import.Resurrect.dismissal)))) =
+        .answer .notFound := by
+  sorry
+
+@[kills dismissal_happened]
+theorem dismissal_happened_rejects_hangup :
+    ¬∀ (afterSave : List UInt8 → Option (List UInt8)),
+        Record.Kept afterSave →
+          ∀ (deadline heldSince : Option Nat) (now : Nat),
+            Record.answer (afterSave (Record.encode (Record.ended (.signaled 1)))) =
+                some .dismissed ∧
+              Wait.decide deadline heldSince now
+                  (.recorded
+                    (Record.answer (afterSave (Record.encode (Record.ended (.signaled 1)))))) =
+                .answer .notFound := by
   sorry
 
 theorem check_eq_some_iff (s result : String) :
@@ -3577,6 +3603,28 @@ theorem sort_live_above_done_rejects_done_above :
                 y ∈ rest →
                   ¬(status y = .asks ∨
                       status y = .wantsYou ∨ status y = .working ∨ status y = .idle) := by
+  sorry
+
+theorem sort_two_keys {α : Type} (status : α → Status.Status) (earlier : α → α → Prop)
+    (rows : List α) (listed : rows.Pairwise earlier) :
+    (View.sort status rows).Perm rows ∧
+      (View.sort status rows).Pairwise fun a b =>
+        View.needs (status a) < View.needs (status b) ∨
+          View.needs (status a) = View.needs (status b) ∧
+            (View.lifecycle (status a) < View.lifecycle (status b) ∨
+              View.lifecycle (status a) = View.lifecycle (status b) ∧ earlier a b) := by
+  sorry
+
+@[kills sort_two_keys]
+theorem sort_two_keys_rejects_ended_above_saved :
+    ¬∀ {α : Type} (status : α → Status.Status) (earlier : α → α → Prop) (rows : List α),
+        rows.Pairwise earlier →
+          (View.endedAboveSaved status rows).Perm rows ∧
+            (View.endedAboveSaved status rows).Pairwise fun a b =>
+              View.needs (status a) < View.needs (status b) ∨
+                View.needs (status a) = View.needs (status b) ∧
+                  (View.lifecycle (status a) < View.lifecycle (status b) ∨
+                    View.lifecycle (status a) = View.lifecycle (status b) ∧ earlier a b) := by
   sorry
 
 theorem before_total (a b c : String) :

@@ -1288,6 +1288,34 @@ theorem dismiss_hides_rejects_memory :
       (Or.inl rfl)
   simp at this
 
+theorem dismissal_happened (afterSave : List UInt8 → Option (List UInt8))
+    (kept : Record.Kept afterSave) (deadline heldSince : Option Nat) (now : Nat) :
+    Record.answer (afterSave (Record.encode Import.Resurrect.dismissal)) = some .dismissed ∧
+      App.Wait.decide deadline heldSince now
+          (.recorded (Record.answer (afterSave (Record.encode Import.Resurrect.dismissal)))) =
+        .answer .notFound := by
+  have read :
+    Record.answer (afterSave (Record.encode Import.Resurrect.dismissal)) = some .dismissed := by
+    rw [kept]; rfl
+  exact
+    ⟨read, by
+      rw [read]; rfl⟩
+
+theorem dismissal_happened_rejects_hangup :
+    ¬∀ (afterSave : List UInt8 → Option (List UInt8)),
+        Record.Kept afterSave →
+          ∀ (deadline heldSince : Option Nat) (now : Nat),
+            Record.answer (afterSave (Record.encode (Record.ended (.signaled 1)))) =
+                some .dismissed ∧
+              App.Wait.decide deadline heldSince now
+                  (.recorded
+                    (Record.answer (afterSave (Record.encode (Record.ended (.signaled 1)))))) =
+                .answer .notFound := by
+  intro h
+  have := (h some (fun _ => rfl) none none 0).1
+  rw [Record.answer_ended] at this
+  cases this
+
 theorem check_eq_some_iff (s result : String) :
     Name.check s = some result ↔ result = s ∧ Name.Valid s := Name.check_eq_some_iff s result
 
@@ -3581,6 +3609,30 @@ theorem sort_live_above_done_rejects_done_above :
   exact
     h (fun b : Bool => if b then .exitedOk else .working) [true, false] [true] [false] (by decide)
       true (by simp) (by simp) false (by simp) (by simp)
+
+theorem sort_two_keys {α : Type} (status : α → Status.Status) (earlier : α → α → Prop)
+    (rows : List α) (listed : rows.Pairwise earlier) :
+    (View.sort status rows).Perm rows ∧
+      (View.sort status rows).Pairwise fun a b =>
+        View.needs (status a) < View.needs (status b) ∨
+          View.needs (status a) = View.needs (status b) ∧
+            (View.lifecycle (status a) < View.lifecycle (status b) ∨
+              View.lifecycle (status a) = View.lifecycle (status b) ∧ earlier a b) :=
+  ⟨View.sort_perm status rows, View.sort_two_keys status earlier rows listed⟩
+
+theorem sort_two_keys_rejects_ended_above_saved :
+    ¬∀ {α : Type} (status : α → Status.Status) (earlier : α → α → Prop) (rows : List α),
+        rows.Pairwise earlier →
+          (View.endedAboveSaved status rows).Perm rows ∧
+            (View.endedAboveSaved status rows).Pairwise fun a b =>
+              View.needs (status a) < View.needs (status b) ∨
+                View.needs (status a) = View.needs (status b) ∧
+                  (View.lifecycle (status a) < View.lifecycle (status b) ∨
+                    View.lifecycle (status a) = View.lifecycle (status b) ∧ earlier a b) := by
+  intro h
+  have := (h (α := Status.Status) id (fun _ _ => True) [.resumable, .exitedOk] (by simp)).2
+  revert this
+  decide
 
 theorem before_total (a b c : String) :
     View.before a a = false ∧

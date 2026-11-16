@@ -17,11 +17,12 @@ running record needs the name held to read: whether its daemon still lives decid
 (`settled`).
 
 Format: the magic `LNGE`, version 1, then 0 for a running program, 1 and the ending as
-`Wire.outcomeBytes` writes it, or 2 and the number of the signal that stopped the daemon, for a
-session it saved; or version 2, 0 and one byte of what the daemon saw (1 for fresh output, 2 for
+`Wire.outcomeBytes` writes it, 2 and the number of the signal that stopped the daemon, for a
+session it saved, or 3, for a saved tmux pane a kill dismissed, which no program ran; or version 2, 0 and one byte of what the daemon saw (1 for fresh output, 2 for
 unseen output, 4 for a bell or a notification since the last look), for a running program whose
 daemon says so. A reader from before saved sessions reads one as no record, so it answers that
-the ending is unknown, and lists it resumable, and a reader from before asks reads a byte with 4
+the ending is unknown, and lists it resumable, a reader from before dismissals reads one as no
+record too, and a reader from before asks reads a byte with 4
 as no record, so it asks the daemon. The record says nothing of how the shell's last command
 ended: that is no status, and the summary that reads the record shows statuses alone, so what it
 reads is what asking would tell it (`rowStatus_published`). -/
@@ -41,6 +42,7 @@ def encode : Record → List UInt8
   | .running (some seen) => [0x4C, 0x4E, 0x47, 0x45, 2, 0, seenByte seen]
   | .ended outcome => [0x4C, 0x4E, 0x47, 0x45, 1, 1] ++ Wire.outcomeBytes outcome
   | .saved signal => [0x4C, 0x4E, 0x47, 0x45, 1, 2, signal]
+  | .dismissed => [0x4C, 0x4E, 0x47, 0x45, 1, 3]
 
 /-- The record these bytes hold, or `none` for bytes no version 1 or 2 record has. -/
 def decode : List UInt8 → Option Record
@@ -50,6 +52,7 @@ def decode : List UInt8 → Option Record
     else none
   | [0x4C, 0x4E, 0x47, 0x45, 1, 1, kind, code] => some (.ended (Wire.readOutcome [kind, code]))
   | [0x4C, 0x4E, 0x47, 0x45, 1, 2, signal] => some (.saved signal)
+  | [0x4C, 0x4E, 0x47, 0x45, 1, 3] => some .dismissed
   | _ => none
 
 /-- What a running record says its daemon saw, for a reader that would otherwise ask the daemon:
@@ -62,7 +65,8 @@ def published (bytes : List UInt8) : Option Seen :=
 /-- What a reader holding the name learns from the name's end record file: with no file, that no
 session has taken the name (`none`); from an ended record, how its program ended; from a saved
 record, that a signal stopped its daemon, which saved the session, and no outcome of its
-program; and from a running record, whose session gave the name up without saying how it ended,
+program; from a dismissed record, that a kill dismissed a saved tmux pane and nothing ended; and
+from a running record, whose session gave the name up without saying how it ended,
 or from bytes that are no record, that its program's ending is unknown. -/
 def answer : Option (List UInt8) → Option Ending
   | none => none
@@ -70,6 +74,7 @@ def answer : Option (List UInt8) → Option Ending
     match decode bytes with
     | some (.ended outcome) => some (.program outcome)
     | some (.saved signal) => some (.saved signal)
+    | some .dismissed => some .dismissed
     | _ => some (.program .unknown)
 
 /-- What a reader learns from the record file without holding the name: `answer`'s answer when
@@ -82,6 +87,7 @@ def settled : Option (List UInt8) → Option (Option Ending)
     match decode bytes with
     | some (.ended outcome) => some (some (.program outcome))
     | some (.saved signal) => some (some (.saved signal))
+    | some .dismissed => some (some .dismissed)
     | _ => none
 
 end Record

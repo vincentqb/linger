@@ -116,6 +116,9 @@ inductive Record where
   stops it at logout or shutdown, and saved the session first, as it stood when the signal came:
   its program did not end by itself, and `resume` runs it again from that screen. -/
   | saved (signal : UInt8)
+  /-- A kill dismissed the saved tmux pane of this name, which linger only read: no session took
+  the name and no program ran, so nothing ended. -/
+  | dismissed
   deriving Repr, DecidableEq
 
 /-- How a session ended, as linger tells whoever asks: its program ended, or its daemon was
@@ -127,6 +130,9 @@ inductive Ending where
   | program (outcome : Outcome)
   /-- The daemon was stopped by this signal, and saved the session. -/
   | saved (signal : UInt8)
+  /-- No session ended: a kill dismissed the saved tmux pane of this name, which linger never
+  ran. -/
+  | dismissed
   deriving Repr, DecidableEq
 
 /-- The end record a session that ended this way leaves its name. -/
@@ -134,15 +140,19 @@ inductive Ending where
 def Ending.record : Ending → Record
   | .program outcome => .ended outcome
   | .saved signal => .saved signal
+  | .dismissed => .dismissed
 
 /-- The answer that tells how a session ended: its program's, as `Outcome.answer` gives it, or,
 for a session a signal to its daemon saved, `saved` with that signal, whose status says which
 signal, as a shell reports a job that signal stopped, and never a status of its program, which
-did not end by itself and runs again on `resume`. -/
+did not end by itself and runs again on `resume`; and, for a dismissed tmux pane, that no
+session has the name, `notFound`, as for a name no session ever took: linger never ran it, and a
+dismissal hides it, so no signal and no status of a program is true of it. -/
 @[expose]
 def Ending.answer : Ending → Os.Answer
   | .program outcome => outcome.answer
   | .saved signal => .saved signal
+  | .dismissed => .notFound
 
 /-- What linger keeps of its sessions, by the key each file is kept under: one fact a file, a
 live session's socket, a saved session's checkpoint and the end record of the last session to
@@ -409,11 +419,13 @@ def ckptIntervalMs : Nat := 60000
 
 /-- What a client attached to a session, or waiting for its end, hears when the session ends this
 way: how its program ended and then the status a shell would report for that, or that a signal
-stopped the daemon, which saved the session. -/
+stopped the daemon, which saved the session; nothing for a dismissed tmux pane, which no daemon
+ran. -/
 @[expose]
 def Ending.told : Ending → List Msg
   | .program outcome => [.ended outcome, .exited outcome.status]
   | .saved signal => [.saved signal]
+  | .dismissed => []
 
 /-- One connection's record: its identity, rights, terminal size, attach and request state, and
 its undecoded input. -/

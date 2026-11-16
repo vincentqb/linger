@@ -90,7 +90,7 @@ theorem sort_attention_first {α : Type} (status : α → Status) (rows : List �
   refine
     ⟨[Status.asks, .exitedBad, .unknown, .wantsYou].flatMap fun st =>
         rows.filter fun x => place (status x) == st,
-      [Status.working, .exitedOk, .resumable].flatMap fun st =>
+      [Status.working, .resumable, .exitedOk].flatMap fun st =>
         rows.filter fun x => place (status x) == st,
       ?_, ?_, ?_⟩
   · rw [← List.flatMap_append]
@@ -121,7 +121,7 @@ theorem sort_done_last {α : Type} (status : α → Status) (rows : List α) :
   refine
     ⟨[Status.asks, .exitedBad, .unknown, .wantsYou, .working].flatMap fun st =>
         rows.filter fun x => place (status x) == st,
-      [Status.exitedOk, .resumable].flatMap fun st => rows.filter fun x => place (status x) == st,
+      [Status.resumable, .exitedOk].flatMap fun st => rows.filter fun x => place (status x) == st,
       ?_, ?_, ?_⟩
   · rw [← List.flatMap_append]
     rfl
@@ -225,6 +225,48 @@ theorem sort_keeps_place {α : Type} (status status' : α → Status) (rows : Li
   congr 1
   funext st
   exact List.filter_congr fun x hx => by rw [hp x hx]
+
+/-- A status's place has its keys: a quiet session's are a printing one's. -/
+theorem keys_place (st : Status) :
+    needs (place st) = needs st ∧ lifecycle (place st) = lifecycle st := by cases st <;> decide
+
+/-- **A view is ordered by two keys**: what needs you to act, then where the session is in its
+life, running, saved, then ended, and rows with the same keys in the order they came in, so by
+any order the rows were listed in, as names as people read them (`before_total`). -/
+theorem sort_two_keys {α : Type} (status : α → Status) (earlier : α → α → Prop) (rows : List α)
+    (listed : rows.Pairwise earlier) :
+    (sort status rows).Pairwise fun a b =>
+      needs (status a) < needs (status b) ∨
+        needs (status a) = needs (status b) ∧
+          (lifecycle (status a) < lifecycle (status b) ∨
+            lifecycle (status a) = lifecycle (status b) ∧ earlier a b) := by
+  have ranked :
+    order.Pairwise fun a b =>
+      needs a < needs b ∨ needs a = needs b ∧ lifecycle a < lifecycle b := by
+    decide
+  have keys :
+    ∀ x st,
+      place (status x) = st →
+        needs (status x) = needs st ∧ lifecycle (status x) = lifecycle st := by
+    intro x st h
+    have := keys_place (status x)
+    rw [h] at this
+    exact ⟨this.1.symm, this.2.symm⟩
+  unfold sort
+  rw [List.pairwise_flatMap]
+  refine ⟨fun st _ => ?_, ranked.imp fun {a b} hab => ?_⟩
+  · refine (listed.sublist List.filter_sublist).imp_of_mem fun {x y} hx hy hxy => ?_
+    simp only [List.mem_filter, beq_iff_eq] at hx hy
+    obtain ⟨nx, lx⟩ := keys x st hx.2
+    obtain ⟨ny, ly⟩ := keys y st hy.2
+    exact Or.inr ⟨by omega, Or.inr ⟨by omega, hxy⟩⟩
+  · intro x hx y hy
+    simp only [List.mem_filter, beq_iff_eq] at hx hy
+    obtain ⟨nx, lx⟩ := keys x a hx.2
+    obtain ⟨ny, ly⟩ := keys y b hy.2
+    rcases hab with h | ⟨h, h'⟩
+    · exact Or.inl (by omega)
+    · exact Or.inr ⟨by omega, Or.inl (by omega)⟩
 
 /-- A view's header says how many rows it lists, -/
 theorem headerParts_count (labels : List String) (statuses : List Status) :

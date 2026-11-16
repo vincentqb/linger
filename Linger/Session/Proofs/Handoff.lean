@@ -35,6 +35,7 @@ theorem rt_ending : RT wEnding rEnding := by
   cases e with
   | program o => simp only [wEnding, rEnding, List.cons_append, rt_outcome, Option.map_some]
   | saved _ => rfl
+  | dismissed => rfl
 
 theorem rt_mode : RT wMode rMode := by
   intro m rest

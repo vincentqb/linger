@@ -101,6 +101,7 @@ theorem endingFields_injective {e₁ e₂ : Ending} (h : endingFields e₁ = end
     cases e₂ with
     | program o₂ => exact congrArg _ (outcomeFields_injective h)
     | saved n₂ => cases o₁ <;> simp [endingFields, outcomeFields] at h
+    | dismissed => cases o₁ <;> simp [endingFields, outcomeFields] at h
   | saved n₁ =>
     cases e₂ with
     | program o₂ => cases o₂ <;> simp [endingFields, outcomeFields] at h
@@ -108,6 +109,12 @@ theorem endingFields_injective {e₁ e₂ : Ending} (h : endingFields e₁ = end
       n₂ =>
       simp only [endingFields, List.cons.injEq, Prod.mk.injEq, true_and, and_true] at h
       exact congrArg _ (UInt8.toNat_inj.mp (toString_nat_inj h))
+    | dismissed => simp [endingFields] at h
+  | dismissed =>
+    cases e₂ with
+    | program o₂ => cases o₂ <;> simp [endingFields, outcomeFields] at h
+    | saved n₂ => simp [endingFields] at h
+    | dismissed => rfl
 
 /-- What an ending tells a client is how its program ended, the status a shell would report, or
 the signal that stopped the daemon: no rendered frame, and nothing a daemon serves. -/
@@ -124,6 +131,7 @@ theorem told_mem {e : Ending} {m : Msg} (h : m ∈ e.told) :
     simp only [Ending.told] at h
     rcases List.mem_singleton.mp h with rfl
     exact .inr (.inr ⟨_, rfl⟩)
+  | dismissed => simp [Ending.told] at h
 
 /-- A daemon's signal pipe stops it only when it carried one of `stopSignals`. -/
 theorem stopOf_none (bytes : List UInt8) : stopOf bytes = none ↔ ∀ b ∈ bytes, b ∉ stopSignals := by

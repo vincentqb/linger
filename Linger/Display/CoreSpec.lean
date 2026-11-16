@@ -260,6 +260,36 @@ def View.byActivity {α : Type} (status : α → Status.Status) (rows : List α)
         .resumable].flatMap
     fun st => rows.filter fun x => status x == st
 
+/-- The first key a view orders rows by, what needs you to act: `⚑` 0, then `✗` 1, `?` 2 and
+`⣿` 3, and 4 for every status that needs nothing of you. -/
+@[expose]
+def View.needs : Status.Status → Nat
+  | .asks => 0
+  | .exitedBad => 1
+  | .unknown => 2
+  | .wantsYou => 3
+  | _ => 4
+
+/-- The second key a view orders rows by, where a session is in its life: running 0, `⣷` and `⣀`
+in one place, saved 1, `~`, which a resume runs again, and ended 2, `✓`. A status that needs you
+ranks by the first key alone, and takes its session's place: `⚑` and `⣿` running, `✗` ended and
+`?`, of a session linger could not read, with the running ones. -/
+@[expose]
+def View.lifecycle : Status.Status → Nat
+  | .resumable => 1
+  | .exitedOk | .exitedBad => 2
+  | _ => 0
+
+/-- A wrong order: the one before views ordered by lifecycle, `⚑ ✗ ? ⣿`, then the running
+sessions, then `✓`, then `~`, so a session that ended sits above one a resume runs again. The
+headline that a view is ordered by what needs you, then by lifecycle, is shown to reject it. -/
+@[expose]
+def View.endedAboveSaved {α : Type} (status : α → Status.Status) (rows : List α) : List α :=
+  ([[Status.Status.asks], [.exitedBad], [.unknown], [.wantsYou], [.working, .idle], [.exitedOk],
+          [.resumable]] :
+        List (List Status.Status)).flatMap
+    fun place => rows.filter fun x => place.contains (status x)
+
 /-- A wrong order: the one before views ranked by what needs you to act, `⚑ ? ✗ ⣿`, then `✓`,
 the running sessions, `⣷` and `⣀` together, then `~`, so a session that ended well sits above
 the live ones. The headline that no row that ended well or can only be resumed sits above a live

@@ -170,6 +170,11 @@ size: Lean erases proofs regardless of file placement.
   request for attention, is told as its standard means it. Where no standard covers what linger
   must say, linger's own word keeps one meaning: a status glyph or a porcelain name never takes
   a second subject.
+- One view, one meaning: a view is a function of the records and of what the person did, and it
+  changes only on an event that changes its meaning, never on sampling, repetition or refresh. A
+  keystroke repaints only the rows it changed, a refresh does not reorder the chooser, printing or
+  going quiet does not move a row, a steady redraw keeps one status, and an alert fires once per
+  change into asking.
 - Read SHELL, HOME for remote hosts and for a resume, and LINGER_NO_DETACH_KEY once, and
   NO_COLOR and TERM once for each of `ls` and the chooser, into the pure policies of
   `Linger/Os/CoreCode/Env.lean`, which `scripts/gates.sh` ties to each read, and run every
