@@ -378,7 +378,7 @@ def serveProbe (dir : String) : IO UInt32 := do
   let saveEnded := fun (st : Session.State) => do
     if ((Session.infoFields st).lookup "exit").isSome then
       IO.FS.writeFile s!"{dir}/saved" ""
-  serve "tail" dir [bin.toString, "--delivery-child", s!"{dir}/go"] saveEnded
+  serve "tail" "tail" dir [bin.toString, "--delivery-child", s!"{dir}/go"] saveEnded
       (IO.FS.writeFile s!"{dir}/exited" "")
       (fun _ => pure (.ok (some (Terminal.Vt.Vt.init 20 5, dir, []))))
       { load := pure none, save := fun _ => pure (), restore := fun _ => pure () }

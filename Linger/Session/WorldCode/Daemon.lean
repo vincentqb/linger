@@ -11,6 +11,7 @@ import Linger.Session.CoreCode.Handoff
 import Linger.Os.CoreCode.Env
 import Linger.Os.CoreCode.Answer
 import Linger.Session.WorldCode.Paths
+import Linger.Session.WorldCode.Names
 
 public section
 
@@ -993,11 +994,11 @@ private def upgradeBlocked (rt : Rt) : Option String :=
 connection `asker`, as `Effect.upgrade` asks. The binary must name the handoff format this one
 writes when probed (`Upgrade.proceeds`). The daemon then waits for its saves and its record
 write, saves its checkpoint, which a new image that cannot take the handoff leaves to resume,
-writes the handoff (`Handoff.encode`) and execs the binary as `__upgraded name handoff pid`,
+writes the handoff (`Handoff.encode`) and execs the binary as `__upgraded id handoff pid`,
 keeping its listener, its pty, its signal pipe, its locks and every connection open
 (`Os.Shell.execImage`). It closes nothing first. It returns only when it does not replace its
 image, with why, and the daemon carries on from the state it kept. -/
-private def upgradeTo (name : String) (login : Bool) (rt : Rt) (asker : Nat) (exe : List UInt8) :
+private def upgradeTo (id : String) (login : Bool) (rt : Rt) (asker : Nat) (exe : List UInt8) :
     IO (Rt × String) := do
   let some exe :=
     String.fromUTF8? (ByteArray.mk exe.toArray) | return (rt, "the binary's path is not text")
@@ -1032,7 +1033,7 @@ private def upgradeTo (name : String) (login : Bool) (rt : Rt) (asker : Nat) (ex
     { listenFd := rt.listenFd.toNat, ptyFd := rt.ptyFd.toNat, childPid := rt.childPid.toNat,
       signals := (sigRead.toNat, sigWrite.toNat), locks := rt.locks.map (·.toNat), conns,
       ptyIn := (Linger.Session.Buf.writeFrom rt.ptyIn).toList, login, asker }
-  let path ← Paths.handoffPath name
+  let path ← Paths.handoffPath id
   try
     IO.FS.writeBinFile path (ByteArray.mk (Linger.Session.Handoff.encode rt.st world).toArray)
   catch err =>
@@ -1040,7 +1041,7 @@ private def upgradeTo (name : String) (login : Bool) (rt : Rt) (asker : Nat) (ex
   let keep :=
     #[rt.listenFd, rt.ptyFd, sigRead, sigWrite] ++ rt.locks.toArray ++ (rt.conns.map (·.fd)).toArray
   try
-    execImage exe #["__upgraded", name, path, toString rt.childPid] keep
+    execImage exe #["__upgraded", id, path, toString rt.childPid] keep
     return (rt, s!"{exe} returned from its exec, so the session keeps running")
   catch err =>
     try
@@ -1051,13 +1052,13 @@ private def upgradeTo (name : String) (login : Bool) (rt : Rt) (asker : Nat) (ex
 
 /-- Carry out the first upgrade the round asked for, and refuse the others it asked for; the
 daemon carries on when it does not replace its image, and the connection that asked hears why. -/
-private def upgradeAsked (name : String) (login : Bool) (rt : Rt) : IO Rt := do
+private def upgradeAsked (id : String) (login : Bool) (rt : Rt) : IO Rt := do
   let (asker, exe) :: others := rt.upgrades | return rt
   let mut rt := { rt with upgrades := [] }
   for (other, _) in others do
     rt ← refuse rt other "another upgrade is under way"
-  let (rt', why) ← upgradeTo name login rt asker exe
-  report s!"linger: session '{name}' did not upgrade: {why}"
+  let (rt', why) ← upgradeTo id login rt asker exe
+  report s!"linger: session '{← Names.said id}' did not upgrade: {why}"
   refuse rt' asker why
 
 /-- Serve the session from `latest` until it ends, then end it: what `serve` does once its program
@@ -1067,8 +1068,8 @@ to the program, and asks the name's end record to say what the daemon sees. Once
 exits it drains the connections; however the loop ends, it closes every connection, stops the
 program if it still runs, writes the end record, waits for the saves, ends what of the program's
 terminal session outlives it, reaps the program, and closes the pty and the signal pipe. -/
-private def run (name : String) (login : Bool) (record : RecordFile) (latest : IO.Ref Rt) :
-    IO Unit := do
+private def run (id : String) (login : Bool) (record : RecordFile) (latest : IO.Ref Rt) : IO Unit :=
+  do
   try
     let mut rt ← latest.get
     setNonblock rt.ptyFd
@@ -1082,7 +1083,7 @@ private def run (name : String) (login : Bool) (record : RecordFile) (latest : I
       let now ← monotonicMs
       let events ← observing rt' login events
       rt ← pump rt' (events ++ [.tick now])
-      rt ← upgradeAsked name login rt
+      rt ← upgradeAsked id login rt
       rt ← flushPty rt
       if !rt.exiting then
         rt ← publish rt
@@ -1160,10 +1161,10 @@ exclude, leaves no half-session: the session ends as a kill ends it, its program
 `__upgraded` names, stopped, the name's end record saying how it ended, and the checkpoint the
 replaced image saved just before its exec kept, for the first attach to show; every descriptor
 the handoff named closes as the process ends. -/
-def adopt (name path : String) (pid : UInt32) (saveCkpt : State → IO Unit) (dropCkpt : IO Unit)
+def adopt (id path : String) (pid : UInt32) (saveCkpt : State → IO Unit) (dropCkpt : IO Unit)
     (record : RecordFile) : IO Unit := do
   ignoreSighup
-  let sockPath ← Paths.socketPath name
+  let sockPath ← Paths.socketPath id
   let bytes ←
     try
       pure (some (← IO.FS.readBinFile path))
@@ -1177,7 +1178,7 @@ def adopt (name path : String) (pid : UInt32) (saveCkpt : State → IO Unit) (dr
   let some (st, w) := bytes.bind (Linger.Session.Handoff.decode ·.toList) |
     do
       report
-          s!"linger: session '{name}': the handoff from the image this one replaced does not \
+          s!"linger: session '{← Names.said id}': the handoff from the image this one replaced does not \
             decode; ending the session, whose checkpoint stays"
       let outcome ← stopChild pid
       try
@@ -1221,7 +1222,7 @@ def adopt (name path : String) (pid : UInt32) (saveCkpt : State → IO Unit) (dr
   let (rt, answered) ← runEffect rt (.send w.asker .done)
   let latest ← IO.mkRef (← pump rt (cut ++ answered))
   try
-    run name w.login record latest
+    run id w.login record latest
   finally
     close listenFd
     try
@@ -1247,21 +1248,31 @@ ended one included, as `recover false` decides, and starts nothing for a live se
 session holds (`Start.resumePlan`) or a checkpoint that does not decode. Either way it takes the
 request's ticket before the session is visible, and starts nothing when the command took it
 first (`Start.proceeds`). -/
-def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State → IO Unit)
+def serve (id name : String) (cwd : String) (argv : List String) (saveCkpt : State → IO Unit)
     (dropCkpt : IO Unit) (recover : Bool → IO Recovered) (record : RecordFile)
     (start : Option Request := none) (resume : Bool := false) : IO Unit := do
   let deadline := (← monotonicMs) + claimWaitMs
   let reported ← IO.mkRef false
-  let retry := claimRetry name (← Paths.socketPath name) deadline reported
-  Paths.withSessionLockHeld name retry fun locks => do
+  let retry := claimRetry name (← Paths.socketPath id) deadline reported
+  Paths.withSessionLockHeld id retry fun locks => do
       ignoreSighup
-      let sockPath ← Paths.socketPath name
+      unless (← Names.resolve name) == some id do
+        -- holding the ID, the name must still lead to it: a rename onto the name since the
+        -- command resolved it gave the name to another session, which this one never takes
+        let why := s!"the name '{name}' now leads to another session"
+        match start with
+        | some req =>
+          req.tell (.failed Linger.Os.Answer.notDone.code.toUInt8 why.toUTF8.toList)
+          return
+        | none =>
+          throw (IO.userError why)
+      let sockPath ← Paths.socketPath id
       let r ← unixConnect sockPath
       let live := r ≥ 0
       if live then
         close r.toUInt64.toUInt32
       if let some req := start then
-        let saved ← System.FilePath.pathExists (← Paths.ckptPath name)
+        let saved ← System.FilePath.pathExists (← Paths.ckptPath id)
         if resume then
           match Start.resumePlan live saved with
           | .running =>
@@ -1358,7 +1369,7 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
           try
             trySpawnPty (UInt32.ofNat (Terminal.Vt.clampDim vt0.colCount))
                 (UInt32.ofNat (Terminal.Vt.clampDim vt0.rowCount)) cwd prog args
-                ((Start.environment name).toArray.map fun (key, value) => s!"{key}={value}")
+                ((Start.environment id).toArray.map fun (key, value) => s!"{key}={value}")
                 (resetOf Start.reset)
           catch err =>
             record.restore previous
@@ -1388,7 +1399,7 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
                  signalWrite := signals.map (·.2), locks, saveCkpt, dropCkpt,
                  saveRecord := record.save } :
                 Rt)
-        run name argv.isEmpty record latest
+        run id argv.isEmpty record latest
       finally
         close listenFd
         try

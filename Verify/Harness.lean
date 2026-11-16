@@ -680,8 +680,9 @@ def verdict (e : Env) : IO UInt32 := do
       pure ()
   return code
 
-/-- `linger kill` every session whose socket is directly in this state dir.
-Best effort: a session that is already gone, or a kill that fails, does not
+/-- `linger kill` every session whose socket is directly in this state dir, by the name its ID
+shows: an entry of `names/` that holds the ID, else the ID itself, which every session whose name
+is its ID has. Best effort: a session that is already gone, or a kill that fails, does not
 stop the others. -/
 def Env.endSessions (e : Env) : IO Unit := do
   let sockets ←
@@ -689,9 +690,18 @@ def Env.endSessions (e : Env) : IO Unit := do
       e.dirNames ".sock"
     catch _ =>
       pure []
-  for socket in sockets do
+  let entries ←
     try
-      let _ ← e.cli #["kill", (socket.dropEnd ".sock".length).toString]
+      (← System.FilePath.readDir s!"{e.dir}/names").toList.filterMapM fun entry => do
+          if entry.fileName.startsWith "." then
+            return none
+          return some ((← IO.FS.readFile entry.path).trimAscii.toString, entry.fileName)
+    catch _ =>
+      pure []
+  for socket in sockets do
+    let id := (socket.dropEnd ".sock".length).toString
+    try
+      let _ ← e.cli #["kill", (entries.lookup id).getD id]
     catch _ =>
       pure ()
 

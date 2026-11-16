@@ -213,7 +213,7 @@ def runCase (e : Env) (index clients : Nat) (inheritedTerm : Option String)
     IO.Process.spawn
         { cmd := e.bin, env := env,
           args :=
-            #["__daemon", name, root.toString, probeBin.toString, "--probe", result, ready,
+            #["__daemon", name, name, root.toString, probeBin.toString, "--probe", result, ready,
               trigger],
           stdout := .null, stderr := .null }
   let mut c : Case := {}

@@ -4,6 +4,7 @@ public import Linger.Session.WorldSpec
 import Linger.Session.CoreCode
 import Linger.Session.WorldCode.Daemon
 import Os.WorldCode
+import Os.WorldSpec
 import Terminal.CoreCode.Replay
 import SoftwareChallenge.Commands
 
@@ -509,5 +510,40 @@ Check Claim.Exclusive grants := do
       unless third ≥ 0 do
         refute s!"a lock file's lock was refused once its holder let it go ({third})"
       close third.toUInt64.toUInt32
+
+/-- What the names of a directory name once a session's name is placed, as a start places an
+entry, with a link, or as a rename moves one, with a rename that may not replace: the observation
+`Os.Place.NoReplace` constrains, which `one_name` rests on. It has no body; the check below
+observes it. -/
+opaque placedNames : Bool → (String → Option Nat) → String → String → Option (String → Option Nat)
+
+-- A start and a rename onto one name leave it naming one entry: in a directory of its own, four
+-- links and four renames that may not replace, at once, from eight files that each hold their
+-- own ID, onto one free name; exactly one succeeds, the name holds that one's ID, every linked
+-- source stays and every renamed source that lost stays too.
+Check Os.Place.NoReplace placedNames := do
+  IO.FS.withTempDir fun dir => do
+      let sources := (List.range 8).map fun i => (decide (i < 4), s!"src{i}")
+      for (_, source) in sources do
+        IO.FS.writeFile (dir / source) source
+      let target := (dir / "name").toString
+      let tasks ←
+        sources.mapM fun (links, source) =>
+            IO.asTask
+              (if links then Os.Shell.linkNew (dir / source).toString target
+              else Os.Shell.renameNew (dir / source).toString target)
+              Task.Priority.dedicated
+      let mut winners := []
+      for ((_, source), task) in sources.zip tasks do
+        if ← IO.ofExcept (← IO.wait task) then
+          winners := winners ++ [source]
+      let [winner] := winners
+        | throw (IO.userError s!"of four links and four renames onto one name, {winners} succeeded")
+      unless (← IO.FS.readFile target) == winner do
+        throw (IO.userError s!"the name holds {← IO.FS.readFile target}, not {winner}'s ID")
+      for (links, source) in sources do
+        let kept ← (dir / source).pathExists
+        unless kept == (links || source != winner) do
+          throw (IO.userError s!"placing a name moved or kept {source} wrongly")
 
 end Linger.Session.Checks

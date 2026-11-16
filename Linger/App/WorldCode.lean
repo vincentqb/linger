@@ -3,10 +3,12 @@ module
 import Os.WorldCode
 import Linger.Os.CoreCode.Env
 import Linger.Session.WorldCode.Paths
+import Linger.Session.WorldCode.Names
 import Linger.Session.WorldCode.Daemon
 import Linger.Session.WorldCode.Client
 import Linger.Session.WorldCode.Inventory
 import Linger.Target.CoreCode.Remote
+import Linger.Target.CoreCode.Name
 import Terminal.CoreCode.Render
 import Linger.Display.CoreCode.Listing
 import Linger.Display.CoreCode.View
@@ -85,10 +87,10 @@ private def helpFooter : String :=
 /-- Start `name`'s daemon detached, running this executable as `__daemon name cwd cmd...`
 with its output appended to `Paths.logPath`. Returns the daemon's pid once that program
 has started, without waiting for it to listen; `connectUpsert` waits for the socket. -/
-private def spawnDaemon (name cwd : String) (cmd : List String) : IO UInt32 := do
+private def spawnDaemon (s : Names.Ref) (cwd : String) (cmd : List String) : IO UInt32 := do
   let self ← IO.appPath
-  let log ← Paths.logPath name
-  spawnDetached self.toString (⟨["__daemon", name, cwd] ++ cmd⟩ : Array String) log
+  let log ← Paths.logPath s.id
+  spawnDetached self.toString (⟨["__daemon", s.id, s.name, cwd] ++ cmd⟩ : Array String) log
 
 /-- How long `connectUpsert` waits for the socket whether or not the daemon it spawned
 still lives: a concurrent start whose daemon lost the name to another one still loading
@@ -110,28 +112,28 @@ private def noSession (name : String) : IO Answer := do
 
 /-- Why nothing starts over the name's checkpoint when its bytes do not decode
 (`Recovery.decide`): it is damaged, it stays as it is, and `linger kill` discards it. -/
-private def undecodedText (name : String) : IO String := do
-  return s!"its checkpoint {← Paths.ckptPath name} is damaged and does not decode, so it stays \
-    as it is; linger kill {name} discards it"
+private def undecodedText (s : Names.Ref) : IO String := do
+  return s!"its checkpoint {← Paths.ckptPath s.id} is damaged and does not decode, so it stays \
+    as it is; linger kill {s.name} discards it"
 
 /-- Why a command that found no live session starts nothing, as `Recovery.decide` answered: no
 session holds the name, or its checkpoint does not decode. -/
-private def refusalText (name : String) (answer : Answer) : IO String := do
+private def refusalText (s : Names.Ref) (answer : Answer) : IO String := do
   if answer == .notFound then
-    return s!"no session '{name}'"
-  return s!"session '{name}': {← undecodedText name}"
+    return s!"no session '{s.name}'"
+  return s!"session '{s.name}': {← undecodedText s}"
 
 /-- Say why a command that found no live session starts nothing, as `Recovery.decide`
 answered, and give that answer: no session holds the name, or its checkpoint does not decode. -/
-private def refused (name : String) (answer : Answer) : IO Answer := do
-  IO.eprintln s!"linger: {← refusalText name answer}"
+private def refused (s : Names.Ref) (answer : Answer) : IO Answer := do
+  IO.eprintln s!"linger: {← refusalText s answer}"
   return answer
 
 /-- What the daemon of `name` starts from, as `Recovery.decide` says from the name's checkpoint
 file, `create` when a new session may start: a refusal is the status its command answers, and
 why. -/
-private def recoverFor (name : String) (create : Bool) : IO Daemon.Recovered := do
-  match Linger.App.Recovery.decide create (← Resume.readCkpt name) with
+private def recoverFor (s : Names.Ref) (create : Bool) : IO Daemon.Recovered := do
+  match Linger.App.Recovery.decide create (← Resume.readCkpt s.id) with
   | .fresh =>
     return .ok none
   | .resume ck =>
@@ -139,9 +141,9 @@ private def recoverFor (name : String) (create : Bool) : IO Daemon.Recovered := 
   | .refuse answer =>
     let why ←
       if answer == .notFound then
-        pure s!"no session '{name}'"
+        pure s!"no session '{s.name}'"
       else
-        undecodedText name
+        undecodedText s
     return .error (answer.code.toUInt8, why)
 
 /-- Write what the daemon did to the report `start` named, whole, through a temporary sibling. -/
@@ -181,18 +183,18 @@ private def daemonRequest (report : String) : IO Daemon.Request := do
 
 /-- The daemon `start` began. It reports what it did once, and a failure before that is reported
 too: as `running` when a live session took the name first, else as linger's own failure. -/
-private def serveStart (report name cwd : String) (argv : List String) : IO Unit := do
+private def serveStart (report id name cwd : String) (argv : List String) : IO Unit := do
   let req ← daemonRequest report
   let told ← IO.mkRef false
   let tell (r : Linger.Session.Start.Report) : IO Unit := do
     told.set true
     req.tell r
   try
-    Daemon.serve name cwd argv (← Resume.saver name) (Resume.dropCkpt name) (recoverFor name)
-        (recordFile name) (some { req with tell })
+    Daemon.serve id name cwd argv (← Resume.saver id) (Resume.dropCkpt id) (recoverFor { name, id })
+        (recordFile id) (some { req with tell })
   catch err =>
     unless ← told.get do
-      match ← Client.connect name with
+      match ← Client.connect id with
       | some fd =>
         close fd
         tell .running
@@ -259,20 +261,21 @@ private def beginRequest (report log : String) (args : List String) : IO UInt32 
 one whose checkpoint decodes, whether its program ended; and for one whose checkpoint does not,
 which nothing resumes (`Recovery.decide`), that it is damaged and kept, and that `linger kill`
 discards it. -/
-private def startRefused (name : String) (saved : Bool) : IO Answer := do
+private def startRefused (s : Names.Ref) (saved : Bool) : IO Answer := do
   unless saved do
-    IO.eprintln s!"linger: session '{name}' is running"
+    IO.eprintln s!"linger: session '{s.name}' is running"
     return .notDone
-  if let .refuse .notDone := Linger.App.Recovery.decide false (← Resume.readCkpt name) then
-    return ← refused name .notDone
-  let record := (← (Record.load name).toBaseIO).toOption.join
+  if let .refuse .notDone := Linger.App.Recovery.decide false (← Resume.readCkpt s.id) then
+    return ← refused s .notDone
+  let record := (← (Record.load s.id).toBaseIO).toOption.join
   match record.bind Linger.Session.Record.decode with
   | some (.ended outcome) =>
     IO.eprintln
-        s!"linger: session '{name}' ended ({(Client.Ending.outcome outcome).describe}); \
+        s!"linger: session '{s.name}' ended ({(Client.Ending.outcome outcome).describe}); \
         attach to see it, which discards it, or kill it to discard it"
   | _ =>
-    IO.eprintln s!"linger: session '{name}' is saved; attach to resume it, or kill it to discard it"
+    IO.eprintln
+        s!"linger: session '{s.name}' is saved; attach to resume it, or kill it to discard it"
   return .notDone
 
 /-- `start`'s answer once its wait ended: `done` exactly when the program runs (`Start.answer`);
@@ -280,37 +283,37 @@ private def startRefused (name : String) (saved : Bool) : IO Answer := do
 could not start, the answer whose status a shell or `env` reports; and `timedOut` when the daemon
 did not answer in time, so it starts nothing. A report that is no report, or a daemon that ended
 without one, is linger's own failure. -/
-private def startStatus (name log : String) (waited : Waited) : IO Answer := do
+private def startStatus (s : Names.Ref) (log : String) (waited : Waited) : IO Answer := do
   match Linger.Session.Start.answer (waited matches .took _) (waited matches .told (some .started)),
     waited with
   | .started, _ =>
     return .done
   | .notStarted, .told (some .running) =>
-    startRefused name false
+    startRefused s false
   | .notStarted, .told (some .saved) =>
-    startRefused name true
+    startRefused s true
   | .notStarted, .told (some (.failed status why)) =>
     do
-      IO.eprintln s!"linger: session '{name}' did not start: {Client.replyText "no reason" why}"
+      IO.eprintln s!"linger: session '{s.name}' did not start: {Client.replyText "no reason" why}"
       return Answer.ofCode status.toUInt32
   | .notStarted, .told none =>
     do
-      IO.eprintln s!"linger: session '{name}' did not start: the daemon's report is unreadable"
+      IO.eprintln s!"linger: session '{s.name}' did not start: the daemon's report is unreadable"
       return .failed
   | .notStarted, .took true =>
     do
       IO.eprintln
-          s!"linger: session '{name}' did not start: its daemon did not answer within \
+          s!"linger: session '{s.name}' did not start: its daemon did not answer within \
         {startWaitMs / 1000} s, so it starts nothing (see {log})"
       return .timedOut
   | .notStarted, .took false =>
     do
-      IO.eprintln s!"linger: session '{name}' did not start: its daemon ended first (see {log})"
+      IO.eprintln s!"linger: session '{s.name}' did not start: its daemon ended first (see {log})"
       return .failed
   | .notStarted, _ =>
     do
       IO.eprintln
-          s!"linger: session '{name}': its daemon ended without saying whether it started \
+          s!"linger: session '{s.name}': its daemon ended without saying whether it started \
         (see {log})"
       return .failed
 
@@ -321,41 +324,41 @@ the daemon decides again holding the name. A program that cannot start answers a
 `env` reports it, `failed` for its directory, `notFound` when not found and `cannotRun` when not
 runnable, and leaves no session, checkpoint or record behind. A daemon that does not answer
 within `startWaitMs` starts nothing, and `start` says so, `timedOut`. -/
-private def cmdStart (name : String) (argv : List String) : IO Answer := do
+private def cmdStart (s : Names.Ref) (argv : List String) : IO Answer := do
   let live ←
-    match ← Client.connect name with
+    match ← Client.connect s.id with
     | some fd =>
       do
         close fd
         pure true
     | none =>
       pure false
-  let saved ← System.FilePath.pathExists (← Paths.ckptPath name)
+  let saved ← System.FilePath.pathExists (← Paths.ckptPath s.id)
   match Linger.Session.Start.plan live saved with
   | .running =>
-    startRefused name false
+    startRefused s false
   | .saved =>
-    startRefused name true
+    startRefused s true
   | .take =>
-    let report ← Paths.startReportPath name s!"{← getpid}-{← IO.rand 0 0xFFFFFFFF}"
+    let report ← Paths.startReportPath s.id s!"{← getpid}-{← IO.rand 0 0xFFFFFFFF}"
     let cwd := (← IO.Process.getCurrentDir).toString
-    let log ← Paths.logPath name
-    let pid ← beginRequest report log (["__start", report, name, cwd] ++ argv)
-    startStatus name log (← awaitReport pid report)
+    let log ← Paths.logPath s.id
+    let pid ← beginRequest report log (["__start", report, s.id, s.name, cwd] ++ argv)
+    startStatus s log (← awaitReport pid report)
 
 /-- The daemon `resume` began: `serveStart`'s, running only a saved session's program again. -/
-private def serveResume (report name cwd : String) : IO Unit := do
+private def serveResume (report id name cwd : String) : IO Unit := do
   let req ← daemonRequest report
   let told ← IO.mkRef false
   let tell (r : Linger.Session.Start.Report) : IO Unit := do
     told.set true
     req.tell r
   try
-    Daemon.serve name cwd [] (← Resume.saver name) (Resume.dropCkpt name) (recoverFor name)
-        (recordFile name) (some { req with tell }) (resume := true)
+    Daemon.serve id name cwd [] (← Resume.saver id) (Resume.dropCkpt id) (recoverFor { name, id })
+        (recordFile id) (some { req with tell }) (resume := true)
   catch err =>
     unless ← told.get do
-      match ← Client.connect name with
+      match ← Client.connect id with
       | some fd =>
         close fd
         tell .running
@@ -365,11 +368,11 @@ private def serveResume (report name cwd : String) : IO Unit := do
 
 /-- A resumed session whose directory is gone runs in `$HOME`: say where it runs and where it was
 saved, from its info fields start_dir and saved_dir. -/
-private def sayMoved (name : String) : IO Unit := do
-  if let some (.ok info)← queryInfo name then
+private def sayMoved (s : Names.Ref) : IO Unit := do
+  if let some (.ok info)← queryInfo s.id then
     if let some saved := info.lookup "saved_dir" then
       let ran := (info.lookup "start_dir").getD "$HOME"
-      IO.eprintln s!"linger: session '{name}' resumed in {ran}: its directory {saved} is gone"
+      IO.eprintln s!"linger: session '{s.name}' resumed in {ran}: its directory {saved} is gone"
 
 /-- `resume`'s answer once its wait ended: `done` exactly when the program runs (`Start.answer`),
 again, saying where when its directory is gone, or in a live session that already runs it;
@@ -378,40 +381,41 @@ session that cannot be read or a program that cannot start, `notDone` or the ans
 a shell or `env` reports; and `timedOut` when the daemon did not answer in time, so it starts
 nothing. A report that is no report, or a daemon that ended without one, is linger's own
 failure. -/
-private def resumeStatus (name log : String) (waited : Waited) : IO Answer := do
+private def resumeStatus (s : Names.Ref) (log : String) (waited : Waited) : IO Answer := do
   let runs := waited matches .told (some .started) || waited matches .told (some .running)
   match Linger.Session.Start.answer (waited matches .took _) runs, waited with
   | .started, .told (some .started) =>
     do
-      sayMoved name
+      sayMoved s
       return .done
   | .started, _ =>
     return .done
   | .notStarted, .told (some (.failed status why)) =>
     if Answer.ofCode status.toUInt32 == .notFound then
-      noSession name
+      noSession s.name
     else
       do
-        IO.eprintln s!"linger: session '{name}' did not resume: {Client.replyText "no reason" why}"
+        IO.eprintln
+            s!"linger: session '{s.name}' did not resume: {Client.replyText "no reason" why}"
         return Answer.ofCode status.toUInt32
   | .notStarted, .told _ =>
     do
-      IO.eprintln s!"linger: session '{name}' did not resume: the daemon's report is unreadable"
+      IO.eprintln s!"linger: session '{s.name}' did not resume: the daemon's report is unreadable"
       return .failed
   | .notStarted, .took true =>
     do
       IO.eprintln
-          s!"linger: session '{name}' did not resume: its daemon did not answer within \
+          s!"linger: session '{s.name}' did not resume: its daemon did not answer within \
         {startWaitMs / 1000} s, so it starts nothing (see {log})"
       return .timedOut
   | .notStarted, .took false =>
     do
-      IO.eprintln s!"linger: session '{name}' did not resume: its daemon ended first (see {log})"
+      IO.eprintln s!"linger: session '{s.name}' did not resume: its daemon ended first (see {log})"
       return .failed
   | .notStarted, .silent =>
     do
       IO.eprintln
-          s!"linger: session '{name}': its daemon ended without saying whether it resumed \
+          s!"linger: session '{s.name}': its daemon ended without saying whether it resumed \
         (see {log})"
       return .failed
 
@@ -420,27 +424,27 @@ directory and on its last screen, without attaching, and return once it runs. A 
 left as it is, and a name no session holds starts nothing (`Start.resumePlan`); the daemon decides
 again holding the name. A daemon that does not answer within `startWaitMs` starts nothing, and
 `resume` says so, `timedOut`. -/
-private def cmdResume (name : String) : IO Answer := do
+private def cmdResume (s : Names.Ref) : IO Answer := do
   let live ←
-    match ← Client.connect name with
+    match ← Client.connect s.id with
     | some fd =>
       do
         close fd
         pure true
     | none =>
       pure false
-  let saved ← System.FilePath.pathExists (← Paths.ckptPath name)
+  let saved ← System.FilePath.pathExists (← Paths.ckptPath s.id)
   match Linger.Session.Start.resumePlan live saved with
   | .running =>
     return .done
   | .missing =>
-    noSession name
+    noSession s.name
   | .resume =>
-    let report ← Paths.startReportPath name s!"{← getpid}-{← IO.rand 0 0xFFFFFFFF}"
+    let report ← Paths.startReportPath s.id s!"{← getpid}-{← IO.rand 0 0xFFFFFFFF}"
     let cwd := (← IO.Process.getCurrentDir).toString
-    let log ← Paths.logPath name
-    let pid ← beginRequest report log ["__resume", report, name, cwd]
-    resumeStatus name log (← awaitReport pid report)
+    let log ← Paths.logPath s.id
+    let pid ← beginRequest report log ["__resume", report, s.id, s.name, cwd]
+    resumeStatus s log (← awaitReport pid report)
 
 /-- The answer of an attach whose daemon ended without listening, when the name's checkpoint
 does not decode, so that daemon started nothing over it (`Recovery.decide`). `none` when there
@@ -461,33 +465,33 @@ private def undecoded (name : String) : IO (Option Answer) := do
 gives up no sooner than `socketWaitFloorMs`; after that it keeps waiting only while the
 spawned daemon lives, never past `socketWaitCapMs`. A daemon that ends without listening over
 a checkpoint that does not decode is answered at once, with the refusal (`undecoded`). -/
-private def connectUpsert (name : String) (cmd : List String) : IO (Except Answer UInt32) := do
-  match ← Client.connect name with
+private def connectUpsert (s : Names.Ref) (cmd : List String) : IO (Except Answer UInt32) := do
+  match ← Client.connect s.id with
   | some fd =>
     return .ok fd
   | none =>
     -- Recovery, including its saved cwd, happens only after the daemon owns
     -- both resources. A parent-side load would race another runtime namespace.
     let cwd := (← IO.Process.getCurrentDir).toString
-    let pid ← spawnDaemon name cwd cmd
+    let pid ← spawnDaemon s cwd cmd
     let start ← monotonicMs
     let mut fdOpt : Option UInt32 := none
     let mut looked := false
     while fdOpt.isNone && ((← monotonicMs) < start + socketWaitFloorMs || (← alive pid)) do
       unless ← nap (start + socketWaitCapMs) 30 do
         break
-      fdOpt ← Client.connect name
+      fdOpt ← Client.connect s.id
       if fdOpt.isNone && !looked && !(← alive pid) then
         looked := true
-        if let some answer← undecoded name then
+        if let some answer← undecoded s.id then
           return .error answer
     match fdOpt with
     | some fd =>
-      sayMoved name
+      sayMoved s
       return .ok fd
     | none =>
-      let log ← Paths.logPath name
-      throw (IO.userError s!"daemon for '{name}' did not come up (see {log})")
+      let log ← Paths.logPath s.id
+      throw (IO.userError s!"daemon for '{s.name}' did not come up (see {log})")
 
 /-- Reject an operand that is neither an exact name nor a well-formed `name@host` target:
 print the name rule and answer `usage`. -/
@@ -555,6 +559,29 @@ private def withTarget (verb target : String) (args : List String)
   match Linger.Target.Remote.parseTarget target with
   | none => invalidTarget
   | some parsed => runTarget verb parsed args localAction options
+
+/-- `withTarget`, its local action given the session the name leads to now (`Names.find`): every
+file of the session is the ID's for the rest of the command, whatever renames follow. A name that
+leads to no session's ID is no session (`noSession`). -/
+private def withSession (verb target : String) (args : List String)
+    (localAction : Names.Ref → IO Answer) (options : List String := []) : IO Answer :=
+  withTarget verb target args
+    (fun name => do
+      match ← Names.find name with
+      | some s =>
+        localAction s
+      | none =>
+        noSession name)
+    options
+
+/-- `withTarget` for a command that may create a session, its local action given the ID the name
+leads to, or a fresh one with an entry for the name when it leads nowhere (`Names.claim`). -/
+private def withNew (verb target : String) (args : List String)
+    (localAction : Names.Ref → IO Answer) (options : List String := []) : IO Answer :=
+  withTarget verb target args
+    (fun name => do
+      localAction (← Names.claim name))
+    options
 
 /-- Maximum simultaneous remote overview commands. -/
 abbrev remoteQueryLimit : Nat := 4
@@ -708,24 +735,24 @@ checkpoint while holding the name, when it still holds `shown`, the bytes the vi
 that a session resumed or replaced since is never lost. Its end record stays, for `wait` and
 `ls`. A name another process holds, or a checkpoint that cannot be read or deleted, keeps the
 session and says so. -/
-private def discardShown (name : String) (shown : ByteArray) : IO Unit := do
+private def discardShown (s : Names.Ref) (shown : ByteArray) : IO Unit := do
   let discarded ←
     try
-      Paths.withSessionLock name do
-          if (← Resume.readCkpt name).map (·.data) == some shown.data then
-            Resume.dropCkpt name
+      Paths.withSessionLock s.id do
+          if (← Resume.readCkpt s.id).map (·.data) == some shown.data then
+            Resume.dropCkpt s.id
       pure none
     catch err =>
       pure (some err.toString)
   if let some why := discarded then
-    IO.eprintln s!"\r\nlinger: session '{name}' was seen but not discarded: {why}"
+    IO.eprintln s!"\r\nlinger: session '{s.name}' was seen but not discarded: {why}"
 
 /-- Take the steps `Recovery.visit` names for the saved session `name`, whose checkpoint held
 `shown`, decoding to the screen `vt`, under the status the listing shows for it: `none` when the
 session is to be resumed, and otherwise how the attach ended. A view a signal interrupts takes no
 later step, so a session it may not have shown is kept; a view the viewer leaves goes on to tell
 how the program ended and discard the session. -/
-private def runVisit (name : String) (shown : ByteArray) (vt : Terminal.Vt.Vt)
+private def runVisit (s : Names.Ref) (shown : ByteArray) (vt : Terminal.Vt.Vt)
     (status : Linger.Display.Status.Status) (steps : List Linger.App.Visit.Step) :
     IO (Option Client.Outcome) := do
   let mut result : Client.Outcome := .detached
@@ -734,7 +761,7 @@ private def runVisit (name : String) (shown : ByteArray) (vt : Terminal.Vt.Vt)
     | .resume =>
       return none
     | .show =>
-      let viewed ← Client.viewSaved name vt status
+      let viewed ← Client.viewSaved s.name vt status
       if let .detached := viewed then
         pure ()
       else
@@ -742,7 +769,7 @@ private def runVisit (name : String) (shown : ByteArray) (vt : Terminal.Vt.Vt)
     | .tell outcome =>
       result := .ended (.outcome outcome)
     | .discard =>
-      discardShown name shown
+      discardShown s shown
   return some result
 
 /-- What an attach does with `name` when no daemon answers for it, from its end record and then,
@@ -751,21 +778,21 @@ program that ended, shown and then discarded, or a saved session viewed or, `non
 (`Recovery.visit`), or, when its checkpoint does not decode or there is none, the refusal
 `Recovery.decide` answers. The record alone decides a resume, so a resume leaves the checkpoint
 unread, to the daemon it starts. -/
-private def visitOffline (name : String) (readOnly : Bool) :
+private def visitOffline (s : Names.Ref) (readOnly : Bool) :
     IO (Except Answer (Option Client.Outcome)) := do
   let (steps, record, file) ←
-    Paths.withSessionLock name do
-        let record ← (Record.load name).toBaseIO
+    Paths.withSessionLock s.id do
+        let record ← (Record.load s.id).toBaseIO
         let steps := Linger.App.Recovery.visit readOnly record.toOption.join
         if steps == [.resume] then
           return (steps, record, none)
-        return (steps, record, ← Resume.readCkpt name)
+        return (steps, record, ← Resume.readCkpt s.id)
   if steps == [.resume] then
     return .ok none
   let status := Linger.Display.Listing.rowStatus (savedRow record).1
   match Linger.App.Recovery.decide false file, file with
   | .resume ck, some shown =>
-    return .ok (← runVisit name shown ck.vt status steps)
+    return .ok (← runVisit s shown ck.vt status steps)
   | .refuse answer, _ =>
     return .error answer
   | _, _ =>
@@ -779,37 +806,37 @@ how it ended and discards once the viewer leaves, since it has been seen; read-o
 views any other saved session, and writable attachment keeps the create/resume path for it. Either
 refuses a checkpoint that does not decode, which stays as it is (`Recovery.decide`). Live titles
 sample `summaryText` in this process. -/
-private def cmdAttach (name : String) (cmd : List String) (readOnly : Bool) : IO Answer := do
+private def cmdAttach (s : Names.Ref) (cmd : List String) (readOnly : Bool) : IO Answer := do
   let result : Except Answer Client.Outcome ←
     if readOnly then
-      match ← Client.connect name with
+      match ← Client.connect s.id with
       | some fd =>
-        attachSpoken name fd true
+        attachSpoken s.name fd true
       | none =>
-        match ← visitOffline name true with
+        match ← visitOffline s true with
         | .ok (some outcome) =>
           pure (.ok outcome)
         | .ok none =>
           -- a watcher's visit never resumes (`visit_result`)
-          .error <$> refused name .notDone
+          .error <$> refused s .notDone
         | .error answer =>
-          .error <$> refused name answer
+          .error <$> refused s answer
     else
       -- a result is shown, not resumed: only a saved session that is no result, or none, takes
       -- the create/resume path, as does a name another process holds
-      match ← Client.connect name with
+      match ← Client.connect s.id with
       | some fd =>
-        attachSpoken name fd false
+        attachSpoken s.name fd false
       | none =>
-        match ← (visitOffline name false).toBaseIO with
+        match ← (visitOffline s false).toBaseIO with
         | .ok (.ok (some outcome)) =>
           pure (.ok outcome)
         | _ =>
-          match ← connectUpsert name cmd with
+          match ← connectUpsert s cmd with
           | .ok fd =>
-            attachSpoken name fd false
+            attachSpoken s.name fd false
           | .error answer =>
-            .error <$> refused name answer
+            .error <$> refused s answer
   match result with
   | .error answer =>
     return answer
@@ -817,30 +844,30 @@ private def cmdAttach (name : String) (cmd : List String) (readOnly : Bool) : IO
     -- the system stopping linger may have hung up this terminal too: the answer says it
     try
       IO.eprintln
-          s!"\r\nlinger: session '{name}' was saved when signal {signal} stopped its daemon; \
+          s!"\r\nlinger: session '{s.name}' was saved when signal {signal} stopped its daemon; \
             attach to resume it"
     catch _ =>
       pure ()
     return endingAnswer (.saved signal)
   | .ok (.ended ending) =>
-    IO.eprintln s!"\r\nlinger: session '{name}' ended ({ending.describe})"
+    IO.eprintln s!"\r\nlinger: session '{s.name}' ended ({ending.describe})"
     return endingAnswer ending
   | .ok (.stopped signal) =>
     -- the terminal is handed back, but a hung-up one cannot show why: the answer says it, and
     -- `main` then ends the process by the signal
     try
-      IO.eprintln s!"\r\nlinger: signal {signal} stopped the attach; detached from '{name}'"
+      IO.eprintln s!"\r\nlinger: signal {signal} stopped the attach; detached from '{s.name}'"
     catch _ =>
       pure ()
     return .stopped signal
   | .ok .detached =>
-    IO.eprintln s!"\r\nlinger: detached from '{name}'"
+    IO.eprintln s!"\r\nlinger: detached from '{s.name}'"
     return .done
   | .ok (.refused msg) =>
     IO.eprintln s!"\r\nlinger: {msg}"
     return .notDone
   | .ok (.lost why) =>
-    IO.eprintln s!"\r\nlinger: {why} for '{name}'"
+    IO.eprintln s!"\r\nlinger: {why} for '{s.name}'"
     return .notDone
 
 /-- The width a human listing fits: the terminal's columns when standard output is one with a
@@ -973,18 +1000,18 @@ private def requestStatus (name : String) (result : Client.Drained) : IO Answer 
 
 /-- One request to a live session, given up after `Client.replySilenceMs` of silence, as every
 one-shot request is (`Client.oneShot`). -/
-private def requireLive (name : String) (m : Msg) : IO Answer := do
-  match ← Client.oneShot name m with
+private def requireLive (s : Names.Ref) (m : Msg) : IO Answer := do
+  match ← Client.oneShot s.id m with
   | none =>
-    noSession name
+    noSession s.name
   | some result =>
-    requestStatus name result
+    requestStatus s.name result
 
 /-- Like `requireLive`, but delivers `ms` without awaiting a reply: `send` text. -/
-private def requireLiveSend (name : String) (ms : List Msg) : IO Answer := do
-  if ← Client.sendOnly name ms then
+private def requireLiveSend (s : Names.Ref) (ms : List Msg) : IO Answer := do
+  if ← Client.sendOnly s.id ms then
     return .done
-  noSession name
+  noSession s.name
 
 /-- What `capture` of a saved session has to show once it has rendered: the session, or why
 there is none, with the answer that says so. -/
@@ -998,7 +1025,7 @@ private inductive Shown where
 an `acquire` to the next `release`, or to the end, inside one `Paths.withSessionLock` of `name`,
 which takes both of the name's locks once and lets them go however those steps end, and the
 other steps outside it. -/
-private def runHolding (name : String) (plan : List Linger.App.Capture.Step)
+private def runHolding (s : Names.Ref) (plan : List Linger.App.Capture.Step)
     (run : Linger.App.Capture.Step → IO Unit) : IO Unit := do
   let mut held : Option (Array Linger.App.Capture.Step) := none
   for step in plan do
@@ -1006,7 +1033,7 @@ private def runHolding (name : String) (plan : List Linger.App.Capture.Step)
     | .acquire, none =>
       held := some #[]
     | .release, some inside =>
-      Paths.withSessionLock name (inside.forM run)
+      Paths.withSessionLock s.id (inside.forM run)
       held := none
     | .acquire, some _ | .release, none =>
       pure ()
@@ -1015,33 +1042,33 @@ private def runHolding (name : String) (plan : List Linger.App.Capture.Step)
     | step, none =>
       run step
   if let some inside := held then
-    Paths.withSessionLock name (inside.forM run)
+    Paths.withSessionLock s.id (inside.forM run)
 
 /-- A connected daemon is authoritative, including its errors. Only an absent connection
 followed by successful ownership acquisition permits an offline read, which takes the steps of
 `Capture.plan`: it holds both locks through loading and rendering, and lets them go before it
 writes what it rendered, so a reader that does not read holds up no attach or resume
 (`capture_waits_unlocked`). Never start or modify a session. -/
-private def cmdRead (name : String) (m : Msg) (render : Terminal.Vt.Vt → List UInt8) : IO Answer :=
+private def cmdRead (s : Names.Ref) (m : Msg) (render : Terminal.Vt.Vt → List UInt8) : IO Answer :=
   do
-  match ← Client.oneShot name m with
+  match ← Client.oneShot s.id m with
   | some result =>
-    requestStatus name result
+    requestStatus s.name result
   | none =>
     let file ← IO.mkRef (none : Option ByteArray)
-    let shown ← IO.mkRef (Shown.refusal .notFound (← refusalText name .notFound))
+    let shown ← IO.mkRef (Shown.refusal .notFound (← refusalText s .notFound))
     let answer ← IO.mkRef Answer.failed
-    runHolding name Linger.App.Capture.plan fun
+    runHolding s Linger.App.Capture.plan fun
         | .load => do
-          file.set (← Resume.readCkpt name)
+          file.set (← Resume.readCkpt s.id)
         | .render => do
           match Linger.App.Recovery.decide false (← file.get) with
           | .resume ck =>
             shown.set (.session (render ck.vt))
           | .refuse refusal =>
-            shown.set (.refusal refusal (← refusalText name refusal))
+            shown.set (.refusal refusal (← refusalText s refusal))
           | .fresh =>
-            shown.set (.refusal .notFound (← refusalText name .notFound))
+            shown.set (.refusal .notFound (← refusalText s .notFound))
         | .write => do
           match ← shown.get with
           | .session bytes =>
@@ -1063,10 +1090,10 @@ answers, input, a reply or either side closing, wakes the poll. Stdin EOF
 answers `done`, and a missing session `notFound`; a refusal, an invalid reply, the session's exit
 or a lost connection answers `notDone`. Nothing accumulates (each chunk is sent and dropped), so
 no `Buf` is involved. -/
-private def cmdSendStdin (name : String) : IO Answer := do
-  match ← Client.connect name with
+private def cmdSendStdin (s : Names.Ref) : IO Answer := do
+  match ← Client.connect s.id with
   | none =>
-    noSession name
+    noSession s.name
   | some fd =>
     try
       let mut dec : Linger.Session.Wire.Decoder := {}
@@ -1076,14 +1103,14 @@ private def cmdSendStdin (name : String) : IO Answer := do
         if revs[1]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
           match ← read fd 65536 with
           | none =>
-            IO.eprintln s!"linger: connection lost for '{name}'"
+            IO.eprintln s!"linger: connection lost for '{s.name}'"
             return .notDone
           | some bs =>
             if !bs.isEmpty then
               let (dec', msgs) := dec.feed bs.toList
               dec := dec'
               if dec.errored then
-                IO.eprintln s!"linger: invalid response from daemon for '{name}'"
+                IO.eprintln s!"linger: invalid response from daemon for '{s.name}'"
                 return .notDone
               for m in msgs do
                 match m with
@@ -1092,14 +1119,14 @@ private def cmdSendStdin (name : String) : IO Answer := do
                   return .notDone
                 | .ended outcome =>
                   let ending := Client.Ending.outcome outcome
-                  IO.eprintln s!"linger: session '{name}' ended while sending ({ending.describe})"
+                  IO.eprintln s!"linger: session '{s.name}' ended while sending ({ending.describe})"
                   return .notDone
                 | .exited status =>
-                  IO.eprintln s!"linger: session '{name}' ended while sending (status {status})"
+                  IO.eprintln s!"linger: session '{s.name}' ended while sending (status {status})"
                   return .notDone
                 | .saved signal =>
                   let ending := Client.Ending.saved signal
-                  IO.eprintln s!"linger: session '{name}' ended while sending ({ending.describe})"
+                  IO.eprintln s!"linger: session '{s.name}' ended while sending ({ending.describe})"
                   return .notDone
                 | _ =>
                   pure ()
@@ -1150,8 +1177,8 @@ private def unanswered (name : String) : IO Unanswered := do
 /-- One look at `name` for `wait` (`Wait.Heard`): its daemon's reply, given up after `silenceMs`
 of silence, or, with no daemon to answer, its end record or that another process holds it; with
 why, for a refusal or a held name. -/
-private def hear (name : String) (silenceMs : Int32) : IO (Wait.Heard × String) := do
-  match ← Client.oneShot name .wait (untilDone := false) (silenceMs := silenceMs) with
+private def hear (s : Names.Ref) (silenceMs : Int32) : IO (Wait.Heard × String) := do
+  match ← Client.oneShot s.id .wait (untilDone := false) (silenceMs := silenceMs) with
   | some (.exited (.outcome outcome)) =>
     return (.ended (.program outcome), "")
   | some (.exited (.saved signal)) =>
@@ -1163,9 +1190,9 @@ private def hear (name : String) (silenceMs : Int32) : IO (Wait.Heard × String)
   | some (.refused why) =>
     return (.refused, why)
   | some .done =>
-    return (.refused, s!"no exit status from '{name}'")
+    return (.refused, s!"no exit status from '{s.name}'")
   | some (.lost _) | none =>
-    match ← unanswered name with
+    match ← unanswered s.id with
     | .recorded answer =>
       return (.recorded answer, "")
     | .held why =>
@@ -1182,7 +1209,7 @@ one. With a `deadline` on the monotonic clock, `timedOut` once it has passed and
 still running, as `timeout(1)` reports, leaving the session as it is. A refusal answers
 `notDone`; that linger could not find out, only for an unknown ending or a name held with no
 daemon answering for `Wait.heldNameMs`, from the look that first found it so. -/
-private def cmdWait (deadline : Option Nat) (name : String) : IO Answer := do
+private def cmdWait (deadline : Option Nat) (s : Names.Ref) : IO Answer := do
   let mut heldSince : Option Nat := none
   repeat
     -- a silence budget ends a held wait when the time is up; `Int32` bounds one round of it
@@ -1191,20 +1218,20 @@ private def cmdWait (deadline : Option Nat) (name : String) : IO Answer := do
       match deadline with
       | some limit => Int32.ofNat (min (limit - now) 2147483647)
       | none => -1
-    let (heard, why) ← hear name silenceMs
+    let (heard, why) ← hear s silenceMs
     match Wait.decide deadline heldSince (← monotonicMs) heard with
     | .answer answer =>
       match answer, heard with
       | .timedOut, _ =>
-        IO.eprintln s!"linger: timed out waiting for '{name}'"
+        IO.eprintln s!"linger: timed out waiting for '{s.name}'"
       | _, .ended ending | _, .recorded (some ending) =>
-        sayEnding name ending
+        sayEnding s.name ending
       | _, .recorded none =>
-        IO.eprintln s!"linger: no session '{name}'"
+        IO.eprintln s!"linger: no session '{s.name}'"
       | _, .refused =>
         IO.eprintln s!"linger: {why}"
       | _, .held =>
-        IO.eprintln s!"linger: no answer for '{name}': {why}"
+        IO.eprintln s!"linger: no answer for '{s.name}': {why}"
       | _, _ =>
         pure ()
       return answer
@@ -1212,6 +1239,15 @@ private def cmdWait (deadline : Option Nat) (name : String) : IO Answer := do
       heldSince := since
       if let some first := since then
         discard <| nap (first + Wait.heldNameMs) 20
+
+/-- `cmdWait` of the session `name` leads to now (`Names.find`), which it waits for whatever
+renames follow; a name that leads to none is no session. -/
+private def waitNamed (deadline : Option Nat) (name : String) : IO Answer := do
+  match ← Names.find name with
+  | some s =>
+    cmdWait deadline s
+  | none =>
+    noSession name
 
 /-- Milliseconds in `text`, a number of seconds such as `timeout(1)` takes: digits, a point and
 digits, or both, counting at most three decimals. -/
@@ -1255,7 +1291,7 @@ private def waitAll (names : List String) (limit : Option Nat) : IO Answer := do
       match deadline with
       | some due => ["--timeout", secondsText (due - now)]
       | none => []
-    answer ← runTarget "wait" target [] (cmdWait deadline) options
+    answer ← runTarget "wait" target [] (waitNamed deadline) options
     -- a remote wait's answer is its status, so the codes tell whether its time ran out
     if let some due := deadline then
       if answer.code == Answer.timedOut.code && (← monotonicMs) ≥ due then
@@ -1286,8 +1322,8 @@ ended, records that and gives the name up. With no daemon, a saved session is di
 an ended one included, whose end record stays for `wait` and `ls`. No session answers
 `notFound`; a refusal, a name another process holds, or a session that has not ended within
 `Wait.heldNameMs`, prints a diagnostic and answers `notDone`. -/
-private def cmdKill (name : String) : IO Answer := do
-  match ← Client.oneShot name .kill with
+private def cmdKill (s : Names.Ref) : IO Answer := do
+  match ← Client.oneShot s.id .kill with
   | some (.refused why) =>
     IO.eprintln s!"linger: {why}"
     return .notDone
@@ -1298,23 +1334,129 @@ private def cmdKill (name : String) : IO Answer := do
     repeat
       let released ←
         try
-          Paths.withSessionLock name (pure true)
+          Paths.withSessionLock s.id (pure true)
         catch _ =>
           pure false
       if released then
         return .done
       unless ← nap deadline 20 do
-        IO.eprintln s!"linger: session '{name}' has not ended"
+        IO.eprintln s!"linger: session '{s.name}' has not ended"
         return .notDone
   | none =>
-    match ← discardSaved name with
+    match ← discardSaved s.id with
     | .ok true =>
       return .done
     | .ok false =>
-      noSession name
+      noSession s.name
     | .error why =>
       IO.eprintln s!"linger: {why}"
       return .notDone
+
+/-- Whether a live or saved session holds the ID `id`, an ended one still listed included: a
+daemon answers on its socket, or its checkpoint exists. -/
+private def held (id : String) : IO Bool := do
+  match ← Client.connect id with
+  | some fd =>
+    close fd
+    return true
+  | none =>
+    System.FilePath.pathExists (← Paths.ckptPath id)
+
+/-- Whether the live session with ID `id` has a daemon an older linger started, which reports no
+`renames` in its `info`; `false` for a session with no daemon. A daemon that does not answer
+throws. -/
+private def olderDaemon (id : String) : IO Bool := do
+  match ← queryInfo id (retainUnavailable := false) with
+  | none =>
+    return false
+  | some (.ok info) =>
+    return (info.lookup "renames").isNone
+  | some (.error err) =>
+    throw (IO.userError s!"{err}, so the session cannot be renamed")
+
+/-- `rename old new`: give the session `old` leads to the name `new`, as `Names.Rename.plan`
+decides, holding the names lock. It refuses, changing nothing, an invalid new name (`usage`), an
+old name no live or saved session has (`notFound`), and, answering `notDone`, a new name a live or
+saved session has, an ended one still listed included, and a session whose daemon an older linger
+started, which a newer linger's `upgrade` moves onto this one. The session keeps its ID, and with
+it its program, its terminal, its clients, its waiters, its description and its status, and its
+files stay where they are: only its name changes, the old name's entry moving to the new name, or
+an entry made for it, neither replacing a name (`Names.move`, `Names.create`). An entry the new
+name has whose session is gone is removed first, holding that session's ID, as is a name that is
+its own free ID held, so that no start takes the new name meanwhile; a start that places it first
+wins, and the rename then refuses. -/
+private def cmdRename (new old : String) : IO Answer := do
+  let valid := (Linger.Target.Name.check new).isSome
+  let outcome ←
+    Names.withLock do
+        let table ← Names.load
+        let oldId := Linger.Session.Names.resolve table old
+        let newId := if valid then Linger.Session.Names.resolve table new else none
+        let oldHeld ←
+          match oldId with
+          | some id =>
+            held id
+          | none =>
+            pure false
+        let newHeld ←
+          match newId with
+          | some id =>
+            if oldId == some id then
+              pure true
+            else
+              held id
+          | none =>
+            pure false
+        let older ←
+          if valid && oldHeld && !newHeld then
+            (oldId.mapM olderDaemon)
+          else
+            pure none
+        match Linger.Session.Names.Rename.plan valid oldHeld (older.getD false) newHeld, oldId with
+        | .move, some id =>
+          let place : IO Bool :=
+            if (table.lookup old).isSome then Names.move old new else Names.create new id
+          let placed ←
+            match newId with
+            | some free =>
+              Paths.withSessionLock free do
+                  if ← held free then
+                    return false
+                  if (table.lookup new).isSome then
+                    Names.remove new
+                  place
+            | none =>
+              place
+          unless placed do
+            return .refuse .taken
+          -- the name placed, it leads where `Names.rename` says: to the session's ID
+          -- (`rename_moves`), which no other rename can change while this one holds the lock
+          let after := Linger.Session.Names.rename table old new id
+          unless
+            Linger.Session.Names.resolve (← Names.load) new ==
+              Linger.Session.Names.resolve after new do
+            throw (IO.userError s!"the names changed while '{old}' was renamed '{new}'")
+          return Linger.Session.Names.Rename.Plan.move
+        | .move, none =>
+          return .refuse .missing
+        | plan, _ =>
+          return plan
+  match outcome with
+  | .move =>
+    return .done
+  | .refuse .invalid =>
+    IO.eprintln s!"linger: invalid session name '{new}' (use {Paths.nameRule})"
+    return .usage
+  | .refuse .missing =>
+    noSession old
+  | .refuse .taken =>
+    IO.eprintln s!"linger: session '{new}' exists, and rename replaces no session"
+    return .notDone
+  | .refuse .older =>
+    IO.eprintln
+        s!"linger: session '{old}' was started by an older linger, which cannot rename it; \
+          `linger upgrade {old}` moves it onto this linger, or restart it"
+    return .notDone
 
 /-- `--version`: print `linger` and `Mediation.versionNumber`, which sessions also see as
 `TERM_PROGRAM_VERSION`, then the socket and state directories this environment resolves. -/
@@ -1355,13 +1497,16 @@ private def cmdListNamed (porcelain : Bool) (names : List String) : IO Answer :=
         | some row =>
           pure (some row)
         | none =>
-          match ← unanswered target.name with
-          | .recorded (some ending) =>
-            pure (some (("name", target.name) :: Linger.Session.endingFields ending))
-          | .recorded none =>
+          match ← (← Names.find target.name).mapM (unanswered ·.id) with
+          | none =>
             answer := worse answer (← noSession target.name)
             pure none
-          | .held why =>
+          | some (.recorded (some ending)) =>
+            pure (some (("name", target.name) :: Linger.Session.endingFields ending))
+          | some (.recorded none) =>
+            answer := worse answer (← noSession target.name)
+            pure none
+          | some (.held why) =>
             IO.eprintln s!"linger: no answer for '{target.name}': {why}"
             answer := worse answer .notDone
             pure none
@@ -1397,7 +1542,10 @@ private def attachArgs (args : List String) : IO Answer := do
   if readOnly && !cmd.isEmpty then
     IO.eprintln "linger: read-only attach does not accept a command"
     return .usage
-  withTarget "attach" name cmd (cmdAttach · cmd readOnly) (if readOnly then ["--read-only"] else [])
+  if readOnly then
+    withSession "attach" name cmd (cmdAttach · cmd true) ["--read-only"]
+  else
+    withNew "attach" name cmd (cmdAttach · cmd false)
 
 private def captureArgs (args : List String) : IO Answer := do
   let history := args.head? == some "--history"
@@ -1405,7 +1553,7 @@ private def captureArgs (args : List String) : IO Answer := do
   let some (name, []) := Linger.Target.Remote.targetArgs args |
     do
       return ← usageError "capture"
-  withTarget "capture" name []
+  withSession "capture" name []
       (cmdRead · (if history then .history else .screen)
         (if history then Terminal.Render.history else Terminal.Render.screenText))
       (if history then ["--history"] else [])
@@ -1418,25 +1566,25 @@ private def upgradeWaitMs : Int32 := 60000
 carries the session over, its program running on (`Msg.upgrade`). A daemon whose `info` names no
 handoff format was started by an older linger, which cannot hand its session over, so it is not
 asked, and keeps running; a daemon that refuses keeps running and says why. -/
-private def upgradeOne (name : String) : IO Answer := do
-  match ← queryInfo name with
+private def upgradeOne (s : Names.Ref) : IO Answer := do
+  match ← queryInfo s.id with
   | none =>
-    noSession name
+    noSession s.name
   | some (.error err) =>
-    IO.eprintln s!"linger: {err} for '{name}'"
+    IO.eprintln s!"linger: {err} for '{s.name}'"
     return .notDone
   | some (.ok info) =>
     if (info.lookup "handoff").isNone then
-      IO.eprintln s!"linger: session '{name}' was started by an older linger; it keeps running"
+      IO.eprintln s!"linger: session '{s.name}' was started by an older linger; it keeps running"
       return .notDone
     let exe := (← IO.appPath).toString
-    match ← Client.oneShot name (.upgrade exe.toUTF8.toList) (silenceMs := upgradeWaitMs) with
+    match ← Client.oneShot s.id (.upgrade exe.toUTF8.toList) (silenceMs := upgradeWaitMs) with
     | none =>
-      noSession name
+      noSession s.name
     | some result =>
-      let answer ← requestStatus name result
+      let answer ← requestStatus s.name result
       if answer == .done then
-        IO.println s!"upgraded {name}"
+        IO.println s!"upgraded {s.name}"
       return answer
 
 /-- `upgrade [name...]`: `upgradeOne` of each named session, `name@host` on its host, or of every
@@ -1444,12 +1592,13 @@ local live one when none is named, answering the worst of their answers. -/
 private def cmdUpgrade (names : List String) : IO Answer := do
   let names ←
     if names.isEmpty then
-      pure ((← Paths.listSocketNames).map (·.name))
+      let table ← Names.load
+      pure ((← Paths.listSocketNames).filterMap (Linger.Session.Names.nameOf table ·.name))
     else
       pure names
   let mut answer : Answer := .done
   for name in names do
-    answer := worse answer (← withTarget "upgrade" name [] upgradeOne)
+    answer := worse answer (← withSession "upgrade" name [] upgradeOne)
   return answer
 
 /-- Perform `op` with the words after its command's word, and give its answer: `usage` for words
@@ -1460,13 +1609,13 @@ private def runOp (op : Linger.App.Commands.Op) (args : List String) : IO Answer
   | .upgrade, names =>
     cmdUpgrade names
   | .resume, [name] =>
-    withTarget "resume" name [] cmdResume
+    withSession "resume" name [] cmdResume
   | .resume, _ =>
     usageError "resume"
   | .start, name :: argv =>
     if argv.isEmpty then
       return ← usageError "start"
-    withTarget "start" name argv (cmdStart · argv)
+    withNew "start" name argv (cmdStart · argv)
   | .start, [] =>
     usageError "start"
   | .attach, rest =>
@@ -1474,21 +1623,25 @@ private def runOp (op : Linger.App.Commands.Op) (args : List String) : IO Answer
   | .send, name :: text =>
     if text.isEmpty then
       return ← usageError "send"
-    withTarget "send" name text fun name =>
-        if text == ["-"] then cmdSendStdin name
+    withSession "send" name text fun s =>
+        if text == ["-"] then cmdSendStdin s
         else
-          requireLiveSend name
+          requireLiveSend s
             (Linger.Session.Wire.inputFrames (String.intercalate " " text).toUTF8.toList)
   | .send, [] =>
     usageError "send"
   | .detach, [name] =>
-    withTarget "detach" name [] (requireLive · .detachAll)
+    withSession "detach" name [] (requireLive · .detachAll)
   | .detach, _ =>
     usageError "detach"
   | .kill, [name] =>
-    withTarget "kill" name [] cmdKill
+    withSession "kill" name [] cmdKill
   | .kill, _ =>
     usageError "kill"
+  | .rename, [old, new] =>
+    withTarget "rename" old [new] (cmdRename new)
+  | .rename, _ =>
+    usageError "rename"
   | .capture, rest =>
     captureArgs rest
   | .resize, [name, cs, rs] =>
@@ -1500,7 +1653,7 @@ private def runOp (op : Linger.App.Commands.Op) (args : List String) : IO Answer
           IO.eprintln "linger: size must be 1..1000 (the emulator clamps at 1000)"
           return .usage
       else
-        withTarget "resize" name [cs, rs]
+        withSession "resize" name [cs, rs]
             (requireLive · (.resize (UInt32.ofNat cols) (UInt32.ofNat rows)))
     | _, _ =>
       usageError "resize"
@@ -1516,8 +1669,8 @@ private def runOp (op : Linger.App.Commands.Op) (args : List String) : IO Answer
     waitAll names none
   | .describe, name :: words =>
     -- no words clear the description
-    withTarget "describe" name words fun name =>
-        requireLive name (.describe (String.intercalate " " words).toUTF8.toList)
+    withSession "describe" name words fun s =>
+        requireLive s (.describe (String.intercalate " " words).toUTF8.toList)
   | .describe, [] =>
     usageError "describe"
   | .list, rest =>
@@ -1534,21 +1687,22 @@ a usage error. `main` routes interactive selection and tmux interchange elsewher
 runs a session's daemon in this process. -/
 def main (args : List String) : IO Answer := do
   match args with
-  | "__daemon" :: name :: cwd :: cmd =>
-    Daemon.serve name cwd cmd (← Resume.saver name) (Resume.dropCkpt name) (recoverFor name)
-        (recordFile name)
+  | "__daemon" :: id :: name :: cwd :: cmd =>
+    Daemon.serve id name cwd cmd (← Resume.saver id) (Resume.dropCkpt id) (recoverFor { name, id })
+        (recordFile id)
     return .done
-  | "__start" :: report :: name :: cwd :: argv =>
-    serveStart report name cwd argv
+  | "__start" :: report :: id :: name :: cwd :: argv =>
+    serveStart report id name cwd argv
     return .done
-  | ["__resume", report, name, cwd] =>
-    serveResume report name cwd
+  | ["__resume", report, id, name, cwd] =>
+    serveResume report id name cwd
     return .done
-  | ["__upgraded", name, path, pid] =>
+  | ["__upgraded", id, path, pid] =>
+    -- an older image names the session's ID too: a name, which was every session's ID
     match pid.toNat? with
     | some pid =>
-      Daemon.adopt name path (UInt32.ofNat pid) (← Resume.saver name) (Resume.dropCkpt name)
-          (recordFile name)
+      Daemon.adopt id path (UInt32.ofNat pid) (← Resume.saver id) (Resume.dropCkpt id)
+          (recordFile id)
       return .done
     | none =>
       return .usage

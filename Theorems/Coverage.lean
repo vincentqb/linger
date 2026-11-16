@@ -12,6 +12,7 @@ import all Linger.Target.Proofs.Name
 import all Linger.Session.Proofs.Checkpoint
 import all Linger.Target.Proofs.Remote
 import all Linger.Session.Proofs.Claim
+import all Linger.Session.Proofs.Names
 import all Linger.Display.Proofs.Listing
 import all Terminal.Proofs.Render
 import all Terminal.Proofs.Replay

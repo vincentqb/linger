@@ -237,19 +237,24 @@ def attachArgs (target : String) (readOnly : Bool := false) : Array String :=
   ("attach" :: (if readOnly then ["--read-only"] else []) ++
       Linger.Target.Remote.targetOperands target).toArray
 
+/-- The name the session with an ID shows now, if any: how the chooser reads the ID that
+`LINGER_SESSION` holds. -/
+abbrev Lookup : Type := String → IO (Option String)
+
 /-- Execute either selected row through attach, after terminal restoration. Every attach
 exit returns to a fresh listing, which shows the view the visit left, the session attached to
-selected, as the first visit selects the session `LINGER_SESSION` names; cancellation ends the manager, answering `cancelled`. The
+selected, as the first visit selects the session whose ID `LINGER_SESSION` holds, by the name
+`nameOf` gives that ID now; cancellation ends the manager, answering `cancelled`. The
 caller supplies one frozen absolute executable for all listing and attach children. A listing
 that fails ends the manager with the answer its exit status gives (`Answer.ofCode`). A signal of
 `handbackSignals` ends the manager as a cancellation does, answering `stopped` with the first that
 came, even one that came while a visit handed the terminal back (`watching`): a visit hands the
 terminal back first, and an attach, which owns the terminal while it runs and hears the signals
 its terminal sends, first ends. -/
-def run (executable : String) (readOnly : Bool := false) : IO Linger.Os.Answer :=
+def run (executable : String) (nameOf : Lookup) (readOnly : Bool := false) : IO Linger.Os.Answer :=
   watching handbackSignals Linger.Os.Answer.stopped fun stops => do
     let mut left : List String := []
-    let mut focus := Linger.Os.Env.inSession (← IO.getEnv "LINGER_SESSION")
+    let mut focus ← (Linger.Os.Env.inSession (← IO.getEnv "LINGER_SESSION")).bindM nameOf
     while true do
       match
         ←

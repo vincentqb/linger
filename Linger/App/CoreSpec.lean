@@ -70,6 +70,8 @@ inductive Op where
   | detach
   /-- End a session, or discard a saved or ended one. -/
   | kill
+  /-- Give a session a new name; its ID, and so everything else of it, stays. -/
+  | rename
   /-- Read a session's screen, or its history. -/
   | capture
   /-- Set the terminal size of a session no client is attached to. -/
@@ -85,7 +87,7 @@ inductive Op where
 /-- Every operation, once each, in the order of its constructors. -/
 @[expose]
 def Op.all : List Op :=
-  [.attach, .list, .tmux, .start, .resume, .send, .detach, .kill, .capture, .resize, .wait,
+  [.attach, .list, .tmux, .start, .resume, .send, .detach, .kill, .rename, .capture, .resize, .wait,
     .describe, .upgrade]
 
 /-- One row of the command table: the one command of an operation. -/

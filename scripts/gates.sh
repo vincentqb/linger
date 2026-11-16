@@ -432,11 +432,11 @@ shell_all="$(module_imports '*.lean' | awk -F: "$IMPORT_AWK"'
   printf '%s\n' "$shell_all" >&2
   fail "import all Os.WorldCode grants the private bindings of Os.WorldSpec: import it plainly"; }
 import_closure packages/os/Os/WorldCode/Command.lean 'import Os.WorldCode;'
-import_closure Linger/Import/WorldCode.lean 'public import Linger.Os.CoreSpec;import Linger.Os.CoreCode.Answer;import Linger.Import.CoreCode.Resurrect;import Linger.Session.CoreCode.Checkpoint;import Os.WorldCode;import Linger.Display.CoreCode.Listing;import Linger.Session.WorldCode.Paths;import Linger.Session.WorldCode.Resume;import Linger.Session.WorldCode.Inventory;import Os.WorldCode.Command;import Linger.Target.CoreCode.Remote;import Linger.Selector.WorldCode;import Linger.Selector.CoreCode.Picker;import Std.Async.System;import Linger.Os.CoreCode.Env;'
+import_closure Linger/Import/WorldCode.lean 'public import Linger.Os.CoreSpec;import Linger.Os.CoreCode.Answer;import Linger.Import.CoreCode.Resurrect;import Linger.Session.CoreCode.Checkpoint;import Os.WorldCode;import Linger.Display.CoreCode.Listing;import Linger.Session.WorldCode.Paths;import Linger.Session.WorldCode.Names;import Linger.Session.WorldCode.Resume;import Linger.Session.WorldCode.Inventory;import Os.WorldCode.Command;import Linger.Target.CoreCode.Remote;import Linger.Selector.WorldCode;import Linger.Selector.CoreCode.Picker;import Std.Async.System;import Linger.Os.CoreCode.Env;'
 import_closure Linger/Selector/WorldCode.lean \
   'public import Linger.Selector.CoreSpec;public import Linger.Os.CoreSpec;import Linger.Os.CoreCode.Answer;import Linger.Selector.CoreCode.Picker;import Os.WorldCode;import Linger.Target.CoreCode.Remote;import Terminal.CoreCode.Title;import Os.WorldCode.Command;import Linger.Display.CoreCode.View;import Std.Data.HashMap.Basic;import Linger.Display.CoreCode.Status;import Linger.Selector.CoreCode.Key;import Linger.Selector.CoreCode.Fetch;import Input.CoreCode;import Linger.Os.CoreCode.Env;'
 import_closure Linger/App/WorldCode/Main.lean \
-  'import Linger.Os.CoreCode.Answer;import Linger.App.WorldCode;import Linger.App.CoreCode.Entry;import Linger.Selector.WorldCode;import Linger.Import.WorldCode;import Os.WorldCode;'
+  'import Linger.Os.CoreCode.Answer;import Linger.App.WorldCode;import Linger.App.CoreCode.Entry;import Linger.Selector.WorldCode;import Linger.Import.WorldCode;import Linger.Session.WorldCode.Names;import Os.WorldCode;'
 # `lean_lib Linger` builds the umbrella's closure, so this list is what `./lake build`
 # checks of the session library.
 import_closure Linger.lean "$(printf 'public import %s;' Linger.Session.CoreCode.Buf \
@@ -518,7 +518,7 @@ spec_imports_bad="$(module_imports 'Linger/*/CoreSpec*.lean' 'Linger/*/WorldSpec
 entry_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/WorldCode/Main.lean)"
 for tie in \
   'def main [(]args : List String[)] : IO UInt32 := do let answer : Linger[.]Os[.]Answer ← try match Linger[.]App[.]Entry[.]route args with' \
-  '[|] [.]selector readOnly => Linger[.]Selector[.]Shell[.]run [(]← IO[.]appPath[)][.]toString readOnly' \
+  '[|] [.]selector readOnly => Linger[.]Selector[.]Shell[.]run [(]← IO[.]appPath[)][.]toString Linger[.]Session[.]Shell[.]Names[.]nameOf readOnly' \
   '[|] [.]tmux rest => Linger[.]Import[.]Shell[.]run [(]← IO[.]appPath[)][.]toString rest' \
   '[|] [.]session argv => Linger[.]App[.]Shell[.]main argv' \
   '[|] [.]malformed => IO[.]eprintln "linger: malformed encoded command line" pure [.]usage' \
@@ -644,7 +644,7 @@ for tie in \
   'let text ← archiveOutput #[[]"-xOzf", archive[.]path[.]toString, "--", member[]] captureLimit checkArchive archive return some text' \
   'metadata[.]type == [.]file && metadata[.]modified == archive[.]modified && metadata[.]byteSize == archive[.]byteSize && [(]← latestSave archive[.]save[)]' \
   'unless text "archive" == some found[.]path[.]toString && row[.]lookup "archive-revision" == some [(]archiveRevision found[)] do throw [(]IO[.]userError "pane capture archive changed; refresh the saved panes"[)]' \
-  'private def seedPane [(]pane : Pane[)] [(]contents : Option String[)] : IO Bool := Paths[.]withSessionLock pane[.]name do' \
+  'private def seedPane [(]pane : Pane[)] [(]contents : Option String[)] : IO Bool := do let id := [(]← Names[.]claim pane[.]name[)][.]id Paths[.]withSessionLock id do' \
   'if [(]← [(]System[.]FilePath[.]mk path[)][.]pathExists[)] [|][|] [(]← [(]System[.]FilePath[.]mk socket[)][.]pathExists[)] then return false' \
   'then return false Os[.]Shell[.]replaceFile path [(]Linger[.]Session[.]Checkpoint[.]saveBytes [(]checkpoint pane contents[)][)] return true' \
   'pending[.]set [(]some [(]← Command[.]startLimited "tar" args limit[)][)] let deadline := [(]← Os[.]Shell[.]monotonicMs[)] [+] 5000' \
@@ -715,11 +715,11 @@ for tie in \
   'nextListing := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]remoteDue [|][|] [(]← monotonicMs[)] ≥ nextListing[)] then full := savedTmux [|][|] remoteDue remoteDue := Linger[.]Selector[.]Picker[.]fetch remoteDue [.]list let args := if full then fullArgs else #[[]"ls", "--porcelain"[]] started ← monotonicMs sorting := sortNext sortNext := false pending[.]set [(]some [(]← Os[.]Shell[.]Command[.]start executable args[)][)] return [.]cancel finally' \
   'finally Os[.]Shell[.]Command[.]stop pending [(]if savedTmux then 0 else 1000[)]' \
   'let fullArgs := if savedTmux then #[[]"tmux", "ls", "--porcelain"[]] [+][+] save[.]toArray else #[[]"ls", "-r", "--porcelain"[]]' \
-  'let mut focus := Linger[.]Os[.]Env[.]inSession [(]← IO[.]getEnv "LINGER_SESSION"[)]' \
+  'let mut focus ← [(]Linger[.]Os[.]Env[.]inSession [(]← IO[.]getEnv "LINGER_SESSION"[)][)][.]bindM nameOf' \
   'match ← choose executable [(]readOnly := readOnly[)] [(]heard := stops[.]came[)] [(]left := left[)] [(]focus := focus[)] with' \
   '[|] [.]attach target displayed => left := displayed[.]candidates focus := some target let child' \
   'let ready ← poll fds events 50 if let some signal[[:space:]]*← heard then return [.]stopped signal' \
-  'IO Linger[.]Os[.]Answer := watching handbackSignals Linger[.]Os[.]Answer[.]stopped fun stops => do let mut left : List String := [[][]] let mut focus := Linger[.]Os[.]Env[.]inSession [(]← IO[.]getEnv "LINGER_SESSION"[)] while true do' \
+  'IO Linger[.]Os[.]Answer := watching handbackSignals Linger[.]Os[.]Answer[.]stopped fun stops => do let mut left : List String := [[][]] let mut focus ← [(]Linger[.]Os[.]Env[.]inSession [(]← IO[.]getEnv "LINGER_SESSION"[)][)][.]bindM nameOf while true do' \
   'discard child[.]wait if let some signal[[:space:]]*← stops[.]came then return [.]stopped signal return [.]done' \
   'def attachArgs [(]target : String[)] [(]readOnly : Bool := false[)] : Array String := [(]"attach" :: [(]if readOnly then [[]"--read-only"[]] else [[][]][)] [+][+] Linger[.]Target[.]Remote[.]targetOperands target[)][.]toArray'; do
   printf '%s\n' "$picker_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
@@ -763,7 +763,7 @@ for tie in \
   'let withColor := Linger[.]Os[.]Env[.]withColor [(]← [(]← IO[.]getStdout[)][.]isTty[)] [(]← IO[.]getEnv "NO_COLOR"[)] [(]← IO[.]getEnv "TERM"[)] let named := rows[.]map fun info => match info[.]lookup "name", info[.]lookup "host" with [|] none, some host => [(]"name", "@" [+][+] host[)] :: info [|] _, _ => info let ordered := Linger[.]Display[.]View[.]sort [(]fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD ""[)][)] named let width ← humanWidth let home ← accountHome writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor width [(]ordered[.]map [(]Linger[.]Display[.]Listing[.]atHome home[)][)][)][.]toArray[)]' \
   'def summaryText : IO String := do let rows ← localRows [(]some [(][(]← monotonicMs[)] [+] 250[)][)] [(]statusOnly := true[)] return Linger[.]Display[.]Status[.]summary [(]rows[.]map fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD "unknown"[)][)]' \
   'def cmdSummary : IO Answer := do let summary ← summaryText if !summary[.]isEmpty then IO[.]println summary return [.]done' \
-  'match ← connectUpsert name cmd with [|] [.]ok fd => attachSpoken name fd false' \
+  'match ← connectUpsert s cmd with [|] [.]ok fd => attachSpoken s[.]name fd false' \
   'if args == [[]"--summary"[]] then return ← cmdSummary'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "listing or prompt bypassed its shared policy: $tie"
@@ -789,9 +789,9 @@ for tie in \
   'while go && [(]← monotonicMs[)] < deadline do let remaining := deadline - [(]← monotonicMs[)] let revs ← poll #[[]fd[]] #[[]POLLIN[]] [(]Int32[.]ofNat [(]min 100 remaining[)][)]' \
   'queryWith [(]Client[.]connect name ·[)] stopAt retainUnavailable' \
   'IO[.]asTask [(]queryWith [(]connectListed listed ·[)] [(]some deadline[)] retainUnavailable[)]' \
-  'let infos ← queryInfos asked deadline stopAt[.]isSome' \
+  'let infos ← queryInfos [(]asked[.]map [(]·[.]1[)][)] deadline stopAt[.]isSome' \
   'let free ← try listed[.]withLock [(]pure true[)] catch _ => pure false return if free then none else some seen' \
-  'for [(]listed, result[)] in asked[.]zip infos do let name := listed[.]name match result with [|] some info => confirmedLive := confirmedLive [+][+] [[]name[]] rows := rows [+][+] [[]liveRow name [(]info[.]toOption[.]getD [[][]][)][]] [|] none => if ![(]← removeStaleSocket listed[)] then'; do
+  'for [(][(]listed, name[)], result[)] in asked[.]zip infos do match result with [|] some info => confirmedLive := confirmedLive [+][+] [[]listed[.]name[]] rows := rows [+][+] [[]liveRow name [(]info[.]toOption[.]getD [[][]][)][]] [|] none => if ![(]← removeStaleSocket listed[)] then'; do
   printf '%s\n' "$inventory_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "listing or prompt bypassed its shared policy: $tie"
 done
@@ -1116,7 +1116,7 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let [(]prog, args[)] := Sta
 # (`failureStatus_exact`); and `info` reports the start as `Start.metadata` says
 # (`metadata_dirs`). The daemon asks the operating system with exactly these.
 for tie in \
-  'trySpawnPty [(]UInt32[.]ofNat [(]Terminal[.]Vt[.]clampDim vt0[.]colCount[)][)] [(]UInt32[.]ofNat [(]Terminal[.]Vt[.]clampDim vt0[.]rowCount[)][)] cwd prog args [(][(]Start[.]environment name[)][.]toArray[.]map fun [(]key, value[)] => s!"[{]key[}]=[{]value[}]"[)] [(]resetOf Start[.]reset[)]' \
+  'trySpawnPty [(]UInt32[.]ofNat [(]Terminal[.]Vt[.]clampDim vt0[.]colCount[)][)] [(]UInt32[.]ofNat [(]Terminal[.]Vt[.]clampDim vt0[.]rowCount[)][)] cwd prog args [(][(]Start[.]environment id[)][.]toArray[.]map fun [(]key, value[)] => s!"[{]key[}]=[{]value[}]"[)] [(]resetOf Start[.]reset[)]' \
   'private def resetOf [(]reset : Linger[.]Session[.]Spawn[.]Reset[)] : SpawnReset := [{] dispositions := reset[.]dispositions, mask := reset[.]mask, descriptors := reset[.]descriptors [}]' \
   'req[.]tell [(][.]failed [(]Start[.]failureStatus failure[)] why[.]toUTF8[.]toList[)]' \
   'private def failureOf : SpawnFailure → Linger[.]Session[.]Spawn[.]Failure [|] [.]directory why => [.]directory why [|] [.]notFound why => [.]notFound why [|] [.]notRunnable why => [.]notRunnable why' \
@@ -1253,8 +1253,10 @@ attach_words="$(code_grep '"attach"[[:space:]]*(,|[]]|::)' 'Linger/*/WorldCode.l
   || fail "noninteractive command lookup must not fuzzy-match or rewrite a name"
 code_grep '^[[:space:]]+Linger[.]Target[.]Remote[.]targetValid target = true ∧ target ∉ candidates := by$' Linger/Selector/Proofs/Picker.lean >/dev/null \
   || fail "selector creation and command arguments no longer share the target grammar"
-for verb in attach start resume send detach kill capture resize describe; do
-  code_grep "^[[:space:]]+withTarget \"$verb\" " Linger/App/WorldCode.lean >/dev/null \
+# `withSession` and `withNew` are `withTarget`, their local action given the session the name
+# leads to (`Names.find`, `Names.claim`).
+for verb in attach start resume send detach kill capture resize describe rename; do
+  code_grep "^[[:space:]]+(withTarget|withSession|withNew) \"$verb\" " Linger/App/WorldCode.lean >/dev/null \
     || fail "session command bypassed the common exact target boundary: $verb"
 done
 # A command line reaches its operation only through the command table (`commands_minimal`): the
@@ -1267,16 +1269,16 @@ printf '%s\n' "$cli_code" | CG_RE='(^|[[:space:]])match Linger[.]App[.]Commands[
 for tie in \
   'match Linger[.]Target[.]Remote[.]parseTarget target with [|] none => invalidTarget [|] some parsed => runTarget verb parsed args localAction options' \
   'let some targets := names[.]mapM Linger[.]Target[.]Remote[.]parseTarget [|] invalidTarget let deadline ← limit[.]mapM' \
-  'answer ← runTarget "wait" target [[]] [(]cmdWait deadline[)] options' \
-  'let [(]heard, why[)] ← hear name silenceMs match Wait[.]decide deadline heldSince [(]← monotonicMs[)] heard with' \
+  'answer ← runTarget "wait" target [[]] [(]waitNamed deadline[)] options' \
+  'let [(]heard, why[)] ← hear s silenceMs match Wait[.]decide deadline heldSince [(]← monotonicMs[)] heard with' \
   'heldSince := since if let some first := since then discard <[|] nap [(]first [+] Wait[.]heldNameMs[)] 20' \
   'let interactive := verb == "attach" if interactive && [(]![(]← stdinIsTty[)] [|][|] ![(]← [(]← IO[.]getStdout[)][.]isTty[)][)] then' \
   'let transport := Linger[.]Target[.]Remote[.]transportFor [(]← remoteConfig[)] host match Linger[.]Target[.]Remote[.]targetArgv transport verb options target[.]name args with' \
   '[|] cmd :: argv => let child ← IO[.]Process[.]spawn [{] cmd, args := argv[.]toArray, stdin := [.]inherit [}] try return [.]program [(]← child[.]wait[)] finally if interactive then writeAll stdoutFd [(]ByteArray[.]mk Terminal[.]Render[.]leaveAnsi[.]toArray[)]' \
   'let readOnly := args[.]head[?] == some "--read-only" let args := if readOnly then args[.]tail else args let some [(]name, cmd[)] := Linger[.]Target[.]Remote[.]targetArgs args [|]' \
   'let history := args[.]head[?] == some "--history" let args := if history then args[.]tail else args let some [(]name, [[][]][)] := Linger[.]Target[.]Remote[.]targetArgs args [|]' \
-  'withTarget "attach" name cmd [(]cmdAttach · cmd readOnly[)] [(]if readOnly then [[]"--read-only"[]] else [[][]][)]' \
-  'withTarget "capture" name [[][]] [(]cmdRead · [(]if history then [.]history else [.]screen[)] [(]if history then Terminal[.]Render[.]history else Terminal[.]Render[.]screenText[)][)] [(]if history then [[]"--history"[]] else [[][]][)]'; do
+  'if readOnly then withSession "attach" name cmd [(]cmdAttach · cmd true[)] [[]"--read-only"[]] else withNew "attach" name cmd [(]cmdAttach · cmd false[)]' \
+  'withSession "capture" name [[][]] [(]cmdRead · [(]if history then [.]history else [.]screen[)] [(]if history then Terminal[.]Render[.]history else Terminal[.]Render[.]screenText[)][)] [(]if history then [[]"--history"[]] else [[][]][)]'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "command transport lost exact targets, argv, stdin or terminal ownership: $tie"
 done
@@ -1297,7 +1299,7 @@ done
 # connected daemon's failure must never fall back to older saved data.
 paths_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/WorldCode/Paths.lean)"
 for tie in \
-  'match Linger[.]Target[.]Name[.]check name with [|] some name => return name [|] none => throw' \
+  'if Linger[.]Session[.]Names[.]validKey key then return key throw' \
   'if listed then return s!"[{]dir[}]/[{]name[}][{]suffix[}]" let name ← checkName name ensureDir dir let path := s!"[{]dir[}]/[{]name[}][{]suffix[}]" checkSpelling path return path' \  'def namedPath [(]dir name suffix : String[)] : IO String := pathIn dir name suffix false' \
   'def socketPath [(]name : String[)] : IO String := do namedPath [(]← socketDir[)] name "[.]sock"' \
   'def ckptPath [(]name : String[)] : IO String := do namedPath [(]← stateDir[)] name "[.]ckpt"' \
@@ -1314,21 +1316,34 @@ for tie in \
   printf '%s\n' "$paths_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "session paths or lifetime locking bypassed their contract: $tie"
 done
-# A listing row takes its name verbatim from the socket filename (`rowFields_name`), so
-# both listings pass every directory entry through the exact name check.
+# A listing row takes its name from the names table for the socket filename's ID (`rowFields_name`,
+# `Names.nameOf`), so both listings pass every directory entry through the exact ID check.
 for tie in \
-  'private def listNames [(]dir suffix : String[)] : IO [(]List Listed[)] := do ensureDir dir return [(]← System[.]FilePath[.]readDir dir[)][.]toList[.]filterMap fun e => [(][(]e[.]fileName[.]dropSuffix[?] suffix[)][.]bind [(]Linger[.]Target[.]Name[.]check ·[.]toString[)][)][.]map [(]⟨·⟩[)]' \
+  'private def listNames [(]dir suffix : String[)] : IO [(]List Listed[)] := do ensureDir dir return [(]← System[.]FilePath[.]readDir dir[)][.]toList[.]filterMap fun e => [(][(]e[.]fileName[.]dropSuffix[?] suffix[)][.]map [(]·[.]toString[)][)][.]bind fun key => if Linger[.]Session[.]Names[.]validKey key then some ⟨key⟩ else none' \
   'def listSocketNames : IO [(]List Listed[)] := do listNames [(]← socketDir[)] "[.]sock"' \
   'def listCkptNames : IO [(]List Listed[)] := do listNames [(]← stateDir[)] "[.]ckpt"'; do
   printf '%s\n' "$paths_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
-    || fail "session listing must check every directory entry with Name.check: $tie"
+    || fail "session listing must check every directory entry with Names.validKey: $tie"
 done
 ! code_grep 'removeFile|rename' Linger/Session/WorldCode/Paths.lean \
   || fail "lock path construction and acquisition must never unlink or replace a lock inode"
 printf '%s\n' "$client_code" | CG_RE='(^|[[:space:]])try Paths[.]checkSpelling path return some fd catch err => close fd throw err([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "successful connects must reject case-folded aliases and close on failure"
-printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])IO Unit := do let deadline := [(]← monotonicMs[)] [+] claimWaitMs let reported ← IO[.]mkRef false let retry := claimRetry name [(]← Paths[.]socketPath name[)] deadline reported Paths[.]withSessionLockHeld name retry fun locks => do ignoreSighup let sockPath ← Paths[.]socketPath name([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
-  || fail "daemon recovery and lifetime must execute inside both ownership locks"
+printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])IO Unit := do let deadline := [(]← monotonicMs[)] [+] claimWaitMs let reported ← IO[.]mkRef false let retry := claimRetry name [(]← Paths[.]socketPath id[)] deadline reported Paths[.]withSessionLockHeld id retry fun locks => do ignoreSighup unless [(]← Names[.]resolve name[)] == some id do([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "daemon recovery and lifetime must execute inside both ownership locks, once the name still leads to the ID"
+# A session's name is placed only where none is (`one_name`, `Os.Place.NoReplace`): every entry and
+# every fresh ID's lock is placed through `Names.call`, which never replaces a name, and nothing
+# else in the session library links or renames without replacing. `rename` decides by
+# `Names.Rename.plan` (`rename_plan`) from what it read holding the names lock.
+names_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/WorldCode/Names.lean)"
+printf '%s\n' "$names_code" | CG_RE='(^|[[:space:]])private def place [(]op : Linger[.]Session[.]Names[.]Op[)] [(]src dst : String[)] : IO Bool := do match Linger[.]Session[.]Names[.]call op with [|] [.]link => Os[.]Shell[.]linkNew src dst [|] [.]renameNew => Os[.]Shell[.]renameNew src dst [|] [.]replace => throw([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "a session's name is placed other than through Names.call, which never replaces one"
+[ "$(code_count 'Os[.]Shell[.](linkNew|renameNew)' 'Linger/*.lean' ':!Linger/*/Suites/*' ':!Linger/*/WorldCode/Checks.lean')" -eq 2 ] \
+  || fail "a link or a rename that may not replace is made outside Names.place"
+printf '%s\n' "$cli_code" | CG_RE='(^|[[:space:]])let outcome ← Names[.]withLock do let table ← Names[.]load let oldId := Linger[.]Session[.]Names[.]resolve table old let newId := if valid then Linger[.]Session[.]Names[.]resolve table new else none([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "rename reads the names other than holding the names lock"
+printf '%s\n' "$cli_code" | CG_RE='(^|[[:space:]])match Linger[.]Session[.]Names[.]Rename[.]plan valid oldHeld [(]older[.]getD false[)] newHeld, oldId with([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "rename decides other than by Names.Rename.plan"
 # A start takes a name only by Start.plan, decided holding the name, and never loads a checkpoint;
 # a resume runs only a saved session's program, by Start.resumePlan, or nothing. Every other
 # daemon starts from what the name's checkpoint holds as `Recovery.decide` says (`recovery_exact`),
@@ -1336,19 +1351,19 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])IO Unit := do let deadline 
 # command's daemon, the offline readers and an attach whose daemon refused all ask it of the
 # file's bytes. Linger.Session.Suites.Resume writes damaged checkpoints at a saved session's path.
 for tie in \
-  'if let some req := start then let saved ← System[.]FilePath[.]pathExists [(]← Paths[.]ckptPath name[)] if resume then match Start[.]resumePlan live saved with' \
+  'if let some req := start then let saved ← System[.]FilePath[.]pathExists [(]← Paths[.]ckptPath id[)] if resume then match Start[.]resumePlan live saved with' \
   'else match Start[.]plan live saved with' \
   'let recovered ← if start[.]isSome && !resume then pure [(][.]ok none[)] else recover !resume if let [.]error [(]status, why[)] := recovered then match start with [|] some req => req[.]tell [(][.]failed status why[.]toUTF8[.]toList[)] [|] none => report s!"linger: session .[{]name[}]. did not start: [{]why[}]" return let saved := recovered[.]toOption[.]join'; do
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "a start took a name outside Start.plan, or a resume started anything but a saved session: $tie"
 done
 for tie in \
-  'private def recoverFor [(]name : String[)] [(]create : Bool[)] : IO Daemon[.]Recovered := do match Linger[.]App[.]Recovery[.]decide create [(]← Resume[.]readCkpt name[)] with [|] [.]fresh => return [.]ok none [|] [.]resume ck => return [.]ok [(]some [(]ck[.]vt, ck[.]cwd, ck[.]fields[)][)] [|] [.]refuse answer =>' \
+  'private def recoverFor [(]s : Names[.]Ref[)] [(]create : Bool[)] : IO Daemon[.]Recovered := do match Linger[.]App[.]Recovery[.]decide create [(]← Resume[.]readCkpt s[.]id[)] with [|] [.]fresh => return [.]ok none [|] [.]resume ck => return [.]ok [(]some [(]ck[.]vt, ck[.]cwd, ck[.]fields[)][)] [|] [.]refuse answer =>' \
   'match Linger[.]App[.]Recovery[.]decide true file with [|] [.]refuse answer => return some answer'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "a command started from a checkpoint other than as Recovery.decide says: $tie"
 done
-[ "$(code_count '[(]recoverFor name[)]' Linger/App/WorldCode.lean)" -eq 3 ] \
+[ "$(code_count '[(]recoverFor [{] name, id [}][)]' Linger/App/WorldCode.lean)" -eq 3 ] \
   || fail "every daemon a command begins, for attach, start and resume, recovers through recoverFor"
 ! code_grep '(^|[^[:alnum:]_])loadBytes([^[:alnum:]_]|$)' Linger/App/WorldCode.lean Linger/Session/WorldCode/Resume.lean \
   || fail "a command decodes a checkpoint itself: ask Recovery.decide, which never takes bytes that do not decode for no checkpoint"
@@ -1371,9 +1386,9 @@ for tie in \
   'IO[.]FS[.]withFile [(]ticketPath report[)] [.]writeNew fun _ => pure [(][)] try spawnDetached [(]← IO[.]appPath[)][.]toString ⟨args⟩ log catch err => discard <[|] takeTicket report throw err' \
   'if bounded then unless ← nap deadline 10 do if ← takeTicket report then return [.]took true bounded := false else pause 10' \
   'match Linger[.]Session[.]Start[.]answer [(]waited matches [.]took _[)] [(]waited matches [.]told [(]some [.]started[)][)], waited with [|] [.]started, _ => return [.]done [|] [.]notStarted,' \
-  'let runs := waited matches [.]told [(]some [.]started[)] [|][|] waited matches [.]told [(]some [.]running[)] match Linger[.]Session[.]Start[.]answer [(]waited matches [.]took _[)] runs, waited with [|] [.]started, [.]told [(]some [.]started[)] => do sayMoved name return [.]done [|] [.]started, _ => return [.]done [|] [.]notStarted,' \
-  'let pid ← beginRequest report log [(][[]"__start", report, name, cwd[]] [+][+] argv[)] startStatus name log [(]← awaitReport pid report[)]' \
-  'let pid ← beginRequest report log [[]"__resume", report, name, cwd[]] resumeStatus name log [(]← awaitReport pid report[)]'; do
+  'let runs := waited matches [.]told [(]some [.]started[)] [|][|] waited matches [.]told [(]some [.]running[)] match Linger[.]Session[.]Start[.]answer [(]waited matches [.]took _[)] runs, waited with [|] [.]started, [.]told [(]some [.]started[)] => do sayMoved s return [.]done [|] [.]started, _ => return [.]done [|] [.]notStarted,' \
+  'let pid ← beginRequest report log [(][[]"__start", report, s[.]id, s[.]name, cwd[]] [+][+] argv[)] startStatus s log [(]← awaitReport pid report[)]' \
+  'let pid ← beginRequest report log [[]"__resume", report, s[.]id, s[.]name, cwd[]] resumeStatus s log [(]← awaitReport pid report[)]'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "start or resume answered without its request's ticket: $tie"
 done
@@ -1425,12 +1440,12 @@ printf '%s\n' "$os_shell_code" | CG_RE='(^|[[:space:]])def replaceFile [(]path :
 # them: it loads and renders holding both locks and writes once it has let them go. The robust
 # suite resumes a session while a capture of it waits on a pipe nobody reads.
 for tie in \
-  'private def runHolding [(]name : String[)] [(]plan : List Linger[.]App[.]Capture[.]Step[)] [(]run : Linger[.]App[.]Capture[.]Step → IO Unit[)] : IO Unit := do let mut held : Option [(]Array Linger[.]App[.]Capture[.]Step[)] := none for step in plan do match step, held with [|] [.]acquire, none => held := some #[[][]] [|] [.]release, some inside => Paths[.]withSessionLock name [(]inside[.]forM run[)] held := none [|] [.]acquire, some _ [|] [.]release, none => pure [(][)] [|] step, some inside => held := some [(]inside[.]push step[)] [|] step, none => run step if let some inside := held then Paths[.]withSessionLock name [(]inside[.]forM run[)]' \
-  'requestStatus name result [|] none => let file ← IO[.]mkRef [(]none : Option ByteArray[)] let shown ← IO[.]mkRef [(]Shown[.]refusal [.]notFound [(]← refusalText name [.]notFound[)][)] let answer ← IO[.]mkRef Answer[.]failed runHolding name Linger[.]App[.]Capture[.]plan fun [|] [.]load => do file[.]set [(]← Resume[.]readCkpt name[)] [|] [.]render => do match Linger[.]App[.]Recovery[.]decide false [(]← file[.]get[)] with [|] [.]resume ck => shown[.]set [(][.]session [(]render ck[.]vt[)][)]' \
+  'private def runHolding [(]s : Names[.]Ref[)] [(]plan : List Linger[.]App[.]Capture[.]Step[)] [(]run : Linger[.]App[.]Capture[.]Step → IO Unit[)] : IO Unit := do let mut held : Option [(]Array Linger[.]App[.]Capture[.]Step[)] := none for step in plan do match step, held with [|] [.]acquire, none => held := some #[[][]] [|] [.]release, some inside => Paths[.]withSessionLock s[.]id [(]inside[.]forM run[)] held := none [|] [.]acquire, some _ [|] [.]release, none => pure [(][)] [|] step, some inside => held := some [(]inside[.]push step[)] [|] step, none => run step if let some inside := held then Paths[.]withSessionLock s[.]id [(]inside[.]forM run[)]' \
+  'requestStatus s[.]name result [|] none => let file ← IO[.]mkRef [(]none : Option ByteArray[)] let shown ← IO[.]mkRef [(]Shown[.]refusal [.]notFound [(]← refusalText s [.]notFound[)][)] let answer ← IO[.]mkRef Answer[.]failed runHolding s Linger[.]App[.]Capture[.]plan fun [|] [.]load => do file[.]set [(]← Resume[.]readCkpt s[.]id[)] [|] [.]render => do match Linger[.]App[.]Recovery[.]decide false [(]← file[.]get[)] with [|] [.]resume ck => shown[.]set [(][.]session [(]render ck[.]vt[)][)]' \
   '[|] [.]write => do match ← shown[.]get with [|] [.]session bytes => writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] answer[.]set [.]done [|] [.]refusal said why => IO[.]eprintln s!"linger: [{]why[}]" answer[.]set said [|] [.]acquire [|] [.]release => pure [(][)] answer[.]get' \
-  'if readOnly then match ← Client[.]connect name with [|] some fd => attachSpoken name fd true [|] none => match ← visitOffline name true with' \
-  'let [(]steps, record, file[)] ← Paths[.]withSessionLock name do let record ← [(]Record[.]load name[)][.]toBaseIO let steps := Linger[.]App[.]Recovery[.]visit readOnly record[.]toOption[.]join if steps == [[][.]resume[]] then return [(]steps, record, none[)] return [(]steps, record, ← Resume[.]readCkpt name[)]' \
-  'Paths[.]withSessionLock name do if [(]← Resume[.]readCkpt name[)][.]map [(]·[.]data[)] == some shown[.]data then Resume[.]dropCkpt name'; do
+  'if readOnly then match ← Client[.]connect s[.]id with [|] some fd => attachSpoken s[.]name fd true [|] none => match ← visitOffline s true with' \
+  'let [(]steps, record, file[)] ← Paths[.]withSessionLock s[.]id do let record ← [(]Record[.]load s[.]id[)][.]toBaseIO let steps := Linger[.]App[.]Recovery[.]visit readOnly record[.]toOption[.]join if steps == [[][.]resume[]] then return [(]steps, record, none[)] return [(]steps, record, ← Resume[.]readCkpt s[.]id[)]' \
+  'Paths[.]withSessionLock s[.]id do if [(]← Resume[.]readCkpt s[.]id[)][.]map [(]·[.]data[)] == some shown[.]data then Resume[.]dropCkpt s[.]id'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "offline reading or listing bypassed ownership: $tie"
 done
@@ -1448,7 +1463,7 @@ for tie in \
   printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "saved viewer bypassed bounded replay, snapshot preservation or terminal ownership: $tie"
 done
-printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])if row[.]lookup "state" == some "resumable" then Paths[.]withSessionLock name do let some saved := [(]← Resume[.]readCkpt name[)][.]bind Linger[.]Session[.]Checkpoint[.]loadBytes [|] throw' awk "$CODE_AWK" >/dev/null \
+printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])if row[.]lookup "state" == some "resumable" then let some id[[:space:]]*← Names[.]resolve name [|] throw [(]IO[.]userError s!"could not read checkpoint for session: [{]name[}]"[)] Paths[.]withSessionLock id do let some saved := [(]← Resume[.]readCkpt id[)][.]bind Linger[.]Session[.]Checkpoint[.]loadBytes [|] throw' awk "$CODE_AWK" >/dev/null \
   || fail "exporter must establish offline ownership before reading saved state"
 
 # `onMsg_resizePty_agrees` connects every emitted pty size to the resulting
@@ -1871,7 +1886,9 @@ grep -q 'workflow_dispatch' "$ci_yml" \
 # test, which they never counted.
 # The quiet suite adds three negative-assertion windows: a daemon must stay asleep, and a poll
 # with no timeout must keep waiting, and only time passing without an event can show either.
-SUITE_SLEEP_CAP=37
+# The rename suite adds one: a `wait` begun before a rename must have looked its name up, which
+# nothing reports.
+SUITE_SLEEP_CAP=38
 es_n="$(code_count 'IO[.]sleep([^[:alnum:]_]|$)' 'Verify/*' 'Linger/*/Suites/*' \
   ':!Linger/Os/Suites/Shim.lean')"
 [ "$es_n" -le "$SUITE_SLEEP_CAP" ] \
@@ -1915,6 +1932,7 @@ ed_n="$(code_count '(^|[^[:alnum:]_.])drain(Str)?[[:space:]]+[^[:space:]]+[[:spa
 #     the probe of the binary an upgrade names, every 10 ms for at most probeMs (10 s).
 #   Session/WorldCode/Inventory: an info reply, until the request's deadline: replySilenceMs (10 s)
 #     for the one an attach asks for its daemon's protocol level.
+#   Session/WorldCode/Names: the names lock another rename holds, every 10 ms for at most 1 s.
 timers="$(code_grep '(IO[.]sleep [^[:space:]]|← poll [^[:space:]]|(^|[[:space:].])nap [^[:space:]]|(^|[[:space:]])pause [0-9])' 'Linger/*.lean' \
     ':!Linger/*/Suites/*' ':!Linger/*/Proofs/*' ':!Linger/*/Tests/*' ':!Linger/*/WorldCode/Checks.lean' \
     'packages/*.lean' ':!packages/*/Suites/*' ':!packages/*/Proofs/*' ':!packages/*/Tests/*' \
@@ -1940,6 +1958,7 @@ Linger/Session/WorldCode/Daemon.lean: let revs ← poll fds (Array.replicate fds
 Linger/Session/WorldCode/Daemon.lean: nap deadline 10
 Linger/Session/WorldCode/Daemon.lean: unless ← nap deadline 10 do
 Linger/Session/WorldCode/Inventory.lean: let revs ← poll #[fd] #[POLLIN] (Int32.ofNat (min 100 remaining))
+Linger/Session/WorldCode/Names.lean: unless ← Os.Shell.nap deadline 10 do
 packages/os/Os/WorldCode.lean: let _ ← poll #[fd] #[POLLOUT] (-1)
 packages/os/Os/WorldCode.lean: def nap (deadline step : Nat) : IO Bool := do
 packages/os/Os/WorldCode.lean: IO.sleep ms.toUInt32

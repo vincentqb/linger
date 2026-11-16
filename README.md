@@ -42,6 +42,14 @@ its terminal and every connection, so the program and attached clients see nothi
 daemon an older linger started cannot do this; it keeps running, as does one whose new binary
 cannot take the session over, and `upgrade` says why.
 
+## Names
+
+`linger rename old new` gives a session a new name; its program, terminal, clients, waiters and
+status stay as they were, and so does `LINGER_SESSION`, which holds the session's ID, fixed when
+the session was created. A new session's ID is its name; a name whose ID a renamed session still
+holds gets a fresh one. `rename` refuses a name a live, saved or ended session has, and a session
+an older linger started until `linger upgrade` moves it onto this one.
+
 ## Remote hosts
 
 Every command takes a `name@host` target, and `linger ls -r` and the chooser also list the

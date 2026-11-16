@@ -1,6 +1,7 @@
 module
 
 import Linger.Session.CoreCode.Claim
+import Linger.Session.CoreCode.Names
 import Os.WorldCode
 import Linger.Target.CoreCode.Name
 import Linger.Target.CoreSpec
@@ -19,8 +20,10 @@ is an explicit override even when empty. The last fallback is `/tmp`, not `$TMPD
 like tmux's `/tmp/tmux-$UID`, it is a short, stable location that every login context
 of the same user agrees on, and `LINGER_DIR` overrides it.
 
-Every name must already equal `Name.sanitize` before touching a path.
-Invalid input is rejected, never converted into another session's name.
+Every path is keyed by a session's ID (`Linger.Session.Names`): a valid name, which is the ID of
+every session whose name was free when it was created, an older linger's sessions among them, or
+a fresh ID. Every key must already be one before touching a path. Invalid input is rejected,
+never converted into another session's key.
 -/
 
 namespace Linger.Session.Shell.Paths
@@ -65,14 +68,12 @@ def ensureDir (d : String) : IO Unit := do
 def nameRule : String :=
   s!"1–{Linger.Target.Name.maxLen} ASCII letters, digits, -_.+; no leading dot"
 
-/-- Return `name` unchanged when `Name.check` accepts it, and throw with `nameRule`
-otherwise; a name is never rewritten into another. -/
-private def checkName (name : String) : IO String := do
-  match Linger.Target.Name.check name with
-  | some name =>
-    return name
-  | none =>
-    throw (IO.userError s!"invalid session name (use {nameRule})")
+/-- Return `key` unchanged when it is a valid name or a fresh ID (`Names.validKey`), and throw
+with `nameRule` otherwise; a key is never rewritten into another. -/
+private def checkName (key : String) : IO String := do
+  if Linger.Session.Names.validKey key then
+    return key
+  throw (IO.userError s!"invalid session name (use {nameRule})")
 
 /-- `s` with the case of each ASCII letter swapped. -/
 private def swapCase (s : String) : String :=
@@ -93,10 +94,10 @@ def checkSpelling (path : String) : IO Unit := do
       unless entries.any (fun entry => entry.fileName == file) do
         throw (IO.userError "session name differs from an existing filename's spelling")
 
-/-- A session name as a directory listing spells it, which is the spelling on disk, so its
+/-- A session ID as a directory listing spells it, which is the spelling on disk, so its
 paths need no `checkSpelling`. Only `listSocketNames` and `listCkptNames` make one. -/
 structure Listed where private mk ::
-  /-- The name, spelled as on disk. -/
+  /-- The ID, spelled as on disk. -/
   name : String
 
 /-- `dir/<name><suffix>`. A name a listing read is taken as spelled, in the directory the listing
@@ -255,17 +256,18 @@ def Listed.withSessionLock {α : Type} (n : Listed) (action : IO α) : IO α := 
         pathIn locks n.name ".lock" true)
       (pure false) true fun _ => action
 
-/-- Valid session names among `dir`'s entries ending in `suffix`, as the directory spells them. -/
+/-- Valid session IDs among `dir`'s entries ending in `suffix`, as the directory spells them. -/
 private def listNames (dir suffix : String) : IO (List Listed) := do
   ensureDir dir
   return (← System.FilePath.readDir dir).toList.filterMap fun e =>
-      ((e.fileName.dropSuffix? suffix).bind (Linger.Target.Name.check ·.toString)).map (⟨·⟩)
+      ((e.fileName.dropSuffix? suffix).map (·.toString)).bind fun key =>
+        if Linger.Session.Names.validKey key then some ⟨key⟩ else none
 
-/-- Session names present as sockets, live or stale. -/
+/-- Session IDs present as sockets, live or stale. -/
 def listSocketNames : IO (List Listed) := do
   listNames (← socketDir) ".sock"
 
-/-- Checkpoint names (resumable sessions after a reboot). -/
+/-- Checkpoint IDs (resumable sessions after a reboot). -/
 def listCkptNames : IO (List Listed) := do
   listNames (← stateDir) ".ckpt"
 

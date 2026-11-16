@@ -198,7 +198,8 @@ answered. -/
 private def answerChecks (e : Env) : IO Unit := do
   let report := s!"{e.dir}/logs/taken.start-check"
   IO.FS.createDirAll s!"{e.dir}/logs"
-  let ran ← e.cliTimeout #["__start", report, "taken", e.dir, "/bin/sh", "-c", "exit 0"] hangMs
+  let ran ←
+    e.cliTimeout #["__start", report, "taken", "taken", e.dir, "/bin/sh", "-c", "exit 0"] hangMs
   expect
       (ran.any (·.1 == 0) && !(← System.FilePath.pathExists report) &&
         !(← e.dirNames ".sock").contains "taken.sock" &&

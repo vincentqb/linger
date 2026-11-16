@@ -168,7 +168,7 @@ def admissionPressure (e : Env) : IO Unit := do
           args :=
             #["-c",
               s!"ulimit -n {limit} || exit; pressure_log=$1; shift; exec \"$@\" 2>\"$pressure_log\"",
-              "sh", logPath, e.bin, "__daemon", "pressure", pressure.dir, "/bin/sh"],
+              "sh", logPath, e.bin, "__daemon", "pressure", "pressure", pressure.dir, "/bin/sh"],
           env := pressure.procEnv, stdin := .null, stdout := .null, stderr := .null }
   let owned ← IO.mkRef (#[] : Array UInt32)
   let child ← IO.mkRef (none : Option UInt32)

@@ -62,6 +62,6 @@ def readCkpt (name : String) : IO (Option ByteArray) := do
   try
     return some (← IO.FS.readBinFile path)
   catch err =>
-    throw (IO.userError s!"checkpoint read failed for '{name}': {err}")
+    throw (IO.userError s!"checkpoint read failed: {err}")
 
 end Linger.Session.Shell.Resume

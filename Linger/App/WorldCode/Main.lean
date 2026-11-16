@@ -5,6 +5,7 @@ import Linger.App.WorldCode
 import Linger.App.CoreCode.Entry
 import Linger.Selector.WorldCode
 import Linger.Import.WorldCode
+import Linger.Session.WorldCode.Names
 import Os.WorldCode
 
 public section
@@ -24,7 +25,7 @@ def main (args : List String) : IO UInt32 := do
     try
       match Linger.App.Entry.route args with
       | .selector readOnly =>
-        Linger.Selector.Shell.run (← IO.appPath).toString readOnly
+        Linger.Selector.Shell.run (← IO.appPath).toString Linger.Session.Shell.Names.nameOf readOnly
       | .tmux rest =>
         Linger.Import.Shell.run (← IO.appPath).toString rest
       | .session argv =>

@@ -19,6 +19,8 @@ public import Linger.Session.CoreCode.Buf
 public import Linger.Session.CoreCode.Checkpoint
 public import Linger.Session.CoreCode.Handoff
 public import Linger.Session.CoreCode.Claim
+public import Linger.Session.CoreCode.Names
+public import Os.WorldSpec
 public import Linger.Session.CoreCode.Driver
 public import Linger.Session.CoreSpec
 public import Linger.Session.WorldSpec
@@ -55,6 +57,7 @@ import all Linger.Session.Proofs.Buf
 import all Linger.Session.Proofs.Checkpoint
 import all Linger.Session.Proofs.Handoff
 import all Linger.Session.Proofs.Claim
+import all Linger.Session.Proofs.Names
 import all Linger.Session.Proofs.Driver
 import all Linger.Session.Proofs.Record
 import all Linger.Session.Proofs.Session
@@ -366,6 +369,166 @@ theorem one_owner_rejects_socket :
       (.enter _ 2 ⟨2, 3⟩ rfl rfl)
   have same := @h grant exclusive s5 reached 1 2 3 ⟨1, 3⟩ ⟨2, 3⟩ rfl rfl (.inr rfl) (.inr rfl)
   exact absurd same (by decide)
+
+theorem names_one_to_one (t : Names.Table) (wf : Names.Wf t) (a b id : String) :
+    (Names.resolve t a = some id → Names.resolve t b = some id → a = b) ∧
+      (Names.resolve t a = some id ↔ Names.nameOf t id = some a) ∧
+      Names.resolve [] a = Name.check a :=
+  ⟨Names.resolve_injective wf, Names.resolve_iff_nameOf wf a id, Names.resolve_nil a⟩
+
+theorem names_one_to_one_rejects_stale :
+    ¬∀ (t : Names.Table),
+        Names.Wf t →
+          ∀ (a b id : String),
+            (Names.resolveStale t a = some id → Names.resolveStale t b = some id → a = b) ∧
+              (Names.resolveStale t a = some id ↔ Names.nameOf t id = some a) ∧
+              Names.resolveStale [] a = Name.check a := by
+  intro h
+  -- `x` renamed `y`: the stale resolution still reaches it by `x`
+  have wf : Names.Wf [("y", "x")] := by simp [Names.Wf]
+  have := (h [("y", "x")] wf "x" "y" "x").1 (by decide) (by decide)
+  exact absurd this (by decide)
+
+theorem rename_moves (t : Names.Table) (wf : Names.Wf t) (old new id : String)
+    (found : Names.resolve t old = some id) (free : t.lookup new = none) (other : old ≠ new) :
+    Names.Wf (Names.rename t old new id) ∧
+      Names.resolve (Names.rename t old new id) new = some id ∧
+      Names.resolve (Names.rename t old new id) old ≠ some id ∧
+      ∀ n, n ≠ old → n ≠ new → Names.resolve (Names.rename t old new id) n = Names.resolve t n :=
+  Names.rename_moves wf found free other
+
+theorem rename_moves_rejects_reid :
+    ¬∀ (t : Names.Table),
+        Names.Wf t →
+          ∀ (old new id : String),
+            Names.resolve t old = some id →
+              t.lookup new = none →
+              old ≠ new →
+              Names.Wf (Names.renameReid t old new id) ∧
+                Names.resolve (Names.renameReid t old new id) new = some id ∧
+                Names.resolve (Names.renameReid t old new id) old ≠ some id ∧
+                ∀ n,
+                  n ≠ old →
+                    n ≠ new →
+                    Names.resolve (Names.renameReid t old new id) n = Names.resolve t n := by
+  intro h
+  have valid : Name.check "a" = some "a" :=
+    (Name.check_eq_some_iff "a" "a").mpr
+      ⟨rfl, by
+        unfold Name.Valid; decide⟩
+  have found : Names.resolve [] "a" = some "a" := by rw [Names.resolve_nil, valid]
+  have moved := (h [] (by simp [Names.Wf]) "a" "b" "a" found (by decide) (by decide)).2.1
+  have : Names.resolve (Names.renameReid [] "a" "b" "a") "b" = some "b" := by
+    simp [Names.renameReid, Names.resolve]
+  rw [this] at moved
+  exact absurd moved (by decide)
+
+theorem claim_fresh (t : Names.Table) (wf : Names.Wf t) (name id : String)
+    (unnamed : Names.resolve t name = none) (fresh : Names.Fresh id) (unused : id ∉ t.map (·.2)) :
+    Names.Wf (Names.claim t name id) ∧
+      Names.resolve (Names.claim t name id) name = some id ∧
+      ∀ n, n ≠ name → Names.resolve (Names.claim t name id) n = Names.resolve t n :=
+  Names.claim_fresh wf unnamed fresh unused
+
+theorem claim_fresh_rejects_self :
+    ¬∀ (t : Names.Table),
+        Names.Wf t →
+          ∀ (name id : String),
+            Names.resolve t name = none →
+              Names.Fresh id →
+              id ∉ t.map (·.2) →
+              Names.Wf (Names.claimSelf t name id) ∧
+                Names.resolve (Names.claimSelf t name id) name = some id ∧
+                ∀ n,
+                  n ≠ name → Names.resolve (Names.claimSelf t name id) n = Names.resolve t n := by
+  intro h
+  -- `n` renamed `x`, so `n` leads nowhere; a start that took `n` for the ID would share it
+  have unnamed : Names.resolve [("x", "n")] "n" = none := by simp [Names.resolve, List.lookup_cons]
+  have fresh : Names.Fresh ".a" := ⟨['a'], rfl, by simp, by decide⟩
+  have := (h [("x", "n")] (by simp [Names.Wf]) "n" ".a" unnamed fresh (by decide)).2.1
+  simp [Names.claimSelf, Names.resolve] at this
+
+theorem nameOf_shown (t : Names.Table) (id name : String) (shown : Names.nameOf t id = some name) :
+    (name, id) ∈ t ∨ Name.check id = some name := Names.nameOf_shown t id name shown
+
+theorem nameOf_shown_rejects_bare :
+    ¬∀ (t : Names.Table) (id name : String),
+        Names.nameOfBare t id = some name → (name, id) ∈ t ∨ Name.check id = some name := by
+  intro h
+  rcases h [] ".a" ".a" rfl with mem | checked
+  · simp at mem
+  · have := ((Name.check_eq_some_iff ".a" ".a").mp checked).2
+    exact absurd this.2.2.2 (by decide)
+
+theorem rename_plan (valid oldHeld older newHeld : Bool) :
+    Names.Rename.plan valid oldHeld older newHeld =
+      if !valid then .refuse .invalid
+      else
+        if !oldHeld then .refuse .missing
+        else
+          if newHeld then .refuse .taken
+          else
+            if older then .refuse .older
+            else .move := Names.rename_plan_eq valid oldHeld older newHeld
+
+theorem rename_plan_rejects_move :
+    ¬∀ (valid oldHeld older newHeld : Bool),
+        (fun (_ _ _ _ : Bool) => Names.Rename.Plan.move) valid oldHeld older newHeld =
+          if !valid then .refuse .invalid
+          else
+            if !oldHeld then .refuse .missing
+            else if newHeld then .refuse .taken else if older then .refuse .older else .move := by
+  intro h
+  cases h false true false false
+
+theorem one_name
+    (placed : Bool → (String → Option Nat) → String → String → Option (String → Option Nat))
+    (noReplace : Os.Place.NoReplace placed) (first second : Names.Op) (names : String → Option Nat)
+    (src src' dst : String) (file : Nat) (named : names src = some file)
+    {after : String → Option Nat}
+    (placedFirst : (Names.call first).run placed names src dst = some after) :
+    after dst = some file ∧ (Names.call second).run placed after src' dst = none :=
+  Names.call_second_fails noReplace first second named placedFirst
+
+theorem one_name_rejects_replace :
+    ¬∀ (placed : Bool → (String → Option Nat) → String → String → Option (String → Option Nat)),
+        Os.Place.NoReplace placed →
+          ∀ (first second : Names.Op) (names : String → Option Nat) (src src' dst : String)
+            (file : Nat),
+            names src = some file →
+              ∀ {after : String → Option Nat},
+                ((fun (_ : Names.Op) => Names.Call.replace) first).run placed names src dst =
+                    some after →
+                  after dst = some file ∧
+                    ((fun (_ : Names.Op) => Names.Call.replace) second).run placed after src' dst =
+                      none := by
+  intro h
+  -- an operating system that places a name only where none is
+  let placed : Bool → (String → Option Nat) → String → String → Option (String → Option Nat) :=
+    fun rename names src dst =>
+    if (names dst).isSome ∨ src = dst then none
+    else
+      some fun p =>
+        if p = dst then names src
+        else if p = src then (if rename then none else names src) else names p
+  have noReplace : Os.Place.NoReplace placed := by
+    intro rename names src dst
+    refine ⟨fun taken => by simp [placed, taken], fun after placedOk => ?_⟩
+    simp only [placed] at placedOk
+    split at placedOk
+    · cases placedOk
+    · rename_i free
+      cases placedOk
+      have ne : src ≠ dst := fun e => free (Or.inr e)
+      refine ⟨ne, by simp, by simp [ne], fun other h1 h2 => by simp [h1, h2]⟩
+  have :=
+    (@h placed noReplace .create .create (fun p => if p = "s" then some 0 else none) "s" "s" "d" 0
+        (by simp)
+        (fun p =>
+          if p = "d" then (if "s" = "s" then some 0 else none)
+          else if p = "s" then none else (if p = "s" then some 0 else none))
+        rfl).2
+  simp [Names.Call.run] at this
 
 theorem step_fields_described (s : State) (ev : Event)
     (changed : (Session.step s ev).1.fieldList ≠ s.fieldList) :
@@ -1337,15 +1500,15 @@ theorem shellOf_choice_rejects_fixed :
 theorem start_runs (inherited : String → Option String)
     (start :
       String → String → Array String → List (String × String) → Spawn.Reset → Option Spawn.Started)
-    (runs : Spawn.Runs inherited start) (name dir shell : String) (argv : List String)
+    (runs : Spawn.Runs inherited start) (id dir shell : String) (argv : List String)
     {started : Spawn.Started}
     (ok :
-      start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
-          (Start.environment name) Start.reset =
+      start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2 (Start.environment id)
+          Start.reset =
         some started) :
     started.argv = argv.headD shell :: argv.drop 1 ∧
       started.dir = dir ∧
-      started.env "LINGER_SESSION" = some name ∧
+      started.env "LINGER_SESSION" = some id ∧
       started.env "TERM" = some "xterm-256color" ∧
       started.env "COLORTERM" = some "truecolor" ∧
       started.env "TERM_PROGRAM" = some "linger" ∧
@@ -1371,13 +1534,13 @@ theorem start_runs_rejects_unnamed :
           String →
             String → Array String → List (String × String) → Spawn.Reset → Option Spawn.Started),
         Spawn.Runs inherited start →
-          ∀ (name dir shell : String) (argv : List String) {started : Spawn.Started},
+          ∀ (id dir shell : String) (argv : List String) {started : Spawn.Started},
             start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
-                  ((fun (_ : String) => ([] : List (String × String))) name) Start.reset =
+                  ((fun (_ : String) => ([] : List (String × String))) id) Start.reset =
                 some started →
               started.argv = argv.headD shell :: argv.drop 1 ∧
                 started.dir = dir ∧
-                started.env "LINGER_SESSION" = some name ∧
+                started.env "LINGER_SESSION" = some id ∧
                 started.env "TERM" = some "xterm-256color" ∧
                 started.env "COLORTERM" = some "truecolor" ∧
                 started.env "TERM_PROGRAM" = some "linger" ∧

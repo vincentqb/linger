@@ -339,10 +339,10 @@ else
 fi
 # shellcheck disable=SC2086  # each skip count is a number
 ./.lake/build/bin/suites --suites \
-  manager:168 delivery:38 attach:83 agent:69:$agent_skips \
+  manager:169 delivery:38 attach:83 agent:69:$agent_skips \
   resume:44:$resume_skips watch:52 title:18:$title_skips graphics:9 robust:35:$robust_skips \
   interop:73 recipes:56 status:35 terminal:14 overview:23 remote:74 shells:5 identity:24 \
-  quiet:7:$quiet_skips upgrade:13:$upgrade_skips \
+  quiet:7:$quiet_skips upgrade:13:$upgrade_skips rename:14 \
   || fail "live suites (see $logs/linger-*.out)"
 defaults_after="$(default_listing)"
 if [ "$defaults_after" != "$defaults_before" ]; then

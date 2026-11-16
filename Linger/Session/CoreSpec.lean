@@ -1,6 +1,7 @@
 module
 
 public import Linger.Os.CoreSpec
+public import Linger.Target.CoreSpec
 public import Terminal.CoreSpec
 
 public section
@@ -16,8 +17,8 @@ which messages fit a frame, describe or look at the session, and what a decoder 
 a chunked stream, the bounds a state
 keeps, the events a session handles when every effect succeeds, the reachable states of the
 daemon's byte queues, and a model of how daemons and offline readers claim a session's
-resources; and the wrong transition, decision and drivers the kills put in place of the
-program's. Bodies are exposed: each definition here is its own specification. What the headlines
+resources, and the names that lead to sessions' IDs; and the wrong transition, decision,
+drivers, renames, start and resolution the kills put in place of the program's. Bodies are exposed: each definition here is its own specification. What the headlines
 assume of the world, the effect executor's answers among it, is in `Linger.Session.WorldSpec`. -/
 
 namespace Linger.Session
@@ -982,3 +983,114 @@ inductive Reachable (grant : State → Nat → Nat → Bool) (enters : Bool → 
     (step : Step grant enters before after) : Reachable grant enters after
 
 end Linger.Session.Claim
+
+namespace Linger.Session.Names
+
+/-! ## Names and IDs
+
+A session's ID is fixed when the session is created: it keys the session's socket, checkpoint,
+end record and locks, and it is the `LINGER_SESSION` its program sees. Its name is a handle that
+leads to its ID, which `rename` changes. A session created under a name that is no session's ID
+takes that name for its ID, as every session did before names could change, so the files an
+older linger keyed by name keep the meaning they had; a name whose ID a renamed session holds
+gets a fresh ID, a dot and hexadecimal digits, which no name can be. The names table holds an
+entry for each session whose name is not its ID: the name, and the ID it leads to. Any other
+valid name leads to the ID that is that name, unless an entry leads to that ID, which a rename
+then gave another name. -/
+
+/-- The names table: each entry a name and the ID it leads to. -/
+abbrev Table : Type := List (String × String)
+
+/-- A lowercase hexadecimal digit. -/
+@[expose]
+def hexDigit (c : Char) : Bool := ('0' ≤ c && c ≤ '9') || ('a' ≤ c && c ≤ 'f')
+
+/-- A fresh ID: a dot, then one or more lowercase hexadecimal digits. No name begins with a dot
+(`Target.Name.Valid`), so no fresh ID is a name. -/
+@[expose]
+def Fresh (id : String) : Prop :=
+  ∃ digits : List Char, id.toList = '.' :: digits ∧ digits ≠ [] ∧ ∀ c ∈ digits, hexDigit c = true
+
+/-- A table the names directory can hold, and linger keeps: each name at most once, as a
+directory holds it, and each ID at most once. -/
+@[expose]
+def Wf (t : Table) : Prop := (t.map (·.1)).Nodup ∧ (t.map (·.2)).Nodup
+
+/-- What places a name in the names directory: a start that must give a session a fresh ID
+creates its entry, as a rename of a session whose name is its ID does (`create`), and a rename of
+a session with an entry moves that entry (`move`). -/
+inductive Op where
+  /-- Create an entry, from a temporary file that holds the ID. -/
+  | create
+  /-- Move an entry to the new name. -/
+  | move
+  deriving DecidableEq, Repr
+
+/-- How a name is placed on disk: a link (`Os.Shell.linkNew`), a rename that may not replace
+(`Os.Shell.renameNew`), or a rename that replaces, as rename(2) does. -/
+inductive Call where
+  /-- link(2), which never replaces a name. -/
+  | link
+  /-- A rename that may not replace a name. -/
+  | renameNew
+  /-- rename(2), which replaces whatever the new name named. -/
+  | replace
+  deriving DecidableEq, Repr
+
+/-- What a call leaves of the names of a directory, which named `names`, when the operating
+system places names as `placed` says (`Os.Place.NoReplace`); `none` when it fails. A rename that
+replaces makes `dst` name `src`'s file whatever `dst` named. -/
+@[expose]
+def Call.run
+    (placed : Bool → (String → Option Nat) → String → String → Option (String → Option Nat)) :
+    Call → (String → Option Nat) → String → String → Option (String → Option Nat)
+  | .link, names, src, dst => placed false names src dst
+  | .renameNew, names, src, dst => placed true names src dst
+  | .replace, names, src, dst =>
+    some fun p => if p = dst then names src else if p = src then none else names p
+
+/-- A wrong rename: it gives the session its new name for its ID too, so the ID changes. -/
+@[expose]
+def renameReid (t : Table) (old new _id : String) : Table :=
+  (new, new) :: t.filter (fun e => e.1 != old)
+
+/-- A wrong start: it takes the name for the new session's ID even when a renamed session holds
+that ID, so two sessions would share it. -/
+@[expose]
+def claimSelf (t : Table) (name _id : String) : Table := (name, name) :: t
+
+/-- A wrong resolution: the entry for the name, else the ID that is the name, even when a rename
+gave that ID's session another name, so the old name still reaches it. -/
+@[expose]
+def resolveStale (t : Table) (name : String) : Option String :=
+  (t.lookup name).orElse fun _ => some name
+
+/-- A wrong reverse lookup: every ID shows as itself. -/
+@[expose]
+def nameOfBare (_t : Table) (id : String) : Option String := some id
+
+end Linger.Session.Names
+
+namespace Linger.Session.Names.Rename
+
+/-- Why `rename` refuses. -/
+inductive Refusal where
+  /-- The new name is not a valid name. -/
+  | invalid
+  /-- No live or saved session has the old name. -/
+  | missing
+  /-- A live or saved session has the new name, an ended one still listed included. -/
+  | taken
+  /-- The session's daemon was started by an older linger, which keeps no name but its ID. -/
+  | older
+  deriving DecidableEq, Repr
+
+/-- What `rename` does with a name. -/
+inductive Plan where
+  /-- Refuse, saying why, and change nothing. -/
+  | refuse (why : Refusal)
+  /-- Give the session the new name. -/
+  | move
+  deriving DecidableEq, Repr
+
+end Linger.Session.Names.Rename

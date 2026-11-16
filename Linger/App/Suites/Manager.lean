@@ -13,6 +13,7 @@ import Linger.Target.CoreSpec
 import Terminal.CoreCode.Title
 import Terminal.CoreCode.Mediation
 import Linger.Session.WorldCode.Paths
+import Linger.Session.WorldCode.Names
 import Linger.Import.CoreCode.Resurrect
 import Linger.Session.CoreCode.Checkpoint
 import Linger.Import.Suites.Recipes
@@ -291,7 +292,7 @@ def probe (args : List String) : IO UInt32 := do
     | "launch" :: manager :: mode :: rest =>
       launch root manager mode rest
     | ["picker", executable] =>
-      return (← Linger.Selector.Shell.run executable).code
+      return (← Linger.Selector.Shell.run executable Linger.Session.Shell.Names.nameOf).code
     | ["tmux-picker", executable, save] =>
       return (← Linger.Import.Shell.run executable ["select", save]).code
     | ["session-program"] =>
@@ -2227,13 +2228,19 @@ private def defaultChecks (e : Env) : IO Unit := do
         s.text "\x03"
         return rows && (← restored s 130 2) && (← beforeAttach s) && (← attachNormal f) &&
             (← f.visits) == attachVisit ["Beta"]
+  -- `LINGER_SESSION` holds the session's ID: a renamed session's ID, which the names directory
+  -- leads its new name to, selects the row of that name
   for (slug, session, chosen) in
     [("inside-session", "Gamma", "Gamma"), ("inside-session-empty", "", "Alpha"),
-      ("inside-session-gone", "Gone", "Alpha")] do
+      ("inside-session-gone", "Gone", "Alpha"), ("inside-session-renamed", "Delta", "Gamma")] do
     check e slug
         s!"picker opened inside a session starts on that session, or the top row without one ({slug})"
         fun f => do
         IO.FS.writeFile (f.root / "linger-session") session
+        if slug == "inside-session-renamed" then
+          IO.FS.createDirAll (f.root / "state" / "names")
+          IO.FS.writeFile (f.root / "state" / "names" / "Gamma") "Delta"
+        let f := { f with env := f.env.push ("LINGER_DIR", some (f.root / "state").toString) }
         withPrompt f.picker #[] fun s => do
             let highlight ← s.selected chosen
             s.text "\x03"

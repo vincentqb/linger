@@ -15,6 +15,7 @@ public import Terminal.CoreCode.Replay
 public import Terminal.CoreSpec
 public import Terminal.CoreCode.Title
 public import Terminal.CoreCode.Vt
+public import Os.WorldSpec
 meta import SoftwareChallenge
 
 /-! # Headline theorems
@@ -298,6 +299,18 @@ def Linger.Session.Start.failureStatus : Spawn.Failure → UInt8 := sorry
 
 def Linger.Session.Start.metadata :
     (name pid created cmd dir : String) → Option String → List (String × String) := sorry
+
+def Linger.Session.Names.resolve : Names.Table → String → Option String := sorry
+
+def Linger.Session.Names.nameOf : Names.Table → String → Option String := sorry
+
+def Linger.Session.Names.claim : Names.Table → String → String → Names.Table := sorry
+
+def Linger.Session.Names.rename : Names.Table → String → String → String → Names.Table := sorry
+
+def Linger.Session.Names.call : Names.Op → Names.Call := sorry
+
+def Linger.Session.Names.Rename.plan : Bool → Bool → Bool → Bool → Names.Rename.Plan := sorry
 
 def Linger.Session.Buf.Buf : Type := sorry
 
@@ -595,7 +608,29 @@ an attach or a resize in the read that asked for it, a size with no zero, so a t
 size yet never reaches the pty. Not claimed: which client sizes the session, the newest writable
 one whose terminal has a size, which the session fixtures and the attach suite check.
 `start` takes no name a session holds (`start_plan`); the daemon decides that holding the name,
-which has one owner (`one_owner`). The fields of a session's record, its description and an
+which has one owner (`one_owner`).
+A session's ID is fixed when it is created and keys its files and its `LINGER_SESSION`; its name
+is a handle that leads to the ID, which `rename` changes (`Session.Names`). A session created
+under a name that is no session's ID takes it for its ID, as every session an older linger keyed
+by name did, so with no entries every valid name leads to itself and old files keep their
+meaning; in a table linger keeps, a name leads to an ID exactly when that ID shows as the name,
+so no two names lead to one ID (`names_one_to_one`). A rename moves the name to the same ID,
+leaves the old name leading elsewhere and no other name changed (`rename_moves`), so every
+command, which reaches a session through the ID its name leads to, reaches it by the new name and
+the program, terminal, clients, waiters, description and status it keeps by its ID stay as they
+were. A start of a name that leads nowhere, because a renamed session holds the name's own ID,
+gives it a fresh ID that no session holds (`claim_fresh`); an ID shows as its entry's name or as
+itself only when it is a name, never a fresh ID (`nameOf_shown`). `rename` refuses an invalid new
+name, an old name no live or saved session has, a new one a live or saved session has, an ended
+one still listed included, and a daemon an older linger started, in that order (`rename_plan`),
+and places a name on disk only with calls that never replace one, so of a start and a rename
+onto one name, whichever comes first, the second fails and the name keeps the first one's
+session (`one_name`, assuming `Os.Place.NoReplace`). Not claimed: that a command resolves its
+name once and keys everything after by the ID, that the daemon takes the name only while it still
+leads to its ID, holding the ID's locks, that `rename` holds the names lock and the new name's ID's
+locks while it places the name, which the rename suite checks, and that a client attached before
+a rename titles its terminal with the new name, which it does from its next attach.
+The fields of a session's record, its description and an
 import's provenance, change only when a client that may change the session describes it
 (`step_fields_described`); they, the boot metadata and the terminal a session reports each have
 one source, and a listing names each row by its socket. A human row reads only
@@ -644,6 +679,118 @@ theorem one_owner_rejects_socket :
               ∀ {a b resource : Nat} {left right : Claim.Lease},
                 s.active a = some left →
                   s.active b = some right → left.Uses resource → right.Uses resource → a = b := by
+  sorry
+
+theorem names_one_to_one (t : Names.Table) (wf : Names.Wf t) (a b id : String) :
+    (Names.resolve t a = some id → Names.resolve t b = some id → a = b) ∧
+      (Names.resolve t a = some id ↔ Names.nameOf t id = some a) ∧
+      Names.resolve [] a = Name.check a := by
+  sorry
+
+@[kills names_one_to_one]
+theorem names_one_to_one_rejects_stale :
+    ¬∀ (t : Names.Table),
+        Names.Wf t →
+          ∀ (a b id : String),
+            (Names.resolveStale t a = some id → Names.resolveStale t b = some id → a = b) ∧
+              (Names.resolveStale t a = some id ↔ Names.nameOf t id = some a) ∧
+              Names.resolveStale [] a = Name.check a := by
+  sorry
+
+theorem rename_moves (t : Names.Table) (wf : Names.Wf t) (old new id : String)
+    (found : Names.resolve t old = some id) (free : t.lookup new = none) (other : old ≠ new) :
+    Names.Wf (Names.rename t old new id) ∧
+      Names.resolve (Names.rename t old new id) new = some id ∧
+      Names.resolve (Names.rename t old new id) old ≠ some id ∧
+      ∀ n, n ≠ old → n ≠ new → Names.resolve (Names.rename t old new id) n = Names.resolve t n := by
+  sorry
+
+@[kills rename_moves]
+theorem rename_moves_rejects_reid :
+    ¬∀ (t : Names.Table),
+        Names.Wf t →
+          ∀ (old new id : String),
+            Names.resolve t old = some id →
+              t.lookup new = none →
+              old ≠ new →
+              Names.Wf (Names.renameReid t old new id) ∧
+                Names.resolve (Names.renameReid t old new id) new = some id ∧
+                Names.resolve (Names.renameReid t old new id) old ≠ some id ∧
+                ∀ n,
+                  n ≠ old →
+                    n ≠ new →
+                    Names.resolve (Names.renameReid t old new id) n = Names.resolve t n := by
+  sorry
+
+theorem claim_fresh (t : Names.Table) (wf : Names.Wf t) (name id : String)
+    (unnamed : Names.resolve t name = none) (fresh : Names.Fresh id) (unused : id ∉ t.map (·.2)) :
+    Names.Wf (Names.claim t name id) ∧
+      Names.resolve (Names.claim t name id) name = some id ∧
+      ∀ n, n ≠ name → Names.resolve (Names.claim t name id) n = Names.resolve t n := by
+  sorry
+
+@[kills claim_fresh]
+theorem claim_fresh_rejects_self :
+    ¬∀ (t : Names.Table),
+        Names.Wf t →
+          ∀ (name id : String),
+            Names.resolve t name = none →
+              Names.Fresh id →
+              id ∉ t.map (·.2) →
+              Names.Wf (Names.claimSelf t name id) ∧
+                Names.resolve (Names.claimSelf t name id) name = some id ∧
+                ∀ n,
+                  n ≠ name → Names.resolve (Names.claimSelf t name id) n = Names.resolve t n := by
+  sorry
+
+theorem nameOf_shown (t : Names.Table) (id name : String) (shown : Names.nameOf t id = some name) :
+    (name, id) ∈ t ∨ Name.check id = some name := by sorry
+
+@[kills nameOf_shown]
+theorem nameOf_shown_rejects_bare :
+    ¬∀ (t : Names.Table) (id name : String),
+        Names.nameOfBare t id = some name → (name, id) ∈ t ∨ Name.check id = some name := by
+  sorry
+
+theorem rename_plan (valid oldHeld older newHeld : Bool) :
+    Names.Rename.plan valid oldHeld older newHeld =
+      if !valid then .refuse .invalid
+      else
+        if !oldHeld then .refuse .missing
+        else if newHeld then .refuse .taken else if older then .refuse .older else .move := by
+  sorry
+
+@[kills rename_plan]
+theorem rename_plan_rejects_move :
+    ¬∀ (valid oldHeld older newHeld : Bool),
+        (fun (_ _ _ _ : Bool) => Names.Rename.Plan.move) valid oldHeld older newHeld =
+          if !valid then .refuse .invalid
+          else
+            if !oldHeld then .refuse .missing
+            else if newHeld then .refuse .taken else if older then .refuse .older else .move := by
+  sorry
+
+theorem one_name
+    (placed : Bool → (String → Option Nat) → String → String → Option (String → Option Nat))
+    (noReplace : Os.Place.NoReplace placed) (first second : Names.Op) (names : String → Option Nat)
+    (src src' dst : String) (file : Nat) (named : names src = some file)
+    {after : String → Option Nat}
+    (placedFirst : (Names.call first).run placed names src dst = some after) :
+    after dst = some file ∧ (Names.call second).run placed after src' dst = none := by sorry
+
+@[kills one_name]
+theorem one_name_rejects_replace :
+    ¬∀ (placed : Bool → (String → Option Nat) → String → String → Option (String → Option Nat)),
+        Os.Place.NoReplace placed →
+          ∀ (first second : Names.Op) (names : String → Option Nat) (src src' dst : String)
+            (file : Nat),
+            names src = some file →
+              ∀ {after : String → Option Nat},
+                ((fun (_ : Names.Op) => Names.Call.replace) first).run placed names src dst =
+                    some after →
+                  after dst = some file ∧
+                    ((fun (_ : Names.Op) => Names.Call.replace) second).run placed after src' dst =
+                      none := by
   sorry
 
 theorem step_fields_described (s : State) (ev : Event)
@@ -1142,7 +1289,8 @@ theorem picker_eof_empty_rejects_cancel :
 
 `start` runs its program in the caller's directory and with the caller's environment, which only
 `LINGER_SESSION`, `TERM`, `COLORTERM`, `TERM_PROGRAM` and `TERM_PROGRAM_VERSION` change, when the
-operating system runs what linger asks (`start_runs`, in part 4). A program that cannot start there
+operating system runs what linger asks (`start_runs`, in part 4); `LINGER_SESSION` holds the
+session's ID, which no rename changes. A program that cannot start there
 makes `start` return what `env -C` would, and a resume that runs elsewhere than its saved directory
 says so.
 
@@ -1510,15 +1658,15 @@ theorem shellOf_choice_rejects_fixed :
 theorem start_runs (inherited : String → Option String)
     (start :
       String → String → Array String → List (String × String) → Spawn.Reset → Option Spawn.Started)
-    (runs : Spawn.Runs inherited start) (name dir shell : String) (argv : List String)
+    (runs : Spawn.Runs inherited start) (id dir shell : String) (argv : List String)
     {started : Spawn.Started}
     (ok :
-      start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
-          (Start.environment name) Start.reset =
+      start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2 (Start.environment id)
+          Start.reset =
         some started) :
     started.argv = argv.headD shell :: argv.drop 1 ∧
       started.dir = dir ∧
-      started.env "LINGER_SESSION" = some name ∧
+      started.env "LINGER_SESSION" = some id ∧
       started.env "TERM" = some "xterm-256color" ∧
       started.env "COLORTERM" = some "truecolor" ∧
       started.env "TERM_PROGRAM" = some "linger" ∧
@@ -1535,13 +1683,13 @@ theorem start_runs_rejects_unnamed :
           String →
             String → Array String → List (String × String) → Spawn.Reset → Option Spawn.Started),
         Spawn.Runs inherited start →
-          ∀ (name dir shell : String) (argv : List String) {started : Spawn.Started},
+          ∀ (id dir shell : String) (argv : List String) {started : Spawn.Started},
             start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
-                  ((fun (_ : String) => ([] : List (String × String))) name) Start.reset =
+                  ((fun (_ : String) => ([] : List (String × String))) id) Start.reset =
                 some started →
               started.argv = argv.headD shell :: argv.drop 1 ∧
                 started.dir = dir ∧
-                started.env "LINGER_SESSION" = some name ∧
+                started.env "LINGER_SESSION" = some id ∧
                 started.env "TERM" = some "xterm-256color" ∧
                 started.env "COLORTERM" = some "truecolor" ∧
                 started.env "TERM_PROGRAM" = some "linger" ∧

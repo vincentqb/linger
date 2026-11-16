@@ -36,6 +36,8 @@ def table : List Command :=
       summary := "Detach all clients from a session" },
     { word := "kill", op := .kill, args := "<name>",
       summary := "End a session, or discard a saved or ended one" },
+    { word := "rename", op := .rename, args := "<name> <new-name>",
+      summary := "Give a session a new name" },
     { word := "capture", op := .capture, args := "[--history] <name>",
       summary := "Print the live or saved screen" },
     { word := "resize", op := .resize, args := "<name> <cols> <rows>",

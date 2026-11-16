@@ -49,7 +49,7 @@ terminal. -/
 def withColor (terminal : Bool) (noColor term : Option String) : Bool :=
   terminal && (noColor.getD "").isEmpty && !["", "dumb"].contains (term.getD "")
 
-/-- The session linger runs inside: `LINGER_SESSION`, which a session's start sets to its name,
+/-- The session linger runs inside: `LINGER_SESSION`, which a session's start sets to its ID,
 when it is set and not empty; none when it is unset or empty, since an empty word names no
 session. -/
 def inSession (value : Option String) : Option String := value.filter (!·.isEmpty)

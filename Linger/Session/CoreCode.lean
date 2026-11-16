@@ -378,7 +378,7 @@ def infoFields (s : State) : List (String × String) :=
     -- what a client needs before sending a request this daemon may not serve
     ++
     [("protocol", toString Wire.protocol), ("version", Terminal.Mediation.versionNumber),
-      ("handoff", toString Handoff.version)]
+      ("handoff", toString Handoff.version), ("renames", "true")]
     -- the observations `Status.classify` needs from the daemon; the rest
     -- (reachability, checkpoint loadability) only the caller can know
     ++

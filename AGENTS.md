@@ -63,9 +63,9 @@ or `WorldCode`, as the Lean Software Challenge reads it, and any other module is
 - `Linger/Display/`: session status, titles and listings.
 - `Linger/Terminal/Suites/`: live suites of the VT toolkit as linger runs it.
 - `Linger/Session/`: the session machine (`CoreCode.lean`), its effect `Driver`, `Wire` format,
-  `Buf` queues, `Checkpoint`s and the `Handoff` an upgrade carries to the daemon's new image
-  (`CoreCode/`); `WorldCode/` holds the daemon, the attach client, checkpoint files and state
-  paths.
+  `Buf` queues, `Checkpoint`s, the `Handoff` an upgrade carries to the daemon's new image and the
+  `Names` that lead to sessions' IDs (`CoreCode/`); `WorldCode/` holds the daemon, the attach
+  client, checkpoint files, state paths, keyed by ID, and the names directory.
 - `Linger/Selector/`: interactive selection: `Key` bindings of the `input` package's keys and
   the `Picker`, which ranks names with the `fuzzy` package; `WorldCode.lean` runs the picker on
   a terminal.

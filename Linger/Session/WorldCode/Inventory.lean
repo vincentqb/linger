@@ -5,6 +5,7 @@ public import Linger.Session.CoreCode
 import Linger.Session.CoreCode.Buf
 import Linger.Session.WorldCode.Client
 import Linger.Session.WorldCode.Paths
+import Linger.Session.WorldCode.Names
 import Linger.Session.WorldCode.Record
 import Linger.Display.CoreCode.Listing
 public import Linger.Display.CoreSpec
@@ -210,20 +211,24 @@ private def publishedSeen (listed : Paths.Listed) : IO (Option Linger.Session.Se
   return if free then none else some seen
 
 /-- Common local snapshot for the listing and prompt. Concurrent queries share
-one deadline (two seconds for a listing); unqueried peers stay unknown. The names come from
-the directories, so no path here needs a spelling check. A saved session is listed as its end
-record says (`savedRow`), read while holding the name. With `statusOnly`, as for a summary, a
-row carries only its status, and a live session whose end record says what its daemon saw is
-read from the record without waking the daemon (`rowStatus_published`). With `only`, just the
-rows of the names it holds. -/
+one deadline (two seconds for a listing); unqueried peers stay unknown. The IDs come from
+the directories, so no path here needs a spelling check, and each row is named as its ID shows
+in the names table, read once (`Names.nameOf`), never by the ID; an ID no name leads to is not
+listed. A saved session is listed as its end record says (`savedRow`), read while holding its
+ID. With `statusOnly`, as for a summary, a row carries only its status, and a live session whose
+end record says what its daemon saw is read from the record without waking the daemon
+(`rowStatus_published`). With `only`, just the rows of the names it holds. -/
 def localRows (stopAt : Option Nat := none) (statusOnly : Bool := false)
     (only : Option (List String) := none) : IO (List (List (String × String))) := do
   let deadline := stopAt.getD ((← monotonicMs) + 2000)
-  let named := fun (listed : Paths.Listed) => only.all (·.contains listed.name)
+  let table ← Names.load
+  let named (ids : List Paths.Listed) : List (Paths.Listed × String) :=
+    ids.filterMap fun listed =>
+      (Linger.Session.Names.nameOf table listed.name).bind fun name =>
+        if only.all (·.contains name) then some (listed, name) else none
   -- names as people read them, `w2` before `w10` (`View.before`)
-  let sockets :=
-    (Linger.Display.View.byName (·.name) ((← Paths.listSocketNames).filter named)).toArray
-  let ckpts := Linger.Display.View.byName (·.name) ((← Paths.listCkptNames).filter named)
+  let sockets := (Linger.Display.View.byName (·.2) (named (← Paths.listSocketNames))).toArray
+  let ckpts := Linger.Display.View.byName (·.2) (named (← Paths.listCkptNames))
   let liveRow := fun name info =>
     Linger.Display.Listing.rowFields name info ++
       [("state", "live"),
@@ -233,34 +238,32 @@ def localRows (stopAt : Option Nat := none) (statusOnly : Bool := false)
   let mut asked := sockets
   if statusOnly then
     asked := #[]
-    for listed in sockets do
+    for (listed, name) in sockets do
       match ← publishedSeen listed with
       | some seen =>
         confirmedLive := confirmedLive ++ [listed.name]
         let row := Linger.Display.Listing.Row.published seen.fresh seen.unseen seen.asks
         rows :=
           rows ++
-            [Linger.Display.Listing.rowFields listed.name
+            [Linger.Display.Listing.rowFields name
                 [("state", "live"),
                   ("status", Linger.Display.Status.name (Linger.Display.Listing.rowStatus row))]]
       | none =>
-        asked := asked.push listed
-  let infos ← queryInfos asked deadline stopAt.isSome
-  for (listed, result) in asked.zip infos do
-    let name := listed.name
+        asked := asked.push (listed, name)
+  let infos ← queryInfos (asked.map (·.1)) deadline stopAt.isSome
+  for ((listed, name), result) in asked.zip infos do
     match result with
     | some info =>
-      confirmedLive := confirmedLive ++ [name]
+      confirmedLive := confirmedLive ++ [listed.name]
       rows := rows ++ [liveRow name (info.toOption.getD [])]
     | none =>
       if !(← removeStaleSocket listed) then
-        -- Failed connect while another process owns (or may own) the name: keep
+        -- Failed connect while another process owns (or may own) the ID: keep
         -- the rendezvous path and list the identity as live/unknown.
-        confirmedLive := confirmedLive ++ [name]
+        confirmedLive := confirmedLive ++ [listed.name]
         rows := rows ++ [liveRow name []]
-  for listed in ckpts do
-    let name := listed.name
-    if !confirmedLive.contains name then
+  for (listed, name) in ckpts do
+    if !confirmedLive.contains listed.name then
       -- Another runtime directory may share this checkpoint namespace.
       -- A busy or unreadable lock cannot establish that the session is offline.
       let record ←

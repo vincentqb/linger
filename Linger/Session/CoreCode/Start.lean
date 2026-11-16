@@ -70,10 +70,10 @@ def programOf (shell : String) : List String → String × Array String
   | program :: words => (program, words.toArray)
 
 /-- The variables a session's program reads unlike the command that asked for the session: the
-session's name, and the terminal linger is: an xterm of 256 colours that keeps and repaints
+session's ID (`Linger.Session.Names`), which no rename changes, and the terminal linger is: an xterm of 256 colours that keeps and repaints
 24-bit colour too, with linger's version. -/
-def environment (name : String) : List (String × String) :=
-  [("LINGER_SESSION", name), ("TERM", "xterm-256color"), ("COLORTERM", "truecolor"),
+def environment (id : String) : List (String × String) :=
+  [("LINGER_SESSION", id), ("TERM", "xterm-256color"), ("COLORTERM", "truecolor"),
     ("TERM_PROGRAM", "linger"), ("TERM_PROGRAM_VERSION", Terminal.Mediation.versionNumber)]
 
 /-- What a session's program starts without, of the process state its daemon would pass on, and

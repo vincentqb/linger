@@ -7,6 +7,7 @@ import Linger.Session.CoreCode.Checkpoint
 import Os.WorldCode
 import Linger.Display.CoreCode.Listing
 import Linger.Session.WorldCode.Paths
+import Linger.Session.WorldCode.Names
 import Linger.Session.WorldCode.Resume
 import Linger.Session.WorldCode.Inventory
 import Os.WorldCode.Command
@@ -283,14 +284,15 @@ private def capturedPane (archive : Option Archive) (pane : Pane) : IO (Option S
 sockets and checkpoints win, including a concurrently created session. The checkpoint is written
 as a daemon saves one, whole, durably and readable by its owner alone (`Os.Shell.replaceFile`):
 a crash leaves no checkpoint or this one, never part of it. -/
-private def seedPane (pane : Pane) (contents : Option String) : IO Bool :=
-  Paths.withSessionLock pane.name do
-    let path ← Paths.ckptPath pane.name
-    let socket ← Paths.socketPath pane.name
-    if (← (System.FilePath.mk path).pathExists) || (← (System.FilePath.mk socket).pathExists) then
-      return false
-    Os.Shell.replaceFile path (Linger.Session.Checkpoint.saveBytes (checkpoint pane contents))
-    return true
+private def seedPane (pane : Pane) (contents : Option String) : IO Bool := do
+  let id := (← Names.claim pane.name).id
+  Paths.withSessionLock id do
+      let path ← Paths.ckptPath id
+      let socket ← Paths.socketPath id
+      if (← (System.FilePath.mk path).pathExists) || (← (System.FilePath.mk socket).pathExists) then
+        return false
+      Os.Shell.replaceFile path (Linger.Session.Checkpoint.saveBytes (checkpoint pane contents))
+      return true
 
 /-- Both bulk import and individual selection preflight before effects, then
 skip existing identities. Each new pane becomes a saved session: its checkpoint holds the pane's
@@ -424,8 +426,11 @@ private def snapshot : IO (List (String × String)) := do
       let name := (row.lookup "name").getD ""
       let dir ←
         if row.lookup "state" == some "resumable" then
-          Paths.withSessionLock name do
-              let some saved := (← Resume.readCkpt name).bind Linger.Session.Checkpoint.loadBytes
+          let some id ←
+            Names.resolve
+                name | throw (IO.userError s!"could not read checkpoint for session: {name}")
+          Paths.withSessionLock id do
+              let some saved := (← Resume.readCkpt id).bind Linger.Session.Checkpoint.loadBytes
                 | throw (IO.userError s!"could not read checkpoint for session: {name}")
               pure saved.cwd
         else
