@@ -42,8 +42,6 @@ def table : List Command :=
       summary := "Resize a detached session" },
     { word := "wait", op := .wait, args := "[--timeout SECONDS] <name>...",
       summary := "Wait for programs to end; 124 on timeout" },
-    { word := "describe", op := .describe, args := "<name> [text...]",
-      summary := "Describe a session; no text clears it" },
     { word := "upgrade", op := .upgrade, args := "[name...]",
       summary := "Move live sessions onto this linger; programs keep running" }]
 

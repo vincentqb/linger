@@ -355,7 +355,7 @@ theorem fits_wf (m : Msg) (h : m.Fits) : m.WF := by
       simp only [knownTag, Bool.and_eq_false_iff, decide_eq_false_iff_not]
       right
       simpa using inside
-    · have high : ¬t ≤ 21 := by
+    · have high : ¬t ≤ 20 := by
         simp only [UInt8.le_iff_toNat_le, UInt8.reduceToNat]
         omega
       simp [knownTag, high]
@@ -363,8 +363,7 @@ theorem fits_wf (m : Msg) (h : m.Fits) : m.WF := by
   | output
   | infoReply
   | err
-  | upgrade
-  | describe => exact ⟨h, trivial⟩
+  | upgrade => exact ⟨h, trivial⟩
   | resize
   | attach
   | exited => exact ⟨by simp [Msg.payload, writeU32, maxPayload], trivial⟩

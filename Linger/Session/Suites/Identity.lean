@@ -3,6 +3,7 @@ module
 public import Verify.Harness
 import Linger.Session.CoreCode.Checkpoint
 import Linger.Target.CoreCode.Name
+import Linger.Os.CoreCode.Answer
 
 public section
 
@@ -35,9 +36,9 @@ private def lockChecks (e : Env) : IO Unit := do
   let mut left : List String := []
   for args in
     [#["ls", "ghost", "--porcelain"], #["kill", "ghost"], #["resume", "ghost"],
-      #["capture", "ghost"], #["capture", "--history", "ghost"], #["describe", "ghost", "x"],
-      #["send", "ghost", "x"], #["detach", "ghost"], #["resize", "ghost", "80", "24"],
-      #["wait", "--timeout", "0", "ghost"], #["attach", "--read-only", "ghost"]] do
+      #["capture", "ghost"], #["capture", "--history", "ghost"], #["send", "ghost", "x"],
+      #["detach", "ghost"], #["resize", "ghost", "80", "24"], #["wait", "--timeout", "0", "ghost"],
+      #["attach", "--read-only", "ghost"]] do
     let _ ← e.cli args
     unless ← locksGone e "ghost" do
       left := left ++ [String.intercalate " " args.toList]
@@ -118,19 +119,21 @@ def run : IO UInt32 :=
       lockChecks e
       let _ ← e.typeIn "a_b" #["true"]
       let pid ← e.info "a_b" "pid"
-      for name in ["a b", "a/b", "", ".hidden", String.ofList (List.replicate 81 'a')] do
+      for name in ["", "   ", "a\tb", "a\u009bb", String.ofList (List.replicate 121 'a')] do
         let (rc, _, _) ← e.cli #["ls", name, "--porcelain"]
         expect (rc == 2) s!"invalid target {repr name} is a usage error"
       let (prefixRc, _, _) ← e.cli #["ls", "a", "--porcelain"]
       expect (prefixRc != 0) "command lookup never selects a name by prefix"
       let (killRc, _, _) ← e.cli #["kill", "a b"]
-      expect (killRc == 2 && (← e.info "a_b" "pid") == pid && pid.isSome)
-          "a malformed kill target cannot kill its sanitized alias"
+      expect
+          (killRc == Linger.Os.Answer.code .notFound && (← e.info "a_b" "pid") == pid && pid.isSome)
+          "a kill of a name no session has is never rewritten into a similar one's"
       let (waitRc, _, _) ← e.cli #["wait", "missing name"]
-      expect (waitRc == 2) "wait validates names even when no session exists"
-      let (describeRc, _, _) ← e.cli #["describe", "a b", "text"]
+      expect (waitRc == Linger.Os.Answer.code .notFound)
+          "wait of a clean name no session has answers that none has it"
+      let (describeRc, _, _) ← e.cli #["describe", "a_b", "text"]
       expect (describeRc == 2 && (← e.info "a_b" "description").isNone)
-          "describe validates its target before changing any session"
+          "describe is no command: a usage error that changes no session"
       let vt := (Terminal.Vt.Vt.init 20 2).feedBytes "old\r\nmiddle\r\nscreen".toUTF8
       let bytes := Linger.Session.Checkpoint.saveBytes ⟨vt, e.dir, [("saved", "yes")]⟩
       let path := s!"{e.dir}/saved.ckpt"

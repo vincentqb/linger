@@ -713,9 +713,14 @@ private def usageChecks (e : Env) : IO Unit := do
   check e "ls-named"
       "ls with names lists only those sessions, in the order named, as their porcelain records, a name with only an end record as its ending, and answers notFound for a name no session took"
       fun f => do
-      let (oneRc, _, _) ← f.piped #["start", "named-one", "/bin/cat"]
+      let (oneRc, _, _) ←
+        f.piped
+            #["start", "named-one", "/bin/sh", "-c",
+              "printf '\\033]2;first one\\007'; exec /bin/cat"]
       let (twoRc, _, _) ← f.piped #["start", "named-two", "/bin/cat"]
-      let (descRc, _, _) ← f.piped #["describe", "named-one", "first", "one"]
+      let titled ←
+        waitFor patienceMs do
+            return has (← f.piped #["ls", "named-one", "--porcelain"]).2.1 "title\tfirst one"
       let (rc, out, err) ← f.piped #["ls", "named-two", "named-one", "--porcelain"]
       let (allRc, all, _) ← f.piped #["ls", "--porcelain"]
       let (humanRc, human, _) ← f.piped #["ls", "named-one"]
@@ -738,13 +743,14 @@ private def usageChecks (e : Env) : IO Unit := do
       let (endedRc, ended, _) ← f.piped #["ls", "named-one", "--porcelain"]
       let (twoKilled, _, _) ← f.piped #["kill", "named-two"]
       let endedRow := records ended
-      return oneRc == 0 && twoRc == 0 && descRc == 0 && rc == 0 && allRc == 0 && err.isEmpty &&
+      return oneRc == 0 && twoRc == 0 && titled && rc == 0 && allRc == 0 && err.isEmpty &&
           named.map (field · "name") == [some "named-two", some "named-one"] &&
           named.all same &&
           named.all (field · "state" == some "live") &&
-          named.all (field · "cmd" == some "/bin/cat") &&
-          field (named.getD 1 []) "description" == some "first one" &&
-          (field (named.getD 0 []) "description").isNone &&
+          field (named.getD 0 []) "cmd" == some "/bin/cat" &&
+          (field (named.getD 1 []) "cmd").any (·.startsWith "/bin/sh") &&
+          field (named.getD 1 []) "title" == some "first one" &&
+          (field (named.getD 0 []) "title").isNone &&
           humanRc == 0 &&
           has human "named-one" &&
           has human "first one" &&
@@ -887,7 +893,7 @@ private def usageChecks (e : Env) : IO Unit := do
       let state := f.root / "state"
       let f := { f with env := f.env.push ("LINGER_DIR", some state.toString) }
       withPrompt f #["attach"] fun s => do
-          unless ← s.typeQuery "invalid/name" "invalid/name" do
+          unless ← s.typeQuery "-invalid name" "-invalid name" do
             return false
           s.text "\r"
           s.observe 350
@@ -1119,11 +1125,13 @@ private def selectionChecks (e : Env) : IO Unit := do
         let noAttach := (← f.visits) == listed
         let clean ← acceptThenCancel s
         return reset && noAttach && clean && (← f.visits) == attachVisit ["Alpha"]
-  let overlong := String.ofList (List.replicate (Linger.Target.Name.maxLen + 1) 'n')
+  -- more bytes than a name may take, in fewer columns than a terminal's width
+  let overlong := String.ofList (List.replicate (Linger.Target.Name.maxBytes / 3 + 1) '€')
+  -- every clean text is a name, and a key an older linger kept; these are neither
   for (slug, query) in
-    [("slash", "bad/name"), ("leading-dot", ".hidden"), ("space", "two words"), ("unicode", "界"),
-      ("empty-host", "work@"), ("empty-local", "@host"), ("overlong", overlong),
-      ("overlong-remote", overlong ++ "@host")] do
+    [("leading-option", "-a b"), ("blank", "   "), ("option-unicode", "-界 x"),
+      ("blank-remote", "   @host"), ("empty-host", "work@"), ("empty-local", "@host"),
+      ("overlong", overlong), ("overlong-remote", overlong ++ "@host")] do
     check e s!"invalid-create-{slug}"
         s!"picker probe invalid creation has no row, ignores Enter and remains editable ({slug})"
         fun f =>
@@ -1234,7 +1242,7 @@ private def inputChecks (e : Env) : IO Unit := do
       "picker probe pasted controls cannot create, refresh or cancel an invalid query" fun f =>
       withPrompt f.picker #[] fun s => do
         let start ← s.mark
-        unless ← s.typeQuery "bad/" "bad/" do
+        unless ← s.typeQuery "-bad " "-bad " do
           return false
         s.text "\x1b[200~\x00\x07\x7f\u0085\r\n\x03\x04\x0c\x12\x1b[201~"
         s.observe 350
@@ -1760,22 +1768,22 @@ private def refreshChecks (e : Env) : IO Unit := do
   check e "refresh-removed"
       "automatic refresh clamps a removed selection while preserving an invalid creation query"
       fun f => do
-      f.listing "name\tone.x\nname\ttwo.x\nname\tthree.x\n"
+      f.listing "name\tone -. x\nname\ttwo -. x\nname\tthree -. x\n"
       withPrompt f.picker #[] fun s => do
-          unless ← s.typeQuery "." "." do
+          unless ← s.typeQuery "-. " "-. " do
             return false
           let selection ← s.mark
           s.text "\x1b[F"
-          unless ← s.selected "three.x" selection do
+          unless ← s.selected "three -. x" selection do
             return false
           let start ← s.mark
-          f.listing "name\tfirst.x\nname\tlast.x\n"
-          unless ← s.selected "last.x" start do
+          f.listing "name\tfirst -. x\nname\tlast -. x\n"
+          unless ← s.selected "last -. x" start do
             return false
           let vt ← s.capture "removed-frame"
           let screen := String.fromUTF8! (ByteArray.mk (screenText vt).toArray)
-          return has screen "  › ." && !has screen "Create " && (← acceptThenCancel s) &&
-              (← f.visits) == attachVisit ["last.x"]
+          return has screen "  › -." && !has screen "Create " && (← acceptThenCancel s) &&
+              (← f.visits) == attachVisit ["last -. x"]
   check e "refresh-created"
       "automatic refresh turns a highlighted creation into the same existing target and attach help"
       fun f => do

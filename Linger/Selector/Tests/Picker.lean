@@ -29,8 +29,8 @@ namespace Linger.Selector.Picker.Tests
     ["work", "wk", "a-w-k", "Work", "work"]
 
 #guard
-  match parseListing "name\t-work\npid\t123\n\nname\t+work\nname\twork@me@dev-a\n" with
-  | .ok targets => targets == ["-work", "+work", "work@me@dev-a"]
+  match parseListing "name\tmy work ✓\npid\t123\n\nname\t+work\nname\twork@me@dev-a\n" with
+  | .ok targets => targets == ["my work ✓", "+work", "work@me@dev-a"]
   | .error _ => false
 
 #guard
@@ -57,7 +57,7 @@ namespace Linger.Selector.Picker.Tests
     | .ok _ => false
 
 #guard
-  ["bad/name", ".hidden", "@host", "a b", String.ofList (List.replicate 81 'a')].all fun target =>
+  ["-a b", "   ", "@host", "a\tb", String.ofList (List.replicate 121 'a')].all fun target =>
     match parseListing ("name\t" ++ target) with
     | .error _ => true
     | .ok _ => false
@@ -84,7 +84,7 @@ namespace Linger.Selector.Picker.Tests
   | .ok _ => false
 
 #guard
-  ["name\twork@\x1b[2J", "name\tbad/name", "name\twork\nname\twork"].all fun text =>
+  ["name\twork@\x1b[2J", "name\t-a b", "name\twork\nname\twork"].all fun text =>
     match parseListing text with
     | .error error => error.toList.all fun char => char.toNat ≥ 32 && char.toNat < 127
     | .ok _ => false
@@ -109,7 +109,7 @@ namespace Linger.Selector.Picker.Tests
   | .error _ => false
 
 #guard
-  ["name\twork\nstatus\tidle\nname\tbad/name", "name\twork\ncmd\tvim\nname\twork",
+  ["name\twork\nstatus\tidle\nname\t-a b", "name\twork\ncmd\tvim\nname\twork",
         "name\twork\nstatus\tworking\nname\tother\textra"].all
     fun text =>
     match parseSnapshot text with
@@ -232,14 +232,14 @@ namespace Linger.Selector.Picker.Tests
 #guard items ["work@host"] "work" == [.existing "work@host", .create "work"]
 
 #guard
-  ["work@host", "work@me@host", "work@世界", "-work", "+work"].all fun target =>
+  ["work@host", "work@me@host", "work@世界", "two words", "世界", "+work"].all fun target =>
     items [] target == [.create target] &&
       step { candidates := [], query := target } .accept == .create target
 
 -- Invalid creation targets remain editable; no sanitizer rewrite is hidden.
 #guard
-  ["bad/name", ".hidden", "@host", "work@", "a b", "work@\u009b",
-        String.ofList (List.replicate 81 'a')].all
+  ["-a b", "   ", "@host", "work@", "a\tb", "work@\u009b",
+        String.ofList (List.replicate 121 'a')].all
     fun query =>
     items [] query == [] &&
       step { candidates := [], query } .accept == .stay { candidates := [], query }

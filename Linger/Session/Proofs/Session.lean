@@ -175,30 +175,6 @@ theorem infoMsgs_no_resize (id : Nat) (bs : List UInt8) (cols rows : UInt32) :
   unfold infoMsgs
   split <;> simp
 
-/-! ## Describing
-
-`.describe` is pinned three ways — the cap (`onMsg_fields_le`), the forged-record channel
-(`infoText_records`) and the exact shape below: for a writable connection it replaces the
-description, or removes it for an empty text, keeps every other field, and answers `.done`. -/
-
-/-- **`linger describe` sets exactly the description.** `rfl`-shaped, so a smuggled side
-effect — a vt touch, an append to another field — breaks it. -/
-theorem onMsg_describe (s : State) (c : Client) (text : List UInt8) (control : c.mode = .writable)
-    (fits :
-      (s.fields.filter (·.1 != "description") ++
-            if descriptionText text = "" then []
-            else [("description", descriptionText text)]).length ≤
-        maxFields) :
-    onMsg s c (.describe text) =
-      ({ s with
-          fields :=
-            s.fields.filter (·.1 != "description") ++
-              if descriptionText text = "" then [] else [("description", descriptionText text)],
-          dirty := true },
-        [.send c.id .done]) := by
-  simp only [onMsg, control]
-  simp_all [String.isEmpty_iff]
-
 /-! ## Detach: sessions outlive their clients -/
 
 /-- Last-attacher detection uses the old roster; dirty state is saved exactly
@@ -3162,76 +3138,41 @@ theorem feed_encode_fresh (m : Msg) (hm : m.Fits) :
 
 /-! ## One source for what a session reports
 
-The labels change only through a label request from a client that is not a watcher, the boot
+No event changes the session record's fields, which a restored checkpoint gave it, the boot
 metadata never changes, and only program output feeds the terminal: every other event keeps it
 or resizes it. -/
 
-/-- A message that is no label request leaves the labels as they were. -/
-theorem onMsg_labels_kept (s : State) (c : Client) (m : Msg) (h : ¬m.Describes) :
-    (onMsg s c m).1.fields = s.fields := by
+/-- No message changes the fields. -/
+theorem onMsg_fields (s : State) (c : Client) (m : Msg) : (onMsg s c m).1.fields = s.fields := by
   cases m
-  all_goals simp only [Msg.Describes, not_true_eq_false] at h
   all_goals
     unfold onMsg controlResize resizeOwned resize focusEffects infoMsgs outputMsgs
     dsimp only
     repeat' split
   all_goals simp_all [State.setClient]
 
-/-- A batch with no label request leaves the labels as they were. -/
-theorem feedMsgs_labels (id : Nat) (msgs : List Msg) (acc : State × List (Effect Plan))
-    (none : ∀ m ∈ msgs, ¬m.Describes) : (feedMsgs id msgs acc).1.fields = acc.1.fields := by
-  exact
-    feedMsgs_induct id msgs acc (P := fun r => r.1.fields = acc.1.fields)
-      (fun current c m hm _ _ _ hs => (onMsg_labels_kept current.1 c m (none m hm)).trans hs) rfl
-
-/-- **The labels have one source**: an event that changes them is a read, from a client that is
-not a watcher, that holds a label request. -/
-theorem step_labels_sources (s : State) (ev : Event)
-    (changed : (step s ev).1.fieldList ≠ s.fieldList) :
-    ∃ id chunk c,
-      ev = .bytes id chunk ∧
-        s.client? id = some c ∧
-        (c.attached = false ∨ c.mode = .writable) ∧
-        ∃ m ∈ (c.decoder.feed chunk).2, m.Describes := by
+/-- **The fields have one source, the checkpoint the session booted from**: no event changes
+them. -/
+theorem step_fields_kept (s : State) (ev : Event) : (step s ev).1.fieldList = s.fieldList := by
+  simp only [State.fieldList]
   cases ev with
   | bytes id chunk =>
-    cases hc : s.client? id with
-    | none => exact absurd (by simp [step, hc, State.fieldList]) changed
-    | some c =>
-      refine ⟨id, chunk, c, rfl, hc, ?_, ?_⟩
-      · by_cases hw : c.attached = true ∧ c.mode = .readOnly
-        · have hwatch : Watches s id := by
-            intro c' h'
-            rw [hc] at h'
-            cases h'
-            exact hw
-          exact absurd (step_bytes_watcher s id chunk hwatch).2.2.1 changed
-        · cases ha : c.attached <;> cases hs : c.mode <;> simp_all
-      · apply Classical.byContradiction
-        intro hnone
-        apply changed
-        simp only [not_exists, not_and] at hnone
-        simp only [step, hc, State.fieldList]
-        split
-        · simp
-        · rw [feedMsgs_labels]
-          · simp [State.setClient]
-          · exact fun m hm => hnone m hm
+    dsimp only [step]
+    split
+    · rfl
+    · split
+      · simp
+      · exact
+          feedMsgs_preserves _ _ _ (P := fun t => t.fields = s.fields)
+            (fun t _ m _ ht => (onMsg_fields t _ m).trans ht) rfl
   | connected id =>
-    refine absurd ?_ changed
     dsimp only [step]
     split <;> rfl
-  | closed id => exact absurd (by simp [step, State.fieldList]) changed
-  | ptyOut chunk => exact absurd rfl changed
-  | childExited o => exact absurd rfl changed
-  | stopped o => exact absurd rfl changed
-  | signal n => exact absurd rfl changed
+  | closed id => simp [step]
   | tick now =>
-    refine absurd ?_ changed
     dsimp only [step]
     split <;> rfl
-  | checkpointFailed => exact absurd rfl changed
-  | observed o => exact absurd rfl changed
+  | _ => rfl
 
 /-- Closing a connection keeps the boot metadata. -/
 theorem closeClient_metaKv (s : State) (id : Nat) : (closeClient s id).1.metaKv = s.metaKv := by

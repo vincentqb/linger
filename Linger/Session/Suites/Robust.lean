@@ -492,8 +492,8 @@ def slowSave (e : Env) : IO Unit := do
   try
     let (startRc, _, _) ← e.cli #["start", name, "/bin/sh", "-c", "exec sleep 1000"]
     let made ← IO.Process.output { cmd := "mkfifo", args := #[tmp] }
-    -- a description makes the session dirty, and its first tick saves at once, in the same round
-    let (setRc, _, _) ← e.cli #["describe", name, "slow", "save"]
+    -- a resize makes the session dirty, and its first tick saves at once, in the same round
+    let (setRc, _, _) ← e.cli #["resize", name, "90", "30"]
     let began ← Os.Shell.monotonicMs
     let answered ← waitFor hangMs (return (← e.info name "pid").isSome)
     let answerMs := (← Os.Shell.monotonicMs) - began

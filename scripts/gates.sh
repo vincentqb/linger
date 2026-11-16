@@ -459,7 +459,7 @@ module_imports ':(glob)Linger/Session/*.lean' 'Linger/Session/CoreCode/*' 'Linge
     packages/terminal/Terminal/CoreCode/Replay.lean Linger.lean \
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
-    if (mod !~ /^(Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](WorldCode|CoreSpec|CoreCode[.](Commands|Wait|Recovery|Capture))|Std[.]Async[.](System|Signal))$/ \
+    if (mod !~ /^(Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](WorldCode|CoreSpec|CoreCode[.](Commands|Fields|Wait|Recovery|Capture))|Std[.]Async[.](System|Signal))$/ \
         && mod != "SoftwareChallenge.Commands") {
       print "  " $0; bad = 1
     }
@@ -612,7 +612,7 @@ for tie in \
   'let contents ← capturedPane [(]← readArchive save[)] pane Paths[.]withSessionLock name do match Linger[.]Import[.]Resurrect[.]adopt [(]← recordsOf name[)] pane contents with [|] none => return [.]recorded [|] some ck => if ← Os[.]Shell[.]createFile [(]← Paths[.]ckptPath name[)] [(]Linger[.]Session[.]Checkpoint[.]saveBytes ck[)] then return [.]written return [.]recorded' \
   'Paths[.]withSessionLock name do let records ← recordsOf name if records[.]holds name then return false' \
   'for ended in [(]Linger[.]Import[.]Resurrect[.]dismiss records name[)][.]endings do unless records[.]endings[.]contains ended do Record[.]save ended dismissal return true' \
-  'let panes := panes[.]map fun pane => if pane[.]dir[.]isEmpty [|][|] [(]System[.]FilePath[.]mk pane[.]dir[)][.]isAbsolute then pane else [{] pane with dir := [(]origin / pane[.]dir[)][.]toString [}] return some [{] path, panes := panes[.]map [(]preparePane content panes[)] [}]'; do
+  'let panes := panes[.]map fun pane => if pane[.]dir[.]isEmpty [|][|] [(]System[.]FilePath[.]mk pane[.]dir[)][.]isAbsolute then pane else [{] pane with dir := [(]origin / pane[.]dir[)][.]toString [}] return some [{] path, panes := named [(]panes[.]map [(]preparePane content panes[)][)] [}]'; do
   printf '%s\n' "$import_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "the save reader lost its proved listing, adoption, dismissal or export: $tie"
 done
@@ -736,7 +736,7 @@ for tie in \
   'match Linger[.]Target[.]Remote[.]checkHosts hosts with [|] [.]ok l => return l[.]map fun host => [(]host, Linger[.]Target[.]Remote[.]transportFor config host[)] [|] [.]error e => throw [(]IO[.]userError e[)]' \
   'for [(][(]host, _[)], output[)] in remotes[.]zip remote[.]toList do match output with [|] none => rows := rows [+][+] [[][[][(]"host", host[)], [(]"status", Linger[.]Display[.]Status[.]name [.]unknown[)][]][]] [|] some output => for row in Linger[.]Target[.]Remote[.]parse output do' \
   '[|] some [(]porcelain, remoteFlag, [[][]][)] => cmdList source porcelain [(]← resolveRemotes remoteFlag[)]' \
-  'let withColor := Linger[.]Os[.]Env[.]withColor [(]← [(]← IO[.]getStdout[)][.]isTty[)] [(]← IO[.]getEnv "NO_COLOR"[)] [(]← IO[.]getEnv "TERM"[)] let named := rows[.]map fun info => match info[.]lookup "name", info[.]lookup "host" with [|] none, some host => [(]"name", "@" [+][+] host[)] :: info [|] _, _ => info let ordered := Linger[.]Display[.]View[.]sort [(]fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD ""[)][)] named let width ← humanWidth let home ← accountHome writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor width [(]ordered[.]map [(]Linger[.]Display[.]Listing[.]atHome home[)][)][)][.]toArray[)]' \
+  'let withColor := Linger[.]Os[.]Env[.]withColor [(]← [(]← IO[.]getStdout[)][.]isTty[)] [(]← IO[.]getEnv "NO_COLOR"[)] [(]← IO[.]getEnv "TERM"[)] let named := rows[.]map fun info => [(]match info[.]lookup "name", info[.]lookup "host" with [|] none, some host => [(]"name", "@" [+][+] host[)] :: info [|] _, _ => info[)][.]filter fun kv => [(]Linger[.]App[.]Fields[.]table[.]map Linger[.]App[.]Fields[.]Field[.]key[)][.]contains kv[.]1 let ordered := Linger[.]Display[.]View[.]sort [(]fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD ""[)][)] named let width ← humanWidth let home ← accountHome writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor width [(]ordered[.]map [(]Linger[.]Display[.]Listing[.]atHome home[)][)][)][.]toArray[)]' \
   'def summaryText : IO String := do let rows ← localRows [(]some [(][(]← monotonicMs[)] [+] 250[)][)] [(]statusOnly := true[)] return Linger[.]Display[.]Status[.]summary [(]rows[.]map fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD "unknown"[)][)]' \
   'def cmdSummary : IO Answer := do let summary ← summaryText if !summary[.]isEmpty then IO[.]println summary return [.]done' \
   'match ← connectUpsert s cmd with [|] [.]ok fd => attachSpoken s[.]name fd false' \
@@ -767,7 +767,7 @@ for tie in \
   'IO[.]asTask [(]queryWith [(]connectListed listed ·[)] [(]some deadline[)] retainUnavailable[)]' \
   'let infos ← queryInfos [(]asked[.]map [(]·[.]1[)][)] deadline stopAt[.]isSome' \
   'let free ← try listed[.]withLock [(]pure true[)] catch _ => pure false return if free then none else some seen' \
-  'for [(][(]listed, name[)], result[)] in asked[.]zip infos do match result with [|] some info => confirmedLive := confirmedLive [+][+] [[]listed[.]name[]] rows := rows [+][+] [[]liveRow name [(]info[.]toOption[.]getD [[][]][)][]] [|] none => if ![(]← removeStaleSocket listed[)] then'; do
+  'for [(][(]listed, name[)], result[)] in asked[.]zip infos do match result with [|] some info => confirmedLive := confirmedLive [+][+] [[]listed[.]name[]] rows := rows [+][+] [[]liveRow listed name [(]info[.]toOption[.]getD [[][]][)][]] [|] none => if ![(]← removeStaleSocket listed[)] then'; do
   printf '%s\n' "$inventory_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "listing or prompt bypassed its shared policy: $tie"
 done
@@ -1234,7 +1234,7 @@ code_grep '^[[:space:]]+Linger[.]Target[.]Remote[.]targetValid target = true ∧
   || fail "selector creation and command arguments no longer share the target grammar"
 # `withSession` and `withNew` are `withTarget`, their local action given the session the name
 # leads to (`Names.find`, `Names.claim`).
-for verb in attach start resume send detach kill capture resize describe rename; do
+for verb in attach start resume send detach kill capture resize rename; do
   code_grep "^[[:space:]]+(withTarget|withSession|withNew) \"$verb\" " Linger/App/WorldCode.lean >/dev/null \
     || fail "session command bypassed the common exact target boundary: $verb"
 done

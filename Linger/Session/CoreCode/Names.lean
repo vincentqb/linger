@@ -2,6 +2,7 @@ module
 
 public import Linger.Session.CoreSpec
 import Linger.Target.CoreCode.Name
+import Linger.Target.CoreCode.Remote
 
 public section
 
@@ -22,6 +23,24 @@ def isFresh (id : String) : Bool :=
   match id.toList with
   | '.' :: digits => !digits.isEmpty && digits.all hexDigit
   | _ => false
+
+/-- The file a name's entry is in the names directory: the name itself when it is a key, as every
+entry was before names were clean text, and otherwise `=` and the name as an encoded command line
+spells a word (`Remote.encodeWord`), in hexadecimal, which no key can be, since `=` is no
+`Name.okChar` (`entryName_entryFile`). -/
+def entryFile (name : String) : String :=
+  if (Linger.Target.Name.check name).isSome then name
+  else "=" ++ Linger.Target.Remote.encodeWord name
+
+/-- The name an entry's file holds, the inverse of `entryFile`: `none` for a file that is neither a
+key nor `=` and the hexadecimal of a name. -/
+def entryName (file : String) : Option String :=
+  if (Linger.Target.Name.check file).isSome then some file
+  else
+    match file.toList with
+    | '=' :: rest =>
+      (Linger.Target.Remote.decodeWord (String.ofList rest)).bind Linger.Target.Name.accept
+    | _ => none
 
 /-- Whether `key` may key a session's files: a valid name, or a fresh ID. -/
 def validKey (key : String) : Bool := (Linger.Target.Name.check key).isSome || isFresh key

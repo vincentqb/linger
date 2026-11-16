@@ -119,4 +119,43 @@ name becomes `"_"`, so the only honest bound is against the cap, not against the
 theorem sanitize_length_le (s : String) : (sanitize s).toList.length ≤ maxLen :=
   (sanitize_valid s).2.1
 
+/-- `usable` decides `Usable`. -/
+theorem usable_iff (s : String) : usable s = true ↔ Usable s := by
+  simp [usable, Usable, List.all_eq_true, and_assoc]
+
+/-- `check` decides `Valid`. -/
+theorem check_isSome_iff (s : String) : (check s).isSome = true ↔ Valid s := by
+  cases h : check s with
+  | none =>
+    simp only [Option.isSome_none, Bool.false_eq_true, false_iff]
+    intro v
+    have := (check_eq_some_iff s s).mpr ⟨rfl, v⟩
+    rw [h] at this
+    cases this
+  | some r => simpa using ((check_eq_some_iff s r).mp h).2
+
+/-- **A name is accepted exactly as it is, when it is clean text or an older key.** -/
+theorem accept_eq_some_iff (s result : String) :
+    accept s = some result ↔ result = s ∧ Accepted s := by
+  unfold accept Accepted
+  rw [← usable_iff, ← check_isSome_iff]
+  constructor
+  · intro h
+    split at h
+    · rename_i ok
+      exact ⟨(Option.some.inj h).symm, by simpa using ok⟩
+    · cases h
+  · rintro ⟨rfl, h⟩
+    have ok : (usable result || (check result).isSome) = true := by simpa using h
+    simp only [ok, ↓reduceIte]
+
+/-- No name holds `@`, which marks a host. -/
+theorem accepted_no_at (s : String) (h : Accepted s) : ∀ c ∈ s.toList, c ≠ '@' := by
+  intro c hc heq
+  subst heq
+  rcases h with h | h
+  · have := h.2.2.1 '@' hc
+    simp [textChar] at this
+  · exact okChar_no_at '@' (h.2.2.1 '@' hc) rfl
+
 end Linger.Target.Name

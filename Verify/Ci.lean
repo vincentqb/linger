@@ -212,7 +212,7 @@ def dependencyInstall (root : String) : IO Unit := do
       return (out.exitCode, ← IO.FS.readFile log)
   -- NUL separators distinguish separate package arguments from one quoted string.
   let install := "apt-get\x00install\x00-y\x00-qq\x00--no-install-recommends\x00"
-  let fish := install ++ "fish\x00"
+  let fish := install ++ "fish\x00zsh\x00"
   let retry := fish ++ "apt-get\x00update\x00-qq\x00" ++ fish
   expect ((← probe "Linux" "fresh" ["clang"]) == (0, fish))
       "CI uses the runner's package index when installation succeeds"
@@ -224,12 +224,12 @@ def dependencyInstall (root : String) : IO Unit := do
   let update ← probe "Linux" "update-fail" ["clang"]
   expect (update.1 != 0 && update.2 == fish ++ "apt-get\x00update\x00-qq\x00")
       "CI stops when refreshing package indexes fails"
-  expect ((← probe "Linux" "fresh" ["fish", "clang"]) == (0, ""))
+  expect ((← probe "Linux" "fresh" ["fish", "zsh", "clang"]) == (0, ""))
       "CI skips package tools when Linux dependencies are present"
-  expect ((← probe "Linux" "fresh" ["fish"]) == (0, install ++ "clang\x00"))
-      "CI installs only clang when fish is present"
-  expect ((← probe "Linux" "fresh" []) == (0, install ++ "fish\x00clang\x00"))
-      "CI installs both missing Linux dependencies in one invocation"
+  expect ((← probe "Linux" "fresh" ["fish", "zsh"]) == (0, install ++ "clang\x00"))
+      "CI installs only clang when fish and zsh are present"
+  expect ((← probe "Linux" "fresh" []) == (0, install ++ "fish\x00zsh\x00clang\x00"))
+      "CI installs every missing Linux dependency in one invocation"
   expect ((← probe "macOS" "fresh" ["fish"]) == (0, ""))
       "CI skips package tools when macOS fish is present"
   expect ((← probe "macOS" "fresh" []) == (0, "brew\x00install\x00fish\x00"))

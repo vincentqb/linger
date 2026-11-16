@@ -128,6 +128,8 @@ def Linger.App.Commands.helpLine : App.Commands.Command → String := sorry
 
 def Linger.App.Commands.helpLines : List String := sorry
 
+def Linger.App.Fields.table : List App.Fields.Field := sorry
+
 def Linger.Os.Answer.code : Os.Answer → UInt32 := sorry
 
 def Linger.Os.Answer.listed : List Os.Answer := sorry
@@ -146,6 +148,8 @@ def Linger.App.Capture.plan : List App.Capture.Step := sorry
 /-! ### Session targets -/
 
 def Linger.Target.Name.check : String → Option String := sorry
+
+def Linger.Target.Name.accept : String → Option String := sorry
 
 def Linger.Target.Remote.commandWords : String → List String → List String := sorry
 
@@ -230,6 +234,10 @@ def Linger.Session.State.boot : Vt.Vt → List (String × String) → List (Stri
 def Linger.Session.Claim.enters : Bool → Bool → Bool := sorry
 
 def Linger.Session.Locks.release : Session.Records → String → Session.Records := sorry
+
+def Linger.Session.Names.entryFile : String → String := sorry
+
+def Linger.Session.Names.entryName : String → Option String := sorry
 
 def Linger.Session.ending : List (UInt32 × Nat) := sorry
 
@@ -634,7 +642,11 @@ one whose terminal has a size, which the session fixtures and the attach suite c
 `start` takes no name a session holds (`start_plan`); the daemon decides that holding the name,
 which has one owner (`one_owner`).
 A session's ID is fixed when it is created and keys its files and its `LINGER_SESSION`; its name
-is a handle that leads to the ID, which `rename` changes (`Session.Names`). A session created
+is a handle that leads to the ID, which `rename` changes (`Session.Names`). A name is clean text,
+spaces and Unicode included, accepted exactly as it is, which every command takes as one argument
+and the names directory keeps, a name that is no key as `=` and its hexadecimal, and reads back
+(`names_round_trip`); a key, a name of the older grammar, stays accepted, one that starts with
+`-` after `--`, and only a key can be its session's own ID. A session created
 under a name that is no session's ID takes it for its ID, as every session an older linger keyed
 by name did, so with no entries every valid name leads to itself and old files keep their
 meaning; in a table linger keeps, a name leads to an ID exactly when that ID shows as the name,
@@ -654,13 +666,14 @@ name once and keys everything after by the ID, that the daemon takes the name on
 leads to its ID, holding the ID's locks, that `rename` holds the names lock and the new name's ID's
 locks while it places the name, which the rename suite checks, and that a client attached before
 a rename titles its terminal with the new name, which it does from its next attach.
-The fields of a session's record, its description and an
-import's provenance, change only when a client that may change the session describes it
-(`step_fields_described`); they, the boot metadata and the terminal a session reports each have
+The fields of a session's record, the description an older linger saved and an import's
+provenance, come from the checkpoint the session booted from, and no event changes them
+(`step_fields_kept`); they, the boot metadata and the terminal a session reports each have
 one source, and a listing names each row by its socket. A human row reads only
-the fields `Listing.sources` names (`rowText_sources`): the user's description outranks the
-program's title, and the foreground program, which the operating system reports, shows only when
-that caption does not name it (`caption_precedence`); its glyph and name are never cut, the rest
+the fields `Listing.sources` names (`rowText_sources`): the program's title is the caption, and a
+description an older linger saved shows in its place while the program sets none, and the
+foreground program, which the operating system reports, shows only when that caption does not name
+it (`caption_precedence`); its glyph and name are never cut, the rest
 fits a width in display columns (`rowText_fits`), and each character is printable
 (`rowText_clean`). One field, one column: a row's parts, the glyph, the name and the caption,
 program, directory, age and watchers cells, each take the display columns its view's layout gives
@@ -817,27 +830,16 @@ theorem one_name_rejects_replace :
                       none := by
   sorry
 
-theorem step_fields_described (s : State) (ev : Event)
-    (changed : (Session.step s ev).1.fieldList ≠ s.fieldList) :
-    ∃ id chunk c,
-      ev = .bytes id chunk ∧
-        s.client? id = some c ∧
-        (c.attached = false ∨ c.mode = .writable) ∧
-        ∃ m ∈ (c.decoder.feed chunk).2, m.Describes := by
-  sorry
+theorem step_fields_kept (s : State) (ev : Event) :
+    (Session.step s ev).1.fieldList = s.fieldList := by sorry
 
-@[kills step_fields_described]
-theorem step_fields_described_rejects_reset :
+@[kills step_fields_kept]
+theorem step_fields_kept_rejects_reset :
     ¬∀ (s : State) (ev : Event),
         ((fun (s : State) (_ : Event) =>
-                  (State.boot s.terminal [] [], ([] : List (Effect Replay.Plan))))
-                s ev).1.fieldList ≠
-            s.fieldList →
-          ∃ id chunk c,
-            ev = .bytes id chunk ∧
-              s.client? id = some c ∧
-              (c.attached = false ∨ c.mode = .writable) ∧
-              ∃ m ∈ (c.decoder.feed chunk).2, m.Describes := by
+                (State.boot s.terminal [] [], ([] : List (Effect Replay.Plan))))
+              s ev).1.fieldList =
+          s.fieldList := by
   sorry
 
 theorem infoFields_boot (vt : Vt.Vt) (fields metadata : List (String × String)) (evs : List Event) :
@@ -1065,26 +1067,25 @@ theorem rowText_sources_rejects_every_field :
   sorry
 
 theorem caption_precedence (info : List (String × String)) :
-    ((info.lookup "description").getD "" ≠ "" →
+    ((info.lookup "title").getD "" ≠ "" → Listing.caption info = (info.lookup "title").getD "") ∧
+      ((info.lookup "title").getD "" = "" →
         Listing.caption info = (info.lookup "description").getD "") ∧
-      ((info.lookup "description").getD "" = "" →
-        Listing.caption info = (info.lookup "title").getD "") ∧
       (Listing.program info = "" ∨
         ¬(Listing.command (Listing.program info)).toList <:+: (Listing.caption info).toList) := by
   sorry
 
 @[kills caption_precedence]
-theorem caption_precedence_rejects_title :
+theorem caption_precedence_rejects_described :
     ¬∀ (info : List (String × String)),
-        ((info.lookup "description").getD "" ≠ "" →
-            (fun (info : List (String × String)) => (info.lookup "title").getD "") info =
-              (info.lookup "description").getD "") ∧
-          ((info.lookup "description").getD "" = "" →
-            (fun (info : List (String × String)) => (info.lookup "title").getD "") info =
+        ((info.lookup "title").getD "" ≠ "" →
+            (fun (info : List (String × String)) => (info.lookup "description").getD "") info =
               (info.lookup "title").getD "") ∧
+          ((info.lookup "title").getD "" = "" →
+            (fun (info : List (String × String)) => (info.lookup "description").getD "") info =
+              (info.lookup "description").getD "") ∧
           (Listing.program info = "" ∨
             ¬(Listing.command (Listing.program info)).toList <:+:
-                ((fun (info : List (String × String)) => (info.lookup "title").getD "")
+                ((fun (info : List (String × String)) => (info.lookup "description").getD "")
                     info).toList) := by
   sorry
 
@@ -1190,7 +1191,7 @@ theorem picker_attach_listed_rejects_fixed :
 
 theorem picker_create_new (s : Selector.Picker.State) (key : Selector.Key) (target : String)
     (h : Selector.Picker.step s key = .create target) :
-    target ∉ s.candidates ∧ target ≠ "" ∧ Name.Valid ((target.splitOn "@").headD "") := by sorry
+    target ∉ s.candidates ∧ target ≠ "" ∧ Name.Accepted ((target.splitOn "@").headD "") := by sorry
 
 @[kills picker_create_new]
 theorem picker_create_new_rejects_empty :
@@ -1198,7 +1199,7 @@ theorem picker_create_new_rejects_empty :
         (fun (_ : Selector.Picker.State) (_ : Selector.Key) => Selector.Picker.Outcome.create "") s
               key =
             .create target →
-          target ∉ s.candidates ∧ target ≠ "" ∧ Name.Valid ((target.splitOn "@").headD "") := by
+          target ∉ s.candidates ∧ target ≠ "" ∧ Name.Accepted ((target.splitOn "@").headD "") := by
   sorry
 
 theorem relist_keeps_rows (s : Selector.Picker.State) (resort : Bool) (ordered : List String)
@@ -1339,13 +1340,19 @@ command, a word that names it (`commands_complete`), and exactly one: one word n
 operation, so no command is another's alias or a second reader or writer of what another reads or
 writes, the table has one row for each operation, in `Op.all`'s order, each word names its own
 row, and help lists the rows, each line its command's word (`commands_minimal`). A command exists
-only for an `Op`, so adding one changes `Op`, and with it what linger claims. Not claimed: that
+only for an `Op`, so adding one changes `Op`, and with it what linger claims. Every field a
+listing reports is human, shown in rows as clean text, or machine, exact and only in `--porcelain`;
+each has one owner, the user, through one command, the program or linger, and no two fields of one
+owner tell the same thing (`fields_owned`): the name is the one field the user owns, which `rename`
+writes, and says what the session is. Not claimed: that
 the session CLI dispatches each command line through `lookup` to its row's operation, which its IO
 code does and the manager suite checks, with any other word a usage error; nor that each option is
 one parameter of one operation with one spelling, which the suites check.
 
-A tmux-resurrect save is a source linger reads and never writes. Its panes are rows of `ls` and
-the chooser exactly while linger keeps no record of their names, no socket, checkpoint, end
+A tmux-resurrect save is a source linger reads and never writes. A pane takes its name from its
+window, as a key, a later pane's name that an earlier one took made unique with a natural-order
+suffix, `-2`, `-3`, and keeps the window's own text as its description. Its panes are rows of `ls`
+and the chooser exactly while linger keeps no record of their names, no socket, checkpoint, end
 record or names entry that names them or leads to them (`listed_unrecorded`), so whether a pane was dealt with is read from the records linger
 already keeps. An attach or a resume of such a pane writes its checkpoint only while no record
 names it, and otherwise writes nothing, so it never replaces a record (`adopt_exclusive`). A kill
@@ -1418,6 +1425,31 @@ theorem commands_minimal_rejects_aliased :
                 command.word =
               some command ∧
             ∃ rest, App.Commands.helpLine command = command.word ++ " " ++ rest) := by
+  sorry
+
+theorem fields_owned :
+    (App.Fields.table.map (·.key)).Nodup ∧
+      (∀ key ∈ Listing.sources, key ∈ App.Fields.table.map (·.key)) ∧
+      (∀ f ∈ App.Fields.table, (f.kind = .human ↔ f.key ∈ Listing.shown)) ∧
+      (∀ f ∈ App.Fields.table,
+        ∀ op,
+          f.owner = .user op →
+            op ∈ App.Commands.Op.all ∧ ∀ g ∈ App.Fields.table, g.owner = .user op → g = f) ∧
+      ∀ f ∈ App.Fields.table,
+        ∀ g ∈ App.Fields.table, f.owner = g.owner → f.role = g.role → f = g := by
+  sorry
+
+@[kills fields_owned]
+theorem fields_owned_rejects_named_twice :
+    ¬((App.Fields.namedTwice.map (·.key)).Nodup ∧
+        (∀ key ∈ Listing.sources, key ∈ App.Fields.namedTwice.map (·.key)) ∧
+        (∀ f ∈ App.Fields.namedTwice, (f.kind = .human ↔ f.key ∈ Listing.shown)) ∧
+        (∀ f ∈ App.Fields.namedTwice,
+          ∀ op,
+            f.owner = .user op →
+              op ∈ App.Commands.Op.all ∧ ∀ g ∈ App.Fields.namedTwice, g.owner = .user op → g = f) ∧
+        ∀ f ∈ App.Fields.namedTwice,
+          ∀ g ∈ App.Fields.namedTwice, f.owner = g.owner → f.role = g.role → f = g) := by
   sorry
 
 theorem usageLine_exact (command : App.Commands.Command) :
@@ -1519,6 +1551,24 @@ theorem dismissal_happened_rejects_hangup :
                   (.recorded
                     (Record.answer (afterSave (Record.encode (Record.ended (.signaled 1)))))) =
                 .answer .notFound := by
+  sorry
+
+theorem names_round_trip (s name : String) :
+    (Name.accept s = some name ↔ name = s ∧ Name.Accepted s) ∧
+      (Name.Usable name →
+        Remote.targetArgs (Remote.targetOperands name) = some (name, []) ∧
+          Names.entryName (Names.entryFile name) = some name) ∧
+      Name.accept "build · ✓ tests" = some "build · ✓ tests" := by
+  sorry
+
+@[kills names_round_trip]
+theorem names_round_trip_rejects_keyed :
+    ¬∀ (s name : String),
+        (Name.keyed s = some name ↔ name = s ∧ Name.Accepted s) ∧
+          (Name.Usable name →
+            Remote.targetArgs (Remote.targetOperands name) = some (name, []) ∧
+              Names.entryName (Names.entryFile name) = some name) ∧
+          Name.keyed "build · ✓ tests" = some "build · ✓ tests" := by
   sorry
 
 theorem check_eq_some_iff (s result : String) :

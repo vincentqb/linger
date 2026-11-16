@@ -17,7 +17,9 @@ example : compose "work" "editor" "" maxChars = "work · editor" := by native_de
 
 example : compose "work" "editor" "2⣿" maxChars = "work · editor · 2⣿" := by native_decide
 
-example : compose "../bad" "" "" maxChars = "_._bad" := by native_decide
+example : compose "../my build ✓" "" "" maxChars = "../my build ✓" := by native_decide
+
+example : compose "bad\x1bname" "" "" maxChars = "bad_name" := by native_decide
 
 example :
     String.ofList

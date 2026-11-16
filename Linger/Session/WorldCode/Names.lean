@@ -10,7 +10,8 @@ public section
 /-! # Linger.Session.Shell.Names — the names directory
 
 The names table (`Linger.Session.Names`) on disk: `names/` in `Paths.stateDir` holds a file for
-each entry, named as the session is and holding its ID. A session whose name is its ID, as every
+each entry, named as the session is when that name is a key, else `=` and the name in hexadecimal
+(`Names.entryFile`), and holding its ID. A session whose name is its ID, as every
 session an older linger started is, has no file, so nothing an older linger wrote is moved or
 rewritten. A start places an entry by linking a temporary file that holds the ID, and a rename
 moves one with a rename that may not replace, so neither ever replaces a name
@@ -37,21 +38,21 @@ structure Ref where
 def namesDir : IO String := do
   return (← Paths.stateDir) ++ "/names"
 
-/-- The path of `name`'s entry, after `Paths.ensureDir` creates the directory; a name that is not
-valid throws, and so does an entry spelled differently on a file system that does not tell case
-apart (`Paths.checkSpelling`). -/
+/-- The path of `name`'s entry, its file `Names.entryFile` spells, after `Paths.ensureDir` creates
+the directory; a name that is not clean text throws, and so does an entry spelled differently on a
+file system that does not tell case apart (`Paths.checkSpelling`). -/
 private def entryPath (name : String) : IO String := do
   let some name :=
-    Linger.Target.Name.check
+    Linger.Target.Name.accept
       name | throw (IO.userError s!"invalid session name (use {Paths.nameRule})")
   let dir ← namesDir
   Paths.ensureDir dir
-  let path := s!"{dir}/{name}"
+  let path := s!"{dir}/{Linger.Session.Names.entryFile name}"
   Paths.checkSpelling path
   return path
 
-/-- The names table the directory holds now: each file whose name is a valid name and that holds
-a valid ID (`Names.validKey`), as the directory spells it. A file removed while this reads is
+/-- The names table the directory holds now: each file that holds a name (`Names.entryName`), as
+the directory spells it, and a valid ID (`Names.validKey`). A file removed while this reads is
 left out. -/
 def load : IO Table := do
   let dir ← namesDir
@@ -59,7 +60,7 @@ def load : IO Table := do
     return []
   let mut table := []
   for entry in ← System.FilePath.readDir dir do
-    if (Linger.Target.Name.check entry.fileName).isSome then
+    if let some name := Linger.Session.Names.entryName entry.fileName then
       let id ←
         try
           pure (some (← IO.FS.readFile entry.path).trimAscii.toString)
@@ -67,7 +68,7 @@ def load : IO Table := do
           pure none
       if let some id := id then
         if Linger.Session.Names.validKey id then
-          table := table ++ [(entry.fileName, id)]
+          table := table ++ [(name, id)]
   return table
 
 /-- The ID `name` leads to now (`Names.resolve`). -/

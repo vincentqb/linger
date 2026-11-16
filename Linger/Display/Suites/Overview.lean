@@ -3,6 +3,7 @@ module
 public import Verify.Harness
 import Linger.Display.CoreCode.Listing
 import Terminal.CoreCode.Vt
+import Linger.Session.CoreCode.Checkpoint
 
 public section
 
@@ -19,7 +20,7 @@ row (`Linger/Selector/Proofs/Picker.lean`).
 `cmdList` in `Linger.App.Shell` writes `terminalListing withColor width` of its rows straight to
 stdout, without color or width when stdout is not a terminal, so `terminalListing false none []`
 **is** the empty-state line and the suite cannot drift from its wording. A row shows the
-session's present: its description, which `describe` sets and clears, the program in its
+session's present: a description an older linger saved, until a rename ends it, the program in its
 terminal's foreground and that program's directory, and a shell at its prompt by its directory
 alone. -/
 
@@ -33,23 +34,28 @@ def rowOf (e : Env) (name : String) : IO String := do
   let rows ← lines <$> e.out #["ls"]
   return (rows.find? fun row => (row.splitOn " ").getD 1 "" == name).getD ""
 
-/-- A row shows the session's present: its description, which `describe` sets and, with no
-text, clears; the program in its foreground with that program's directory; and a shell at its
-prompt by its directory alone. -/
+/-- A row shows the session's present: a description an older linger saved, where the program's
+title would be while the program sets none, until a rename ends it; the program in its foreground
+with that program's directory; and a shell at its prompt by its directory alone. -/
 def present (e : Env) : IO Unit :=
   IO.FS.withTempDir fun scratch => do
     let dir := (← IO.FS.realPath scratch).toString
-    let _ ← e.typeIn "described" #["true"]
-    let (drc, _, _) ← e.cli #["describe", "described", "fixing", "the", "parser"]
+    let ck : Linger.Session.Checkpoint.Ckpt Terminal.Vt.Vt :=
+      { vt := Terminal.Vt.Vt.init 80 24, cwd := dir,
+        fields := [("description", "fixing the parser")] }
+    IO.FS.writeBinFile s!"{e.dir}/described.ckpt" (Linger.Session.Checkpoint.saveBytes ck)
+    let (rrc, _, _) ← e.cli #["resume", "described"]
     let shown ← waitFor patienceMs (return has (← rowOf e "described") "fixing the parser")
-    expect (drc == 0 && shown) "a described session shows its description"
+    expect (rrc == 0 && shown)
+        s!"an older record's description shows as the caption: {← rowOf e "described"}"
     expect ((← e.field "described" "description") == some "fixing the parser")
-        "porcelain carries the description as its label"
-    let (crc, _, _) ← e.cli #["describe", "described"]
-    let row ← rowOf e "described"
+        "porcelain carries the description an older linger saved"
+    let (nrc, _, _) ← e.cli #["rename", "described", "renamed-now"]
+    let row ← rowOf e "renamed-now"
     expect
-        (crc == 0 && !has row "fixing" && row != "" && (← e.field "described" "description").isNone)
-        "describe with no text clears the description"
+        (nrc == 0 && !has row "fixing" && row != "" &&
+          (← e.field "renamed-now" "description").isNone)
+        s!"a rename ends an older record's description: {row}"
     let _ ← e.typeIn "sleeper" #["cd", shellQuote dir, "&&", "sleep", "100"]
     let busy ←
       waitFor patienceMs do
@@ -71,7 +77,7 @@ def present (e : Env) : IO Unit :=
           return has row dir && !has row "/bin/sh"
     expect atPrompt
         s!"a shell at its prompt shows its directory but not its shell: {← rowOf e "prompt"}"
-    e.killAll #["described", "sleeper", "prompt"]
+    e.killAll #["renamed-now", "sleeper", "prompt"]
 
 /-- The display column where `needle` starts in `row`, counting each character as wide as a
 terminal shows it, or none when the row lacks it. -/
@@ -88,8 +94,11 @@ def aligned (e : Env) : IO Unit :=
   IO.FS.withTempDir fun scratch => do
     let dir := (← IO.FS.realPath scratch).toString
     for (name, caption) in [("a", "漢字"), ("longer-name", "abcdefgh")] do
-      let _ ← e.typeIn name #["cd", shellQuote dir, "&&", "sleep", "100"]
-      let _ ← e.cli #["describe", name, caption]
+      -- the caption is the title the program gives its window
+      let _ ←
+        e.typeIn name
+            #["printf", s!"'\\033]2;{caption}\\007'", "&&", "cd", shellQuote dir, "&&", "sleep",
+              "100"]
     let ready ←
       waitFor patienceMs do
           return has (← rowOf e "a") "sleep 100" && has (← rowOf e "longer-name") "sleep 100"

@@ -64,9 +64,10 @@ def ensureDir (d : String) : IO Unit := do
   IO.FS.createDirAll d
   Os.Shell.chmod d 0o700
 
-/-- The accepted name alphabet, as every diagnostic and help text states it. -/
+/-- The accepted names, as every diagnostic and help text states it. -/
 def nameRule : String :=
-  s!"1–{Linger.Target.Name.maxLen} ASCII letters, digits, -_.+; no leading dot"
+  s!"text of at most {Linger.Target.Name.maxBytes} bytes, not blank, with no control \
+    character or @, not starting with -"
 
 /-- Return `key` unchanged when it is a valid name or a fresh ID (`Names.validKey`), and throw
 with `nameRule` otherwise; a key is never rewritten into another. -/

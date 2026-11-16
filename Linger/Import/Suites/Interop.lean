@@ -2,6 +2,7 @@ module
 
 import Linger.Import.Suites.Recipes
 import Linger.Os.CoreCode.Answer
+import Linger.Target.CoreCode.Name
 import Linger.Session.CoreCode.Checkpoint
 import all Linger.Import.WorldCode
 
@@ -140,6 +141,14 @@ private def Fixture.seed (f : Fixture) (name cwd : String) : IO Unit := do
 /-- Where tmux-resurrect keeps the latest save for the fixture's data directory. -/
 private def Fixture.latest (f : Fixture) : System.FilePath := f.root / "data/tmux/resurrect/last"
 
+/-- The panes of the save `text`, named as `ls` names them (`Resurrect.named`); none for a save
+that does not parse. -/
+private def savedPanes (f : Fixture) (text : String) : List Linger.Import.Resurrect.Pane :=
+  match Linger.Import.Resurrect.parseSave (f.root / "home").toString text with
+  | .ok raw =>
+    Linger.Import.Resurrect.named (raw.map (Linger.Import.Resurrect.preparePane text raw))
+  | .error _ => []
+
 /-- Write `text` as the save at `path`, with its file's UTC mtime fixed, and own its panes'
 names. Its directory is one no command may change. -/
 private def Fixture.writeSave (f : Fixture) (text : String) (path : System.FilePath := f.latest) :
@@ -154,8 +163,7 @@ private def Fixture.writeSave (f : Fixture) (text : String) (path : System.FileP
   unless code == 0 do
     throw (IO.userError s!"could not timestamp fixture save: {err}")
   f.saveDirs.modify fun dirs => if dirs.contains dir then dirs else dirs ++ [dir]
-  for pane in
-    (Linger.Import.Resurrect.parseSave (f.root / "home").toString text).toOption.getD [] do
+  for pane in savedPanes f text do
     f.own pane.name
 
 /-- Make `text` the latest save and resume each of its panes, as an attach would: the first
@@ -163,8 +171,8 @@ failing resume's result, or, for a save that does not parse, what `ls` says of i
 private def Fixture.importText (f : Fixture) (text : String) : IO (UInt32 × String × String) := do
   f.writeSave text
   match Linger.Import.Resurrect.parseSave (f.root / "home").toString text with
-  | .ok panes =>
-    for pane in panes do
+  | .ok _ =>
+    for pane in savedPanes f text do
       let result ← f.cli #["resume", pane.name]
       unless result.1 == 0 do
         return result
@@ -183,7 +191,9 @@ private def namesIn (dir : System.FilePath) : IO (List String) := do
   return (← dir.readDir).toList.map (·.fileName) |>.toArray.qsort (· < ·) |>.toList
 
 private def commonFields (home text : String) : Option (List (String × String)) :=
-  (Linger.Import.Resurrect.parseSave home text).toOption.map Linger.Import.Resurrect.common
+  (Linger.Import.Resurrect.parseSave home text).toOption.map fun raw =>
+    Linger.Import.Resurrect.common
+      (Linger.Import.Resurrect.named (raw.map (Linger.Import.Resurrect.preparePane text raw)))
 
 private def sameFields (a b : List (String × String)) : Bool :=
   a.toArray.qsort (fun x y => x.1 < y.1 || (x.1 == y.1 && x.2 < y.2)) ==
@@ -241,7 +251,8 @@ private def Fixture.rowsMatch (f : Fixture) (text out : String) (expected : List
   match Linger.Import.Resurrect.parseSave (f.root / "home").toString text with
   | .error _ => false
   | .ok raw =>
-    let panes := raw.map (Linger.Import.Resurrect.preparePane text raw)
+    let panes :=
+      Linger.Import.Resurrect.named (raw.map (Linger.Import.Resurrect.preparePane text raw))
     let rows := sourceRecords out
     rows.map (field · "name") == expected &&
       rows.all fun row =>
@@ -286,16 +297,38 @@ private def sourceOrder (f : Fixture) : IO Bool := do
   let (humanRc, human, humanErr) ← f.cli #["ls"]
   let rows := (lines human).filter (has · "(saved by tmux)")
   return rc == 0 && err.isEmpty &&
-      f.rowsMatch text out ["alpha-w3-p1", "zeta-w12-p2", "zeta-w12-p8"] &&
+      f.rowsMatch text out ["Build_window", "Review_window", "Review_window-2"] &&
       humanRc == 0 &&
       humanErr.isEmpty &&
       rows.length == 3 &&
-      (rows.zip ["alpha-w3-p1", "zeta-w12-p2", "zeta-w12-p8"]).all
+      (rows.zip ["Build_window", "Review_window", "Review_window-2"]).all
         (fun (row, name) => has row name) &&
       has (rows[0]?.getD "") "Build window" &&
       has (rows[1]?.getD "") "Review window" &&
       (← f.queries) == queryCall ++ queryCall &&
       (← namesIn (System.FilePath.mk f.env.dir)).isEmpty
+
+/-- A pane takes its name from its window, as a key, and a later pane whose window's name an
+earlier pane took gets the next natural-order suffix, so two windows of one name and two panes of
+one window each get their own; a pane of a window the save names nothing keeps the name its record
+projects. -/
+private def windowNames (f : Fixture) : IO Bool := do
+  let home := (f.root / "home").toString
+  f.writeSave
+      ("window\tdesk\t0\t:editor\n" ++ "window\tdesk\t1\t:editor\n" ++
+        "window\tlab\t0\t:my notes\n" ++
+        paneLine "desk" "0" "0" home "" ++
+        paneLine "desk" "0" "1" home "" ++
+        paneLine "desk" "1" "0" home "" ++
+        paneLine "lab" "0" "0" home "" ++
+        paneLine "bare" "0" "0" home "")
+  let (rc, out, err) ← f.cli #["ls", "--porcelain"]
+  let names := sourceNames out
+  let desk := (sourceRecords out).filter (field · "tmux.session" == "desk")
+  return rc == 0 && err.isEmpty &&
+      names == ["bare-w0-p0", "editor", "editor-2", "editor-3", "my_notes"] &&
+      desk.map (fun row => (field row "tmux.window", field row "tmux.pane", field row "name")) ==
+        [("0", "0", "editor"), ("0", "1", "editor-2"), ("1", "0", "editor-3")]
 
 private def sourceControls (f : Fixture) : IO Bool := do
   let controls := "\x07\x1b[2J\r\x7f\u0080\u0085\u009b\u009d\u009f"
@@ -307,7 +340,9 @@ private def sourceControls (f : Fixture) : IO Bool := do
   let (rc, out, err) ← f.cli #["ls", "--porcelain"]
   let (humanRc, human, humanErr) ← f.cli #["ls"]
   let printable := fun c => Terminal.Render.textChar c == c
-  return rc == 0 && err.isEmpty && f.rowsMatch text out ["control-w4-p0"] && humanRc == 0 &&
+  return rc == 0 && err.isEmpty &&
+      f.rowsMatch text out [Linger.Target.Name.sanitize ("title" ++ controls)] &&
+      humanRc == 0 &&
       humanErr.isEmpty &&
       human.toList.all (fun c => c == '\n' || printable c) &&
       (out.splitOn "\n").all (fun row => row.toList.all (fun c => c == '\t' || printable c)) &&
@@ -342,7 +377,7 @@ private def sourceReadOnly (f : Fixture) : IO Bool := do
   let (humanRc, human, humanErr) ← f.cli #["ls"]
   IO.sleep 200 -- negative assertion: allow an accidentally started saved command to run
   let after ← f.cli #["ls", "native.only", "--porcelain"]
-  return rc == 0 && err.isEmpty && f.rowsMatch text out ["foreign-w2-p0"] && humanRc == 0 &&
+  return rc == 0 && err.isEmpty && f.rowsMatch text out ["Original_title"] && humanRc == 0 &&
       humanErr.isEmpty &&
       before.1 == 0 &&
       after == before &&
@@ -401,19 +436,19 @@ private def attachPane (f : Fixture) : IO Bool := do
     f.env.spawnEnv
         (#[s!"HOME={f.root}/home", s!"XDG_DATA_HOME={f.root}/data"] ++
           f.tmuxEnv.filterMap fun (k, v) => v.map (s!"{k}={·}"))
-        #["attach", "pty-w1-p0"]
+        #["attach", "Pty_window"]
   try
     let shown ← client.awaitNeedle "Saved foreground command"
     let attached ←
       waitFor 5000 do
-          return (← f.info "pty-w1-p0" "clients") == some "1"
-    let here ← f.cwdIs "pty-w1-p0" dir
-    let description ← f.info "pty-w1-p0" "description"
+          return (← f.info "Pty_window" "clients") == some "1"
+    let here ← f.cwdIs "Pty_window" dir
+    let description ← f.info "Pty_window" "description"
     client.detach
     let _ ← client.reap
     let (_, out, _) ← f.cli #["ls", "--porcelain"]
     return shown && attached && here && description == some "Pty window" && sourceNames out == [] &&
-        has out "name\tpty-w1-p0" &&
+        has out "name\tPty_window" &&
         !(← marker.pathExists)
   finally
     client.bye (sendDetach := false)
@@ -577,12 +612,12 @@ private def setupRaw (f : Fixture) : IO Unit := do
   link (dir / "child") (f.root / "alias")
   let text := rawText f
   let (code, _, err) ← f.importText text
-  unless code == 0 && (← f.cwdIs "foreign-w7-p2" dir) do
+  unless code == 0 && (← f.cwdIs "unknown_window_fields" dir) do
     throw (IO.userError s!"foreign pane did not resume in its physical cwd: {err}")
 
 private def sourceIndependent (f : Fixture) : IO Bool := do
   setupRaw f
-  let expected := [("foreign-w7-p2", (f.root / "pane 'quoted' $cash a b").toString)]
+  let expected := [("unknown_window_fields", (f.root / "pane 'quoted' $cash a b").toString)]
   f.writeSave "source replaced after import\n"
   let first ← f.exportFields "replaced" expected
   IO.FS.removeFile f.latest
@@ -592,28 +627,28 @@ private def sourceIndependent (f : Fixture) : IO Bool := do
 
 private def metadataOnlyImport (f : Fixture) : IO Bool := do
   setupRaw f
-  let before ← f.pid "foreign-w7-p2"
-  let expected := [("foreign-w7-p2", (f.root / "pane 'quoted' $cash a b").toString)]
+  let before ← f.pid "unknown_window_fields"
+  let expected := [("unknown_window_fields", (f.root / "pane 'quoted' $cash a b").toString)]
   let first ← f.exportFields "first" expected
   let latest := rawText f "latest successful import" ++ "last-record\tno trailing newline"
   let (importCode, _, _) ← f.importText latest
   let second ← f.exportFields "second" expected
-  return importCode == 0 && before.isSome && (← f.pid "foreign-w7-p2") == before && first &&
+  return importCode == 0 && before.isSome && (← f.pid "unknown_window_fields") == before && first &&
       second &&
       (← readBytes (f.root / "out" / "first")) == (← readBytes (f.root / "out" / "second")) &&
       !(← (System.FilePath.mk f.env.dir / "tmux-import.json").pathExists)
 
 private def failedImport (f : Fixture) : IO Bool := do
   setupRaw f
-  let before ← f.pid "foreign-w7-p2"
+  let before ← f.pid "unknown_window_fields"
   f.own "must-not-start-w0-p0"
   let malformed :=
     paneLine "must-not-start" "0" "0" (f.root / "home").toString "" ++ "pane\tbroken\n"
   let (importCode, _, _) ← f.importText malformed
-  return importCode == 1 && before.isSome && (← f.pid "foreign-w7-p2") == before &&
+  return importCode == 1 && before.isSome && (← f.pid "unknown_window_fields") == before &&
       (←
         f.exportFields "previous"
-            [("foreign-w7-p2", (f.root / "pane 'quoted' $cash a b").toString)]) &&
+            [("unknown_window_fields", (f.root / "pane 'quoted' $cash a b").toString)]) &&
       !(← (System.FilePath.mk f.env.dir / "tmux-import.json").pathExists) &&
       !(← (System.FilePath.mk f.env.dir / "must-not-start-w0-p0.sock").pathExists)
 
@@ -622,24 +657,26 @@ private def topologyChange (f : Fixture) (remove : Bool) : IO Bool := do
   let dir := f.root / "home"
   f.start "added.name+" dir
   if remove then
-    let (code, _, _) ← f.cli #["kill", "foreign-w7-p2"]
+    let (code, _, _) ← f.cli #["kill", "unknown_window_fields"]
     unless
       code == 0 &&
         (←
           waitFor 5000 do
-              return !(← (System.FilePath.mk f.env.dir / "foreign-w7-p2.sock").pathExists)) do
+              return !(←
+                    (System.FilePath.mk f.env.dir / "unknown_window_fields.sock").pathExists)) do
       throw (IO.userError "fixture session was not removed")
   let expected :=
     [("added.name+", dir.toString)] ++
-      if remove then [] else [("foreign-w7-p2", (f.root / "pane 'quoted' $cash a b").toString)]
+      if remove then []
+      else [("unknown_window_fields", (f.root / "pane 'quoted' $cash a b").toString)]
   f.exportFields "changed" expected
 
 private def liveCwd (f : Fixture) : IO Bool := do
   setupRaw f
   let changed := f.root / "home"
-  let (code, _, _) ← f.cli #["send", "foreign-w7-p2", s!"cd {changed}\n"]
-  return code == 0 && (← f.cwdIs "foreign-w7-p2" changed) &&
-      (← f.exportFields "changed-cwd" [("foreign-w7-p2", changed.toString)])
+  let (code, _, _) ← f.cli #["send", "unknown_window_fields", s!"cd {changed}\n"]
+  return code == 0 && (← f.cwdIs "unknown_window_fields" changed) &&
+      (← f.exportFields "changed-cwd" [("unknown_window_fields", changed.toString)])
 
 private def nativeRoundtrip (f : Fixture) : IO Bool := do
   let dir := f.root / "one two 'three' $four 会é"
@@ -718,8 +755,8 @@ private def Fixture.row (f : Fixture) (name : String) : IO String := do
 
 /-- A session an import made before a row had a description: its checkpoint, in the format a
 linger of then wrote, holds the import's provenance and no description. Resumed, its row shows the
-description today's import gives, the window's name; `describe` with no text clears it, and a
-crash and a resume keep it cleared. -/
+description today's import gives, the window's name, until a rename ends it, which a crash and a
+resume keep ended. -/
 private def olderImport (f : Fixture) : IO Bool := do
   let dir := f.root / "home"
   let pane : Linger.Import.Resurrect.Pane :=
@@ -731,40 +768,22 @@ private def olderImport (f : Fixture) : IO Bool := do
   -- the record of a linger older than descriptions: the same layout under the tag 3
   let old : Ckpt Terminal.Vt.Vt :=
     { today with fields := today.fields.filter (·.1 != "description") }
-  f.own pane.name
+  f.own "newer"
   let checkpoint := System.FilePath.mk f.env.dir / s!"{pane.name}.ckpt"
   IO.FS.writeBinFile checkpoint ((saveBytes old).set! 4 3)
   unless ← f.resume pane.name do
     throw (IO.userError "older import did not resume")
   let described ← f.info pane.name "description"
   let row ← f.row pane.name
-  let (cleared, _, _) ← f.cli #["describe", pane.name]
-  let after ← f.info pane.name "description"
-  let some shellPid ← f.pid pane.name | throw (IO.userError "fixture shell pid is missing")
+  let (renamed, _, _) ← f.cli #["rename", pane.name, "newer"]
+  let after ← f.info "newer" "description"
+  let some shellPid ← f.pid "newer" | throw (IO.userError "fixture shell pid is missing")
   let (psCode, parent, _) ←
     process { cmd := "ps", args := #["-o", "ppid=", "-p", toString shellPid] }
   let some daemon :=
     parent.trimAscii.toString.toNat? | throw (IO.userError "fixture daemon pid is missing")
   unless psCode == 0 && 1 < daemon && daemon < UInt32.size do
     throw (IO.userError "invalid fixture daemon pid")
-  let client ← f.env.spawnEnv #[s!"HOME={dir}"] #["attach", pane.name]
-  try
-    unless
-      ←
-        waitFor 5000
-            (do
-              return (← f.info pane.name "clients") == some "1") do
-      throw (IO.userError "older import client did not attach")
-    client.detach
-    let _ ← client.reap
-  finally
-    client.bye (sendDetach := false)
-  -- the last detach saves the cleared description
-  let saved ←
-    waitFor 5000 do
-        let some bytes ← readBytes checkpoint | return false
-        return (loadBytes bytes).any fun ck =>
-            ck.fields.lookup "description" == none && ck.fields.lookup "tmux.window" == some "4"
   Os.Shell.kill daemon.toUInt32 9
   unless
     ←
@@ -774,11 +793,10 @@ private def olderImport (f : Fixture) : IO Bool := do
     throw (IO.userError "older import daemon did not stop")
   if ← Os.Shell.alive shellPid then
     Os.Shell.kill shellPid 9
-  let resumed ← f.resume pane.name
-  let again ← f.info pane.name "description"
-  let window ← f.info pane.name "tmux.window-title"
-  return described == some "Old window" && has row "Old window" && cleared == 0 && after.isNone &&
-      saved &&
+  let resumed ← f.resume "newer"
+  let again ← f.info "newer" "description"
+  let window ← f.info "newer" "tmux.window-title"
+  return described == some "Old window" && has row "Old window" && renamed == 0 && after.isNone &&
       resumed &&
       again.isNone &&
       window == some "Old window"
@@ -832,7 +850,7 @@ private def unrepresentableCwd (f : Fixture) : IO Bool := do
 private def discardedCommands (f : Fixture) : IO Bool := do
   setupRaw f
   let barrier := f.root / "barrier"
-  let (code, _, _) ← f.cli #["send", "foreign-w7-p2", s!"printf ready > '{barrier}'\n"]
+  let (code, _, _) ← f.cli #["send", "unknown_window_fields", s!"printf ready > '{barrier}'\n"]
   let ready ←
     waitFor 5000 do
         return (← readBytes barrier) == some "ready".toUTF8
@@ -845,7 +863,7 @@ private def exportStdout (f : Fixture) : IO Bool := do
   let (code, text, err, unchanged) ← f.export
   return code == 0 && err.isEmpty && unchanged &&
       commonFields (f.root / "home").toString text ==
-        some [("foreign-w7-p2", (f.root / "pane 'quoted' $cash a b").toString)] &&
+        some [("unknown_window_fields", (f.root / "pane 'quoted' $cash a b").toString)] &&
       (← namesIn (System.FilePath.mk f.env.dir)).all
         (fun name => !name.contains '~' && !name.endsWith ".tmp")
 
@@ -926,28 +944,28 @@ private def captureImport (f : Fixture) : IO Bool := do
   let (rc, _, err) ← f.importText text
   unless
     rc == 0 && err.isEmpty && listed == 0 && listError.isEmpty &&
-      f.rowsMatch text catalog ["captured-w3-p0", "captured-w3-p1"] &&
-      (← f.cwdIs "captured-w3-p0" first) &&
-      (← f.cwdIs "captured-w3-p1" second) do
+      f.rowsMatch text catalog ["Build_window", "Build_window-2"] &&
+      (← f.cwdIs "Build_window-2" first) &&
+      (← f.cwdIs "Build_window" second) do
     return false
-  let firstPid ← f.pid "captured-w3-p0"
-  let secondPid ← f.pid "captured-w3-p1"
-  let (firstRc, firstHistory, _) ← f.cli #["capture", "--history", "captured-w3-p0"]
-  let (secondRc, secondHistory, _) ← f.cli #["capture", "--history", "captured-w3-p1"]
+  let firstPid ← f.pid "Build_window-2"
+  let secondPid ← f.pid "Build_window"
+  let (firstRc, firstHistory, _) ← f.cli #["capture", "--history", "Build_window-2"]
+  let (secondRc, secondHistory, _) ← f.cli #["capture", "--history", "Build_window"]
   let labels ←
     ["tmux.session", "tmux.window", "tmux.pane", "tmux.title", "tmux.command", "tmux.saved-command",
             "tmux.window-title", "tmux.capture", "description"].mapM
-        (fun key => f.info "captured-w3-p0" key)
+        (fun key => f.info "Build_window-2" key)
   let barrier := f.root / "shell-ready"
   let secondBarrier := f.root / "second-shell-ready"
-  let (ran, _, _) ← f.cli #["send", "captured-w3-p0", s!"printf ready > '{barrier}'\n"]
-  let (secondRan, _, _) ← f.cli #["send", "captured-w3-p1", s!"printf ready > '{secondBarrier}'\n"]
+  let (ran, _, _) ← f.cli #["send", "Build_window-2", s!"printf ready > '{barrier}'\n"]
+  let (secondRan, _, _) ← f.cli #["send", "Build_window", s!"printf ready > '{secondBarrier}'\n"]
   let ready ←
     waitFor 5000 do
         return (← readBytes barrier) == some "ready".toUTF8 &&
             (← readBytes secondBarrier) == some "ready".toUTF8
   let (again, _, againError) ← f.importText text
-  let (_, repeatedHistory, _) ← f.cli #["capture", "--history", "captured-w3-p0"]
+  let (_, repeatedHistory, _) ← f.cli #["capture", "--history", "Build_window-2"]
   return firstPid.isSome && secondPid.isSome && firstPid != secondPid && firstRc == 0 &&
       secondRc == 0 &&
       has firstHistory "first old λ" &&
@@ -970,8 +988,8 @@ private def captureImport (f : Fixture) : IO Bool := do
       !(← marker.pathExists) &&
       again == 0 &&
       againError.isEmpty &&
-      (← f.pid "captured-w3-p0") == firstPid &&
-      (← f.pid "captured-w3-p1") == secondPid &&
+      (← f.pid "Build_window-2") == firstPid &&
+      (← f.pid "Build_window") == secondPid &&
       has repeatedHistory "first old λ" &&
       (repeatedHistory.splitOn "Saved foreground command: ").length == 2 &&
       (← readBytes f.latest) == savedBytes &&
@@ -1192,7 +1210,7 @@ def runWith (binary : String) : IO UInt32 := do
         ("export observes a live cwd change instead of its startup directory", liveCwd),
         ("native identities remain exact and preserve dot, plus and UTF8 cwd in a second state dir",
           nativeRoundtrip),
-        ("a session an older import saved without a description reads with the import's, and a clear of it lasts",
+        ("a session an older import saved without a description reads with the import's, until a rename ends it",
           olderImport),
         ("export reads the changed checkpoint cwd after last detach and daemon crash",
           resumableCwd),
@@ -1231,6 +1249,7 @@ def runWith (binary : String) : IO UInt32 := do
         ("a pane is listed exactly while no socket, checkpoint or end record names it",
           listedUnrecorded),
         ("saved panes sort last within the saved status", sourceLast),
+        ("a pane takes its window's name, a duplicate the next natural-order suffix", windowNames),
         ("an attach of a saved pane resumes it as a fresh shell in its directory", attachPane),
         ("an attach or a resume never replaces a record of the pane's name", adoptExclusive),
         ("a kill of a saved pane leaves only an end record that says it was dismissed, and hides it for good",

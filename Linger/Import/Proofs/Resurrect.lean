@@ -171,19 +171,22 @@ theorem preparePane_preserves (content : String) (panes : List Pane) (pane : Pan
   exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- An accepted member uses the validated pane's exact source triple, and requires
-that this triple still projects to its canonical linger identity. -/
+that this triple still projects to a canonical linger identity. -/
 theorem contentMember_exact (pane : Pane) (member : String)
     (h : contentMember pane = some member) :
-    Linger.Target.Name.sanitize pane.name = pane.name ∧
-      projectName pane.details.session pane.details.window pane.details.index = some pane.name ∧
-      member =
-        s!"./pane_contents/pane-{pane.details.session}:{pane.details.window}.{pane.details.index}" := by
+    ∃ identity,
+      Linger.Target.Name.sanitize identity = identity ∧
+        projectName pane.details.session pane.details.window pane.details.index = some identity ∧
+        member =
+          s!"./pane_contents/pane-{pane.details.session}:{pane.details.window}.{pane.details.index}" := by
   unfold contentMember at h
   split at h
-  · rename_i guard
-    simp only [Bool.and_eq_true, beq_iff_eq] at guard
-    cases h
-    exact ⟨guard.1, guard.2, rfl⟩
+  · rename_i identity projected
+    split at h
+    · rename_i guard
+      cases h
+      exact ⟨identity, by simpa using guard, projected, rfl⟩
+    · cases h
   · cases h
 
 /-- Capture retention is fixed at eight MiB per pane. -/

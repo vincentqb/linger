@@ -456,7 +456,7 @@ def closeOrder (dir : String) : IO Unit := do
             conns := [{ fd, replay := some (Replay.start st.vt) }]
             saveCkpt := fun s => saved.modify (· ++ [s.fields]) }
         let detach := Wire.encode .detachAll
-        let later := Wire.encode (.describe "after detach".toUTF8.toList)
+        let later := Wire.encode (.resize 33 7)
         let events :=
           if variant == "packet" then [.bytes id (detach ++ later)]
           else [.bytes (if variant == "other-client" then control else id) detach, .bytes id later]
@@ -464,7 +464,8 @@ def closeOrder (dir : String) : IO Unit := do
         -- saves run on their own thread; wait for them as the daemon does before exiting
         let rt ← finishSaves rt
         expect
-            (rt.st.fields.isEmpty && (← saved.get) == [[]] && (rt.st.client? id).isNone &&
+            (rt.st.fields.isEmpty && rt.st.vt.colCount == 20 && (← saved.get) == [[]] &&
+              (rt.st.client? id).isNone &&
               (rt.conn? fd).any (·.closing))
             s!"delivery/close-order/{variant}"
 
@@ -472,12 +473,10 @@ def closeOrder (dir : String) : IO Unit := do
 stack growth, and observe a real command at the end of that batch. -/
 def largeBatch (dir : String) : IO Unit :=
   withPair dir "large-batch" (Vt.Vt.init 20 5) fun rt _ fd => do
-    let events :=
-      List.replicate 100000 (.tick 0) ++
-        [.bytes fd.toNat (Wire.encode (.describe "batch complete".toUTF8.toList))]
+    let events := List.replicate 100000 (.tick 0) ++ [.bytes fd.toNat (Wire.encode (.resize 30 6))]
     let rt ← pump rt events
     expect
-        (!rt.exiting && rt.st.fields == [("description", "batch complete")] && (rt.conn? fd).isSome)
+        (!rt.exiting && rt.st.vt.colCount == 30 && rt.st.vt.rowCount == 6 && (rt.conn? fd).isSome)
         "delivery/large-batch/reaches-final-command"
 
 /-- A failed send causes logical disconnect; failure of the resulting save
@@ -493,9 +492,7 @@ def failureFeedback (dir : String) : IO Unit :=
           saved.modify (· ++ [Session.infoFields st])
           throw (IO.userError "injected feedback save failure") }
     close peer
-    let rt ←
-      pump rt
-          [.ptyOut [0x41], .bytes fd.toNat (Wire.encode (.describe "stale input".toUTF8.toList))]
+    let rt ← pump rt [.ptyOut [0x41], .bytes fd.toNat (Wire.encode (.resize 31 6))]
     -- the save runs on its own thread, and its failure comes back as the next round's event
     let (rt, failed) ← collectSave rt true
     let rt ← pump rt failed
@@ -505,6 +502,7 @@ def failureFeedback (dir : String) : IO Unit :=
     expect
         (!rt.exiting && rt.conns.isEmpty && (rt.st.client? fd.toNat).isNone &&
           rt.st.fields.isEmpty &&
+          rt.st.vt.colCount == 20 &&
           first.length == 1 &&
           first.all correctState &&
           (match failed with

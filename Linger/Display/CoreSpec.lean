@@ -130,6 +130,11 @@ def sources : List String :=
     "description", "title", "notice", "lastcmd", "lastexit", "login", "fg", "fgpid", "fgdir",
     "idle", "clients"]
 
+/-- The fields a human row prints of, each as clean text: every field it reads (`sources`) but
+the processes and the login flag, which only decide what it prints. -/
+@[expose]
+def shown : List String := sources.filter fun key => !["pid", "fgpid", "login"].contains key
+
 /-- How a view lays out its rows, one field to a column: the name column's width, then the width of
 each later column, the caption, the foreground program, its directory, the age and the watchers,
 all in the display columns a terminal gives them. -/

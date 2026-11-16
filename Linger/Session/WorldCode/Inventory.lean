@@ -231,7 +231,8 @@ one deadline (two seconds for a listing); unqueried peers stay unknown. The IDs 
 the directories, so no path here needs a spelling check, and each row is named as its ID shows
 in the names table, read once (`Names.nameOf`), never by the ID; an ID no name leads to is not
 listed. A saved session is listed as its end record says (`savedRow`), read while holding its
-ID. With `statusOnly`, as for a summary, a row carries only its status, and a live session whose
+ID. A description an older linger saved shows only while the session's name is its ID, so a rename
+ends it. With `statusOnly`, as for a summary, a row carries only its status, and a live session whose
 end record says what its daemon saw is read from the record without waking the daemon
 (`rowStatus_published`). With `only`, just the rows of the names it holds. A listing of every row
 also lets go of the locks of every ID nothing names, which deletes their lock files
@@ -247,8 +248,11 @@ def localRows (stopAt : Option Nat := none) (statusOnly : Bool := false)
   -- names as people read them, `w2` before `w10` (`View.before`)
   let sockets := (Linger.Display.View.byName (·.2) (named (← Paths.listSocketNames))).toArray
   let ckpts := Linger.Display.View.byName (·.2) (named (← Paths.listCkptNames))
-  let liveRow := fun name info =>
-    Linger.Display.Listing.rowFields name info ++
+  -- a description an older linger saved says what the session was called until it was renamed:
+  -- a session whose name is not its ID shows none
+  let liveRow := fun (listed : Paths.Listed) name info =>
+    Linger.Display.Listing.rowFields name
+        (if listed.name == name then info else info.filter (·.1 != "description")) ++
       [("state", "live"),
         ("status", Linger.Display.Status.name (Linger.Display.Listing.rowStatus (.live info)))]
   let mut confirmedLive : List String := []
@@ -273,13 +277,13 @@ def localRows (stopAt : Option Nat := none) (statusOnly : Bool := false)
     match result with
     | some info =>
       confirmedLive := confirmedLive ++ [listed.name]
-      rows := rows ++ [liveRow name (info.toOption.getD [])]
+      rows := rows ++ [liveRow listed name (info.toOption.getD [])]
     | none =>
       if !(← removeStaleSocket listed) then
         -- Failed connect while another process owns (or may own) the ID: keep
         -- the rendezvous path and list the identity as live/unknown.
         confirmedLive := confirmedLive ++ [listed.name]
-        rows := rows ++ [liveRow name []]
+        rows := rows ++ [liveRow listed name []]
   for (listed, name) in ckpts do
     if !confirmedLive.contains listed.name then
       -- Another runtime directory may share this checkpoint namespace.
@@ -297,7 +301,7 @@ def localRows (stopAt : Option Nat := none) (statusOnly : Bool := false)
       rows :=
         rows ++
           [match record with
-            | none => liveRow name []
+            | none => liveRow listed name []
             | some loaded =>
               let (row, ending) := savedRow loaded
               savedFields row ending]

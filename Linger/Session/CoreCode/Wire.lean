@@ -44,10 +44,10 @@ private def readU32 (l : List UInt8) : UInt32 :=
 Tag 3 was the attach of levels 1 and 2, which carried only a size and made a client that gave
 none read-only. It is retired, so this version reads it as a message it does not know, and
 refuses it, as an older daemon refuses tag 18, the attach that carries a mode. Tags 11 to 13 set,
-removed and cleared labels before the session record had fields of its own; they are retired too,
-and tag 21 describes the session. -/
+removed and cleared labels before the session record had fields of its own, and tag 21 described
+the session before its name said what it is; they are retired too. -/
 
-/-- A message's frame tag: 0 to 21 for the assigned messages, but 3 and 11 to 13, which are
+/-- A message's frame tag: 0 to 20 for the assigned messages, but 3 and 11 to 13, which are
 retired, and an `unknown` message's own tag. -/
 private def Msg.tag : Msg → UInt8
   | .input _ => 0
@@ -67,11 +67,10 @@ private def Msg.tag : Msg → UInt8
   | .ended _ => 17
   | .saved _ => 19
   | .upgrade _ => 20
-  | .describe _ => 21
   | .unknown t _ => t
 
 /-- Tags with an assigned meaning in this version. -/
-private def knownTag (t : UInt8) : Bool := t ≤ 21 && t != 3 && (t < 11 || 13 < t)
+private def knownTag (t : UInt8) : Bool := t ≤ 20 && t != 3 && (t < 11 || 13 < t)
 
 /-- A mode as one byte: 0 writable, 1 read-only. `readMode` inverts it (`readMode_modeByte`). -/
 def modeByte : Mode → UInt8
@@ -102,7 +101,7 @@ def readOutcome : List UInt8 → Outcome
 `writeU32`, after an attach's mode byte, an ending's two bytes, a signal's number, or nothing.
 `decodeMsg` recovers a well-formed message from its tag and payload (`decodeMsg_roundtrip`). -/
 private def Msg.payload : Msg → List UInt8
-  | .input b | .output b | .infoReply b | .err b | .upgrade b | .describe b => b
+  | .input b | .output b | .infoReply b | .err b | .upgrade b => b
   | .resize c r => writeU32 c ++ writeU32 r
   | .attach m c r => modeByte m :: (writeU32 c ++ writeU32 r)
   | .exited s => writeU32 s
@@ -154,9 +153,7 @@ private def decodeMsg (tag : UInt8) (p : List UInt8) : Msg :=
                               if tag = 18 then decodeAttach p
                               else
                                 if tag = 19 then .saved (p.headD 0)
-                                else
-                                  if tag = 20 then .upgrade p
-                                  else if tag = 21 then .describe p else .unknown tag p
+                                else if tag = 20 then .upgrade p else .unknown tag p
 
 /-- A message the encoder may legally emit: payload within `maxPayload`, and
 `unknown` only for genuinely unassigned tags (an `unknown` wearing a

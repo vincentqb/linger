@@ -13,7 +13,7 @@ namespace Linger.Display.Title
 Empty optional parts contribute neither text nor a separator. Clip the
 application to the encoder's budget after reserving the session and attention. -/
 def compose (session application summary : String) (capacity : Nat) : String :=
-  let session := Linger.Target.Name.sanitize session
+  let session := Linger.Target.Name.shown session
   let suffix := if summary.isEmpty then "" else " · " ++ summary
   let application := (application.take (capacity - session.length - suffix.length - 3)).copy
   session ++ (if application.isEmpty then "" else " · " ++ application) ++ suffix

@@ -24,25 +24,26 @@ namespace Linger.Target.Remote
 
 open Linger.Target.Name
 
-/-- Parsed names are valid; an invalid peer name cannot become a different target. -/
+/-- Parsed names are clean text; an invalid peer name cannot become a different target. -/
 theorem parseRecord_name_valid {lines : List String} {r : RemoteRow}
-    (h : parseRecord lines = some r) : Valid r.name := by
+    (h : parseRecord lines = some r) : Accepted r.name := by
   unfold parseRecord at h
   dsimp only at h
   split at h
   · exact absurd h (by simp)
   · rename_i raw heq
-    cases hc : check raw with
+    cases hc : accept raw with
     | none => simp [hc] at h
     | some name =>
-      simp only [hc, Option.bind_eq_bind, Option.bind_some, Option.some.injEq] at h
-      subst r
-      obtain ⟨rfl, valid⟩ := (check_eq_some_iff raw name).mp hc
+      rw [hc] at h
+      simp only [Option.bind_eq_bind, Option.bind_some, Option.some.injEq] at h
+      subst h
+      obtain ⟨rfl, valid⟩ := (accept_eq_some_iff raw name).mp hc
       exact valid
 
-/-- Every parsed row's name is valid, whatever the remote
+/-- Every parsed row's name is clean text, whatever the remote
 sent. -/
-theorem parse_names_valid (out : String) : ∀ r ∈ parse out, Valid r.name := by
+theorem parse_names_valid (out : String) : ∀ r ∈ parse out, Accepted r.name := by
   intro r hr
   obtain ⟨rec, -, hparse⟩ := List.mem_filterMap.mp hr
   exact parseRecord_name_valid hparse
@@ -66,22 +67,34 @@ theorem parse_cmd_scrubbed (out : String) :
   split at h
   · exact absurd h (by simp)
   · rename_i raw heq
-    cases hc : check raw with
+    cases hc : accept raw with
     | none => simp [hc] at h
     | some name =>
-      simp only [hc, Option.bind_eq_bind, Option.bind_some, Option.some.injEq] at h
-      subst r
+      rw [hc] at h
+      simp only [Option.bind_eq_bind, Option.bind_some, Option.some.injEq] at h
+      subst h
       exact scrub_no_ctl _
 
 /-- Commands and interactive creation use exactly the same target grammar. -/
 theorem targetValid_iff (target : String) :
     targetValid target = true ↔
       target ≠ "" ∧
-        Valid ((target.splitOn "@").headD "") ∧
+        Accepted ((target.splitOn "@").headD "") ∧
         (∀ char ∈ target.toList, 32 ≤ char.toNat ∧ (char.toNat < 127 ∨ 160 ≤ char.toNat)) ∧
         ((target.splitOn "@").tail = [] ∨
           String.intercalate "@" (target.splitOn "@").tail ≠ "") := by
-  simp [targetValid, hostClean, sanitize_eq_self_iff, and_assoc]
+  have accepted (name : String) : (accept name).isSome = true ↔ Accepted name := by
+    cases h : accept name with
+    | none =>
+      simp only [Option.isSome_none, Bool.false_eq_true, false_iff]
+      intro u
+      have := (accept_eq_some_iff name name).mpr ⟨rfl, u⟩
+      rw [h] at this
+      cases this
+    | some r =>
+      simp only [Option.isSome_some, true_iff]
+      exact ((accept_eq_some_iff name r).mp h).2
+  simp [targetValid, hostClean, accepted, and_assoc]
 
 /-- Parsing preserves the exact name and complete host suffix; no fuzzy lookup
 or name repair occurs at this boundary. -/
@@ -101,7 +114,7 @@ theorem parseTarget_exact (target : String) (result : Target) :
   · simp_all
 
 theorem parseTarget_name_valid {target : String} {result : Target}
-    (h : parseTarget target = some result) : Valid result.name := by
+    (h : parseTarget target = some result) : Accepted result.name := by
   obtain ⟨valid, name, _⟩ := (parseTarget_exact target result).mp h
   rw [name]
   exact ((targetValid_iff target).mp valid).2.1

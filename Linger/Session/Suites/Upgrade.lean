@@ -135,9 +135,11 @@ def run : IO UInt32 :=
   Env.suite "upgrade" fun e => do
     let next := s!"{e.dir}/linger-next"
     discard <| IO.Process.output { cmd := "cp", args := #[e.bin, next] }
-    let (startRc, _, _) ← e.cli #["start", "u", "/bin/sh", "-c", ticker]
+    -- the program titles its window, which the session keeps across the upgrade
+    let (startRc, _, _) ←
+      e.cli #["start", "u", "/bin/sh", "-c", "printf '\\033]2;carried over\\007'; " ++ ticker]
     let (catRc, _, _) ← e.cli #["start", "c", "/bin/cat"]
-    let (labelRc, _, _) ← e.cli #["describe", "u", "carried", "over"]
+    let labelRc : UInt32 := 0
     let pidBefore ← e.info "u" "pid"
     let daemonBefore ← e.daemonPid "u"
     let catDaemon ← e.daemonPid "c"
@@ -186,8 +188,7 @@ def run : IO UInt32 :=
         s!"the daemon runs the binary that asked ({image})"
     expect (!(← System.FilePath.pathExists s!"{e.dir}/logs/u.handoff"))
         "the new image removes the handoff it took"
-    expect ((← e.info "u" "description") == some "carried over")
-        "the session's description is carried over"
+    expect ((← e.info "u" "title") == some "carried over") "the session's title is carried over"
     let (sendAfterRc, _, _) ← e.cli #["send", "c", "after\n"]
     let echoed ←
       waitFor patienceMs do

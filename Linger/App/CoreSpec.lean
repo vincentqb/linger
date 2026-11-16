@@ -72,8 +72,6 @@ inductive Op where
   | resize
   /-- Wait for sessions' programs to end, and answer how they ended. -/
   | wait
-  /-- Set or clear a session's description. -/
-  | describe
   /-- Carry live sessions over to this linger's image, their programs running on. -/
   | upgrade
   deriving Repr, DecidableEq
@@ -82,7 +80,7 @@ inductive Op where
 @[expose]
 def Op.all : List Op :=
   [.attach, .list, .start, .resume, .send, .detach, .kill, .rename, .capture, .resize, .wait,
-    .describe, .upgrade]
+    .upgrade]
 
 /-- One row of the command table: the one command of an operation. -/
 structure Command where
@@ -97,20 +95,66 @@ structure Command where
   deriving Repr, DecidableEq
 
 /-- The command table before commands were one to one with operations, a wrong part: each of a
-command's spellings its own row, `info` and `get` readers of what `ls` reports, and `set`,
-`unset` and `clear` writers of the labels `describe` writes one of. Every operation has a command
-in it, but some have several. -/
+command's spellings its own row, and `info` and `get` readers of what `ls` reports. Every
+operation has a command in it, but some have several. -/
 @[expose]
 def aliased : List Command :=
   [("attach", .attach), ("a", .attach), ("ls", .list), ("list", .list), ("l", .list),
         ("start", .start), ("resume", .resume), ("send", .send), ("s", .send), ("detach", .detach),
         ("d", .detach), ("kill", .kill), ("k", .kill), ("info", .list), ("i", .list),
         ("capture", .capture), ("c", .capture), ("resize", .resize), ("wait", .wait), ("w", .wait),
-        ("get", .list), ("g", .list), ("set", .describe), ("unset", .describe), ("un", .describe),
-        ("clear", .describe), ("cl", .describe), ("describe", .describe), ("upgrade", .upgrade)].map
+        ("get", .list), ("g", .list), ("rename", .rename), ("upgrade", .upgrade)].map
     fun (word, op) => { word, op, args := "", summary := "" }
 
 end Linger.App.Commands
+
+namespace Linger.App.Fields
+
+/-- What a field is to its reader: shown in a human row as clean text, or exact, a machine's,
+which only `--porcelain` gives and no human row shows. -/
+inductive Kind where
+  /-- Shown in human rows, as clean text. -/
+  | human
+  /-- Exact: an ID, a process, a path, a protocol or a format, for porcelain readers alone. -/
+  | machine
+  deriving DecidableEq, Repr
+
+/-- Who writes a field, its one owner: the user, through the one command of this operation; the
+session's program, through what it writes to its terminal; or linger, from what it observes and
+keeps. Only a field the user owns has a command that writes it. -/
+inductive Owner where
+  /-- The user, through the one command of this operation. -/
+  | user (op : Commands.Op)
+  /-- The session's program, its shell included. -/
+  | program
+  /-- linger, from what it observes and keeps. -/
+  | linger
+  deriving DecidableEq, Repr
+
+/-- A field of a session's record, as listings report it: its key, its kind, its owner, and its
+role, what it tells, which no other field of the same owner tells. -/
+structure Field where
+  /-- The key listings report it under. -/
+  key : String
+  /-- Whether human rows show it. -/
+  kind : Kind
+  /-- Who writes it. -/
+  owner : Owner
+  /-- What it tells. -/
+  role : String
+  deriving DecidableEq, Repr
+
+/-- A wrong table: today's before names said what a session is, the name and the description
+both the user's, and both what the user calls the session. The headline that each owner's fields
+have one role each is shown to reject it. -/
+@[expose]
+def namedTwice : List Field :=
+  [{ key := "name", kind := .human, owner := .user .rename,
+     role := "what the user calls the session" },
+    { key := "description", kind := .human, owner := .user .rename,
+      role := "what the user calls the session" }]
+
+end Linger.App.Fields
 
 namespace Linger.App
 

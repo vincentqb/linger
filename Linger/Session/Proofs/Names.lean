@@ -5,6 +5,7 @@ public import Os.WorldSpec
 public import Linger.Target.CoreCode.Name
 import all Linger.Session.CoreCode.Names
 import Linger.Target.Proofs.Name
+import Linger.Target.Proofs.Remote
 
 public section
 
@@ -99,6 +100,35 @@ theorem check_some {s : String} (h : (Linger.Target.Name.check s).isSome = true)
   cases hc : Linger.Target.Name.check s with
   | none => simp [hc] at h
   | some r => exact congrArg some ((Linger.Target.Name.check_eq_some_iff s r).mp hc).1
+
+/-- No key starts with `=`, which is no `Name.okChar`. -/
+theorem check_eq_none_of_eq (rest : String) : Linger.Target.Name.check ("=" ++ rest) = none := by
+  cases hc : Linger.Target.Name.check ("=" ++ rest) with
+  | none => rfl
+  | some r =>
+    have valid := ((Linger.Target.Name.check_eq_some_iff _ r).mp hc).2
+    have := valid.2.2.1 '=' (by simp)
+    simp [Linger.Target.Name.okChar] at this
+
+/-- **A name's entry holds the name**: the entry file `entryFile` gives a name reads back as it. -/
+theorem entryName_entryFile (name : String) (usable : Linger.Target.Name.Usable name) :
+    entryName (entryFile name) = some name := by
+  unfold entryFile
+  cases hk : (Linger.Target.Name.check name).isSome
+  · simp only [Bool.false_eq_true, ↓reduceIte]
+    unfold entryName
+    rw [check_eq_none_of_eq]
+    simp only [Option.isSome_none, Bool.false_eq_true, ↓reduceIte, String.toList_append]
+    show
+      (Linger.Target.Remote.decodeWord
+              (String.ofList (Linger.Target.Remote.encodeWord name).toList)).bind
+          Linger.Target.Name.accept =
+        some name
+    rw [String.ofList_toList, Linger.Target.Remote.decodeWord_encodeWord]
+    exact (Linger.Target.Name.accept_eq_some_iff name name).mpr ⟨rfl, .inl usable⟩
+  · simp only [↓reduceIte]
+    unfold entryName
+    simp [hk]
 
 /-- With no entries, as in the old layout, every valid name leads to itself. -/
 theorem resolve_nil (a : String) : resolve [] a = Linger.Target.Name.check a := by

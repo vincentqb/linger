@@ -143,11 +143,11 @@ example :
      sB.clients.isEmpty && effsB.all (· == .checkpoint)
        && (sB.vt.getRow 0 == sA.vt.getRow 0)) = true := by native_decide
 
-/-- info replies with meta and the record's fields; a description round-trips. -/
+/-- info replies with meta and the record's fields: a description an older linger saved. -/
 example :
     (let (_, effs) :=
-        run
-          [.connected 1, .bytes 1 (encode (.describe "dev".toUTF8.toList)), .bytes 1 (encode .info)]
+        run [.connected 1, .bytes 1 (encode .info)]
+          (State.boot (Vt.Vt.init 20 5) [("description", "dev")] [])
      effs.any
         (fun e =>
           match e with
@@ -161,7 +161,7 @@ example :
 /-- A C1 control in a description (U+009B, the 8-bit CSI) reaches `infoText` as U+FFFD, the
 bytes 239 191 189: `ls --porcelain` prints these records. -/
 example :
-    (let (s, _) := run [.connected 1, .bytes 1 (encode (.describe "a\u009b31mb".toUTF8.toList))]
+    (let (s, _) := run [] (State.boot (Vt.Vt.init 20 5) [("description", "a\u009b31mb")] [])
      let txt := String.fromUTF8? (ByteArray.mk (infoText s).toArray) |>.getD ""
      txt.contains "description\ta\uFFFD31mb" && !txt.contains '\u009b') =
       true := by
@@ -261,11 +261,11 @@ example :
       true := by
   native_decide
 
-/-! ### `detach-all` and describing
+/-! ### `detach-all`
 
-`onMsg_detachAll` / `onMsg_describe` pin the effect lists as equations; these run the same
-verbs through the real decoder so the promise is checked end to end, and they are what fails if
-an arm is rewired rather than merely reshaped. -/
+`onMsg_detachAll` pins the effect list as an equation; these run the same verb through the real
+decoder so the promise is checked end to end, and they are what fails if an arm is rewired rather
+than merely reshaped. -/
 
 /-- **`detach-all` closes the attached clients and spares a control connection.**
 Clients 1 and 2 attach; client 3 never does — it is the `linger detach` control
@@ -280,12 +280,11 @@ example :
        && effs.contains (.send 3 .done)) = true := by native_decide
 
 /-- A close requested by an attached sender stops the rest of its decoded
-packet before it can describe the session, write input or resize the child. -/
+packet before it can write input or resize the child. -/
 example :
     (let s := (run [.connected 1, .bytes 1 (encode (.attach .writable 20 5))]).1
      let packet :=
-        encode .detachAll ++ encode (.describe "after detach".toUTF8.toList) ++
-          encode (.input [0x78]) ++
+        encode .detachAll ++ encode (.input [0x77]) ++ encode (.input [0x78]) ++
           encode (.resize 21 6)
       let r := step s (.bytes 1 packet)
       r.1.fields.isEmpty && r.1.vt.colCount == 20 && r.1.vt.rowCount == 5 &&
@@ -296,17 +295,15 @@ example :
 /-- Detaching someone else does not stop a control connection's next command. -/
 example :
     (let s := (run [.connected 1, .bytes 1 (encode (.attach .writable 20 5)), .connected 2]).1
-     let r := step s (.bytes 2 (encode .detachAll ++ encode (.describe "after control".toUTF8.toList)))
-     r.1.fields == [("description", "after control")] &&
-       r.2 == [.close 1, .send 2 .done, .send 2 .done]) = true := by
+     let r := step s (.bytes 2 (encode .detachAll ++ encode (.input [0x78])))
+     r.2 == [.close 1, .send 2 .done, .writePty [0x78]]) = true := by
   native_decide
 
 /-- A kill stops the decoded packet too: it closes its sender, so later input must not follow
 it. -/
 example :
     (let s := (run [.connected 1]).1
-     let packet :=
-        encode .kill ++ encode (.describe "after kill".toUTF8.toList) ++ encode (.input [0x78])
+     let packet := encode .kill ++ encode (.resize 21 6) ++ encode (.input [0x78])
       let r := step s (.bytes 1 packet)
       r.1.fields.isEmpty && r.2 == [.stopProgram, .close 1]) =
       true := by
@@ -326,42 +323,16 @@ example :
       true := by
   native_decide
 
-/-- **`describe` replaces the description and keeps every other field**: the provenance a
-restored checkpoint gave stays, and a second description replaces the first. -/
+/-- **No message changes the fields**: the description an older linger saved and the provenance a
+restored checkpoint gave stay through an attach, input, a resize and a query. -/
 example :
     (let (s, _) :=
         run
-          [.connected 1, .bytes 1 (encode (.describe "first".toUTF8.toList)),
-            .bytes 1 (encode (.describe "second".toUTF8.toList))]
-          (State.boot (Vt.Vt.init 20 5) [("tmux.pane", "0")] [])
-     s.fields == [("tmux.pane", "0"), ("description", "second")]) =
-      true := by
-  native_decide
-
-/-- **An empty description clears it**, and only it. -/
-example :
-    (let (s, effs) :=
-        run
-          [.connected 1, .bytes 1 (encode (.describe "first".toUTF8.toList)),
-            .bytes 1 (encode (.describe []))]
-          (State.boot (Vt.Vt.init 20 5) [("tmux.pane", "0")] [])
-     s.fields == [("tmux.pane", "0")] &&
-        !effs.any
-            (fun e =>
-              match e with
-              | .send _ (.err _) => true
-              | _ => false)) =
-      true := by
-  native_decide
-
-/-- A description with an **invalid UTF-8** payload decodes to `""`, which clears it: a corrupt
-payload sets no text it did not carry. -/
-example :
-    (let (s, _) :=
-        run
-          [.connected 1, .bytes 1 (encode (.describe "dev".toUTF8.toList)),
-            .bytes 1 (encode (.describe [0xFF, 0xFE]))]
-     s.fields.isEmpty) =
+          [.connected 1, .bytes 1 (encode (.attach .writable 20 5)),
+            .bytes 1 (encode (.input [97])), .bytes 1 (encode (.resize 30 6)),
+            .bytes 1 (encode .info)]
+          (State.boot (Vt.Vt.init 20 5) [("tmux.pane", "0"), ("description", "d")] [])
+     s.fields == [("tmux.pane", "0"), ("description", "d")]) =
       true := by
   native_decide
 
@@ -699,15 +670,6 @@ example :
             [.connected 1, .bytes 1 (encode (.attach .writable width 5)),
               .ptyOut "\x1b[2;4r\x1b[3g".toUTF8.toList, .bytes 1 (encode (.resize width 5))]
         s.vt.top == 1 && s.vt.bot == 3 && s.vt.tabs == Array.replicate s.vt.colCount false) =
-      true := by
-  native_decide
-
-/-- Quiet descriptions are persistent changes even without any new pty output. -/
-example :
-    ([Msg.describe "new".toUTF8.toList, .describe []].all fun msg =>
-        let s := { s0 with fields := [("description", "old")] }
-        let changed := (onMsg s { id := 1 } msg).1
-        (step changed (.tick ckptIntervalMs)).2.contains .checkpoint) =
       true := by
   native_decide
 

@@ -119,7 +119,7 @@ private def renameChecks (e : Env) : IO Unit := do
 /-- Each refusal changes nothing, and nothing is ever replaced. -/
 private def refusalChecks (e : Env) : IO Unit := do
   let pid ← e.info "b" "pid"
-  let (invalidRc, _, _) ← e.cli #["rename", "b", ".bad"]
+  let (invalidRc, _, _) ← e.cli #["rename", "b", "   "]
   expect (invalidRc == 2 && (← e.info "b" "pid") == pid)
       "rename refuses an invalid new name as a usage error"
   let (missingRc, _, _) ← e.cli #["rename", "nosuch", "z"]
@@ -242,6 +242,35 @@ private def layoutChecks (e : Env) : IO Unit := do
   expect (wRc == 0 && waited == some 7)
       s!"a wait begun before a rename answers with the program's status ({waited})"
 
+/-- A name is clean text, spaces and Unicode included: a session renamed to one is listed under
+it and reached by it, as one argument, by every command, here an attach and a kill; and a session
+started under one is too, its files keyed by a fresh ID. -/
+private def textNameChecks (e : Env) : IO Unit := do
+  let name := "my build · ✓ 世界"
+  let _ ← e.typeIn "plain" #["true"]
+  let (rc, _, _) ← e.cli #["rename", "plain", name]
+  let shown := (← listed e).contains name
+  let c ← e.spawn #["attach", name]
+  let attached ← waitFor patienceMs (return (← e.info name "clients") == some "1")
+  c.type "echo text-$((40+2))\r"
+  let typed ← c.awaitNeedle "text-42"
+  c.detach
+  let _ ← waitFor patienceMs (return (← e.info name "clients") == some "0")
+  c.bye (sendDetach := false)
+  let (killRc, _, _) ← e.cli #["kill", name]
+  let gone ← waitFor patienceMs (return !(← listed e).contains name)
+  expect (rc == 0 && shown && attached && typed && killRc == 0 && gone)
+      "a session renamed to a name with spaces and Unicode is listed, attached and killed by it"
+  let started := "two words ✓"
+  let (startRc, _, _) ← e.cli #["start", started, "/bin/cat"]
+  let live := (← e.info started "state") == some "live"
+  let sockets ← e.dirNames ".sock"
+  let keyed := sockets.all fun file => !has file " " && !has file "✓"
+  let (endRc, _, _) ← e.cli #["kill", started]
+  expect (startRc == 0 && live && keyed && endRc == 0)
+      s!"a session started under a name with spaces is reached by it, its files keyed by an ID: \
+        {sockets}"
+
 /-- The rename suite. -/
 def run : IO UInt32 :=
   Env.suite "rename" fun e => do
@@ -250,6 +279,7 @@ def run : IO UInt32 :=
       refusalChecks e
       raceChecks e
       layoutChecks e
+      textNameChecks e
     finally
       e.endSessions
 

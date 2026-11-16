@@ -316,15 +316,13 @@ private def startChecks (e : Env) : IO Unit := do
   e.killAll #["st1"]
   let (runRc, _, runErr) ← e.cli #["run", "st-run", "true"]
   let (shortRc, _, shortErr) ← e.cli #["r", "st-run"]
+  let (_, _, unknown) ← e.cli #["no-such-word"]
   let (infoRc, _, _) ← e.cli #["ls", "st-run", "--porcelain"]
   expect
-      (runRc == 2 && shortRc == 2 && has shortErr "removed" && has shortErr "start" &&
-        has runErr "removed" &&
-        has runErr "start" &&
-        has runErr "resume" &&
-        has runErr "send" &&
+      (runRc == 2 && shortRc == 2 && runErr == unknown && shortErr == unknown &&
+        !has runErr "removed" &&
         infoRc == 127)
-      s!"run is removed: it returns 2, points to start, resume and send, and starts nothing \
+      s!"run is no command: the usage error any unknown word gets, and it starts nothing \
         ({runRc}, {shortRc}, {infoRc})"
 
 /-- A shell probe of the state its process would pass on, which opens no descriptor: `open` lists
@@ -608,7 +606,7 @@ def run : IO UInt32 :=
             stdout := .null, stderr := .piped }
     unless (← waitFor 5000 (System.FilePath.pathExists badReady)) do
       throw (IO.userError "malformed-frame server did not become ready")
-    let (mrc, _, merr) ← e.cli #["describe", "malformed", "text"]
+    let (mrc, _, merr) ← e.cli #["detach", "malformed"]
     let serverRc ← badServer.wait
     expect (serverRc == 0 && mrc == 1 && has merr "invalid response")
         "a malformed daemon response exits 1"

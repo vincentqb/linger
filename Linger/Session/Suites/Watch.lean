@@ -254,8 +254,9 @@ def run : IO UInt32 :=
         "resizing the watcher's terminal does not resize the session"
     -- 6b. a watcher may look and leave, nothing more, whatever its size. This one attaches
     -- read-only with a size of its own. On its own connection, what it types never reaches the
-    -- program, its requests to end the session, disconnect every client or describe it are
-    -- refused, and the session keeps its program, its clients and its description.
+    -- program, its requests to end the session or disconnect every client are refused, and the
+    -- session keeps its program and its clients; a request no daemon knows any more, as the
+    -- description request of older versions, is refused as any message it does not know.
     let raw ← Os.Shell.unixConnect s!"{e.dir}/w.sock"
     expect (raw ≥ 0) "a raw watcher connects to the session"
     let watcherFd := raw.toUInt64.toUInt32
@@ -280,8 +281,8 @@ def run : IO UInt32 :=
     -- the daemon handles the line before it refuses the request that follows it
     Linger.Session.Shell.Client.sendMsg watcherFd (.input "echo rawmark-$((21+21))\r".toUTF8.toList)
     expect (← refused .detachAll) "a watcher's request to disconnect every client is refused"
-    expect (← refused (.describe "owner watcher".toUTF8.toList))
-        "a watcher's request to describe the session is refused"
+    expect (← refusedWith "unknown message" (.unknown 21 "owner watcher".toUTF8.toList))
+        "an older version's description request is refused as a message the daemon does not know"
     expect (← refused .kill) "a watcher's request to end the session is refused"
     expect (← refusedWith "unknown message" (.unknown 99 [1, 2, 3]))
         "a message the daemon does not know is refused"

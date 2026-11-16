@@ -32,7 +32,7 @@ private def userHost : String := s!"me@{devHost}"
 
 private def goodName : String := "remote-work"
 
-private def hostileName : String := "../../etc/passwd"
+private def hostileName : String := "../../etc/passwd\x01"
 
 private def attachMark : String := "FAKE-ATTACH-OK"
 
@@ -522,8 +522,8 @@ def run : IO UInt32 :=
           "lost SSH clears the title through a partial OSC"
       lost.bye (sendDetach := false)
       for name in
-        ["work@", hostileName ++ "@" ++ devHost, "work;printf REMOTE-INJECTED@" ++ devHost,
-          "work$(printf REMOTE-INJECTED)@" ++ devHost, "work 'two words'@" ++ devHost,
+        ["work@", hostileName ++ "@" ++ devHost, "work\x01;printf REMOTE-INJECTED@" ++ devHost,
+          "work\x01$(printf REMOTE-INJECTED)@" ++ devHost, "work\x01 'two words'@" ++ devHost,
           "work\nprintf REMOTE-INJECTED@" ++ devHost] do
         IO.FS.writeFile log ""
         let c ← e.spawnEnv ptyPath #["attach", name] 100 24
@@ -569,7 +569,7 @@ def run : IO UInt32 :=
           ("detach", "detach", [], []), ("kill", "kill", [], []), ("ls", "ls", [], []),
           ("ls", "ls", ["--porcelain"], []), ("capture", "capture", [], []),
           ("capture", "capture", ["--history"], []), ("resize", "resize", [], ["120", "40"]),
-          ("wait", "wait", [], []), ("describe", "describe", [], words)] do
+          ("wait", "wait", [], []), ("rename", "rename", [], ["renamed"])] do
         let (rc, _, _) ← e.cliEnv procPath ([verb] ++ options ++ [tag] ++ args).toArray
         expect
             (rc == 0 &&
@@ -602,7 +602,7 @@ def run : IO UInt32 :=
           "remote send stdin is byte-exact, including NUL and invalid UTF-8"
       for args in
         [#["resize", tag, "0", "40"], #["set", tag, "x=ok", "=bad"], #["unset", tag, ""],
-          #["wait", tag, "bad name"], #["run", tag], #["send", tag],
+          #["wait", tag, "-bad name"], #["run", tag], #["send", tag],
           #["attach", "--read-only", tag, "sh"], #["capture", tag, "--history"]] do
         IO.FS.writeFile log ""
         let (rc, _, _) ← e.cliEnv procPath args

@@ -141,14 +141,48 @@ def preparePane (content : String) (panes : List Pane) (pane : Pane) : Pane :=
         windowTitle := ((fields[3]?.getD "").dropPrefix ":").toString,
         cols := size.map Prod.fst |>.getD 80, rows := size.map Prod.snd |>.getD 24 } }
 
-/-- The exact archive member for a validated source identity. No path rewriting. -/
+/-- The exact archive member for a validated source identity, the pane's session, window and
+index, which still project to a canonical identity, whatever name the pane took from its window
+(`named`). No path rewriting. -/
 def contentMember (pane : Pane) : Option String :=
-  if
-      Linger.Target.Name.sanitize pane.name == pane.name &&
-        projectName pane.details.session pane.details.window pane.details.index ==
-          some pane.name then
-    some s!"./pane_contents/pane-{pane.details.session}:{pane.details.window}.{pane.details.index}"
-  else none
+  match projectName pane.details.session pane.details.window pane.details.index with
+  | some identity =>
+    if Linger.Target.Name.sanitize identity == identity then
+      some
+        s!"./pane_contents/pane-{pane.details.session}:{pane.details.window}.{pane.details.index}"
+    else none
+  | none => none
+
+/-- The name a pane would take from its window: the window's name, as a key
+(`Name.sanitize`), so that the pane's files are keyed by it as every import's are; or the name its
+record projects, for a window with no name and for a pane of a save linger wrote, whose names are
+linger's own. -/
+def windowName (pane : Pane) : String :=
+  if pane.details.session.startsWith "linger=" || pane.details.windowTitle.isEmpty then pane.name
+  else Linger.Target.Name.sanitize pane.details.windowTitle
+
+/-- `base` with the suffix `-n`, cut so that it stays a key of at most `Name.maxLen`
+characters. -/
+def suffixed (base : String) (n : Nat) : String :=
+  let suffix := s!"-{n}"
+  String.ofList (base.toList.take (Linger.Target.Name.maxLen - suffix.length)) ++ suffix
+
+/-- `base` when `taken` does not hold it, else `base-2`, `base-3` and so on, the first that
+`taken` does not hold: one of the first `taken.length + 1` is free. -/
+def unique (taken : List String) (base : String) : String :=
+  if !taken.contains base then base
+  else
+    ((List.range (taken.length + 1)).map (suffixed base <| · + 2)).find? (!taken.contains ·) |>.getD
+      base
+
+/-- The panes of a save, each named from its window (`windowName`), in the save's order, a name
+that an earlier pane took made unique with a natural-order suffix, `-2`, `-3` (`unique`). -/
+def named (panes : List Pane) : List Pane :=
+  (panes.foldl
+      (fun (acc : List Pane × List String) pane =>
+        let name := unique acc.2 (windowName pane)
+        (acc.1 ++ [{ pane with name }], acc.2 ++ [name]))
+      ([], [])).1
 
 /-- Maximum retained capture bytes per pane; oversize input is refused at the `IO` boundary. -/
 def captureLimit : Nat := 8 * 1024 * 1024

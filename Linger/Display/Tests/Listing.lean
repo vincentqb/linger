@@ -78,13 +78,16 @@ example :
       "⣀ work vim notes.md  ~/src  6m  +1" := by
   native_decide
 
--- The description outranks the title, which outranks nothing it names: `vim` is in the title.
+-- The title outranks a description an older linger saved, which shows while the program sets
+-- none, and the caption outranks the program it names: `vim` is in the title.
 example :
     String.ofList (alone none (present ++ [("title", "notes.md - VIM - vim")])) =
         "⣀ work notes.md - VIM - vim  /home/u/src  6m  +1" ∧
+      String.ofList (alone none (("description", "fixing the parser") :: present)) =
+        "⣀ work fixing the parser  vim notes.md  /home/u/src  6m  +1" ∧
       String.ofList
           (alone none (("description", "fixing the parser") :: present ++ [("title", "t")])) =
-        "⣀ work fixing the parser  vim notes.md  /home/u/src  6m  +1" := by
+        "⣀ work t  vim notes.md  /home/u/src  6m  +1" := by
   native_decide
 
 -- A login shell at its prompt shows no program, and a title that holds its directory hides it.

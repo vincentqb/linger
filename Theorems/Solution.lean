@@ -3,6 +3,7 @@ module
 public import Linger.App.CoreCode.Capture
 public import Linger.App.CoreCode.Commands
 public import Linger.App.CoreCode.Entry
+public import Linger.App.CoreCode.Fields
 public import Linger.App.CoreCode.Recovery
 public import Linger.App.CoreCode.Wait
 public import Linger.Display.CoreCode.Alert
@@ -40,6 +41,7 @@ import all Linger.App.Proofs.Entry
 import all Linger.App.Proofs.Recovery
 import all Linger.App.Proofs.Wait
 import Linger.Display.Proofs.Clean
+import all Linger.App.Proofs.Fields
 import all Linger.Display.Proofs.Alert
 import all Linger.Display.Proofs.Listing
 import all Linger.Display.Proofs.Status
@@ -532,38 +534,24 @@ theorem one_name_rejects_replace :
         rfl).2
   simp [Names.Call.run] at this
 
-theorem step_fields_described (s : State) (ev : Event)
-    (changed : (Session.step s ev).1.fieldList ≠ s.fieldList) :
-    ∃ id chunk c,
-      ev = .bytes id chunk ∧
-        s.client? id = some c ∧
-        (c.attached = false ∨ c.mode = .writable) ∧
-        ∃ m ∈ (c.decoder.feed chunk).2, m.Describes := Session.step_labels_sources s ev changed
+theorem step_fields_kept (s : State) (ev : Event) :
+    (Session.step s ev).1.fieldList = s.fieldList := Session.step_fields_kept s ev
 
-theorem step_fields_described_rejects_reset :
+theorem step_fields_kept_rejects_reset :
     ¬∀ (s : State) (ev : Event),
         ((fun (s : State) (_ : Event) =>
-                  (State.boot s.terminal [] [], ([] : List (Effect Replay.Plan))))
-                s ev).1.fieldList ≠
-            s.fieldList →
-          ∃ id chunk c,
-            ev = .bytes id chunk ∧
-              s.client? id = some c ∧
-              (c.attached = false ∨ c.mode = .writable) ∧
-              ∃ m ∈ (c.decoder.feed chunk).2, m.Describes := by
+                (State.boot s.terminal [] [], ([] : List (Effect Replay.Plan))))
+              s ev).1.fieldList =
+          s.fieldList := by
   intro h
   obtain ⟨-, -, -, -, labelled, -⟩ :=
     Session.boot_observed (Vt.Vt.init 1 1) [("description", "b")] []
   obtain ⟨-, -, -, -, emptied, -⟩ :=
     Session.boot_observed (State.boot (Vt.Vt.init 1 1) [("description", "b")] []).terminal [] []
-  have changed :
-    (State.boot (State.boot (Vt.Vt.init 1 1) [("description", "b")] []).terminal [] []).fieldList ≠
-      (State.boot (Vt.Vt.init 1 1) [("description", "b")] []).fieldList := by
-    rw [emptied, labelled]
-    simp [maxFields, recordField]
-  obtain ⟨_, _, _, ticked, -⟩ :=
-    h (State.boot (Vt.Vt.init 1 1) [("description", "b")] []) (.tick 0) changed
-  cases ticked
+  have kept := h (State.boot (Vt.Vt.init 1 1) [("description", "b")] []) (.tick 0)
+  simp only at kept
+  rw [emptied, labelled] at kept
+  simp [maxFields, recordField] at kept
 
 theorem infoFields_boot (vt : Vt.Vt) (fields metadata : List (String × String)) (evs : List Event) :
     ∃ rest,
@@ -860,25 +848,24 @@ theorem rowText_sources_rejects_every_field :
   simp at this
 
 theorem caption_precedence (info : List (String × String)) :
-    ((info.lookup "description").getD "" ≠ "" →
+    ((info.lookup "title").getD "" ≠ "" → Listing.caption info = (info.lookup "title").getD "") ∧
+      ((info.lookup "title").getD "" = "" →
         Listing.caption info = (info.lookup "description").getD "") ∧
-      ((info.lookup "description").getD "" = "" →
-        Listing.caption info = (info.lookup "title").getD "") ∧
       (Listing.program info = "" ∨
         ¬(Listing.command (Listing.program info)).toList <:+: (Listing.caption info).toList) :=
   Listing.caption_precedence info
 
-theorem caption_precedence_rejects_title :
+theorem caption_precedence_rejects_described :
     ¬∀ (info : List (String × String)),
-        ((info.lookup "description").getD "" ≠ "" →
-            (fun (info : List (String × String)) => (info.lookup "title").getD "") info =
-              (info.lookup "description").getD "") ∧
-          ((info.lookup "description").getD "" = "" →
-            (fun (info : List (String × String)) => (info.lookup "title").getD "") info =
+        ((info.lookup "title").getD "" ≠ "" →
+            (fun (info : List (String × String)) => (info.lookup "description").getD "") info =
               (info.lookup "title").getD "") ∧
+          ((info.lookup "title").getD "" = "" →
+            (fun (info : List (String × String)) => (info.lookup "description").getD "") info =
+              (info.lookup "description").getD "") ∧
           (Listing.program info = "" ∨
             ¬(Listing.command (Listing.program info)).toList <:+:
-                ((fun (info : List (String × String)) => (info.lookup "title").getD "")
+                ((fun (info : List (String × String)) => (info.lookup "description").getD "")
                     info).toList) := by
   intro h
   have := (h [("description", "d"), ("title", "t")]).1 (by simp [List.lookup])
@@ -993,8 +980,8 @@ theorem picker_attach_listed_rejects_fixed :
 
 theorem picker_create_new (s : Selector.Picker.State) (key : Selector.Key) (target : String)
     (h : Selector.Picker.step s key = .create target) :
-    target ∉ s.candidates ∧ target ≠ "" ∧ Name.Valid ((target.splitOn "@").headD "") := by
-  obtain ⟨-, absent, nonempty, -, valid, -⟩ := Selector.Picker.step_create_valid s key target h
+    target ∉ s.candidates ∧ target ≠ "" ∧ Name.Accepted ((target.splitOn "@").headD "") := by
+  obtain ⟨-, absent, nonempty, valid, -⟩ := Selector.Picker.step_create_valid s key target h
   exact ⟨absent, nonempty, valid⟩
 
 theorem picker_create_new_rejects_empty :
@@ -1002,7 +989,7 @@ theorem picker_create_new_rejects_empty :
         (fun (_ : Selector.Picker.State) (_ : Selector.Key) => Selector.Picker.Outcome.create "") s
               key =
             .create target →
-          target ∉ s.candidates ∧ target ≠ "" ∧ Name.Valid ((target.splitOn "@").headD "") := by
+          target ∉ s.candidates ∧ target ≠ "" ∧ Name.Accepted ((target.splitOn "@").headD "") := by
   intro h
   exact absurd (h { candidates := [] } .accept "" rfl).2.1 (by simp)
 
@@ -1189,6 +1176,33 @@ theorem commands_minimal_rejects_aliased :
   have short : "a" = word := unique "a" (by decide)
   exact absurd (long.trans short.symm) (by decide)
 
+theorem fields_owned :
+    (App.Fields.table.map (·.key)).Nodup ∧
+      (∀ key ∈ Listing.sources, key ∈ App.Fields.table.map (·.key)) ∧
+      (∀ f ∈ App.Fields.table, (f.kind = .human ↔ f.key ∈ Listing.shown)) ∧
+      (∀ f ∈ App.Fields.table,
+        ∀ op,
+          f.owner = .user op →
+            op ∈ App.Commands.Op.all ∧ ∀ g ∈ App.Fields.table, g.owner = .user op → g = f) ∧
+      ∀ f ∈ App.Fields.table, ∀ g ∈ App.Fields.table, f.owner = g.owner → f.role = g.role → f = g :=
+  ⟨App.Fields.keys_nodup, App.Fields.sources_listed, App.Fields.kind_shown,
+    App.Fields.user_one_writer, App.Fields.roles_distinct⟩
+
+theorem fields_owned_rejects_named_twice :
+    ¬((App.Fields.namedTwice.map (·.key)).Nodup ∧
+        (∀ key ∈ Listing.sources, key ∈ App.Fields.namedTwice.map (·.key)) ∧
+        (∀ f ∈ App.Fields.namedTwice, (f.kind = .human ↔ f.key ∈ Listing.shown)) ∧
+        (∀ f ∈ App.Fields.namedTwice,
+          ∀ op,
+            f.owner = .user op →
+              op ∈ App.Commands.Op.all ∧ ∀ g ∈ App.Fields.namedTwice, g.owner = .user op → g = f) ∧
+        ∀ f ∈ App.Fields.namedTwice,
+          ∀ g ∈ App.Fields.namedTwice, f.owner = g.owner → f.role = g.role → f = g) := by
+  intro h
+  have := h.2.1 "status" (by decide)
+  revert this
+  decide
+
 theorem usageLine_exact (command : App.Commands.Command) :
     App.Commands.usageLine command =
       if command.args.isEmpty then s!"usage: linger {command.word}"
@@ -1303,6 +1317,29 @@ theorem dismissal_happened_rejects_hangup :
   have := (h some (fun _ => rfl) none none 0).1
   rw [Record.answer_ended] at this
   cases this
+
+theorem names_round_trip (s name : String) :
+    (Name.accept s = some name ↔ name = s ∧ Name.Accepted s) ∧
+      (Name.Usable name →
+        Remote.targetArgs (Remote.targetOperands name) = some (name, []) ∧
+          Names.entryName (Names.entryFile name) = some name) ∧
+      Name.accept "build · ✓ tests" = some "build · ✓ tests" := by
+  refine
+    ⟨Name.accept_eq_some_iff s name, fun usable => ⟨?_, Names.entryName_entryFile name usable⟩,
+      (Name.accept_eq_some_iff _ _).mpr ⟨rfl, .inl ((Name.usable_iff _).mp (by decide))⟩⟩
+  simpa using Remote.targetArgs_targetOperands name []
+
+theorem names_round_trip_rejects_keyed :
+    ¬∀ (s name : String),
+        (Name.keyed s = some name ↔ name = s ∧ Name.Accepted s) ∧
+          (Name.Usable name →
+            Remote.targetArgs (Remote.targetOperands name) = some (name, []) ∧
+              Names.entryName (Names.entryFile name) = some name) ∧
+          Name.keyed "build · ✓ tests" = some "build · ✓ tests" := by
+  intro h
+  have := (h "a b" "a b").1.mpr ⟨rfl, .inl ((Name.usable_iff _).mp (by decide))⟩
+  revert this
+  decide
 
 theorem check_eq_some_iff (s result : String) :
     Name.check s = some result ↔ result = s ∧ Name.Valid s := Name.check_eq_some_iff s result

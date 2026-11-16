@@ -96,8 +96,9 @@ structure StateRec where
   scan : Terminal.Mediation.Scan := .ground
   /-- The connected clients, in arrival order. -/
   clients : List Client := []
-  /-- The fields of the session's record, at most `maxFields`: its description, which only
-  `.describe` sets, and those a restored checkpoint holds, as a tmux import's provenance. -/
+  /-- The fields of the session's record, at most `maxFields`, those a restored checkpoint holds:
+  the description an older linger saved, and a tmux import's provenance. No message changes
+  them. -/
   fields : List (String × String) := []
   /-- name/pid/created/cwd…, set once by the runtime at boot. -/
   metaKv : List (String × String) := []
@@ -172,8 +173,8 @@ def State.commands (s : State) : Commands := { running := s.running, finished :=
 restored record fields, the boot-time metadata. Everything else a `State` ever holds
 is `step`'s doing (the private fields above make the constructor private).
 
-Restored fields are kept to the record's own and capped HERE: `.describe` enforces
-`maxFields`, but `Checkpoint.loadBytes` is deliberately total on arbitrary bytes, so a corrupt
+Restored fields are kept to the record's own and capped HERE: `Checkpoint.loadBytes` is
+deliberately total on arbitrary bytes, so a corrupt
 or forged checkpoint could carry any list, and a checkpoint an older linger saved holds the
 labels it had, any key. Only `recordField`s are restored, and over the cap, the first
 `maxFields` of them. `boot_wf` is the claim; composed with `run_wf`
@@ -187,11 +188,6 @@ def bootVt (restored : Option Vt.Vt) : Vt.Vt := restored.getD (Vt.Vt.init 80 24)
 /-- How long output counts as happening right now (`⣷`): from the tick that saw it, the spec's
 working window (`workingMs`). -/
 def freshMs : Nat := workingMs
-
-/-- A `.describe` payload decoded as text. Invalid UTF-8 becomes `""`, which clears the
-description: a corrupt payload sets no text it did not carry. -/
-private def descriptionText (bs : List UInt8) : String :=
-  String.fromUTF8? (ByteArray.mk bs.toArray) |>.getD ""
 
 /-! ## Helpers -/
 
@@ -413,7 +409,7 @@ a description containing a newline shows a replacement
 character instead of **forging an extra record**, and in particular cannot forge a
 `status`/`state` pair that the listing would then display as a session's state.
 
-Established here rather than at `.describe`, for the same reason `Render.gridAnsi`
+Established here rather than where a field is read, for the same reason `Render.gridAnsi`
 establishes its own pen instead of trusting its callers: a guard at the emit site
 needs no invariant about where the field came from, and it covers fields nobody has
 added yet. `Status.name_clean` proves the *status* column carries no framing byte;
@@ -513,8 +509,8 @@ private def broadcast (s : State) (bytes : List UInt8) : List (Effect Plan) :=
 
 /-- Handle one client message; one query per read is answered (`Client.answered`). A connection's
 rights are its mode alone: a watcher, a client that attached read-only, may look and leave,
-whatever its size: its keystrokes are dropped and its requests to disconnect every client, end
-the session or describe it are refused. -/
+whatever its size: its keystrokes are dropped and its requests to disconnect every client or end
+the session are refused. -/
 private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Plan) :=
   match m with
   | .attach mode cols rows =>
@@ -590,18 +586,6 @@ private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Pla
     match s.ended with
     | some ending => (s, ending.told.map (Effect.send c.id))
     | none => (s.setClient { c with waiting := true }, [])
-  | .describe text =>
-    if c.mode == .readOnly then (s, [.send c.id (.err "read-only".toUTF8.toList)])
-    else
-      let text := descriptionText text
-      let fields :=
-        s.fields.filter (·.1 != "description") ++
-          if text.isEmpty then [] else [("description", text)]
-      if fields.length > maxFields then (s, [.send c.id (.err "too many fields".toUTF8.toList)])
-      else
-        ({ s with
-            fields, dirty := true },
-          [.send c.id .done])
   | .upgrade exe =>
     -- a watcher may not replace the daemon, nor may a client that streams the session; the
     -- runtime carries one upgrade out at a time and refuses the others it is asked for meanwhile

@@ -18,6 +18,7 @@ public import Linger.Os.CoreSpec
 public import Linger.Session.CoreSpec
 import Linger.App.CoreCode.Recovery
 import Linger.App.CoreCode.Commands
+import Linger.App.CoreCode.Fields
 import Linger.App.CoreCode.Wait
 import Os.WorldCode.Command
 import Linger.Session.WorldCode.Resume
@@ -948,15 +949,17 @@ private def printRows (porcelain : Bool) (rows : List (List (String × String)))
     -- a palette style, and only where `Env.withColor` allows color. What asks for
     -- someone comes first, as in the selector (`View.sort`). A terminal's rows fit its width, and
     -- a directory under the account's home shows as `~`. A host that did not answer has no
-    -- session name, so its row shows `@host`.
+    -- session name, so its row shows `@host`. A row is built only of the fields whose kind and
+    -- owner the field table gives (`Fields.table`), every field a row reads among them.
     let withColor :=
       Linger.Os.Env.withColor (← (← IO.getStdout).isTty) (← IO.getEnv "NO_COLOR")
         (← IO.getEnv "TERM")
     let named :=
       rows.map fun info =>
-        match info.lookup "name", info.lookup "host" with
-        | none, some host => ("name", "@" ++ host) :: info
-        | _, _ => info
+        (match info.lookup "name", info.lookup "host" with
+            | none, some host => ("name", "@" ++ host) :: info
+            | _, _ => info).filter
+          fun kv => (Linger.App.Fields.table.map Linger.App.Fields.Field.key).contains kv.1
     let ordered :=
       Linger.Display.View.sort
         (fun info => Linger.Display.Status.ofName ((info.lookup "status").getD "")) named
@@ -1452,7 +1455,8 @@ name has whose session is gone is removed first, holding that session's ID, as i
 its own free ID held, so that no start takes the new name meanwhile; a start that places it first
 wins, and the rename then refuses. -/
 private def cmdRename (new old : String) : IO Answer := do
-  let valid := (Linger.Target.Name.check new).isSome
+  -- a new name is clean text; an older key that starts with `-` stays reachable, but is no new name
+  let valid := Linger.Target.Name.usable new
   let outcome ←
     Names.withLock do
         let table ← Names.load
@@ -1744,12 +1748,6 @@ private def runOp (source : Source) (op : Linger.App.Commands.Op) (args : List S
       usageError "wait"
   | .wait, names =>
     waitAll names none
-  | .describe, name :: words =>
-    -- no words clear the description
-    withSession "describe" name words fun s =>
-        requireLive s (.describe (String.intercalate " " words).toUTF8.toList)
-  | .describe, [] =>
-    usageError "describe"
   | .list, rest =>
     listArgs source rest
 

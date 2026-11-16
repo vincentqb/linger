@@ -2,6 +2,7 @@ module
 
 public import Verify.Harness
 import Linger.Session.CoreCode.Checkpoint
+import Terminal.CoreCode.Render
 import Linger.Session.WorldCode.Daemon
 public import Linger.Session.CoreSpec
 
@@ -307,12 +308,19 @@ private def damagedChecks (e : Env) : IO Unit := do
   expect (killRc == 0 && !(← System.FilePath.pathExists path))
       s!"kill discards a checkpoint that does not decode (rc={killRc})"
 
-/-- The description the checkpoint at `path` holds, or `none` when the file does not decode or
-holds none. -/
+/-- The last generation the screen of the checkpoint at `path` shows, a line `GEN-<n>` the
+session printed, or `none` when the file does not decode or shows none. -/
 private def savedDescription (path : String) : IO (Option String) := do
   match ← (IO.FS.readBinFile path).toBaseIO with
   | .ok bytes =>
-    return (Linger.Session.Checkpoint.loadBytes bytes).bind (·.fields.lookup "description")
+    return (Linger.Session.Checkpoint.loadBytes bytes).bind fun ck =>
+        ((lines
+                ((String.fromUTF8? (ByteArray.mk (Terminal.Render.screenText ck.vt).toArray)).getD
+                  "")).filterMap
+            fun line =>
+            if line.startsWith "GEN-" && ((line.drop 4).toString.toNat?).isSome then
+              some (line.drop 4).toString
+            else none).getLast?
   | .error _ =>
     return none
 
@@ -338,11 +346,12 @@ private def durableChecks (e : Env) : IO Unit := do
   let name := "durable"
   let path := s!"{e.dir}/{name}.ckpt"
   let tmp := path ++ ".tmp"
-  -- attach, change the description, and detach: the last detach asks for a save
+  -- attach, print the generation, and detach: the last detach asks for a save
   let askSave (gen : Nat) : IO Unit := do
     let client ← e.spawn #["attach", name]
     let _ ← waitFor patienceMs (return (← e.info name "clients") == some "1")
-    let _ ← e.cli #["describe", name, toString gen]
+    client.type s!"echo GEN-$(({gen}+0))\r"
+    let _ ← client.awaitNeedle s!"GEN-{gen}"
     client.detach
     client.bye (sendDetach := false)
   let recordDecodes : IO Bool := do
@@ -378,7 +387,8 @@ private def durableChecks (e : Env) : IO Unit := do
     [(3, "asked"), (4, "writing"), (5, "placed"), (6, "writing"), (7, "writing")] do
     let client ← e.spawn #["attach", name]
     let _ ← waitFor patienceMs (return (← e.info name "clients") == some "1")
-    let _ ← e.cli #["describe", name, toString gen]
+    client.type s!"echo GEN-$(({gen}+0))\r"
+    let _ ← client.awaitNeedle s!"GEN-{gen}"
     let dpid ← e.daemonPid name
     client.detach
     let _ ←
@@ -504,8 +514,12 @@ def run : IO UInt32 :=
     let cols : UInt32 := 80
     let rows : UInt32 := 24
     let marker := "survives-the-reboot-42"
-    -- create a session working in this suite's directory, leave a marker on screen and
-    -- a description
+    -- a session an older linger saved with a description, resumed working in this suite's
+    -- directory, with a marker left on screen
+    let legacy : Linger.Session.Checkpoint.Ckpt Terminal.Vt.Vt :=
+      { vt := Terminal.Vt.Vt.init cols.toNat rows.toNat, cwd := e.dir,
+        fields := [("description", "kept across")] }
+    IO.FS.writeBinFile s!"{e.dir}/boot.ckpt" (Linger.Session.Checkpoint.saveBytes legacy)
     let boot ← e.spawn #["attach", "boot"] cols rows
     let _ ← waitFor 4000 (return (← e.info "boot" "clients") == some "1")
     boot.type s!"cd '{e.dir}' && echo survives-the-reboot-$((40+2))\r"
@@ -524,7 +538,6 @@ def run : IO UInt32 :=
     let hist0 := lines (← e.out #["capture", "--history", "boot"])
     expect (hist0.contains marker && !(hist0.drop (hist0.length - rows.toNat)).contains marker)
         "the pre-reboot marker is in the ring, off the 24-row screen"
-    let _ ← e.cli #["describe", "boot", "kept", "across"]
     -- detach (last attached client): the machine checkpoints here
     boot.detach
     -- the save runs on its own thread, so the daemon answers at once: it is on disk once the

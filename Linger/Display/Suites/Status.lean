@@ -205,12 +205,11 @@ def checkAsks (e : Env) : IO Unit := do
   let _ ← waitFor patienceMs (return (← e.status "a-out") == Status.wantsYou)
   expect (← summaryBecomes e (Linger.Display.Status.summary [.asks, .wantsYou] ++ "\n"))
       "summary counts the ask with its own glyph"
-  let _ ← e.typeIn "n9" #["true"]
-  let (drc, _, _) ← e.cli #["describe", "n9", "fix", "parser"]
+  let _ ← e.typeIn "n9" #["printf", "'\\033]2;fix parser\\007'"]
   let _ ← e.cli #["send", "n9", "printf '\\033]9;edit src/Foo.lean?\\007' && echo n9-$((1+1))\n"]
   let posted ← printed e "n9" "n9-2"
   expect
-      (posted && drc == 0 && (← e.info "n9" "notice") == some "edit src/Foo.lean?" &&
+      (posted && (← e.info "n9" "notice") == some "edit src/Foo.lean?" &&
         (← e.field "n9" "notice") == some "edit src/Foo.lean?")
       "an OSC 9 notification's text is in info and the porcelain"
   let row ← rowOf e "n9"

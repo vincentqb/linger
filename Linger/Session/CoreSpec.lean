@@ -13,7 +13,7 @@ events and effects, and the end record a name keeps), what a command answers for
 session ends, what a session hears of its shell's commands from the shell's marks, the caps its
 state keeps and how long its changes may go unsaved, the time its
 events tell it, and predicates over the session's operations, which they take as parameters:
-which messages fit a frame, describe or look at the session, and what a decoder reads from
+which messages fit a frame or look at the session, and what a decoder reads from
 a chunked stream, the bounds a state
 keeps, the events a session handles when every effect succeeds, the reachable states of the
 daemon's byte queues, and a model of how daemons and offline readers claim a session's
@@ -96,10 +96,10 @@ def Commands.hear (c : Commands) : Terminal.Mediation.Mark → Commands
     | none => c
 
 /-- What a connection may do, as it asks when it attaches: type into the session, or only watch
-it. A connection that never attached, as `send`, `kill` and `describe` open, is writable. -/
+it. A connection that never attached, as `send` and `kill` open, is writable. -/
 inductive Mode where
-  /-- Its keystrokes reach the program, and it may end the session, disconnect every client and
-  describe the session. -/
+  /-- Its keystrokes reach the program, and it may end the session and disconnect every
+  client. -/
   | writable
   /-- It watches: its keystrokes are dropped, and its requests to change the session refused. -/
   | readOnly
@@ -335,9 +335,6 @@ inductive Msg where
   /-- client → daemon: replace your image with the program at this path, which carries the
   session over without ending it (`linger upgrade`). -/
   | upgrade (exe : List UInt8)
-  /-- client → daemon: describe the session with this text, or give it no description when the
-  text is empty (`linger describe`). -/
-  | describe (text : List UInt8)
   /-- any tag this version does not know: skipped, never fatal. -/
   | unknown (tag : UInt8) (payload : List UInt8)
   deriving Repr, DecidableEq, Inhabited
@@ -353,21 +350,16 @@ structure Decoder where
 
 /-- A message the encoder may send: its bytes fit one frame's payload, and an `unknown` message
 carries a tag this version leaves unassigned, 3, the attach of levels 1 and 2, 11 to 13, the
-label requests of versions before the session record had fields of its own, or one above 21, so
-that it cannot read back as a known one. -/
+label requests of versions before the session record had fields of its own, 21, the description
+request of versions before a session's name said what it is, or one above, so that it cannot read
+back as a known one. -/
 @[expose]
 def Msg.Fits : Msg → Prop
-  | .input bytes | .output bytes | .infoReply bytes | .describe bytes | .err bytes |
-    .upgrade bytes => bytes.length ≤ maxPayload
+  | .input bytes | .output bytes | .infoReply bytes | .err bytes | .upgrade bytes =>
+    bytes.length ≤ maxPayload
   | .unknown tag payload =>
-    payload.length ≤ maxPayload ∧ (tag = 3 ∨ (11 ≤ tag.toNat ∧ tag.toNat ≤ 13) ∨ 21 < tag.toNat)
+    payload.length ≤ maxPayload ∧ (tag = 3 ∨ (11 ≤ tag.toNat ∧ tag.toNat ≤ 13) ∨ 21 ≤ tag.toNat)
   | _ => True
-
-/-- A request to change a session's description, the one field of its record a client sets. -/
-@[expose]
-def Msg.Describes : Msg → Prop
-  | .describe _ => True
-  | _ => False
 
 /-- A request that looks at the session: an attach, which shows its screen, or a capture of
 it. -/
@@ -405,9 +397,9 @@ restored fields. -/
 @[expose]
 def maxFields : Nat := 64
 
-/-- The keys of the fields a session's record holds of its own: `description`, which only
-`describe` sets, and the `tmux.` fields with which a tmux import records the pane it came from,
-which only the import sets. -/
+/-- The keys of the fields a session's record holds of its own: `description`, which an older
+linger's `describe` set and no command sets now, and the `tmux.` fields with which a tmux import
+records the pane it came from, which only the import sets. -/
 @[expose]
 def recordField (key : String) : Bool := key == "description" || key.startsWith "tmux."
 

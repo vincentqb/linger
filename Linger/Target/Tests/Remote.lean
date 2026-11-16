@@ -32,7 +32,10 @@ example : (parse "").isEmpty = true := by native_decide
 example : (parse "\n\n\n\t\t\n").isEmpty = true := by native_decide
 
 /-- Invalid names are refused, without inventing a different session identity. -/
-example : (parse "name\t../../etc/passwd\n").isEmpty = true := by native_decide
+example : (parse "name\t-r f\n").isEmpty = true := by native_decide
+
+/-- A name is clean text, kept exactly: it is never a path. -/
+example : (parse "name\t../my build ✓\n").map (·.name) = ["../my build ✓"] := by native_decide
 
 example : parseTarget "work@me@dev-a" == some { name := "work", host := some "me@dev-a" } := by
   native_decide
@@ -40,7 +43,7 @@ example : parseTarget "work@me@dev-a" == some { name := "work", host := some "me
 example : parseTarget "work" == some { name := "work", host := none } := by native_decide
 
 example :
-    ["", "work@", "two words", "foo/bar", ".hidden", "work@bad\x1bhost"].all
+    ["", "work@", "-a b", "   ", "bad\x01name", "work@bad\x1bhost"].all
       (fun s => (parseTarget s).isNone) := by
   native_decide
 

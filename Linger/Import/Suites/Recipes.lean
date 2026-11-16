@@ -399,12 +399,12 @@ def run : IO UInt32 :=
     let resume := fun (data name : String) => runLinger e home.toString data #["resume", name]
     let (drc, dout, derr) ← ls data.toString
     let listed := sourceNames dout
-    let (rrc, _, _) ← resume data.toString "desk-w1-p0"
+    let (rrc, _, _) ← resume data.toString "ignored"
     expect
-        (drc == 0 && derr.isEmpty && listed == ["desk-w1-p0"] &&
+        (drc == 0 && derr.isEmpty && listed == ["ignored"] &&
           has dout s!"directory\t{defaultDir}" &&
           rrc == 0 &&
-          (← savedIn' e.dir "desk-w1-p0" defaultDir))
+          (← savedIn' e.dir "ignored" defaultDir))
         "ls lists the default XDG save's pane with its escaped cwd, and resume runs a shell there"
     IO.sleep 700 -- negative assertion: give a wrongly-started command time to run
     expect (!(← System.FilePath.pathExists defaultSink))
@@ -512,6 +512,6 @@ def run : IO UInt32 :=
     let (nrc, nout, nerr) ← ls data.toString
     expect (nrc == 0 && sourceNames nout == [] && nerr.isEmpty)
         "with no save, ls lists no pane and says nothing of one"
-    e.killAll #["desk-w1-p0", "dev-w1-p0", "dev-w1-p1", "dev-w1-p2", "resumable-w1-p0"]
+    e.killAll #["ignored", "dev-w1-p0", "dev-w1-p1", "dev-w1-p2", "resumable-w1-p0"]
 
 end Linger.Import.Suites.Recipes

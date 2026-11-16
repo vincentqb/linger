@@ -118,9 +118,10 @@ user's words outrank the program's, which outrank the operating system's. -/
 /-- A field of a record, `""` when the record lacks it. -/
 def look (info : List (String × String)) (key : String) : String := (info.lookup key).getD ""
 
-/-- The row's words: the user's description, else the title the program gave its window. -/
+/-- The row's words: the title the program gave its window, else a description an older linger
+saved, which shows where the title would while the program sets none. -/
 def caption (info : List (String × String)) : String :=
-  if (look info "description").isEmpty then look info "title" else look info "description"
+  if (look info "title").isEmpty then look info "description" else look info "title"
 
 /-- The text of the program's last notification since the session was last looked at, while the
 session asks; nothing for any other status. -/

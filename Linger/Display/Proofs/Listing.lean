@@ -427,9 +427,8 @@ theorem rowText_sources (width : Option Nat) (layout : Layout) (info info' : Lis
 is the caption; without one, the program's title is; and the foreground program shows only when
 the caption does not already name it. -/
 theorem caption_precedence (info : List (String × String)) :
-    ((info.lookup "description").getD "" ≠ "" →
-        caption info = (info.lookup "description").getD "") ∧
-      ((info.lookup "description").getD "" = "" → caption info = (info.lookup "title").getD "") ∧
+    ((info.lookup "title").getD "" ≠ "" → caption info = (info.lookup "title").getD "") ∧
+      ((info.lookup "title").getD "" = "" → caption info = (info.lookup "description").getD "") ∧
       (program info = "" ∨ ¬(command (program info)).toList <:+: (caption info).toList) := by
   refine ⟨fun h => ?_, fun h => ?_, ?_⟩
   · simp [caption, look, String.isEmpty_iff, h]

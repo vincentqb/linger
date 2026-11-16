@@ -134,7 +134,7 @@ private def readSave (origin : System.FilePath) (home : String) : IO (Option Sav
     panes.map fun pane =>
       if pane.dir.isEmpty || (System.FilePath.mk pane.dir).isAbsolute then pane
       else { pane with dir := (origin / pane.dir).toString }
-  return some { path, panes := panes.map (preparePane content panes) }
+  return some { path, panes := named (panes.map (preparePane content panes)) }
 
 /-- A capture archive belongs only to the save reached by the adjacent `last`, as it stood when
 it was read: its physical path, modification time, size and members. -/

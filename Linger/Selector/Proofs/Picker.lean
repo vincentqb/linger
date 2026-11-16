@@ -152,9 +152,7 @@ theorem parseListing_valid (text : String) (targets : List String)
     targets.Nodup ∧
       ∀ target ∈ targets,
         target ≠ "" ∧
-          Linger.Target.Name.sanitize ((target.splitOn "@").headD "") =
-            (target.splitOn "@").headD "" ∧
-          Linger.Target.Name.Valid ((target.splitOn "@").headD "") ∧
+          Linger.Target.Name.Accepted ((target.splitOn "@").headD "") ∧
           (∀ char ∈ target.toList, 32 ≤ char.toNat ∧ (char.toNat < 127 ∨ 160 ≤ char.toNat)) ∧
           ((target.splitOn "@").tail = [] ∨
             String.intercalate "@" (target.splitOn "@").tail ≠ "") := by
@@ -163,8 +161,7 @@ theorem parseListing_valid (text : String) (targets : List String)
   intro target ht
   obtain ⟨nonempty, nameValid, clean, host⟩ :=
     (Linger.Target.Remote.targetValid_iff target).mp (valid target ht)
-  exact
-    ⟨nonempty, (Linger.Target.Name.sanitize_eq_self_iff _).mpr nameValid, nameValid, clean, host⟩
+  exact ⟨nonempty, nameValid, clean, host⟩
 
 theorem parseListing_provenance (text : String) (targets : List String)
     (h : parseListing text = .ok targets) (target : String) (ht : target ∈ targets) :
@@ -948,8 +945,7 @@ theorem step_create_valid (s : State) (key : Linger.Selector.Key) (target : Stri
     target = (if s.query.isEmpty then Linger.Target.Name.defaultName else s.query) ∧
       target ∉ s.candidates ∧
       target ≠ "" ∧
-      Linger.Target.Name.sanitize ((target.splitOn "@").headD "") = (target.splitOn "@").headD "" ∧
-      Linger.Target.Name.Valid ((target.splitOn "@").headD "") ∧
+      Linger.Target.Name.Accepted ((target.splitOn "@").headD "") ∧
       (∀ char ∈ target.toList, 32 ≤ char.toNat ∧ (char.toNat < 127 ∨ 160 ≤ char.toNat)) ∧
       ((target.splitOn "@").tail = [] ∨ String.intercalate "@" (target.splitOn "@").tail ≠ "") := by
   have selected := ((step_create_iff s key target).mp h).2
@@ -957,9 +953,7 @@ theorem step_create_valid (s : State) (key : Linger.Selector.Key) (target : Stri
     (mem_items_create _ _ _ s.allowCreate s.descriptions).mp (List.mem_of_getElem? selected)
   obtain ⟨nonempty, nameValid, printable, suffix⟩ :=
     (Linger.Target.Remote.targetValid_iff target).mp valid
-  exact
-    ⟨exactTarget, absent, nonempty, (Linger.Target.Name.sanitize_eq_self_iff _).mpr nameValid,
-      nameValid, printable, suffix⟩
+  exact ⟨exactTarget, absent, nonempty, nameValid, printable, suffix⟩
 
 theorem step_empty_accept (s : State)
     (h : items s.candidates s.query s.allowCreate s.descriptions = []) :

@@ -65,7 +65,7 @@ def parseRecord (lines : List String) : Option RemoteRow :=
   match kvs.lookup "name" with
   | none => none -- no name: not a session record
   | some rawName => do
-    let name ← Linger.Target.Name.check rawName
+    let name ← Linger.Target.Name.accept rawName
     some {
           name
           live := (kvs.lookup "state").getD "live" == "live"
@@ -115,7 +115,7 @@ The host is preserved verbatim, including a possible `user@host` suffix. -/
 def targetValid (target : String) : Bool :=
   let parts := target.splitOn "@"
   let name := parts.headD ""
-  !target.isEmpty && sanitize name == name && hostClean target &&
+  !target.isEmpty && (Linger.Target.Name.accept name).isSome && hostClean target &&
     (parts.tail.isEmpty || !(String.intercalate "@" parts.tail).isEmpty)
 
 /-- Split a target that `targetValid` accepts at its first `@`, and refuse any other
