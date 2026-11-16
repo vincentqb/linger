@@ -696,18 +696,18 @@ private def usageChecks (e : Env) : IO Unit := do
           has out "state: " &&
           extraRc == 2
   check e "removed"
-      "each removed command and spelling is refused with a usage error that names its replacement"
+      "a word no command has, a removed one's included, gets the ordinary usage error and says nothing of what it was"
       fun f => do
-      let mut ok := !Linger.App.Commands.retired.isEmpty
-      for (word, advice) in Linger.App.Commands.retired do
+      let (_, _, unknown) ← f.piped #["no-such-word"]
+      let mut ok := !unknown.isEmpty
+      for word in
+        ["run", "r", "a", "list", "l", "s", "d", "k", "c", "w", "info", "i", "get", "g", "set",
+          "unset", "un", "clear", "cl", "help", "h", "-h", "version", "v", "tmux"] do
         for args in [#[word], #[word, "work"]] do
           let (rc, out, err) ← f.piped args
           appendText (f.root / "removed-observation") s!"{repr args}: {rc} {repr err}\n"
           ok :=
-            ok && rc == 2 && out.isEmpty && has err s!"linger: {word} was removed: {advice}" &&
-              (Linger.App.Commands.table.any (fun command => has advice command.word) ||
-                has advice Linger.App.Commands.helpOption ||
-                has advice Linger.App.Commands.versionOption) &&
+            ok && rc == 2 && out.isEmpty && err == unknown && !has err "removed" &&
               (Linger.App.Commands.lookup word).isNone
       return ok
   check e "ls-named"
@@ -757,7 +757,7 @@ private def usageChecks (e : Env) : IO Unit := do
           endedRc == 0 &&
           endedRow.head? == some ("name", "named-one") &&
           (endedRow.lookup "exit").isSome
-  check e "usage" "linger rejects retired commands and conflicting listing options" fun f => do
+  check e "usage" "linger rejects unknown commands and conflicting listing options" fun f => do
       let mut ok := true
       for args in
         [#["work"], #["--unknown"], #["--help", "extra"], #["-h", "extra"], #["help", "extra"],

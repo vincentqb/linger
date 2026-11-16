@@ -62,7 +62,7 @@ theorem route_attach_operands (rest : List String) (h : rest ≠ [])
     (hReadOnly : rest ≠ ["--read-only"]) : route ("attach" :: rest) = .session ("attach" :: rest) :=
   route_session_argv "attach" rest (.inr ⟨h, hReadOnly⟩) (by decide)
 
-theorem route_select_retired (rest : List String) :
+theorem route_select_argv (rest : List String) :
     route ("select" :: rest) = .session ("select" :: rest) :=
   route_session_argv "select" rest (.inl (by decide)) (by decide)
 
@@ -73,9 +73,8 @@ theorem route_daemon_argv (rest : List String) :
 theorem route_ls_argv (rest : List String) : route ("ls" :: rest) = .session ("ls" :: rest) :=
   route_session_argv "ls" rest (.inl (by decide)) (by decide)
 
-/-- A `tmux` command line reaches the session CLI, which refuses it as a removed command. -/
-theorem route_tmux_retired (rest : List String) :
-    route ("tmux" :: rest) = .session ("tmux" :: rest) :=
+/-- A `tmux` command line reaches the session CLI, which refuses it as a word it does not know. -/
+theorem route_tmux_argv (rest : List String) : route ("tmux" :: rest) = .session ("tmux" :: rest) :=
   route_session_argv "tmux" rest (.inl (by decide)) (by decide)
 
 theorem route_import_argv (rest : List String) :

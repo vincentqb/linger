@@ -470,18 +470,17 @@ private def killDismisses (f : Fixture) : IO Bool := do
       !(← (System.FilePath.mk f.env.dir / "unknown-w0-p0.end").pathExists) &&
       !(← (System.FilePath.mk f.env.dir / "dismissed-w0-p0.ckpt").pathExists)
 
-/-- Every removed `tmux` spelling is refused as a usage error that names what to use instead, and
-reads no save. -/
+/-- `tmux`, a word no command has, gets the usage error any unknown word gets, saying nothing of
+what it once was, and reads no save. -/
 private def retiredSpellings (f : Fixture) : IO Bool := do
   f.writeSave (paneLine "mustnot" "0" "0" (f.root / "home").toString "")
+  let (_, _, unknown) ← f.cli #["no-such-word"]
   let mut ok := true
-  for (args, advice) in
-    [(#["tmux"], "ls lists their panes"), (#["tmux", "help"], "ls lists their panes"),
-      (#["tmux", "ls", "--porcelain"], "use ls"), (#["tmux", "select"], "use attach"),
-      (#["tmux", "import", "save"], "use attach NAME or resume NAME"),
-      (#["tmux", "export", "save"], "use ls --resurrect")] do
+  for args in
+    [#["tmux"], #["tmux", "help"], #["tmux", "ls", "--porcelain"], #["tmux", "select"],
+      #["tmux", "import", "save"], #["tmux", "export", "save"]] do
     let (rc, out, err) ← f.cli args
-    ok := ok && rc == 2 && out.isEmpty && has err "was removed" && has err advice
+    ok := ok && rc == 2 && out.isEmpty && err == unknown && !has err "removed"
   return ok && (← f.queries).isEmpty && (← namesIn (System.FilePath.mk f.env.dir)).isEmpty &&
       (← namesIn (f.root / "out")).isEmpty
 
@@ -1236,7 +1235,7 @@ def runWith (binary : String) : IO UInt32 := do
         ("an attach or a resume never replaces a record of the pane's name", adoptExclusive),
         ("a kill of a saved pane leaves only an end record that says it was dismissed, and hides it for good",
           killDismisses),
-        ("every removed tmux spelling is refused, naming what to use instead", retiredSpellings),
+        ("tmux is an unknown word, refused as any other", retiredSpellings),
         ("a configured directory with no last lists no pane, without falling back or scanning history",
           fun f => missingDiscovery f true),
         ("a conventional directory with no last lists no pane, without scanning history", fun f =>

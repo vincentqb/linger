@@ -26,17 +26,11 @@ theorem words_nodup : (table.map (·.word)).Nodup := by decide
 /-- The command table is not empty. -/
 theorem table_ne_nil : table ≠ [] := by decide
 
-/-- The removed words are not none. -/
-theorem retired_ne_nil : retired ≠ [] := by decide
-
 /-- A command's usage error: its word, then its arguments when it takes any. -/
 theorem usageLine_eq (command : Command) :
     usageLine command =
       if command.args.isEmpty then s!"usage: linger {command.word}"
       else s!"usage: linger {command.word} {command.args}" := rfl
-
-/-- A removed command's words name no command. -/
-theorem retired_free : ∀ entry ∈ retired, lookup entry.1 = none := by decide
 
 /-- Every command answers to its word. -/
 theorem lookup_word : ∀ command ∈ table, lookup command.word = some command := by decide

@@ -1189,20 +1189,6 @@ theorem commands_minimal_rejects_aliased :
   have short : "a" = word := unique "a" (by decide)
   exact absurd (long.trans short.symm) (by decide)
 
-theorem retired_free : ∀ entry ∈ App.Commands.retired, App.Commands.lookup entry.1 = none :=
-  App.Commands.retired_free
-
-theorem retired_free_rejects_any :
-    ¬∀ entry ∈ App.Commands.retired,
-        (fun (_ : String) =>
-              some
-                ({ word := "run", op := .start, args := "", summary := "" } : App.Commands.Command))
-            entry.1 =
-          none := by
-  intro h
-  obtain ⟨entry, member⟩ := List.exists_mem_of_ne_nil _ App.Commands.retired_ne_nil
-  exact absurd (h entry member) (by simp)
-
 theorem usageLine_exact (command : App.Commands.Command) :
     App.Commands.usageLine command =
       if command.args.isEmpty then s!"usage: linger {command.word}"

@@ -122,8 +122,6 @@ def Linger.App.Commands.table : List App.Commands.Command := sorry
 
 def Linger.App.Commands.lookup : String → Option App.Commands.Command := sorry
 
-def Linger.App.Commands.retired : List (String × String) := sorry
-
 def Linger.App.Commands.usageLine : App.Commands.Command → String := sorry
 
 def Linger.App.Commands.helpLine : App.Commands.Command → String := sorry
@@ -1341,11 +1339,10 @@ command, a word that names it (`commands_complete`), and exactly one: one word n
 operation, so no command is another's alias or a second reader or writer of what another reads or
 writes, the table has one row for each operation, in `Op.all`'s order, each word names its own
 row, and help lists the rows, each line its command's word (`commands_minimal`). A command exists
-only for an `Op`, so adding one changes `Op`, and with it what linger claims. A removed word names
-no command (`retired_free`). Not claimed: that the session CLI dispatches each command line
-through `lookup` to its row's operation, which its IO code does and the manager suite checks,
-with a removed word refused with what to use instead; nor that each option is one parameter of
-one operation with one spelling, which the suites check.
+only for an `Op`, so adding one changes `Op`, and with it what linger claims. Not claimed: that
+the session CLI dispatches each command line through `lookup` to its row's operation, which its IO
+code does and the manager suite checks, with any other word a usage error; nor that each option is
+one parameter of one operation with one spelling, which the suites check.
 
 A tmux-resurrect save is a source linger reads and never writes. Its panes are rows of `ls` and
 the chooser exactly while linger keeps no record of their names, no socket, checkpoint, end
@@ -1421,19 +1418,6 @@ theorem commands_minimal_rejects_aliased :
                 command.word =
               some command ∧
             ∃ rest, App.Commands.helpLine command = command.word ++ " " ++ rest) := by
-  sorry
-
-theorem retired_free : ∀ entry ∈ App.Commands.retired, App.Commands.lookup entry.1 = none := by
-  sorry
-
-@[kills retired_free]
-theorem retired_free_rejects_any :
-    ¬∀ entry ∈ App.Commands.retired,
-        (fun (_ : String) =>
-              some
-                ({ word := "run", op := .start, args := "", summary := "" } : App.Commands.Command))
-            entry.1 =
-          none := by
   sorry
 
 theorem usageLine_exact (command : App.Commands.Command) :

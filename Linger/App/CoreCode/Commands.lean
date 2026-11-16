@@ -12,7 +12,7 @@ what it does. The session CLI dispatches a command line through `lookup` to its 
 word no row has names no command. Each operation of the session model has exactly one row, in
 the order of `Op.all`, so each has exactly one spelling and no command is another's alias.
 `linger --help` prints the table (`helpText`), and a usage error quotes its command's row
-(`usageLine`). A removed word names no command and says what to use instead (`retired`).
+(`usageLine`). A word no row has is a usage error like any other.
 `--help` and `--version` are the program's options, spelled as every program spells them, and
 no operation of a session. -/
 
@@ -52,35 +52,6 @@ def helpOption : String := "--help"
 
 /-- The option that prints linger's version and the state paths. -/
 def versionOption : String := "--version"
-
-/-- What to use instead of the removed `tmux` command whose next word is `sub`: `ls` lists the
-latest save's panes no record names, an attach resumes one and a kill hides one, and
-`ls --resurrect` writes the sessions as a save, to standard output. -/
-def tmuxAdvice (sub : String) : String :=
-  match sub with
-  | "ls" => "use ls, which lists the panes of the latest tmux-resurrect save"
-  | "select" => "use attach, whose chooser lists the panes of the latest tmux-resurrect save"
-  | "import" => "use attach NAME or resume NAME on a pane ls lists"
-  | "export" => "use ls --resurrect, which writes the save to standard output"
-  | _ =>
-    "tmux saves are read in place: ls lists their panes, attach NAME resumes one, kill NAME \
-      hides one, and ls --resurrect writes a save to standard output"
-
-/-- Words of removed commands and spellings, each with what to use instead. A removed word names
-no command (`retired_free`), so it never comes back meaning something else. -/
-def retired : List (String × String) :=
-  let run :=
-    "use start to run a program in a new session, resume to run a saved session's program \
-      again, or send to type into a session"
-  let labels := "labels were removed; use describe to describe a session"
-  [("run", run), ("r", run), ("a", "use attach"), ("list", "use ls"), ("l", "use ls"),
-    ("s", "use send"), ("d", "use detach"), ("k", "use kill"), ("c", "use capture"),
-    ("w", "use wait"), ("info", "use ls NAME --porcelain"), ("i", "use ls NAME --porcelain"),
-    ("get", "use ls NAME --porcelain, which reports the description"),
-    ("g", "use ls NAME --porcelain, which reports the description"), ("set", labels),
-    ("unset", labels), ("un", labels), ("clear", labels), ("cl", labels), ("help", "use --help"),
-    ("h", "use --help"), ("-h", "use --help"), ("version", "use --version"), ("v", "use --version"),
-    ("tmux", tmuxAdvice "")]
 
 /-- The command a word names, if any: the row whose word it is. -/
 def lookup (word : String) : Option Command := table.find? fun command => command.word == word

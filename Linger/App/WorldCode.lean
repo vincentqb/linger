@@ -82,19 +82,6 @@ private def usageError (word : String) : IO Answer := do
     IO.eprintln (Linger.App.Commands.usageLine command)
   return .usage
 
-/-- A removed command's word: what to use instead (`Commands.retired`), and the answer
-`usage`; for `tmux`, what to use instead of the command its next word, `rest`'s first, named
-(`Commands.tmuxAdvice`). -/
-private def retiredCommand (word : String) (rest : List String) : IO Answer := do
-  if word == "tmux" then
-    let sub := rest.headD ""
-    let spelled :=
-      if ["ls", "select", "import", "export"].contains sub then s!"tmux {sub}" else "tmux"
-    IO.eprintln s!"linger: {spelled} was removed: {Linger.App.Commands.tmuxAdvice sub}"
-  else if let some advice := Linger.App.Commands.retired.lookup word then
-    IO.eprintln s!"linger: {word} was removed: {advice}"
-  return .usage
-
 /-- What `linger --help` prints after the commands: the program's two options, the eight statuses
 a session can show, which of them titles and `ls --summary` count, and the exit statuses every
 command shares: a program's and a signal's, then one line per answer of linger's own
@@ -1769,8 +1756,7 @@ private def runOp (source : Source) (op : Linger.App.Commands.Op) (args : List S
 /-- Run one session command and give its answer, whose code is its exit status: `usage` for a
 usage error or invalid target, otherwise the verb's own. The program's two options, `--help` and
 `--version`, stand alone; any other first word is a command's (`Commands.lookup`), which performs
-its operation (`runOp`), a removed one's, which says what to use instead (`Commands.retired`), or
-a usage error. `main` routes interactive selection and tmux interchange elsewhere; `__daemon`
+its operation (`runOp`), and any other is a usage error. `main` routes interactive selection and tmux interchange elsewhere; `__daemon`
 runs a session's daemon in this process. -/
 def main (source : Source) (args : List String) : IO Answer := do
   match args with
@@ -1807,10 +1793,7 @@ def main (source : Source) (args : List String) : IO Answer := do
     | some command =>
       runOp source command.op args.tail
     | none =>
-      if (Linger.App.Commands.retired.lookup word).isSome then
-        retiredCommand word args.tail
-      else
-        IO.eprintln usage
-        return .usage
+      IO.eprintln usage
+      return .usage
 
 end Linger.App.Shell
