@@ -65,7 +65,11 @@ the titles, listings and selector views that show statuses: a view ranks rows by
 to act, `⚑`, then `✗` and `?`, then `⣿`, first, then by where the session is in its life, the
 running sessions, then the saved ones, `~`, then the ended ones, `✓` (`sort_two_keys`), so no row
 that ended well or can only be resumed sits above a live one, a finished session comes last, and a
-running session's row keeps its place whether it is printing or quiet. Within a place a view keeps the listing's order,
+running session's row keeps its place whether it is printing or quiet. Output is `⣷` for a working
+window of three seconds from the poll round that saw it (`Session.workingMs`), so a program that
+redraws more often, as `top` does, reads `⣷` at every poll round of every redraw, and once it
+stops, it reads quiet from the round a working window after its last redraw, for which its
+session sets a tick (`steady_working`). Within a place a view keeps the listing's order,
 and a listing orders names as people read them: a total order (`before_total`) that puts names
 differing only in one number in the order of that number, `w2` before `w10` (`before_number`). A session
 asks exactly while its program has rung the bell or posted a notification since the session was
@@ -223,6 +227,8 @@ def Linger.Session.Locks.release : Session.Records → String → Session.Record
 def Linger.Session.ending : List (UInt32 × Nat) := sorry
 
 def Linger.Session.drainTimeoutMs : Nat := sorry
+
+def Linger.Session.freshMs : Nat := sorry
 
 def Linger.Session.pollTimeout : Nat → List Nat → Int32 := sorry
 
@@ -3105,6 +3111,56 @@ which the manager suite checks, how much later than its deadline a loaded host l
 and an update over a terminal in insert or origin mode, without autowrap, with a narrower scroll
 region or a DEC line-drawing character set, none of which the picker sets. Not claimed yet: that
 an event's work follows its size. -/
+
+theorem steady_working (s : State) (chunk : List UInt8) (start period : Nat)
+    (between : Nat → List Nat) (rounds : Nat) (gaps : period < Session.workingMs)
+    (within : ∀ i d, d ∈ between i → d ≤ period) :
+    (∀ i ≤ rounds,
+        ∀ k ≤ (between i).length,
+          (Session.trace Session.step s
+                (Session.steady chunk start period between i ++
+                  Session.redraw chunk (start + i * period)
+                    ((0 :: between i).take (k + 1)))).1.seen.fresh =
+            true) ∧
+      (∃ due,
+        (Session.trace Session.step s
+                (Session.steady chunk start period between (rounds + 1))).1.nextTick =
+            some due ∧
+          due ≤ start + rounds * period + Session.freshMs) ∧
+      ∀ (quiet : List Nat) (t : Nat),
+        start + rounds * period + Session.freshMs ≤ t →
+          (Session.trace Session.step s
+                (Session.steady chunk start period between (rounds + 1) ++ quiet.map Event.tick ++
+                  [Event.tick t])).1.seen.fresh =
+            false := by
+  sorry
+
+@[kills steady_working]
+theorem steady_working_rejects_second :
+    ¬∀ (s : State) (chunk : List UInt8) (start period : Nat) (between : Nat → List Nat)
+        (rounds : Nat),
+        period < Session.workingMs →
+          (∀ i d, d ∈ between i → d ≤ period) →
+          (∀ i ≤ rounds,
+              ∀ k ≤ (between i).length,
+                (Session.trace Session.step s
+                      (Session.steady chunk start period between i ++
+                        Session.redraw chunk (start + i * period)
+                          ((0 :: between i).take (k + 1)))).1.seen.fresh =
+                  true) ∧
+            (∃ due,
+              (Session.trace Session.step s
+                      (Session.steady chunk start period between (rounds + 1))).1.nextTick =
+                  some due ∧
+                due ≤ start + rounds * period + (1000 : Nat)) ∧
+            ∀ (quiet : List Nat) (t : Nat),
+              start + rounds * period + (1000 : Nat) ≤ t →
+                (Session.trace Session.step s
+                      (Session.steady chunk start period between (rounds + 1) ++
+                        quiet.map Event.tick ++
+                        [Event.tick t])).1.seen.fresh =
+                  false := by
+  sorry
 
 theorem ticks_settle (s : State) (now t₁ t₂ : Nat)
     (h₁ : (Session.trace Session.step s [.tick now]).1.nextTick = some t₁)

@@ -184,8 +184,9 @@ def State.boot (vt : Vt.Vt) (fields : List (String × String)) (metaKv : List (S
 /-- The emulator a daemon boots with: a restored checkpoint's, else a fresh 80×24 screen. -/
 def bootVt (restored : Option Vt.Vt) : Vt.Vt := restored.getD (Vt.Vt.init 80 24)
 
-/-- How long output counts as happening right now (`⣷`): from the tick that saw it. -/
-def freshMs : Nat := 1000
+/-- How long output counts as happening right now (`⣷`): from the tick that saw it, the spec's
+working window (`workingMs`). -/
+def freshMs : Nat := workingMs
 
 /-- A `.describe` payload decoded as text. Invalid UTF-8 becomes `""`, which clears the
 description: a corrupt payload sets no text it did not carry. -/

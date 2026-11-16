@@ -3050,6 +3050,59 @@ theorem withColor_iff_rejects_presence :
     (h true (some "") (some "xterm")).mpr ⟨rfl, .inr rfl, "xterm", rfl, by simp, by simp⟩
   exact absurd colors (by decide)
 
+theorem steady_working (s : State) (chunk : List UInt8) (start period : Nat)
+    (between : Nat → List Nat) (rounds : Nat) (gaps : period < Session.workingMs)
+    (within : ∀ i d, d ∈ between i → d ≤ period) :
+    (∀ i ≤ rounds,
+        ∀ k ≤ (between i).length,
+          (Session.trace Session.step s
+                (Session.steady chunk start period between i ++
+                  Session.redraw chunk (start + i * period)
+                    ((0 :: between i).take (k + 1)))).1.seen.fresh =
+            true) ∧
+      (∃ due,
+        (Session.trace Session.step s
+                (Session.steady chunk start period between (rounds + 1))).1.nextTick =
+            some due ∧
+          due ≤ start + rounds * period + Session.freshMs) ∧
+      ∀ (quiet : List Nat) (t : Nat),
+        start + rounds * period + Session.freshMs ≤ t →
+          (Session.trace Session.step s
+                (Session.steady chunk start period between (rounds + 1) ++ quiet.map Event.tick ++
+                  [Event.tick t])).1.seen.fresh =
+            false := Session.steady_working s chunk start period between rounds gaps within
+
+theorem steady_working_rejects_second :
+    ¬∀ (s : State) (chunk : List UInt8) (start period : Nat) (between : Nat → List Nat)
+        (rounds : Nat),
+        period < Session.workingMs →
+          (∀ i d, d ∈ between i → d ≤ period) →
+          (∀ i ≤ rounds,
+              ∀ k ≤ (between i).length,
+                (Session.trace Session.step s
+                      (Session.steady chunk start period between i ++
+                        Session.redraw chunk (start + i * period)
+                          ((0 :: between i).take (k + 1)))).1.seen.fresh =
+                  true) ∧
+            (∃ due,
+              (Session.trace Session.step s
+                      (Session.steady chunk start period between (rounds + 1))).1.nextTick =
+                  some due ∧
+                due ≤ start + rounds * period + (1000 : Nat)) ∧
+            ∀ (quiet : List Nat) (t : Nat),
+              start + rounds * period + (1000 : Nat) ≤ t →
+                (Session.trace Session.step s
+                      (Session.steady chunk start period between (rounds + 1) ++
+                        quiet.map Event.tick ++
+                        [Event.tick t])).1.seen.fresh =
+                  false := by
+  intro h
+  have wrong :=
+    (h (State.boot (Vt.Vt.init 1 1) [] []) [] 0 1000 (fun _ => []) 0 (by decide) (by simp)).2.2 []
+      1000 (by decide)
+  rw [Session.steady_then_tick] at wrong
+  simp [Session.freshMs, Session.workingMs] at wrong
+
 theorem ticks_settle (s : State) (now t₁ t₂ : Nat)
     (h₁ : (Session.trace Session.step s [.tick now]).1.nextTick = some t₁)
     (h₂ : (Session.trace Session.step s [.tick now, .tick t₁]).1.nextTick = some t₂) :

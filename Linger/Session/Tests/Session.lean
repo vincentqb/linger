@@ -844,12 +844,13 @@ tick that saves them, and a session with neither needs no tick at all. -/
 example :
     (let (fresh, _) := run []
      let (saved, _) := run [.ptyOut "x".toUTF8.toList, .tick 70000]
-      let (stale, _) := step saved (.tick 71000)
+      let (stale, _) := step saved (.tick (70000 + freshMs))
       let (busy, _) :=
         run [.ptyOut "x".toUTF8.toList, .tick 70000, .ptyOut "y".toUTF8.toList, .tick 70500]
-      let (unsaved, _) := step busy (.tick 71500)
-      fresh.nextTick == none && saved.nextTick == some 71000 && stale.nextTick == none &&
-        busy.nextTick == some 71500 &&
+      let (unsaved, _) := step busy (.tick (70500 + freshMs))
+      fresh.nextTick == none && saved.nextTick == some (70000 + freshMs) &&
+        stale.nextTick == none &&
+        busy.nextTick == some (70500 + freshMs) &&
         unsaved.nextTick == some (70000 + ckptIntervalMs)) =
       true := by
   native_decide

@@ -519,6 +519,28 @@ def clock : List Event → Nat
   | .tick now :: evs => max now (clock evs)
   | _ :: evs => clock evs
 
+/-- How long output counts as happening right now, `⣷`, from the poll round that saw it: three
+seconds, so that a program that redraws every second or two, as `top`, `htop` and `zenith` do,
+stays `⣷` between its redraws instead of flipping to `⣿` or `⣀` and back on each. -/
+@[expose]
+def workingMs : Nat := 3000
+
+/-- One redraw of a steady program, as its daemon hears it: its output `chunk`, then the poll
+rounds at `time` plus each offset, the first of which that output ends. -/
+@[expose]
+def redraw (chunk : List UInt8) (time : Nat) (offsets : List Nat) : List Event :=
+  .ptyOut chunk :: offsets.map fun d => .tick (time + d)
+
+/-- A program that prints `chunk` once a `period`, `rounds` times, as its daemon hears it: a poll
+round at `start` before any of it, then each time its output, the poll round that output ends, at
+`start` plus `period` times the redraws before, and the rounds `between i` sets at those offsets
+after the `i`th. -/
+@[expose]
+def steady (chunk : List UInt8) (start period : Nat) (between : Nat → List Nat) : Nat → List Event
+  | 0 => [.tick start]
+  | n + 1 =>
+    steady chunk start period between n ++ redraw chunk (start + n * period) (0 :: between n)
+
 /-- What the runtime executes, given the type of a captured repaint. -/
 inductive Effect (Plan : Type) where
   /-- Send one message to a connection. -/

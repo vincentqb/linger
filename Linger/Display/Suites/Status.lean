@@ -324,6 +324,36 @@ def checkEndings (e : Env) : IO Unit := do
       "a shell that marks nothing reports no ending"
   e.killAll #["mk", "plain"]
 
+/-- How many times `checkSteady` reads a steady program's status. -/
+def steadySamples : Nat := 6
+
+/-- A program that redraws once a second, as `top` does, keeps one status, `⣷`, between its
+redraws, and goes quiet once it stops. The program reads its own session's status each time,
+right after the second it sleeps between two outputs, when the latest output is oldest: a working
+window of a second has let it go quiet by then, and the session would flip between `⣷` and `⣿` on
+every redraw. Its reads go to a file, never to its terminal, so a read is no output. -/
+def checkSteady (e : Env) : IO Unit := do
+  let samples := s!"{e.dir}/steady-samples"
+  -- the suite's own state directory and tmux source, whatever the session's environment holds
+  let env :=
+    " ".intercalate (e.procEnv.toList.filterMap fun (k, v) => v.map fun v => s!"{k}={shellQuote v}")
+  let read :=
+    s!"env {env} {shellQuote e.bin} ls --porcelain -- steady | grep '^status' >> {shellQuote samples}"
+  let _ ←
+    e.typeIn "steady"
+        #[s!"i=0; while [ $i -lt {steadySamples} ]; do printf 'redraw\\n'; sleep 1; {read}; \
+            i=$((i+1)); done; echo steady-$((1+1))"]
+  let finished ←
+    waitFor (patienceMs + steadySamples * 2000)
+        (return has (← e.out #["capture", "--history", "steady"]) "steady-2")
+  let read ← (lines <$> readText samples) <|> pure []
+  let working := s!"status\t{Linger.Display.Status.name .working}"
+  expect (finished && read.length == steadySamples && read.all (· == working))
+      s!"a program that prints once a second stays working between its redraws: {read}"
+  let quiet ← waitFor patienceMs (return [Status.wantsYou, .idle].contains (← e.status "steady"))
+  expect (finished && quiet) "a steady program that stops goes quiet"
+  e.killAll #["steady"]
+
 /-- The status suite: attaching marks a session seen and detached output marks it unread. -/
 def run : IO UInt32 :=
   Env.suite "status" fun e => do
@@ -402,6 +432,7 @@ def run : IO UInt32 :=
         "a summary counts a killed daemon as not answering, not from what it last wrote"
     e.killAll #["st"]
     checkAsks e
+    checkSteady e
     checkEndings e
     checkDeadline e
     checkBacklog e

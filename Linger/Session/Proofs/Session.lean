@@ -755,7 +755,7 @@ theorem step_tick_fresh (s : State) (now : Nat) (hout : s.tickOutSeq < s.outSeq)
   have hfresh :
     (step s (.tick now)).1.freshFlag = true ∧ (step s (.tick now)).1.lastOutMs = some now := by
     simp only [step]
-    split <;> simp [State.ticked, hout, freshMs]
+    split <;> simp [State.ticked, hout, freshMs, workingMs]
   exact ⟨hfresh.1, nextTick_stale _ hfresh.1 hfresh.2⟩
 
 /-- **Idle is free**: a tick that finds nothing unsaved, no output since the previous tick and
@@ -4765,5 +4765,214 @@ theorem step_cmdline_le (s : State) (ev : Event) (hs : s.scan.Bounded)
       · simp only [State.commands] at hnone
         rw [hnone] at hfin
         cases hfin
+
+/-! ### A steady program keeps one status
+
+A program that redraws more often than the working window (`workingMs`) reads `⣷` at every poll
+round between its redraws, and once it stops it reads quiet from the round a working window after
+its last redraw, which its session sets a tick for. -/
+
+/-- The state a trace leaves is the one its second part leaves from where its first left. -/
+theorem trace_cons_state (s : State) (ev : Event) (evs : List Event) :
+    (trace step s (ev :: evs)).1 = (trace step (step s ev).1 evs).1 := rfl
+
+/-- …and of a second part after a first. -/
+theorem trace_append_state (s : State) (a b : List Event) :
+    (trace step s (a ++ b)).1 = (trace step (trace step s a).1 b).1 := by
+  induction a generalizing s with
+  | nil => rfl
+  | cons ev evs ih => exact ih (step s ev).1
+
+/-- Output counts one more output and leaves what the ticks recorded. -/
+theorem ptyOut_seqs (s : State) (chunk : List UInt8) :
+    (step s (.ptyOut chunk)).1.outSeq = s.outSeq + 1 ∧
+      (step s (.ptyOut chunk)).1.tickOutSeq = s.tickOutSeq ∧
+      (step s (.ptyOut chunk)).1.lastOutMs = s.lastOutMs := ⟨rfl, rfl, rfl⟩
+
+/-- A tick changes no output count. -/
+theorem tick_outSeq (s : State) (now : Nat) : (step s (.tick now)).1.outSeq = s.outSeq := by
+  simp only [step, State.ticked]
+  split <;> rfl
+
+/-- A tick after output records its own time as the last output's. -/
+theorem tick_records (s : State) (now : Nat) (h : s.tickOutSeq < s.outSeq) :
+    (step s (.tick now)).1.lastOutMs = some now := by
+  have ticked : (s.ticked now).lastOutMs = some now := by simp [State.ticked, h]
+  simp only [step]
+  split
+  · exact ticked
+  · exact ticked
+
+/-- Poll rounds with no output between keep the last output's time, and read fresh exactly while
+the latest is younger than the working window from it. -/
+theorem trace_ticks (s : State) (last : Nat) (settled : s.tickOutSeq = s.outSeq)
+    (known : s.lastOutMs = some last) (times : List Nat) :
+    (trace step s (times.map Event.tick)).1.tickOutSeq =
+        (trace step s (times.map Event.tick)).1.outSeq ∧
+      (trace step s (times.map Event.tick)).1.lastOutMs = some last ∧
+      ∀ t,
+        times.getLast? = some t →
+          (trace step s (times.map Event.tick)).1.freshFlag = decide (t < last + freshMs) := by
+  induction times generalizing s with
+  | nil => exact ⟨settled, known, fun t h => by cases h⟩
+  | cons now rest ih =>
+    obtain ⟨settled', -, fresh', kept⟩ := tick_facts s now
+    have known' : (step s (.tick now)).1.lastOutMs = some last := (kept settled).trans known
+    obtain ⟨a, b, c⟩ := ih (step s (.tick now)).1 settled' known'
+    rw [List.map_cons, trace_cons_state]
+    refine ⟨a, b, fun t ht => ?_⟩
+    cases rest with
+    | nil =>
+      simp only [List.getLast?_singleton, Option.some.injEq] at ht
+      subst ht
+      rw [List.map_nil]
+      show (step s (.tick now)).1.freshFlag = _
+      rw [fresh', known', Option.any_some]
+    | cons r rs => exact c t (by simpa using ht)
+
+/-- A redraw: after its output, the poll rounds at `time` plus its offsets, the first of which
+records `time` plus the first offset as the last output's. -/
+theorem trace_redraw (s : State) (settled : s.tickOutSeq = s.outSeq) (chunk : List UInt8)
+    (time d : Nat) (ds : List Nat) :
+    (trace step s (redraw chunk time (d :: ds))).1.tickOutSeq =
+        (trace step s (redraw chunk time (d :: ds))).1.outSeq ∧
+      (trace step s (redraw chunk time (d :: ds))).1.lastOutMs = some (time + d) ∧
+      ∀ e,
+        (d :: ds).getLast? = some e →
+          (trace step s (redraw chunk time (d :: ds))).1.freshFlag =
+            decide (time + e < time + d + freshMs) := by
+  obtain ⟨hout, htick, hlast⟩ := ptyOut_seqs s chunk
+  let o := (step s (.ptyOut chunk)).1
+  have pending : o.tickOutSeq < o.outSeq := by
+    show (step s (.ptyOut chunk)).1.tickOutSeq < (step s (.ptyOut chunk)).1.outSeq
+    omega
+  let t := (step o (.tick (time + d))).1
+  have recorded : t.lastOutMs = some (time + d) := tick_records o (time + d) pending
+  obtain ⟨settled', -, fresh', -⟩ := tick_facts o (time + d)
+  obtain ⟨a, b, c⟩ := trace_ticks t (time + d) settled' recorded (ds.map (time + ·))
+  have whole :
+    (trace step s (redraw chunk time (d :: ds))).1 =
+      (trace step t ((ds.map (time + ·)).map Event.tick)).1 := by
+    simp only [redraw, List.map_cons, trace, List.map_map]
+    rfl
+  rw [whole]
+  refine ⟨a, b, fun e he => ?_⟩
+  cases ds with
+  | nil =>
+    simp only [List.getLast?_singleton, Option.some.injEq] at he
+    subst he
+    simp only [List.map_nil, trace]
+    show t.freshFlag = _
+    rw [fresh', recorded, Option.any_some]
+  | cons x
+    xs =>
+    have :=
+      c (time + e)
+        (by
+          rw [List.getLast?_map]
+          simp only [List.getLast?_cons_cons] at he
+          rw [he]
+          rfl)
+    rw [this]
+
+/-- After `rounds` redraws a steady program's session has seen all its output, and the last
+output it knows of is the last redraw's. -/
+theorem trace_steady (s : State) (chunk : List UInt8) (start period : Nat)
+    (between : Nat → List Nat) (rounds : Nat) :
+    (trace step s (steady chunk start period between rounds)).1.tickOutSeq =
+        (trace step s (steady chunk start period between rounds)).1.outSeq ∧
+      ∀ n,
+        rounds = n + 1 →
+          (trace step s (steady chunk start period between rounds)).1.lastOutMs =
+            some (start + n * period) := by
+  induction rounds with
+  | zero =>
+    refine ⟨?_, fun n h => by cases h⟩
+    exact (tick_facts s start).1
+  | succ n ih =>
+    simp only [steady]
+    rw [trace_append_state]
+    obtain ⟨a, b, -⟩ := trace_redraw _ ih.1 chunk (start + n * period) 0 (between n)
+    refine ⟨a, fun m h => ?_⟩
+    cases h
+    simpa using b
+
+/-- Once a steady program stops, a poll round reads fresh exactly while it is younger than the
+working window from the last redraw, whatever rounds came between. -/
+theorem steady_then_tick (s : State) (chunk : List UInt8) (start period : Nat)
+    (between : Nat → List Nat) (rounds : Nat) (quiet : List Nat) (t : Nat) :
+    (trace step s
+          (steady chunk start period between (rounds + 1) ++ quiet.map Event.tick ++
+            [Event.tick t])).1.seen.fresh =
+      decide (t < start + rounds * period + freshMs) := by
+  obtain ⟨settled, known⟩ := trace_steady s chunk start period between (rounds + 1)
+  have ticks : quiet.map Event.tick ++ [Event.tick t] = (quiet ++ [t]).map Event.tick := by simp
+  rw [List.append_assoc, ticks, trace_append_state]
+  obtain ⟨-, -, fresh⟩ :=
+    trace_ticks _ (start + rounds * period) settled (known rounds rfl) (quiet ++ [t])
+  exact fresh t (by simp)
+
+/-- **A steady program keeps one status**: one that redraws more often than the working window
+reads fresh at every poll round of every redraw; once it stops, the session's next tick is due no
+later than a working window after its last redraw, and from then on every round reads quiet. -/
+theorem steady_working (s : State) (chunk : List UInt8) (start period : Nat)
+    (between : Nat → List Nat) (rounds : Nat) (gaps : period < workingMs)
+    (within : ∀ i d, d ∈ between i → d ≤ period) :
+    (∀ i ≤ rounds,
+        ∀ k ≤ (between i).length,
+          (trace step s
+                (steady chunk start period between i ++
+                  redraw chunk (start + i * period) ((0 :: between i).take (k + 1)))).1.seen.fresh =
+            true) ∧
+      (∃ due,
+        (trace step s (steady chunk start period between (rounds + 1))).1.nextTick = some due ∧
+          due ≤ start + rounds * period + freshMs) ∧
+      ∀ (quiet : List Nat) (t : Nat),
+        start + rounds * period + freshMs ≤ t →
+          (trace step s
+                (steady chunk start period between (rounds + 1) ++ quiet.map Event.tick ++
+                  [Event.tick t])).1.seen.fresh =
+            false := by
+  have window : freshMs = workingMs := rfl
+  have redrawn :
+    ∀ i k,
+      k ≤ (between i).length →
+        (trace step s
+              (steady chunk start period between i ++
+                redraw chunk (start + i * period) ((0 :: between i).take (k + 1)))).1.freshFlag =
+          true := by
+    intro i k hk
+    rw [trace_append_state]
+    obtain ⟨-, -, fresh⟩ :=
+      trace_redraw _ (trace_steady s chunk start period between i).1 chunk (start + i * period) 0
+        ((between i).take k)
+    have last : ∃ e, ((0 :: between i).take (k + 1)).getLast? = some e ∧ e ≤ period := by
+      cases k with
+      | zero => exact ⟨0, rfl, Nat.zero_le _⟩
+      | succ k =>
+        rcases hl : ((between i).take (k + 1)).getLast? with _ | e
+        · simp only [List.getLast?_eq_none_iff, List.take_eq_nil_iff] at hl
+          rcases hl with hl | hl
+          · cases hl
+          · simp [hl] at hk
+        · refine ⟨e, ?_, within i e (List.mem_of_mem_take (List.mem_of_getLast? hl))⟩
+          rw [List.take_succ_cons, List.getLast?_cons, hl]
+          rfl
+    obtain ⟨e, he, small⟩ := last
+    rw [List.take_succ_cons] at he ⊢
+    rw [fresh e he]
+    simp only [Nat.add_zero, decide_eq_true_eq]
+    omega
+  obtain ⟨settled, known⟩ := trace_steady s chunk start period between (rounds + 1)
+  have ended :
+    (trace step s (steady chunk start period between (rounds + 1))).1.freshFlag = true := by
+    have := redrawn rounds (between rounds).length (Nat.le_refl _)
+    rw [List.take_of_length_le (by simp)] at this
+    simpa [steady, trace_append_state] using this
+  refine ⟨fun i _ k hk => redrawn i k hk, ?_, fun quiet t late => ?_⟩
+  · exact nextTick_stale _ ended (known rounds rfl)
+  · rw [steady_then_tick]
+    simp only [decide_eq_false_iff_not, Nat.not_lt]
+    exact late
 
 end Linger.Session
