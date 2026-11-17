@@ -18,9 +18,10 @@ The world claim `Wait.Lasts` says that a sleep lasts at least as long as it was 
 the bounded waits of `Os.Shell.nap` rest on, `Exec.Keeps` that an exec keeps the process, its
 children and the descriptors it does not close, which an upgrade of a session's daemon rests on,
 `Place.NoReplace` that a link or a rename that may not replace never replaces a name, which the
-names of sessions rest on, and `Lock.Tells` that `fstat` and `stat` tell the file a descriptor
+names of sessions rest on, `Lock.Tells` that `fstat` and `stat` tell the file a descriptor
 holds from the one a path names, which a lock that its holder may delete rests on
-(`Os.Shell.flock`). -/
+(`Os.Shell.flock`), and `Signal.Group` that a signal to a process group reaches every member,
+which a session's ending rests on (`Os.Shell.signalGroup`). -/
 
 namespace Os.Boundary
 
@@ -108,6 +109,12 @@ private opaque execImage (prog : @& String) (args : @& Array String) (keep : @& 
 @[extern "linger_signal_session"]
 private opaque signalSession (sid sig : UInt32) (valid : 0 < sid ∧ sid ≤ 0x7FFFFFFF) : IO UInt32
 
+@[extern "linger_kill_group"]
+private opaque killGroup (pgid sig : UInt32) (valid : 1 < pgid ∧ pgid ≤ 0x7FFFFFFF) : IO Bool
+
+@[extern "linger_environ_names"]
+private opaque environNames : IO (Array String)
+
 @[extern "linger_getuid"]
 private opaque getuid : IO UInt32
 
@@ -182,3 +189,15 @@ and reads true, falsifies it. -/
 WorldClaim Tells (reads : Bool → Bool) := ∀ named, reads named = named
 
 end Os.Lock
+
+namespace Os.Signal
+
+/-- A signal to a process group reaches every process of the group. `member pgid pid` says
+whether the process `pid` is in the process group `pgid` when `Os.Shell.signalGroup` signals it,
+and `reaches pgid pid` whether that signal reaches `pid`: kill(2) of `-pgid` delivers to every
+member at once, one forked since included. A member the signal misses falsifies it. A process
+that left the group, with `setsid` or `setpgid`, is no member. -/
+WorldClaim Group (member reaches : Nat → Nat → Bool) :=
+  ∀ pgid pid, member pgid pid = true → reaches pgid pid = true
+
+end Os.Signal

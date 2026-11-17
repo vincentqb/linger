@@ -278,7 +278,7 @@ def admissionPressure (e : Env) : IO Unit := do
           Linger.Session.Shell.Inventory.readInfo control
               (some ((← Os.Shell.monotonicMs) + patienceMs))
         Linger.Session.Shell.Client.sendMsg control
-            (.input "printf alive > \"$LINGER_DIR/alive\"\n".toUTF8.toList)
+            (.input s!"printf alive > {shellQuote marker}\n".toUTF8.toList)
         let ran ← waitFor patienceMs (System.FilePath.pathExists marker)
         pure (ran && current.contains ("pid", pidText) && (← server.tryWait).isNone)
       catch _ =>

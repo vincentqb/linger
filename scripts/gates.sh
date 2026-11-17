@@ -975,7 +975,11 @@ code_grep "$VT_ALL_RE" '*.lean' \
 # place a session's name only where none is (`Os.Place.NoReplace`); Lean core's rename replaces.
 # 30: whether a path names the file a descriptor holds (fstat and stat), so that a lock file's
 # holder may delete it (`Os.Lock.Tells`); Lean core reads neither inode number.
-SHIM_CAP=30
+# 31: kill(2) of a process group, so that a session's ending reaches every process of its
+# program's group at once (`Os.Signal.Group`); `kill` refuses a selector.
+# 32: the names of the process's environment, so that a session's program gets none of linger's
+# own variables; Lean core reads a variable only by name.
+SHIM_CAP=32
 shim_n="$(code_count 'LEAN_EXPORT' 'packages/os/c/shim.c')"
 [ "$shim_n" -le "$SHIM_CAP" ] \
   || fail "shim grew to $shim_n wrappers (cap $SHIM_CAP); justify the new syscall and bump the cap"
@@ -1088,14 +1092,15 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def Rt[.]closeConn [(]rt : 
 # empty SHELL makes sh (shellOf_absent). Linger.Session.Suites.Agent creates sessions with both.
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let [(]prog, args[)] := Start[.]programOf [(]Linger[.]Os[.]Env[.]shellOf [(]← IO[.]getEnv "SHELL"[)][)] argv([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "a session's program bypasses Start.programOf or Env.shellOf"
-# The program reads the session's variables as `Start.environment` sets them (`start_runs`, over
+# The program reads the session's variables as `Start.environment` sets them, of the daemon's own
+# environment's names, which it reads once for the start (`start_runs`, over
 # the world claim `Spawn.Runs`, which its check and the agent and resume suites test), and starts
 # without what `Start.reset` resets (`start_clean`, over the world claim `Spawn.Clean`, which its
 # check and the agent suite test); a program that cannot start reports `Start.failureStatus`
 # (`failureStatus_exact`); and `info` reports the start as `Start.metadata` says
 # (`metadata_dirs`). The daemon asks the operating system with exactly these.
 for tie in \
-  'trySpawnPty [(]UInt32[.]ofNat [(]Terminal[.]Vt[.]clampDim vt0[.]colCount[)][)] [(]UInt32[.]ofNat [(]Terminal[.]Vt[.]clampDim vt0[.]rowCount[)][)] cwd prog args [(][(]Start[.]environment id[)][.]toArray[.]map fun [(]key, value[)] => s!"[{]key[}]=[{]value[}]"[)] [(]resetOf Start[.]reset[)]' \
+  'trySpawnPty [(]UInt32[.]ofNat [(]Terminal[.]Vt[.]clampDim vt0[.]colCount[)][)] [(]UInt32[.]ofNat [(]Terminal[.]Vt[.]clampDim vt0[.]rowCount[)][)] cwd prog args [(][(]Start[.]environment id [(]← environNames[)][.]toList[)][.]toArray[.]map fun [|] [(]key, some value[)] => s!"[{]key[}]=[{]value[}]" [|] [(]key, none[)] => key[)] [(]resetOf Start[.]reset[)]' \
   'private def resetOf [(]reset : Linger[.]Session[.]Spawn[.]Reset[)] : SpawnReset := [{] dispositions := reset[.]dispositions, mask := reset[.]mask, descriptors := reset[.]descriptors [}]' \
   'req[.]tell [(][.]failed [(]Start[.]failureStatus failure[)] why[.]toUTF8[.]toList[)]' \
   'private def failureOf : SpawnFailure → Linger[.]Session[.]Spawn[.]Failure [|] [.]directory why => [.]directory why [|] [.]notFound why => [.]notFound why [|] [.]notRunnable why => [.]notRunnable why' \
@@ -1104,13 +1109,19 @@ for tie in \
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "a session starts outside Start.environment, Start.reset, Start.failureStatus or Start.metadata: $tie"
 done
-# A session's end sends its program and the rest of the program's terminal session the signals
-# of `Session.ending`, SIGHUP and then SIGKILL (`ending_clean`, over the world claim
-# `Signal.Ends`, which its check and the attach suite test), both while the program is unreaped. A stop
-# that cannot send a signal reports it and sends the next all the same.
+# A session's end sends its program's process group, at once, and the rest of its terminal
+# session the signals of `Session.ending`, SIGHUP and then SIGKILL at the grace (`ending_clean`,
+# over the world claims `Os.Signal.Group` and `Signal.Ends`, which their checks and the attach
+# suite test), while the program is unreaped, by a kill (`stopChild`) and by the program's own end
+# (`endSession`) alike, and only then writes the end record. A stop that cannot send a signal
+# reports it and sends the next all the same.
 for tie in \
-  'for [(]sig, ms[)] in Linger[.]Session[.]ending do if ← ended then break try kill pid sig catch err => report s!"[^"]*" try discard <[|] signalSession pid sig catch err => report s!"[^"]*" if ← within ms 10 ended then break' \
-  'for [(]sig, ms[)] in Linger[.]Session[.]ending do if ← gone then return discard <[|] signalSession pid sig if ← within ms 50 gone then return'; do
+  'match send[.]target with [|] [.]program => try kill pid send[.]signal catch err => report s!"[^"]*" [|] [.]group => try discard <[|] signalGroup pid send[.]signal catch err => report s!"[^"]*" try discard <[|] signalSession pid send[.]signal catch err => report s!"[^"]*"' \
+  'for send in Linger[.]Session[.]ending do if ← gone then return deliver pid send if ← within send[.]wait 50 gone then return' \
+  'try endAll pid ended catch err => report s!"[^"]*"' \
+  'private def endSession [(]pid : UInt32[)] : IO Unit := endAll pid [(]pure true[)]' \
+  'try endSession rt[.]childPid catch err => report s!"[^"]*" try record[.]save [(]rt[.]final[.]getD [(][.]ended outcome[)][)]' \
+  'try endSession pid catch err => report s!"[^"]*" try record[.]save [(][.]ended outcome[)]'; do
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "a session's processes end other than by Session.ending: $tie"
 done
@@ -1398,7 +1409,7 @@ retrying="$(code_grep '(^|[^[:alnum:]_])with(Session)?Lock(Retrying|Held)([^[:al
   || fail "only the daemon's startup claim may retry a held lock: ${retrying:-no retrying claim}"
 for tie in \
   'finally close listenFd try IO[.]FS[.]removeFile sockPath catch _ => pure [(][)][[:space:]]+end Linger[.]Session[.]Shell[.]Daemon' \
-  'finally let rt ← latest[.]get for c in rt[.]conns do close c[.]fd let outcome ← stopProgram rt let rt ← settleRecord rt try record[.]save [(]rt[.]final[.]getD [(][.]ended outcome[)][)]' \
+  'finally let rt ← latest[.]get for c in rt[.]conns do close c[.]fd let outcome ← stopProgram rt let rt ← settleRecord rt try endSession rt[.]childPid catch err => report s!"[^"]*" try record[.]save [(]rt[.]final[.]getD [(][.]ended outcome[)][)]' \
   'let previous ← record[.]load record[.]save [(][.]running none[)] let spawned ← try trySpawnPty'; do
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "daemon resource cleanup escaped its ownership lifetime: $tie"

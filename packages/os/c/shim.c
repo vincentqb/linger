@@ -532,14 +532,15 @@ LEAN_EXPORT lean_obj_res linger_spawn_pty(uint32_t cols, uint32_t rows,
         envp = calloc(inherited + nenv + 1, sizeof(char *));
         if (!envp) { int e = errno; close(master); free(argv); return io_err_code("calloc", e); }
         for (size_t i = 0; i < inherited; i++) envp[envc++] = environ[i];
+        /* "K=V" sets K; a bare "K" unsets it */
         for (size_t i = 0; i < nenv; i++) {
             char *entry = (char *)lean_string_cstr(lean_array_get_core(extra_env, i));
             const char *eq = strchr(entry, '=');
-            if (!eq) { close(master); free(argv); free(envp); return io_msg("spawn_pty: env entry is not K=V"); }
-            size_t keylen = (size_t)(eq - entry) + 1;             /* include '=' */
+            size_t keylen = eq ? (size_t)(eq - entry) : strlen(entry);
+            if (keylen == 0) { close(master); free(argv); free(envp); return io_msg("spawn_pty: env entry has no name"); }
             for (size_t j = 0; j < envc; j++)
-                if (strncmp(envp[j], entry, keylen) == 0) { envp[j] = envp[--envc]; break; }
-            envp[envc++] = entry;
+                if (strncmp(envp[j], entry, keylen) == 0 && envp[j][keylen] == '=') { envp[j] = envp[--envc]; break; }
+            if (eq) envp[envc++] = entry;
         }
         envp[envc] = NULL;
     }
@@ -942,6 +943,29 @@ LEAN_EXPORT lean_obj_res linger_spawn_detached(b_lean_obj_arg prog, b_lean_obj_a
 LEAN_EXPORT lean_obj_res linger_kill(uint32_t pid, uint32_t sig) {
     if (kill((pid_t)pid, (int)sig) < 0 && errno != ESRCH) return io_err("kill");
     return io_ok_unit();
+}
+
+/* linger_kill_group : UInt32 -> UInt32 -> IO Bool
+ * kill(-pgid, sig): sig to every process of the process group pgid. False when the group has
+ * no process left (ESRCH). A pgid of 0 or 1 never arrives (Os.Shell.signalGroup): -1 would
+ * signal every process the user may signal, and 0 the caller's own group. */
+LEAN_EXPORT lean_obj_res linger_kill_group(uint32_t pgid, uint32_t sig) {
+    if (pgid <= 1 || pgid > 0x7FFFFFFF) return io_msg("kill_group: not a process group");
+    if (kill(-(pid_t)pgid, (int)sig) == 0) return lean_io_result_mk_ok(lean_box(1));
+    if (errno == ESRCH) return lean_io_result_mk_ok(lean_box(0));
+    return io_err("kill(-pgid)");
+}
+
+/* linger_environ_names : IO (Array String)  the names of this process's environment */
+LEAN_EXPORT lean_obj_res linger_environ_names(void) {
+    extern char **environ;
+    lean_object *names = lean_mk_empty_array();
+    for (size_t i = 0; environ[i]; i++) {
+        const char *eq = strchr(environ[i], '=');
+        size_t len = eq ? (size_t)(eq - environ[i]) : strlen(environ[i]);
+        names = lean_array_push(names, lean_mk_string_from_bytes(environ[i], len));
+    }
+    return lean_io_result_mk_ok(names);
 }
 
 /* linger_alive : UInt32 -> IO Bool  (kill(pid, 0)) */

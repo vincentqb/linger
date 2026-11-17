@@ -3865,9 +3865,9 @@ theorem attached_output_witness :
 
 /-! ## How a session's processes end -/
 
-/-- A daemon ends its program and the rest of the program's terminal session with SIGHUP, then
-SIGKILL a second later, and waits a second more for SIGKILL. -/
-theorem ending_eq : ending = [(1, 1000), (9, 1000)] := rfl
+/-- A daemon ends its program's process group and the rest of its terminal session with SIGHUP,
+then SIGKILL at the grace, and waits the grace more for SIGKILL. -/
+theorem ending_eq : ending = [⟨.group, 1, Stop.grace⟩, ⟨.group, 9, Stop.grace⟩] := rfl
 
 /-! ## Work follows events -/
 

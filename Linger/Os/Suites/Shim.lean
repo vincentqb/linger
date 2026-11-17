@@ -307,13 +307,14 @@ defence-in-depth against a future caller and no test can reach it today. -/
 def testZeroLengthRead : IO Unit := do
   check "read of 0 bytes is refused, not reported as EOF" (← throws (read stdinFd 0))
 
-/-- Child-side spawn failures must reach the parent. A missing program and a
-malformed environment entry are both setup failures the caller has to see. -/
+/-- Child-side spawn failures must reach the parent. A missing program and an
+environment entry that names no variable are both setup failures the caller has to see; a bare
+name is no failure, since it unsets the variable. -/
 def testSpawnFailures : IO Unit := do
   check "spawnPty reports a failed exec"
       (← throws (spawnPty 80 24 "" "linger-no-such-program-42" #[] #[]))
-  check "spawnPty rejects a malformed environment entry"
-      (← throws (spawnPty 80 24 "" "sh" #["-c", "exit 0"] #["NOEQUALS"]))
+  check "spawnPty rejects an environment entry that names no variable"
+      (← throws (spawnPty 80 24 "" "sh" #["-c", "exit 0"] #["=value"]))
   let dir ← IO.FS.createTempDir
   check "spawnDetached reports a failed exec"
       (← throws (spawnDetached "linger-no-such-program-42" #[] s!"{dir}/log"))

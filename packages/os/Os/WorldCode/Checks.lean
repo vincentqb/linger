@@ -10,11 +10,12 @@ import SoftwareChallenge.Commands
 that an exec keeps the process, its children and the descriptors it does not close,
 `Os.Place.NoReplace` that a link or a rename that may not replace never replaces a name, and
 `Os.Lock.Tells` that `fstat` and `stat` tell the file a descriptor holds from the one a path
-names. Each claim takes the behaviour it constrains as a parameter, which no Lean term computes:
-`slept`, `execd`, `placedBy` and `told` name them, and the checks observe them, by sleeping and
-reading the monotonic clock around each sleep, by running a process that execs, by placing names
-in a directory of their own, eight at once onto one, and by locking, deleting and creating lock
-files. No program module imports this one. -/
+names, and `Os.Signal.Group` that a signal to a process group reaches every member. Each claim
+takes the behaviour it constrains as a parameter, which no Lean term computes: `slept`, `execd`,
+`placedBy`, `told`, `grouped` and `groupReached` name them, and the checks observe them, by
+sleeping and reading the monotonic clock around each sleep, by running a process that execs, by
+placing names in a directory of their own, eight at once onto one, by locking, deleting and
+creating lock files, and by signalling a process group whose members note the signal. No program module imports this one. -/
 
 namespace Os.Checks
 
@@ -162,5 +163,66 @@ Check Os.Lock.Tells told := do
         Os.Shell.close held
   finally
     IO.FS.removeDirAll dir
+
+/-- Whether a process is in a process group when `Os.Shell.signalGroup` signals the group: the
+membership `Os.Signal.Group` speaks of. It has no body; the check below observes it. -/
+opaque grouped : Nat → Nat → Bool
+
+/-- Whether `Os.Shell.signalGroup` of a group reaches a process: the observation `Os.Signal.Group`
+constrains. It has no body; the check below observes it. -/
+opaque groupReached : Nat → Nat → Bool
+
+-- A signal to a process group reaches every member: a shell that leads a terminal session and a
+-- process group of its own starts two jobs in its group, each of which, like the shell, notes
+-- SIGTERM in a file of its own; one SIGTERM to the group, and each of the three notes it.
+Check Os.Signal.Group grouped groupReached := do
+  IO.FS.withTempDir fun dir => do
+      let note (who : String) := s!"trap ': > {dir}/{who}; exit 0' TERM"
+      let member (who : String) := s!"({note who}; while :; do sleep 0.05; done) &"
+      let script :=
+        s!"{member "first"} {member "second"} {note "leader"}; " ++
+          s!"ps -o pgid= -p $! > {dir}/group.part && mv {dir}/group.part {dir}/group; " ++
+          "while :; do sleep 0.05; done"
+      let (pid, master) ← Os.Shell.spawnPty 80 24 "" "/bin/sh" #["-c", script] #[]
+      try
+        let deadline := (← Os.Shell.monotonicMs) + 10000
+        let mut started := false
+        repeat
+          if ← (dir / "group").pathExists then
+            started := true
+            break
+          unless ← Os.Shell.nap deadline 20 do
+            break
+        unless started do
+          throw (IO.userError "the group's leader did not start its jobs")
+        let pgid := (← IO.FS.readFile (dir / "group")).trimAscii.toString
+        unless pgid == toString pid do
+          throw (IO.userError s!"a job of the leader {pid} is in the process group {pgid}")
+        unless ← Os.Shell.signalGroup pid 15 do
+          throw (IO.userError s!"the process group {pid} had no process to signal")
+        let noted : IO Bool := do
+          return (← (dir / "leader").pathExists) && (← (dir / "first").pathExists) &&
+              (← (dir / "second").pathExists)
+        let notedBy := (← Os.Shell.monotonicMs) + 5000
+        let mut all := false
+        repeat
+          if ← noted then
+            all := true
+            break
+          unless ← Os.Shell.nap notedBy 20 do
+            break
+        unless all do
+          throw (IO.userError "a member of the process group did not note the SIGTERM sent to it")
+      finally
+        discard <| (Os.Shell.signalGroup pid 9).toBaseIO
+        let reapBy := (← Os.Shell.monotonicMs) + 2000
+        repeat
+          match ← Os.Shell.reapNohang pid with
+          | .running =>
+            unless ← Os.Shell.nap reapBy 20 do
+              break
+          | _ =>
+            break
+        Os.Shell.close master
 
 end Os.Checks

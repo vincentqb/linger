@@ -143,8 +143,9 @@ structure SpawnReset where
 /-- posix_openpt + execve. A bare program is searched in the child's PATH;
 slash-qualified programs run directly. Executable text without a shebang runs
 through `/bin/sh`, preserving execvp's fallback.
-`extraEnv` entries are `"K=V"` with a nonempty key. `cwd = ""` inherits; a cwd the child cannot
-enter fails the start, whatever `$HOME` is: a resume chooses its directory before
+`extraEnv` entries are `"K=V"`, which sets `K`, or a bare `"K"`, which unsets it, each with a
+nonempty key, applied in order over the environment the caller has. `cwd = ""` inherits; a cwd
+the child cannot enter fails the start, whatever `$HOME` is: a resume chooses its directory before
 (`Linger.Os.Env.resumeDir`). Dimensions must fit 16 bits.
 
 Returns `(pid, master)`: the child, with its terminal on descriptors 0, 1 and 2, SIGPIPE and
@@ -162,8 +163,8 @@ def trySpawnPty (cols rows : UInt32) (cwd prog : String) (args : Array String)
   checkCommand "spawnPty" prog args
   for entry in extraEnv do
     checkCString "spawnPty environment" entry
-    unless entry.contains '=' && !entry.startsWith "=" do
-      throw (IO.userError s!"spawnPty: environment entry '{entry}' is not K=V")
+    if entry.isEmpty || entry.startsWith "=" then
+      throw (IO.userError s!"spawnPty: environment entry '{entry}' names no variable")
   let spawned ←
     Boundary.spawnPty cols rows cwd prog args extraEnv reset.dispositions reset.mask
         reset.descriptors
@@ -456,6 +457,18 @@ with the reason, so the process carries on as it was. -/
 def execImage (prog : String) (args : Array String) (keep : Array UInt32) : IO Unit := do
   checkCommand "execImage" prog args
   Boundary.execImage prog args keep
+
+/-- Send `sig` to every process of the process group `pgid` at once, kill(2) of `-pgid`, and say
+whether the group had one. A `pgid` of 0 or 1 throws before the call: kill(2) reads `-1` as every
+process the caller may signal. -/
+def signalGroup (pgid sig : UInt32) : IO Bool := do
+  if valid : 1 < pgid ∧ pgid ≤ 0x7FFFFFFF then
+    Boundary.killGroup pgid sig valid
+  else
+    throw (IO.userError s!"signalGroup: {pgid} is not a process group linger may signal")
+
+/-- The names of this process's environment, in its order. -/
+def environNames : IO (Array String) := Boundary.environNames
 
 /-- Send `sig` to every process whose session id is `sid`, other than `sid` itself, and return
 how many it reached; signal 0 only counts them. The caller keeps the session's leader, its

@@ -1651,12 +1651,14 @@ theorem metadata_dirs_rejects_silent :
 
 theorem start_runs (inherited : String → Option String)
     (start :
-      String → String → Array String → List (String × String) → Spawn.Reset → Option Spawn.Started)
-    (runs : Spawn.Runs inherited start) (id dir shell : String) (argv : List String)
-    {started : Spawn.Started}
+      String →
+        String → Array String → List (String × Option String) → Spawn.Reset → Option Spawn.Started)
+    (runs : Spawn.Runs inherited start) (names : List String)
+    (named : ∀ key, (inherited key).isSome → key ∈ names) (id dir shell : String)
+    (argv : List String) {started : Spawn.Started}
     (ok :
-      start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2 (Start.environment id)
-          Start.reset =
+      start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
+          (Start.environment id names) Start.reset =
         some started) :
     started.argv = argv.headD shell :: argv.drop 1 ∧
       started.dir = dir ∧
@@ -1667,11 +1669,11 @@ theorem start_runs (inherited : String → Option String)
       started.env "TERM_PROGRAM_VERSION" = some Mediation.versionNumber ∧
       ∀ key,
         key ∉ ["LINGER_SESSION", "TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"] →
-          started.env key = inherited key := by
+          started.env key = if Start.lingers key then none else inherited key := by
   obtain ⟨hargv, hdir, henv⟩ := runs _ _ _ _ _ _ ok
   rw [Start.programOf_exact] at hargv
   refine ⟨by simpa using hargv, hdir, ?_, ?_, ?_, ?_, ?_, fun key hkey => ?_⟩
-  all_goals rw [henv, Start.environment_lookup]
+  all_goals rw [henv, Start.environment_lookup _ _ _ _ (named _)]
   · simp
   · simp
   · simp
@@ -1680,48 +1682,62 @@ theorem start_runs (inherited : String → Option String)
   · simp only [List.mem_cons, List.not_mem_nil, or_false, not_or] at hkey
     simp [hkey.1, hkey.2.1, hkey.2.2.1, hkey.2.2.2.1, hkey.2.2.2.2]
 
-theorem start_runs_rejects_unnamed :
+theorem start_runs_rejects_passing :
     ¬∀ (inherited : String → Option String)
         (start :
           String →
-            String → Array String → List (String × String) → Spawn.Reset → Option Spawn.Started),
+            String →
+            Array String → List (String × Option String) → Spawn.Reset → Option Spawn.Started),
         Spawn.Runs inherited start →
-          ∀ (id dir shell : String) (argv : List String) {started : Spawn.Started},
-            start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
-                  ((fun (_ : String) => ([] : List (String × String))) id) Start.reset =
-                some started →
-              started.argv = argv.headD shell :: argv.drop 1 ∧
-                started.dir = dir ∧
-                started.env "LINGER_SESSION" = some id ∧
-                started.env "TERM" = some "xterm-256color" ∧
-                started.env "COLORTERM" = some "truecolor" ∧
-                started.env "TERM_PROGRAM" = some "linger" ∧
-                started.env "TERM_PROGRAM_VERSION" = some Mediation.versionNumber ∧
-                ∀ key,
-                  key ∉
-                      ["LINGER_SESSION", "TERM", "COLORTERM", "TERM_PROGRAM",
-                        "TERM_PROGRAM_VERSION"] →
-                    started.env key = inherited key := by
+          ∀ (names : List String),
+            (∀ key, (inherited key).isSome → key ∈ names) →
+              ∀ (id dir shell : String) (argv : List String) {started : Spawn.Started},
+                start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
+                      ((fun (id : String) (_ : List String) => Start.environment id []) id names)
+                      Start.reset =
+                    some started →
+                  started.argv = argv.headD shell :: argv.drop 1 ∧
+                    started.dir = dir ∧
+                    started.env "LINGER_SESSION" = some id ∧
+                    started.env "TERM" = some "xterm-256color" ∧
+                    started.env "COLORTERM" = some "truecolor" ∧
+                    started.env "TERM_PROGRAM" = some "linger" ∧
+                    started.env "TERM_PROGRAM_VERSION" = some Mediation.versionNumber ∧
+                    ∀ key,
+                      key ∉
+                          ["LINGER_SESSION", "TERM", "COLORTERM", "TERM_PROGRAM",
+                            "TERM_PROGRAM_VERSION"] →
+                        started.env key = if Start.lingers key then none else inherited key := by
   intro h
+  -- a caller with `LINGER_DIR` set, which an environment that unsets nothing passes through
+  let inherited := fun key : String => if key = "LINGER_DIR" then some "state" else none
   have runs :
-    Spawn.Runs (fun _ => none) fun dir prog args extra _ =>
+    Spawn.Runs inherited fun dir prog args extra _ =>
       some
         { argv := prog :: args.toList, dir,
-          env := fun key => (extra.reverse.lookup key).orElse fun _ => none,
+          env := fun key => (extra.reverse.lookup key).getD (inherited key),
           ignored := fun _ => false, blocked := fun _ => false, descriptor := fun _ => none } := by
     intro dir prog args extra reset started hs
     cases hs
     exact ⟨rfl, rfl, fun _ => rfl⟩
-  exact absurd (h _ _ runs "x" "" "sh" [] rfl).2.2.1 (by simp)
+  have named : ∀ key, (inherited key).isSome → key ∈ ["LINGER_DIR"] := by
+    intro key h
+    by_cases dirKey : key = "LINGER_DIR"
+    · simp [dirKey]
+    · simp [inherited, dirKey] at h
+  have passed :=
+    (h _ _ runs ["LINGER_DIR"] named "x" "" "sh" [] rfl).2.2.2.2.2.2.2 "LINGER_DIR" (by decide)
+  simp [Start.lingers, Start.environment, Start.session, List.lookup, inherited] at passed
 
 theorem start_clean
     (start :
-      String → String → Array String → List (String × String) → Spawn.Reset → Option Spawn.Started)
-    (clean : Spawn.Clean start) (name dir shell : String) (argv : List String)
+      String →
+        String → Array String → List (String × Option String) → Spawn.Reset → Option Spawn.Started)
+    (clean : Spawn.Clean start) (name dir shell : String) (names argv : List String)
     {started : Spawn.Started}
     (ok :
       start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
-          (Start.environment name) Start.reset =
+          (Start.environment name names) Start.reset =
         some started) :
     (∀ sig, started.ignored sig = false) ∧
       (∀ sig, started.blocked sig = false) ∧
@@ -1739,11 +1755,12 @@ theorem start_clean_rejects_inherited :
     ¬∀
         (start :
           String →
-            String → Array String → List (String × String) → Spawn.Reset → Option Spawn.Started),
+            String →
+            Array String → List (String × Option String) → Spawn.Reset → Option Spawn.Started),
         Spawn.Clean start →
-          ∀ (name dir shell : String) (argv : List String) {started : Spawn.Started},
+          ∀ (name dir shell : String) (names argv : List String) {started : Spawn.Started},
             start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
-                  (Start.environment name)
+                  (Start.environment name names)
                   ({ dispositions := false, mask := true, descriptors := true } : Spawn.Reset) =
                 some started →
               (∀ sig, started.ignored sig = false) ∧
@@ -1761,7 +1778,7 @@ theorem start_clean_rejects_inherited :
     cases hs
     refine ⟨fun fd low => ite_eq_left low, fun asked _ => by simp [asked], fun _ _ => rfl, ?_⟩
     exact fun _ fd high => ite_eq_right (Nat.not_lt_of_le high)
-  exact absurd ((h _ clean "x" "" "sh" [] rfl).1 2) (by simp)
+  exact absurd ((h _ clean "x" "" "sh" [] [] rfl).1 2) (by simp)
 
 theorem step_kill_stops (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {rest : List Wire.Msg} (hc : s.client? id = some c)
@@ -2037,7 +2054,7 @@ theorem wait_held (deadline heldSince : Option Nat) (now : Nat) (heard : App.Wai
       (heard = .held →
         ∀ since,
           heldSince = some since →
-            now < since + (Session.drainTimeoutMs + (Session.ending.map (·.2)).sum) →
+            now < since + (Session.drainTimeoutMs + (Session.ending.map (·.wait)).sum) →
             App.Wait.decide deadline heldSince now heard ≠ .answer .failed) := by
   refine
     ⟨(App.Wait.wait_held deadline heldSince now heard).1,
@@ -2070,7 +2087,7 @@ theorem wait_held_rejects_eager :
           (heard = .held →
             ∀ since,
               heldSince = some since →
-                now < since + (Session.drainTimeoutMs + (Session.ending.map (·.2)).sum) →
+                now < since + (Session.drainTimeoutMs + (Session.ending.map (·.wait)).sum) →
                 (fun (_ _ : Option Nat) (_ : Nat) (_ : App.Wait.Heard) =>
                       App.Wait.Next.answer .failed)
                     deadline heldSince now heard ≠
@@ -2093,7 +2110,7 @@ theorem wait_held_rejects_drain :
           (heard = .held →
             ∀ since,
               heldSince = some since →
-                now < since + (Session.drainTimeoutMs + (Session.ending.map (·.2)).sum) →
+                now < since + (Session.drainTimeoutMs + (Session.ending.map (·.wait)).sum) →
                 App.Wait.decide deadline heldSince now heard ≠ .answer .failed) := by
   intro h
   -- a wait that fails once a drain has passed, while the ending's signals still wait
@@ -2497,28 +2514,32 @@ theorem captureBytes_bounded_rejects_unbounded :
   exact absurd (h "") (by simp)
 
 theorem ending_clean (gone : UInt32 → Nat → Nat → Bool) (ends : Signal.Ends gone)
-    (alive : List Nat) :
-    (Session.ending.head?.map (·.1)) = some 1 ∧
-      Session.ending.foldl
-          (fun still (signal : UInt32 × Nat) => still.filter (!gone signal.1 signal.2 ·)) alive =
-        [] := by
+    (member reaches : Nat → Nat → Bool) (group : Os.Signal.Group member reaches) (program : Nat)
+    (alive : List Nat) (members : ∀ pid ∈ alive, member program pid = true) :
+    (Session.ending.head?.map (·.signal)) = some 1 ∧
+      Session.ending.foldl (Stop.survivors (Stop.reach program reaches) gone) alive = [] := by
   rw [Session.ending_eq]
-  refine ⟨rfl, List.filter_eq_nil_iff.mpr fun pid _ => ?_⟩
-  simp [ends pid 1000 (Nat.le_refl _)]
+  refine ⟨rfl, List.filter_eq_nil_iff.mpr fun pid mem => ?_⟩
+  -- SIGKILL to the group reaches each process of it that SIGHUP left, which then ends
+  have inGroup := members pid (List.mem_filter.mp mem).1
+  simp [Stop.reach, group program pid inGroup, ends pid Stop.grace (Nat.le_refl _)]
 
-theorem ending_clean_rejects_hangup :
+theorem ending_clean_rejects_pid :
     ¬∀ (gone : UInt32 → Nat → Nat → Bool),
         Signal.Ends gone →
-          ∀ (alive : List Nat),
-            (([(1, 1000)] : List (UInt32 × Nat)).head?.map (·.1)) = some 1 ∧
-              ([(1, 1000)] : List (UInt32 × Nat)).foldl
-                  (fun still (signal : UInt32 × Nat) => still.filter (!gone signal.1 signal.2 ·))
-                  alive =
-                [] := by
+          ∀ (member reaches : Nat → Nat → Bool),
+            Os.Signal.Group member reaches →
+              ∀ (program : Nat) (alive : List Nat),
+                (∀ pid ∈ alive, member program pid = true) →
+                  (Stop.pidOnly.head?.map (·.signal)) = some 1 ∧
+                    Stop.pidOnly.foldl (Stop.survivors (Stop.reach program reaches) gone) alive =
+                      [] := by
   intro h
-  -- an operating system where SIGKILL ends every process at once and no other signal ends any
-  have ends : Signal.Ends fun sig _ _ => sig == 9 := fun _ _ _ => rfl
-  have survives := (h _ ends [1]).2
+  -- a group of two, the program 0 and its job 1, where every signal ends what it reaches: the
+  -- job, which no signal to the program alone reaches, outlives the stop
+  have ends : Signal.Ends fun _ _ _ => true := fun _ _ _ => rfl
+  have group : Os.Signal.Group (fun _ _ => true) fun _ _ => true := fun _ _ _ => rfl
+  have survives := (h _ ends _ _ group 0 [1] fun _ _ => rfl).2
   exact absurd survives (by decide)
 
 theorem handoff_carries (s : State) (w : Handoff.World)

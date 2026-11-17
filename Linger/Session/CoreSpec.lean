@@ -183,6 +183,12 @@ end Linger.Session
 
 namespace Linger.Session.Start
 
+/-- Whether a variable is linger's own: its name begins `LINGER_`. Linger reads its own from the
+command that runs it, and a session's program sees none of them but the session's
+`LINGER_SESSION`. -/
+@[expose]
+def lingers (key : String) : Bool := key.startsWith "LINGER_"
+
 /-- What `start` does with the name it is given. -/
 inductive Plan where
   /-- No session holds the name: take it. -/
@@ -269,6 +275,63 @@ inductive Reachable (proceeds : Bool → Bool) (answer : Bool → Bool → Answe
     Reachable proceeds answer r → Step proceeds answer r s → Reachable proceeds answer s
 
 end Linger.Session.Start
+
+namespace Linger.Session.Stop
+
+/-! ### How a session's processes end
+
+A session's program leads its own terminal session and its own process group. When the session
+ends, by a kill or by the program's own end, its daemon signals the program's process group, and
+the rest of its terminal session, with each `Send` of the session's ending in turn, then writes
+the end record. A process that left the terminal session with `setsid` is out of reach. -/
+
+/-- How long the processes of an ending session have, after the signal that asks them to end,
+before SIGKILL ends what remains: a second. -/
+@[expose]
+def grace : Nat := 1000
+
+/-- Whom one signal of an ending reaches. -/
+inductive Target where
+  /-- The program alone, by its pid. -/
+  | program
+  /-- The program's whole process group, which it leads, by one signal to the group, and the
+  rest of its terminal session. -/
+  | group
+  deriving DecidableEq, Repr
+
+/-- One signal of an ending: whom it reaches, which signal, and how many milliseconds the daemon
+then waits for them to end. -/
+structure Send where
+  /-- Whom the signal reaches. -/
+  target : Target
+  /-- The signal's number. -/
+  signal : UInt32
+  /-- How long the daemon then waits, in milliseconds. -/
+  wait : Nat
+  deriving DecidableEq, Repr
+
+/-- Whether a signal to `target` reaches the process `pid`, of the program `program` whose process
+group `inGroup program` tells: the program alone, or every process the group signal reaches. -/
+@[expose]
+def reach (program : Nat) (inGroup : Nat → Nat → Bool) : Target → Nat → Bool
+  | .program, pid => pid == program
+  | .group, pid => inGroup program pid
+
+/-- Of the processes `alive`, those still running after `send`: `reaches send.target pid` says
+whether its signal reaches `pid`, and `gone signal ms pid` whether `pid` has ended `ms`
+milliseconds after `signal` reached it. -/
+@[expose]
+def survivors (reaches : Target → Nat → Bool) (gone : UInt32 → Nat → Nat → Bool) (alive : List Nat)
+    (send : Send) : List Nat :=
+  alive.filter fun pid => !(reaches send.target pid && gone send.signal send.wait pid)
+
+/-- A wrong ending: SIGHUP and then SIGKILL to the program alone, as a stop that knows only its
+pid sends them. The headline that an ending leaves no process of the program's group running is
+shown to reject it. -/
+@[expose]
+def pidOnly : List Send := [⟨.program, 1, grace⟩, ⟨.program, 9, grace⟩]
+
+end Linger.Session.Stop
 
 namespace Linger.Session.Wire
 
@@ -545,8 +608,9 @@ inductive Effect (Plan : Type) where
   | writePty (bytes : List UInt8)
   /-- Set the pty's window size. -/
   | resizePty (cols rows : UInt32)
-  /-- End the program: each signal of the session's ending in turn, SIGHUP first, to it and to
-  every process of its terminal session, until it ends. The runtime answers how it ended. -/
+  /-- End the program: each signal of the session's ending in turn, SIGHUP first, to its whole
+  process group and every other process of its terminal session, until they end. The runtime
+  answers how the program ended. -/
   | stopProgram
   /-- Save a checkpoint of the session. -/
   | checkpoint

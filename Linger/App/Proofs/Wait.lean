@@ -89,6 +89,7 @@ theorem wait_held (deadline heldSince : Option Nat) (now : Nat) (heard : Heard) 
 /-- **`wait`'s patience covers a daemon's ending**: its drain, and a second for each signal that
 stops its program. -/
 theorem held_covers_ending :
-    Linger.Session.drainTimeoutMs + (Linger.Session.ending.map (·.2)).sum ≤ heldNameMs := by decide
+    Linger.Session.drainTimeoutMs + (Linger.Session.ending.map (·.wait)).sum ≤ heldNameMs := by
+  decide
 
 end Linger.App.Wait

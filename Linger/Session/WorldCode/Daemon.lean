@@ -36,8 +36,10 @@ holds the terminal, after which it asks without blocking whether the program end
 leaving it unreaped until the rest of its terminal session has ended (`programEnd`), and SIGHUP,
 SIGINT, SIGQUIT or SIGTERM, which it reports as the session's event
 (`Event.signal`); the terminal's end of file ends nothing by itself. A kill stops the program
-first, with each signal of `Session.ending` in turn (`Effect.stopProgram`), and the session then
-ends as it does when its program ends by itself; a stop signal stops the program the same way,
+first, with each signal of `Session.ending` in turn, to its whole process group and the rest of
+its terminal session (`Effect.stopProgram`), and the session then ends as it does when its
+program ends by itself, which ends what of the group and the session outlives it before the end
+record says the session ended; a stop signal stops the program the same way,
 and the session then ends saved, with an end record that says which signal stopped it
 (`Effect.record`). Between events it sleeps until the session's next tick (`State.nextTick`), so
 an idle session costs no wakeup.
@@ -472,12 +474,46 @@ private def within (ms step : Nat) (done : IO Bool) : IO Bool := do
       break
   done
 
-/-- How the program ended, ending it first if it still runs: each signal of `Session.ending`, to
-it and to the rest of its terminal session, until it ends, SIGHUP first and then SIGKILL, and
-`unknown` if it has not ended once the last wait is over. A signal that cannot be sent, as to a
-program that became another user, is reported, and the next one is sent all the same; a stop that
-cannot even look whether the program ended is reported and answers `unknown`. The program stays
-unreaped (`programEnd`). -/
+/-- Send one signal of `Session.ending`: to the program alone, or to the program's process group
+at once (`Os.Shell.signalGroup`) and to every other process of its terminal session
+(`signalSession`). A signal that cannot be sent is reported, and the stop goes on. -/
+private def deliver (pid : UInt32) (send : Linger.Session.Stop.Send) : IO Unit := do
+  match send.target with
+  | .program =>
+    try
+      kill pid send.signal
+    catch err =>
+      report s!"linger: signalling the program failed: {err}"
+  | .group =>
+    try
+      discard <| signalGroup pid send.signal
+    catch err =>
+      report s!"linger: signalling the program's process group failed: {err}"
+    try
+      discard <| signalSession pid send.signal
+    catch err =>
+      report s!"linger: signalling the program's terminal session failed: {err}"
+
+/-- End the program's process group and the rest of its terminal session, with each signal of
+`Session.ending` in turn, SIGHUP to them all and SIGKILL to whatever outlives the grace, until
+`programEnded` holds and no other process of the session runs. Run while the program is
+unreaped, so its pid is still its group's and its session's id and no one else's. A process that
+left the session with `setsid` is not reached. Each look at the session lists every process on
+the host, so it looks every 50 ms. -/
+private def endAll (pid : UInt32) (programEnded : IO Bool) : IO Unit := do
+  let gone : IO Bool := do
+    return (← programEnded) && (← signalSession pid 0) == 0
+  for send in Linger.Session.ending do
+    if ← gone then
+      return
+    deliver pid send
+    if ← within send.wait 50 gone then
+      return
+
+/-- How the program ended, ending it first if it still runs, with the rest of its group and its
+terminal session (`endAll`), and `unknown` if it has not ended once the last wait is over. A stop
+that cannot even look whether the program ended is reported and answers `unknown`. The program
+stays unreaped (`programEnd`). -/
 private def stopChild (pid : UInt32) : IO Outcome := do
   let ending ← IO.mkRef (none : Option Outcome)
   let ended : IO Bool := do
@@ -485,19 +521,7 @@ private def stopChild (pid : UInt32) : IO Outcome := do
       ending.set (← programEnd pid)
     return (← ending.get).isSome
   try
-    for (sig, ms) in Linger.Session.ending do
-      if ← ended then
-        break
-      try
-        kill pid sig
-      catch err =>
-        report s!"linger: signalling the program failed: {err}"
-      try
-        discard <| signalSession pid sig
-      catch err =>
-        report s!"linger: signalling the program's terminal session failed: {err}"
-      if ← within ms 10 ended then
-        break
+    endAll pid ended
   catch err =>
     report s!"linger: stopping the program failed: {err}"
   return (← ending.get).getD .unknown
@@ -864,19 +888,9 @@ def drainConns (rt : Rt) : IO Rt := do
     close c.fd
   return { rt with conns := [] }
 
-/-- End every other process of the program's terminal session with the signals of
-`Session.ending`: SIGHUP, then SIGKILL to whatever outlives a second of it. Run while the program
-is unreaped, so its pid is still the session's id and no other session's. A process that left
-the session with `setsid` is not reached. Each look at the session lists every process on the
-host, so it looks every 50 ms. -/
-private def endSession (pid : UInt32) : IO Unit := do
-  let gone : IO Bool := return (← signalSession pid 0) == 0
-  for (sig, ms) in Linger.Session.ending do
-    if ← gone then
-      return
-    discard <| signalSession pid sig
-    if ← within ms 50 gone then
-      return
+/-- End every other process of the program's process group and terminal session once the
+program has ended (`endAll`). -/
+private def endSession (pid : UInt32) : IO Unit := endAll pid (pure true)
 
 /-- How long a starting daemon waits for its locks. An offline reader holds both only
 while it loads and prints a checkpoint. `connectUpsert` gives up on the socket no sooner
@@ -1066,8 +1080,9 @@ runs, and what an upgraded image does once it has taken the handoff. Each round 
 round's events and a tick through the session, carries out an upgrade the round asked for, writes
 to the program, and asks the name's end record to say what the daemon sees. Once the session
 exits it drains the connections; however the loop ends, it closes every connection, stops the
-program if it still runs, writes the end record, waits for the saves, ends what of the program's
-terminal session outlives it, reaps the program, and closes the pty and the signal pipe. -/
+program if it still runs, ends what of the program's process group and terminal session outlives
+it, writes the end record, waits for the saves, reaps the program, and closes the pty and the
+signal pipe. -/
 private def run (id : String) (login : Bool) (record : RecordFile) (latest : IO.Ref Rt) : IO Unit :=
   do
   try
@@ -1097,17 +1112,18 @@ private def run (id : String) (login : Bool) (record : RecordFile) (latest : IO.
     let outcome ← stopProgram rt
     let rt ← settleRecord rt
     try
-      record.save (rt.final.getD (.ended outcome))
-    catch err =>
-      report s!"linger: recording how the session ended failed: {err}"
-    -- the session's last screen reaches the disk while the name is still this session's
-    discard <| finishSaves rt
-    -- the program is reaped last: until then its zombie keeps its pid, which is its
-    -- session's id, so ending the session's other processes reaches no one else
-    try
       endSession rt.childPid
     catch err =>
       report s!"linger: ending the session's processes failed: {err}"
+    try
+      record.save (rt.final.getD (.ended outcome))
+    catch err =>
+      report s!"linger: recording how the session ended failed: {err}"
+    -- the end record said the session ended only once none of its group and terminal session
+    -- ran; the program is reaped last: until then its zombie keeps its pid, which is its group's
+    -- and its session's id, so ending their other processes reached no one else
+    -- the session's last screen reaches the disk while the name is still this session's
+    discard <| finishSaves rt
     discard <| reapNohang rt.childPid
     close rt.ptyFd
     if let some fd := rt.signals then
@@ -1182,13 +1198,13 @@ def adopt (id path : String) (pid : UInt32) (saveCkpt : State → IO Unit) (drop
             decode; ending the session, whose checkpoint stays"
       let outcome ← stopChild pid
       try
-        record.save (.ended outcome)
-      catch err =>
-        report s!"linger: recording how the session ended failed: {err}"
-      try
         endSession pid
       catch err =>
         report s!"linger: ending the session's processes failed: {err}"
+      try
+        record.save (.ended outcome)
+      catch err =>
+        report s!"linger: recording how the session ended failed: {err}"
       discard <| reapNohang pid
       try
         IO.FS.removeFile sockPath
@@ -1369,7 +1385,9 @@ def serve (id name : String) (cwd : String) (argv : List String) (saveCkpt : Sta
           try
             trySpawnPty (UInt32.ofNat (Terminal.Vt.clampDim vt0.colCount))
                 (UInt32.ofNat (Terminal.Vt.clampDim vt0.rowCount)) cwd prog args
-                ((Start.environment id).toArray.map fun (key, value) => s!"{key}={value}")
+                ((Start.environment id (← environNames).toList).toArray.map fun
+                  | (key, some value) => s!"{key}={value}"
+                  | (key, none) => key)
                 (resetOf Start.reset)
           catch err =>
             record.restore previous

@@ -39,11 +39,11 @@ open Terminal.Replay (Plan)
 each replay step. -/
 def outputChunk : Nat := 65536
 
-/-- How a daemon ends its program and every other process of the program's terminal session: the
-signals it sends, in order, each with the milliseconds it then waits for them to end. SIGHUP
-first, as a terminal that hangs up sends, so a program can save its work, then SIGKILL to
-whatever outlives a second of it. -/
-def ending : List (UInt32 × Nat) := [(1, 1000), (9, 1000)]
+/-- How a daemon ends its program, the program's whole process group and every other process of
+its terminal session: the signals it sends, in order, each to the group and with the
+milliseconds it then waits for them to end. SIGHUP first, as a terminal that hangs up sends, so a
+program can save its work, then SIGKILL to whatever outlives the grace. -/
+def ending : List Stop.Send := [⟨.group, 1, Stop.grace⟩, ⟨.group, 9, Stop.grace⟩]
 
 /-- The signals that stop a daemon as the system stops linger at logout or shutdown, by number,
 the same on Linux and macOS: SIGHUP, SIGINT, SIGQUIT and SIGTERM. -/

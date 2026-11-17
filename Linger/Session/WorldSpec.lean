@@ -60,18 +60,19 @@ WorldClaim Pty.Foreground (reported seen : UInt32 → Option Foreground) :=
 
 /-- The operating system runs what linger asks, and nothing else. A program that `start dir prog
 args extra reset` starts sees the words `prog` and then `args`, runs in `dir`, and reads each
-variable as the last pair of `extra` that sets it, or else as `inherited` has it: the environment
-of the command that asked for the session, which its daemon runs with. A program that cannot
-start is `none`. A started program that sees other words, another directory or another value
-falsifies it. -/
+variable as the last pair of `extra` that names it says, its value or, for `none`, no such
+variable, or else as `inherited` has it: the environment of the command that asked for the
+session, which its daemon runs with. A program that cannot start is `none`. A started program
+that sees other words, another directory, another value or a variable `extra` unsets falsifies
+it. -/
 WorldClaim Spawn.Runs (inherited : String → Option String)
   (start :
-    String → String → Array String → List (String × String) → Spawn.Reset → Option Spawn.Started) :=
+    String →
+      String → Array String → List (String × Option String) → Spawn.Reset → Option Spawn.Started) :=
   ∀ dir prog args extra reset started,
     start dir prog args extra reset = some started →
       started.argv = prog :: args.toList ∧
-        started.dir = dir ∧
-        ∀ key, started.env key = (extra.reverse.lookup key).orElse fun _ => inherited key
+        started.dir = dir ∧ ∀ key, started.env key = (extra.reverse.lookup key).getD (inherited key)
 
 /-- The operating system starts a program as clean as its start asks. A program that `start dir
 prog args extra reset` starts has its session's terminal on descriptors 0, 1 and 2, and with
@@ -82,7 +83,8 @@ descriptor from 3 up open, or another file than its terminal on 0, 1 or 2 falsif
 `SigIgn`, `SigBlk` and `fd` entries under `/proc` show on Linux. -/
 WorldClaim Spawn.Clean
   (start :
-    String → String → Array String → List (String × String) → Spawn.Reset → Option Spawn.Started) :=
+    String →
+      String → Array String → List (String × Option String) → Spawn.Reset → Option Spawn.Started) :=
   ∀ dir prog args extra reset started,
     start dir prog args extra reset = some started →
       (∀ fd, fd < 3 → started.descriptor fd = some .terminal) ∧

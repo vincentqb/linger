@@ -205,6 +205,81 @@ private def jobEnds (path : String) : IO Bool := do
     Os.Shell.kill job 9
   return ended
 
+/-- The pid a shell wrote to `path`, once it has. -/
+private def pidAt (path : String) : IO (Option UInt32) := do
+  unless ← waitFor patienceMs (System.FilePath.pathExists s!"{path}.done") do
+    return none
+  return ((← IO.FS.readFile path).trimAscii.toString.toNat?).map UInt32.ofNat
+
+/-- A session's ending ends its program's whole process group and the rest of its terminal
+session, at the grace for a process that ignores SIGHUP and SIGTERM, before its end record says
+it ended: a kill returns once none of a background job, a job in a process group of its own and
+the stubborn one runs, and a `wait` on a program that exits by itself returns once its stubborn
+job is gone. Anything left running is ended here, so a failed check leaves nothing behind. -/
+private def groupChecks (e : Env) : IO Unit := do
+  let dir := s!"{e.dir}/group"
+  IO.FS.createDirAll dir
+  let record (job : String) := s!"echo $! > {dir}/{job}; : > {dir}/{job}.done"
+  let stubborn := "(trap '' HUP TERM; while :; do sleep 1; done) &"
+  IO.FS.writeFile s!"{dir}/kill.sh"
+      (s!"sleep 600 & {record "bg"}\nset -m\nsleep 600 & {record "pg"}\nset +m\n" ++
+        s!"{stubborn} {record "stubborn"}\nwait\n")
+  IO.FS.writeFile s!"{dir}/exit.sh" s!"{stubborn} {record "left"}\nexit 37\n"
+  let (startRc, _, _) ← e.cli #["start", "wg", "/bin/sh", s!"{dir}/kill.sh"]
+  let jobs ← ["bg", "pg", "stubborn"].mapM fun job => pidAt s!"{dir}/{job}"
+  let pgids ←
+    jobs.mapM fun job => do
+        let some pid := job | return ""
+        return (←
+              IO.Process.output
+                  { cmd := "ps",
+                    args := #["-o", "pgid=", "-p", toString pid] }).stdout.trimAscii.toString
+  let killStart ← Os.Shell.monotonicMs
+  let killing ← IO.asTask (e.cli #["kill", "wg"]) Task.Priority.dedicated
+  -- the stubborn job outlives the first signal: it has not ended by half the grace
+  let stubbornAtHalf ←
+    match jobs[2]? with
+    | some (some pid) =>
+      do
+        let ended ← waitFor (Linger.Session.Stop.grace / 2) (return !(← Os.Shell.alive pid))
+        pure !ended
+    | _ =>
+      pure false
+  let (killRc, _, _) ← IO.ofExcept (← IO.wait killing)
+  let allGone ←
+    waitFor
+        (Linger.Session.Stop.grace + 1000 -
+          min (Linger.Session.Stop.grace + 1000) ((← Os.Shell.monotonicMs) - killStart))
+        (jobs.allM fun job =>
+          match job with
+          | some pid => return !(← Os.Shell.alive pid)
+          | none => return true)
+  for job in jobs do
+    if let some pid := job then
+      if ← Os.Shell.alive pid then
+        Os.Shell.kill pid 9
+  expect
+      (startRc == 0 && jobs.all (·.isSome) && pgids[0]? != pgids[1]? && stubbornAtHalf &&
+        killRc == 0 &&
+        allGone)
+      s!"kill ends the program's process group and terminal session, at the grace for a job \
+        that ignores SIGHUP and SIGTERM (pgids {pgids}, alive at half the grace: {stubbornAtHalf})"
+  let (_, _, _) ← e.cli #["start", "wx", "/bin/sh", s!"{dir}/exit.sh"]
+  let left ← pidAt s!"{dir}/left"
+  let (exitRc, _, _) ← e.cli #["wait", "wx"]
+  let leftGone ←
+    match left with
+    | some pid =>
+      waitFor 200 (return !(← Os.Shell.alive pid))
+    | none =>
+      pure false
+  if let some pid := left then
+    if ← Os.Shell.alive pid then
+      Os.Shell.kill pid 9
+  expect (exitRc == 37 && leftGone)
+      s!"a program's own end ends a job of its group that ignores SIGHUP and SIGTERM before its \
+        end record says it ended (rc={exitRc})"
+
 /-- Focus reports reach the program. One that enabled focus reporting reads nothing from a
 watcher, then `Session.focusReport true` when a client that can type attaches and
 `Session.focusReport false` when it detaches; one that did not enable it reads none. Each
@@ -657,6 +732,7 @@ def run : IO UInt32 :=
     let ownEnded ← jobEnds job9
     expect (ownRc == 37 && ownEnded)
         s!"a session's end ends a job of its terminal session that ignores SIGHUP (rc={ownRc})"
+    groupChecks e
     -- With no daemon, kill discards a saved session, and then finds none.
     let savedPath := s!"{e.dir}/w-saved.ckpt"
     IO.FS.writeBinFile savedPath

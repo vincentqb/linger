@@ -177,7 +177,8 @@ opaque inherited : String → Option String
 /-- What a program a start asks for sees of its start, `none` when it cannot start: the
 observation `Spawn.Runs` and `Spawn.Clean` constrain. -/
 opaque started :
-    String → String → Array String → List (String × String) → Spawn.Reset → Option Spawn.Started
+    String →
+      String → Array String → List (String × Option String) → Spawn.Reset → Option Spawn.Started
 
 /-- Start `/bin/sh` in a new terminal, in `dir`, running `script` with `words` and the extra
 environment `extra`, as a session's program starts, and give the lines it leaves in `out` once
@@ -194,23 +195,25 @@ def startedSees (dir out script : String) (words extra : Array String) (reset : 
 
 -- A started program sees the words, the directory and the environment its start asked for: a
 -- shell started in a new terminal, in a directory of its own, with words a shell would expand,
--- split or quote, and with variables that override what it inherits, the last setting of one
--- winning, writes what it sees to a file: its directory, its words and each variable.
+-- split or quote, with variables that override what it inherits, the last setting of one
+-- winning, and one it inherits unset, writes what it sees to a file: its directory, its words and
+-- each variable.
 Check Spawn.Runs inherited started := do
   IO.FS.withTempDir fun dir => do
       let out := (dir / "started").toString
       let words := #["w0", "two words", "$HOME `id` * ;", "ü ✓", ""]
       let script :=
-        "printf '%s\\000' \"$(pwd -P)\" \"$0\" \"$@\" \"$LINGER_CHECK\" \"$HOME\" \"$PATH\" > \
+        "printf '%s\\000' \"$(pwd -P)\" \"$0\" \"$@\" \"$LINGER_CHECK\" \"${HOME-unset}\" \"$PATH\" > \
         \"$LINGER_CHECK_OUT.part\" && mv \"$LINGER_CHECK_OUT.part\" \"$LINGER_CHECK_OUT\""
       let extra :=
-        #["LINGER_CHECK=first", s!"LINGER_CHECK_OUT={out}", "LINGER_CHECK=last", s!"HOME={dir}"]
+        #["LINGER_CHECK=first", s!"LINGER_CHECK_OUT={out}", "LINGER_CHECK=last", s!"HOME={dir}",
+          "HOME"]
       let some seen ←
         startedSees dir.toString out script words
             extra | refute "the started program did not say what it sees"
       let wanted :=
         [(← IO.FS.realPath dir).toString] ++ words.toList ++
-          ["last", dir.toString, (← IO.getEnv "PATH").getD "", ""]
+          ["last", "unset", (← IO.getEnv "PATH").getD "", ""]
       unless seen == wanted do
         refute s!"a started program saw {seen}, not {wanted}"
 
@@ -572,5 +575,46 @@ Check Os.Exec.Keeps upgraded := do
     throw
         (IO.userError
           s!"the exec'd shell wrote nothing through the descriptor it kept: {out.stdout} {out.stderr}")
+
+/-- Whether a process is in the process group of a session's program when its ending signals
+the group: the membership `Os.Signal.Group` speaks of, which `ending_clean` rests on. It has no
+body; the check below observes it. -/
+opaque inProgramGroup : Nat → Nat → Bool
+
+/-- Whether the signal a session's ending sends to its program's process group
+(`Os.Shell.signalGroup`) reaches a process: the observation `Os.Signal.Group` constrains. It has no
+body; the check below observes it. -/
+opaque endingReaches : Nat → Nat → Bool
+
+-- A session's ending reaches every process of its program's group: a program in a terminal session
+-- and a process group of its own starts two jobs in its group, each of which, like the program,
+-- notes the SIGHUP an ending sends first in a file of its own and keeps running; one signal to the
+-- group, and each of the three notes it.
+Check Os.Signal.Group inProgramGroup endingReaches := do
+  IO.FS.withTempDir fun dir => do
+      let first := Linger.Session.ending.head?.map (·.signal) |>.getD 1
+      let note (who : String) := s!"trap ': > {dir}/{who}' HUP"
+      let member (who : String) := s!"({note who}; while :; do sleep 0.05; done) &"
+      let script :=
+        s!"{member "first"} {member "second"} {note "program"}; " ++
+          s!"ps -o pgid= -p $! > {dir}/group.part && mv {dir}/group.part {dir}/group; " ++
+          "while :; do sleep 0.05; done"
+      let (pid, master) ← spawnPty 80 24 "" "/bin/sh" #["-c", script] #[]
+      try
+        unless ← within ((← monotonicMs) + 10000) (System.FilePath.pathExists (dir / "group")) do
+          refute "the program did not start its jobs"
+        let pgid := (← IO.FS.readFile (dir / "group")).trimAscii.toString
+        unless pgid == toString pid do
+          refute s!"a job of the program {pid} is in the process group {pgid}"
+        unless ← signalGroup pid first do
+          refute s!"the program's process group {pid} had no process to signal"
+        let noted : IO Bool := do
+          return (← (dir / "program").pathExists) && (← (dir / "first").pathExists) &&
+              (← (dir / "second").pathExists)
+        unless ← within ((← monotonicMs) + 5000) noted do
+          refute "a process of the program's group did not note the signal sent to the group"
+      finally
+        discard <| (signalGroup pid 9).toBaseIO
+        stop pid master
 
 end Linger.Session.Checks

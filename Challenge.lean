@@ -240,7 +240,7 @@ def Linger.Session.Names.entryFile : String → String := sorry
 
 def Linger.Session.Names.entryName : String → Option String := sorry
 
-def Linger.Session.ending : List (UInt32 × Nat) := sorry
+def Linger.Session.ending : List Linger.Session.Stop.Send := sorry
 
 def Linger.Session.drainTimeoutMs : Nat := sorry
 
@@ -320,7 +320,7 @@ def Linger.Session.Start.proceeds : Bool → Bool := sorry
 
 def Linger.Session.Start.answer : Bool → Bool → Start.Answer := sorry
 
-def Linger.Session.Start.environment : String → List (String × String) := sorry
+def Linger.Session.Start.environment : String → List String → List (String × Option String) := sorry
 
 def Linger.Session.Start.reset : Spawn.Reset := sorry
 
@@ -1835,7 +1835,10 @@ session's shell alone, which is what a resume runs again on the saved session's 
 (`resume_restores`, in part 7). The operating system runs it as asked: the world claim
 `Spawn.Runs`, which its check and the agent and resume suites test. Its terminal says what it is:
 `TERM=xterm-256color`, `COLORTERM=truecolor`, since the session's terminal keeps and repaints
-24-bit colour, and linger's name and version (`start_runs`).
+24-bit colour, and linger's name and version; it reads every other variable as the command that
+asked for the session has it, but linger's own, whose names begin `LINGER_` (`Start.lingers`),
+which it never sees but for its session's `LINGER_SESSION`, so `env -i K=V … linger start` gives
+it exactly `K=V` and the session's variables (`start_runs`).
 
 The program starts from what its start asks, never from how linger was started: every signal at its
 default action, none blocked, and its terminal on descriptors 0, 1 and 2 with no other open,
@@ -1847,12 +1850,14 @@ user and groups it runs as. -/
 
 theorem start_runs (inherited : String → Option String)
     (start :
-      String → String → Array String → List (String × String) → Spawn.Reset → Option Spawn.Started)
-    (runs : Spawn.Runs inherited start) (id dir shell : String) (argv : List String)
-    {started : Spawn.Started}
+      String →
+        String → Array String → List (String × Option String) → Spawn.Reset → Option Spawn.Started)
+    (runs : Spawn.Runs inherited start) (names : List String)
+    (named : ∀ key, (inherited key).isSome → key ∈ names) (id dir shell : String)
+    (argv : List String) {started : Spawn.Started}
     (ok :
-      start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2 (Start.environment id)
-          Start.reset =
+      start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
+          (Start.environment id names) Start.reset =
         some started) :
     started.argv = argv.headD shell :: argv.drop 1 ∧
       started.dir = dir ∧
@@ -1863,42 +1868,47 @@ theorem start_runs (inherited : String → Option String)
       started.env "TERM_PROGRAM_VERSION" = some Mediation.versionNumber ∧
       ∀ key,
         key ∉ ["LINGER_SESSION", "TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"] →
-          started.env key = inherited key := by
+          started.env key = if Start.lingers key then none else inherited key := by
   sorry
 
 @[kills start_runs]
-theorem start_runs_rejects_unnamed :
+theorem start_runs_rejects_passing :
     ¬∀ (inherited : String → Option String)
         (start :
           String →
-            String → Array String → List (String × String) → Spawn.Reset → Option Spawn.Started),
+            String →
+            Array String → List (String × Option String) → Spawn.Reset → Option Spawn.Started),
         Spawn.Runs inherited start →
-          ∀ (id dir shell : String) (argv : List String) {started : Spawn.Started},
-            start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
-                  ((fun (_ : String) => ([] : List (String × String))) id) Start.reset =
-                some started →
-              started.argv = argv.headD shell :: argv.drop 1 ∧
-                started.dir = dir ∧
-                started.env "LINGER_SESSION" = some id ∧
-                started.env "TERM" = some "xterm-256color" ∧
-                started.env "COLORTERM" = some "truecolor" ∧
-                started.env "TERM_PROGRAM" = some "linger" ∧
-                started.env "TERM_PROGRAM_VERSION" = some Mediation.versionNumber ∧
-                ∀ key,
-                  key ∉
-                      ["LINGER_SESSION", "TERM", "COLORTERM", "TERM_PROGRAM",
-                        "TERM_PROGRAM_VERSION"] →
-                    started.env key = inherited key := by
+          ∀ (names : List String),
+            (∀ key, (inherited key).isSome → key ∈ names) →
+              ∀ (id dir shell : String) (argv : List String) {started : Spawn.Started},
+                start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
+                      ((fun (id : String) (_ : List String) => Start.environment id []) id names)
+                      Start.reset =
+                    some started →
+                  started.argv = argv.headD shell :: argv.drop 1 ∧
+                    started.dir = dir ∧
+                    started.env "LINGER_SESSION" = some id ∧
+                    started.env "TERM" = some "xterm-256color" ∧
+                    started.env "COLORTERM" = some "truecolor" ∧
+                    started.env "TERM_PROGRAM" = some "linger" ∧
+                    started.env "TERM_PROGRAM_VERSION" = some Mediation.versionNumber ∧
+                    ∀ key,
+                      key ∉
+                          ["LINGER_SESSION", "TERM", "COLORTERM", "TERM_PROGRAM",
+                            "TERM_PROGRAM_VERSION"] →
+                        started.env key = if Start.lingers key then none else inherited key := by
   sorry
 
 theorem start_clean
     (start :
-      String → String → Array String → List (String × String) → Spawn.Reset → Option Spawn.Started)
-    (clean : Spawn.Clean start) (name dir shell : String) (argv : List String)
+      String →
+        String → Array String → List (String × Option String) → Spawn.Reset → Option Spawn.Started)
+    (clean : Spawn.Clean start) (name dir shell : String) (names argv : List String)
     {started : Spawn.Started}
     (ok :
       start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
-          (Start.environment name) Start.reset =
+          (Start.environment name names) Start.reset =
         some started) :
     (∀ sig, started.ignored sig = false) ∧
       (∀ sig, started.blocked sig = false) ∧
@@ -1910,11 +1920,12 @@ theorem start_clean_rejects_inherited :
     ¬∀
         (start :
           String →
-            String → Array String → List (String × String) → Spawn.Reset → Option Spawn.Started),
+            String →
+            Array String → List (String × Option String) → Spawn.Reset → Option Spawn.Started),
         Spawn.Clean start →
-          ∀ (name dir shell : String) (argv : List String) {started : Spawn.Started},
+          ∀ (name dir shell : String) (names argv : List String) {started : Spawn.Started},
             start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
-                  (Start.environment name)
+                  (Start.environment name names)
                   ({ dispositions := false, mask := true, descriptors := true } : Spawn.Reset) =
                 some started →
               (∀ sig, started.ignored sig = false) ∧
@@ -2226,7 +2237,7 @@ theorem wait_held (deadline heldSince : Option Nat) (now : Nat) (heard : Wait.He
       (heard = .held →
         ∀ since,
           heldSince = some since →
-            now < since + (Session.drainTimeoutMs + (Session.ending.map (·.2)).sum) →
+            now < since + (Session.drainTimeoutMs + (Session.ending.map (·.wait)).sum) →
             Wait.decide deadline heldSince now heard ≠ .answer .failed) := by
   sorry
 
@@ -2248,7 +2259,7 @@ theorem wait_held_rejects_eager :
           (heard = .held →
             ∀ since,
               heldSince = some since →
-                now < since + (Session.drainTimeoutMs + (Session.ending.map (·.2)).sum) →
+                now < since + (Session.drainTimeoutMs + (Session.ending.map (·.wait)).sum) →
                 (fun (_ _ : Option Nat) (_ : Nat) (_ : Wait.Heard) => Wait.Next.answer .failed)
                     deadline heldSince now heard ≠
                   .answer .failed) := by
@@ -2269,7 +2280,7 @@ theorem wait_held_rejects_drain :
           (heard = .held →
             ∀ since,
               heldSince = some since →
-                now < since + (Session.drainTimeoutMs + (Session.ending.map (·.2)).sum) →
+                now < since + (Session.drainTimeoutMs + (Session.ending.map (·.wait)).sum) →
                 Wait.decide deadline heldSince now heard ≠ .answer .failed) := by
   sorry
 
@@ -2508,15 +2519,19 @@ does a client's output queue the daemon keeps (`reachableIn_bound`, `reachableOu
 gets at most one rendered reply, its frames followed by `done`, and when it leaves its sender
 unattached at most one pty resize (`step_bytes_one_reply`); every frame of program output carries at
 most 64 KiB (`step_output_delivered`, in part 1); and a tmux capture's bytes are at most twice its
-limit (`captureBytes_bounded`). When a session ends, the daemon sends SIGHUP to its program and the
-rest of the program's terminal session, then SIGKILL to those still running a second later, and
-reaps the program last, so the program's pid, which is the session's id, stays reserved until then:
-of the processes of the terminal session its signals reach, none still runs once the ending is over
-(`ending_clean`), when SIGKILL ends within a second each process it reaches (`Signal.Ends`, which
-its check and the attach suite test and a process stuck in the kernel falsifies). Not claimed: how
-many pty resizes a read asks for while its sender stays attached; and the processes linger's signals
-miss, as the claim's comment names them: one that left the terminal session with `setsid`, one of
-another user and one forked after the daemon looked.
+limit (`captureBytes_bounded`). When a session ends, by a kill or by its program's own end, the
+daemon signals the program's whole process group, which the program leads, at once, and the rest
+of its terminal session, with each signal of `Session.ending`: SIGHUP, then SIGKILL to what still
+runs at the grace, `Stop.grace`; it then writes the end record, so `kill` and `wait` return once
+that is done, and reaps the program last, so the program's pid, which is the group's and the
+session's id, stays reserved until then. Of the processes of the program's group, none still runs
+once the ending is over (`ending_clean`), when a signal to a group reaches every member
+(`Os.Signal.Group`, which its check tests) and SIGKILL ends within a second each process it
+reaches (`Signal.Ends`, which its check and the attach suite test and a process stuck in the
+kernel falsifies). Not claimed: how many pty resizes a read asks for while its sender stays
+attached; the rest of the terminal session, which the attach suite tests; and the processes
+linger's signals miss: one that left the group and the terminal session with `setsid`, which only
+a PID namespace would hold, and one of another user.
 
 State is bounded by what it means: every file in linger's state is one fact, a session's socket
 or checkpoint or an ID's end record, or a names entry, and a lock file means nothing of its own.
@@ -2633,23 +2648,23 @@ theorem captureBytes_bounded_rejects_unbounded :
   sorry
 
 theorem ending_clean (gone : UInt32 → Nat → Nat → Bool) (ends : Signal.Ends gone)
-    (alive : List Nat) :
-    (Session.ending.head?.map (·.1)) = some 1 ∧
-      Session.ending.foldl
-          (fun still (signal : UInt32 × Nat) => still.filter (!gone signal.1 signal.2 ·)) alive =
-        [] := by
+    (member reaches : Nat → Nat → Bool) (group : Os.Signal.Group member reaches) (program : Nat)
+    (alive : List Nat) (members : ∀ pid ∈ alive, member program pid = true) :
+    (Session.ending.head?.map (·.signal)) = some 1 ∧
+      Session.ending.foldl (Stop.survivors (Stop.reach program reaches) gone) alive = [] := by
   sorry
 
 @[kills ending_clean]
-theorem ending_clean_rejects_hangup :
+theorem ending_clean_rejects_pid :
     ¬∀ (gone : UInt32 → Nat → Nat → Bool),
         Signal.Ends gone →
-          ∀ (alive : List Nat),
-            (([(1, 1000)] : List (UInt32 × Nat)).head?.map (·.1)) = some 1 ∧
-              ([(1, 1000)] : List (UInt32 × Nat)).foldl
-                  (fun still (signal : UInt32 × Nat) => still.filter (!gone signal.1 signal.2 ·))
-                  alive =
-                [] := by
+          ∀ (member reaches : Nat → Nat → Bool),
+            Os.Signal.Group member reaches →
+              ∀ (program : Nat) (alive : List Nat),
+                (∀ pid ∈ alive, member program pid = true) →
+                  (Stop.pidOnly.head?.map (·.signal)) = some 1 ∧
+                    Stop.pidOnly.foldl (Stop.survivors (Stop.reach program reaches) gone) alive =
+                      [] := by
   sorry
 
 /-! ## 7. Recovery

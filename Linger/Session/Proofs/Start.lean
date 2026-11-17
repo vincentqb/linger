@@ -41,10 +41,11 @@ alone. -/
 theorem programOf_exact (shell : String) (argv : List String) :
     programOf shell argv = (argv.headD shell, (argv.drop 1).toArray) := by cases argv <;> rfl
 
-/-- A session's program reads each variable `environment` sets as it sets it, and every other as
-the command that asked for the session had it. -/
-theorem environment_lookup (name key : String) (inherited : String → Option String) :
-    ((environment name).reverse.lookup key).orElse (fun _ => inherited key) =
+/-- A session's program reads each variable `session` sets as it sets it, none of linger's own
+of the command that asked for the session, and every other as that command had it. -/
+theorem environment_lookup (name key : String) (names : List String)
+    (inherited : String → Option String) (named : (inherited key).isSome → key ∈ names) :
+    ((environment name names).reverse.lookup key).getD (inherited key) =
       if key = "LINGER_SESSION" then some name
       else
         if key = "TERM" then some "xterm-256color"
@@ -54,7 +55,22 @@ theorem environment_lookup (name key : String) (inherited : String → Option St
             if key = "TERM_PROGRAM" then some "linger"
             else
               if key = "TERM_PROGRAM_VERSION" then some Terminal.Mediation.versionNumber
-              else inherited key := by
+              else if lingers key then none else inherited key := by
+  have unsets :
+    ∀ keys : List String,
+      List.lookup key (keys.map fun x => (x, (none : Option String))) =
+        if key ∈ keys then some none else none := by
+    intro keys
+    induction keys with
+    | nil => simp
+    | cons x xs ih =>
+      by_cases h : key = x
+      · subst h
+        simp
+      · simp [List.lookup, h, ih, beq_eq_false_iff_ne.2 h]
+  unfold environment
+  rw [List.reverse_append, List.lookup_append, ← List.map_reverse (l := names.filter lingers),
+    unsets]
   by_cases h1 : key = "LINGER_SESSION"
   · subst h1; rfl
   by_cases h2 : key = "TERM"
@@ -65,9 +81,21 @@ theorem environment_lookup (name key : String) (inherited : String → Option St
   · subst h3; rfl
   by_cases h4 : key = "TERM_PROGRAM_VERSION"
   · subst h4; rfl
-  simp [environment, List.lookup, beq_eq_false_iff_ne.2 h1, beq_eq_false_iff_ne.2 h2,
-    beq_eq_false_iff_ne.2 h5, beq_eq_false_iff_ne.2 h3, beq_eq_false_iff_ne.2 h4, h1, h2, h5, h3,
-    h4]
+  have none_set :
+    List.lookup key ((session name).map fun (key, value) => (key, some value)).reverse = none := by
+    simp [session, List.lookup, beq_eq_false_iff_ne.2 h1, beq_eq_false_iff_ne.2 h2,
+      beq_eq_false_iff_ne.2 h5, beq_eq_false_iff_ne.2 h3, beq_eq_false_iff_ne.2 h4]
+  rw [none_set]
+  simp only [h1, h2, h5, h3, h4, ite_false, Option.none_or]
+  by_cases own : lingers key = true
+  · by_cases listed : key ∈ names
+    · simp [listed, own]
+    · have absent : inherited key = none := by
+        cases h : inherited key with
+        | none => rfl
+        | some _ => exact absurd (named (by simp [h])) listed
+      simp [listed, own, absent]
+  · simp [own]
 
 /-- A session's program starts with every signal at its default action, none blocked, and no
 descriptor open past the three of its terminal. -/

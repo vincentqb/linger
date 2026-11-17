@@ -261,15 +261,22 @@ the data directory is `data` there, which a suite that tests saves fills. A lega
 def Env.sourceEnv (e : Env) : Array (String × String) :=
   #[("TMUX", s!"{e.dir}/no-tmux-server,0,0"), ("XDG_DATA_HOME", s!"{e.dir}/data")]
 
-/-- `extraEnv` for `spawnPty`: the state dir plus a predictable shell and the suite's own
-tmux-resurrect source (`sourceEnv`). -/
+/-- Where a linger that runs without `LINGER_DIR` keeps its sockets and its state, in the suite's
+directory: a session's program never sees `LINGER_DIR`, so a linger it runs, as a nested session
+does, uses these and never the user's. -/
+def Env.fallbackEnv (e : Env) : Array (String × String) :=
+  #[("XDG_RUNTIME_DIR", s!"{e.dir}/xdg-run"), ("XDG_STATE_HOME", s!"{e.dir}/xdg-state")]
+
+/-- `extraEnv` for `spawnPty`: the state dir plus a predictable shell, the suite's own
+tmux-resurrect source (`sourceEnv`) and fallback directories (`fallbackEnv`). -/
 def Env.ptyEnv (e : Env) : Array String :=
-  #[s!"LINGER_DIR={e.dir}", "SHELL=/bin/sh"] ++ e.sourceEnv.map fun (k, v) => s!"{k}={v}"
+  #[s!"LINGER_DIR={e.dir}", "SHELL=/bin/sh"] ++
+    (e.sourceEnv ++ e.fallbackEnv).map fun (k, v) => s!"{k}={v}"
 
 /-- …and the same for `IO.Process.output`, which wants pairs. -/
 def Env.procEnv (e : Env) : Array (String × Option String) :=
   #[("LINGER_DIR", some e.dir), ("SHELL", some "/bin/sh")] ++
-    e.sourceEnv.map fun (k, v) => (k, some v)
+    (e.sourceEnv ++ e.fallbackEnv).map fun (k, v) => (k, some v)
 
 /-- A live pty client: the child's pid and our end of its terminal. -/
 structure Client where
