@@ -801,29 +801,15 @@ example :
       true := by
   native_decide
 
-/-- Work follows events: output schedules the tick that ends its freshness, unsaved changes the
-tick that saves them, and a session with neither needs no tick at all. -/
+/-- Work follows events: unsaved changes get the tick that saves them, and a session with none
+needs no tick at all; output sets no other. -/
 example :
-    (let (fresh, _) := run []
-     let (saved, _) := run [.ptyOut "x".toUTF8.toList, .tick 70000]
-      let (stale, _) := step saved (.tick (70000 + freshMs))
-      let (busy, _) :=
-        run [.ptyOut "x".toUTF8.toList, .tick 70000, .ptyOut "y".toUTF8.toList, .tick 70500]
-      let (unsaved, _) := step busy (.tick (70500 + freshMs))
-      fresh.nextTick == none && saved.nextTick == some (70000 + freshMs) &&
-        stale.nextTick == none &&
-        busy.nextTick == some (70500 + freshMs) &&
-        unsaved.nextTick == some (70000 + ckptIntervalMs)) =
-      true := by
-  native_decide
-
-/-- Output counts as right now for `freshMs` from the tick that saw it, whatever other ticks
-happen meanwhile, as when a question wakes the daemon: `info` reports it fresh until then. -/
-example :
-    (let (seen, _) := run [.ptyOut "x".toUTF8.toList, .tick 70000]
-     let (asked, _) := step seen (.tick 70200)
-      let (later, _) := step asked (.tick (70000 + freshMs))
-      asked.freshFlag && !later.freshFlag && (infoFields asked).contains ("fresh", toString true)) =
+    (let (quiet, _) := run []
+     let (wrote, _) := run [.ptyOut "x".toUTF8.toList]
+      let (saved, _) := run [.ptyOut "x".toUTF8.toList, .tick 70000]
+      let (busy, _) := step saved (.ptyOut "y".toUTF8.toList)
+      quiet.nextTick == none && wrote.nextTick == some ckptIntervalMs && saved.nextTick == none &&
+        busy.nextTick == some (70000 + ckptIntervalMs)) =
       true := by
   native_decide
 
@@ -862,15 +848,61 @@ example :
 example :
     (let (titled, _) := run [.ptyOut ([0x1B, 0x5D, 0x32, 0x3B, 0x74, 0x07] ++ "x".toUTF8.toList)]
       let (progress, _) := run [.ptyOut (osc9 "4;1;50")]
-      !titled.seen.asks && !progress.seen.asks && titled.seen.unseen &&
+      !titled.seen.asks && !progress.seen.asks && !titled.seen.unseen &&
         !(infoFields progress).any (·.1 == "notice")) =
+      true := by
+  native_decide
+
+/-- A program works exactly while it declared progress under way, normal or indeterminate, as
+`info` reports it, whatever ticks happen meanwhile, until a report removes it; an error and a
+pause say the progress stopped, and output alone declares nothing. -/
+example :
+    (let (wrote, _) := run [.ptyOut "x".toUTF8.toList, .tick 70000]
+     let (busy, _) := run [.ptyOut (osc9 "4;3;"), .tick 70000, .tick 900000]
+      let (done, _) := step busy (.ptyOut (osc9 "4;0;"))
+      let (normal, _) := run [.ptyOut (osc9 "4;1;50")]
+      let (failed, _) := run [.ptyOut (osc9 "4;2")]
+      let (paused, _) := run [.ptyOut (osc9 "4;4;10")]
+      !wrote.seen.working && (infoFields wrote).contains ("progress", "none") &&
+        busy.seen.working &&
+        (infoFields busy).contains ("working", "true") &&
+        (infoFields busy).contains ("progress", "indeterminate") &&
+        !done.seen.working &&
+        (infoFields done).contains ("progress", "none") &&
+        normal.seen.working &&
+        !failed.seen.working &&
+        (infoFields failed).contains ("progress", "error") &&
+        !paused.seen.working &&
+        (infoFields paused).contains ("progress", "paused")) =
+      true := by
+  native_decide
+
+/-- Lines that enter the history with nobody attached are unseen until a look; a line rewritten
+in place, a title and anything on the alternate screen add none. -/
+example :
+    (let (scrolled, _) := run [.ptyOut ((List.range 30).flatMap fun _ => "x\r\n".toUTF8.toList)]
+     let (looked, _) := run [.connected 1, .bytes 1 (encode (.attach .writable 80 24))] scrolled
+      let (spun, _) :=
+        run
+          [.ptyOut
+              ((List.range 30).flatMap fun _ =>
+                "\rtick".toUTF8.toList ++ [0x1B, 0x5D, 0x30, 0x3B, 0x73, 0x07])]
+      let (alt, _) :=
+        run
+          [.ptyOut
+              ([0x1B, 0x5B, 0x3F, 0x31, 0x30, 0x34, 0x39, 0x68] ++
+                (List.range 30).flatMap fun _ => "x\r\n".toUTF8.toList)]
+      scrolled.seen.unseen && (infoFields scrolled).contains ("unseen", "true") &&
+        !looked.seen.unseen &&
+        !spun.seen.unseen &&
+        !alt.seen.unseen) =
       true := by
   native_decide
 
 /-- What a daemon publishes to its name's end record carries the ask, and reads back. -/
 example :
     (let (rang, _) := run [.ptyOut [0x07]]
-     Record.published (Record.encode (.running (some rang.seen))) == some ⟨false, true, true⟩) =
+     Record.published (Record.encode (.running (some rang.seen))) == some ⟨false, false, true⟩) =
       true := by
   native_decide
 
@@ -884,8 +916,8 @@ def untold (s : State) : Bool :=
 
 /-- A `D` after a `C` with nobody attached is a command's ending, told in `info` with the command
 line its `C` gave and the status its `D` gave, across chunks, and a `D` after it, with no `C`
-since, tells nothing; the session's status is unchanged, unseen output, which a summary that reads
-the end record sees too; an attach clears the ending, and an ending while a client is attached is
+since, tells nothing; the session's status is unchanged, no command running and no line in the
+history, which a summary that reads the end record sees too; an attach clears the ending, and an ending while a client is attached is
 seen as it arrives. -/
 example :
     (let (ended, _) :=
@@ -896,7 +928,7 @@ example :
       let (seen, _) := run [.ptyOut (mark "C;cmdline_url=ls" ++ mark "D;1")] looked
       (infoFields ended).contains ("lastcmd", "make test") &&
         (infoFields ended).contains ("lastexit", "2") &&
-        ended.seen == ⟨false, true, false⟩ &&
+        ended.seen == ⟨false, false, false⟩ &&
         Record.published (Record.encode (.running (some ended.seen))) == some ended.seen &&
         untold looked &&
         untold seen) =

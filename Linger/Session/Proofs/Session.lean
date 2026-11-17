@@ -15,6 +15,7 @@ import all Linger.Session.Proofs.Wire
 -- "Resume at the daemon", below), and `Checkpoint.loadBytes_saveBytes_live` gives a resumed
 -- session's checkpoint round trip (`run_resume_load_save`).
 import all Linger.Session.Proofs.Checkpoint
+import Std.Data.String.ToNat
 public import Linger.Session.CoreSpec
 
 /-! # The daemon state machine theorems
@@ -67,9 +68,9 @@ theorem infoFields_protocol (s : State) :
   simp [infoFields]
 
 /-- What the name's end record publishes is what `info` reports: a summary that reads the record
-sees the daemon's own `fresh`, `unseen` and `asks`. -/
+sees the daemon's own `working`, `unseen` and `asks`. -/
 theorem infoFields_seen (s : State) :
-    ("fresh", toString s.seen.fresh) ∈ infoFields s ∧
+    ("working", toString s.seen.working) ∈ infoFields s ∧
       ("unseen", toString s.seen.unseen) ∈ infoFields s ∧
       ("asks", toString s.seen.asks) ∈ infoFields s := by
   simp [infoFields, State.seen]
@@ -263,7 +264,8 @@ theorem step_ptyOut_no_clients (s : State) (chunk : List UInt8) (h : s.clients =
           vt := r.vt, scan := r.scan, dirty := true, outSeq := s.outSeq + 1,
           asking := s.asking || r.asks, notice := r.notice.or s.notice,
           running := (r.marks.foldl hearMark (s.running, s.finished)).1,
-          finished := (r.marks.foldl hearMark (s.running, s.finished)).2 },
+          finished := (r.marks.foldl hearMark (s.running, s.finished)).2,
+          progress := r.progress.getD s.progress, unseenLines := s.unseenLines || r.lines },
         if r.replies.isEmpty then [] else [Effect.writePty r.replies]) := by
   simp [step, broadcast, h]
 
@@ -711,111 +713,52 @@ theorem ticked_frame (s : State) (now : Nat) :
       (s.ticked now).lastOutMs = (if s.tickOutSeq < s.outSeq then some now else s.lastOutMs) :=
   ⟨rfl, rfl, rfl, rfl, rfl⟩
 
-/-- A session needs a tick exactly while it has unsaved changes or fresh output. -/
-theorem nextTick_eq_none (s : State) :
-    s.nextTick = none ↔ s.dirty = false ∧ (s.freshFlag = false ∨ s.lastOutMs = none) := by
+/-- A session needs a tick exactly while it has unsaved changes: no status waits on a clock. -/
+theorem nextTick_eq_none (s : State) : s.nextTick = none ↔ s.dirty = false := by
   unfold State.nextTick
-  cases s.dirty <;> cases s.freshFlag <;> cases s.lastOutMs <;> simp
+  cases s.dirty <;> simp
 
-/-- Unsaved changes get their tick no later than the cadence allows a save. -/
+/-- Unsaved changes get their tick when the cadence allows a save. -/
 theorem nextTick_save (s : State) (h : s.dirty = true) :
-    ∃ due, s.nextTick = some due ∧ due ≤ s.lastCkptMs + ckptIntervalMs := by
-  unfold State.nextTick
-  simp only [h, ↓reduceIte]
-  cases s.freshFlag <;> cases s.lastOutMs <;> simp [Nat.min_le_left]
+    s.nextTick = some (s.lastCkptMs + ckptIntervalMs) := by simp [State.nextTick, h]
 
-/-- Fresh output gets its tick no later than the moment it stops being fresh. -/
-theorem nextTick_stale (s : State) {t : Nat} (h : s.freshFlag = true) (ho : s.lastOutMs = some t) :
-    ∃ due, s.nextTick = some due ∧ due ≤ t + freshMs := by
-  unfold State.nextTick
-  simp only [h, ho, ↓reduceIte, Option.map_some]
-  cases s.dirty <;> simp [Nat.min_le_right]
-
-/-- Output since the previous tick is fresh at this one, and schedules the tick that ends its
-freshness. -/
-theorem step_tick_fresh (s : State) (now : Nat) (hout : s.tickOutSeq < s.outSeq) :
-    (step s (.tick now)).1.freshFlag = true ∧
-      ∃ due, (step s (.tick now)).1.nextTick = some due ∧ due ≤ now + freshMs := by
-  have hfresh :
-    (step s (.tick now)).1.freshFlag = true ∧ (step s (.tick now)).1.lastOutMs = some now := by
-    simp only [step]
-    split <;> simp [State.ticked, hout, freshMs, workingMs]
-  exact ⟨hfresh.1, nextTick_stale _ hfresh.1 hfresh.2⟩
-
-/-- **Idle is free**: a tick that finds nothing unsaved, no output since the previous tick and
-the last output already stale leaves the session needing no tick, so its daemon sleeps until
-the next event. -/
-theorem step_tick_sleeps (s : State) (now : Nat) (hd : s.dirty = false)
-    (hout : s.tickOutSeq = s.outSeq) (hstale : ∀ t, s.lastOutMs = some t → t + freshMs ≤ now) :
+/-- **Idle is free**: a tick that finds nothing unsaved leaves the session needing no tick, so
+its daemon sleeps until the next event. -/
+theorem step_tick_sleeps (s : State) (now : Nat) (hd : s.dirty = false) :
     (step s (.tick now)).1.nextTick = none := by
-  have hlt : ¬s.tickOutSeq < s.outSeq := by omega
   rw [nextTick_eq_none]
-  simp only [step, hd, Bool.false_and, Bool.false_eq_true, ↓reduceIte, State.ticked, hlt]
-  refine ⟨trivial, Or.inl ?_⟩
-  cases ho : s.lastOutMs with
-  | none => rfl
-  | some t =>
-    have := hstale t ho
-    simp only [Option.any_some, decide_eq_false_iff_not]
-    omega
+  simp [step, hd, State.ticked]
 
-/-- What a tick leaves of the reasons to tick again: it has seen all output so far, its unsaved
-changes outlive it only while their save is not yet due, its output is fresh exactly while the
-last output it knows of is younger than `freshMs`, and when it had seen all output already, the
-last output it knows of is the one it knew. -/
+/-- What a tick leaves of the reasons to tick again: its unsaved changes outlive it only while
+their save is not yet due. -/
 theorem tick_facts (s : State) (now : Nat) :
-    let s' := (step s (.tick now)).1
-    s'.tickOutSeq = s'.outSeq ∧
-      (s'.dirty = true →
-        s.dirty = true ∧ now < s.lastCkptMs + ckptIntervalMs ∧ s'.lastCkptMs = s.lastCkptMs) ∧
-      s'.freshFlag = s'.lastOutMs.any (now < · + freshMs) ∧
-      (s.tickOutSeq = s.outSeq → s'.lastOutMs = s.lastOutMs) := by
+    (step s (.tick now)).1.dirty = true →
+      s.dirty = true ∧
+        now < s.lastCkptMs + ckptIntervalMs ∧ (step s (.tick now)).1.lastCkptMs = s.lastCkptMs := by
   simp only [step, State.ticked]
   split <;> simp_all
 
-/-- A session's next tick is the earlier of its save, while it has unsaved changes, and the end
-of its output's freshness, while that output is fresh. -/
-theorem nextTick_some (s : State) {t : Nat} (h : s.nextTick = some t) :
-    (s.dirty = true → t ≤ s.lastCkptMs + ckptIntervalMs) ∧
-      (∀ l, s.freshFlag = true → s.lastOutMs = some l → t ≤ l + freshMs) ∧
-      (s.dirty = true ∧ t = s.lastCkptMs + ckptIntervalMs ∨
-        ∃ l, s.freshFlag = true ∧ s.lastOutMs = some l ∧ t = l + freshMs) := by
-  unfold State.nextTick at h
-  cases hd : s.dirty <;> cases hf : s.freshFlag <;> cases hl : s.lastOutMs <;> simp_all
-  all_goals omega
-
-/-- **After the last event, a daemon wakes at most twice on its own.** Ticking at the deadlines
-its session sets, for its save and for the end of its output's freshness, the session then needs
-no tick until the next event. The tick that ends an event's poll round has seen all output, so
-the last output stays the one it knows, the deadlines only move later, and each tick at the
-earlier one settles its reason without reviving the other. -/
+/-- **After the last event, a daemon wakes at most twice on its own.** Ticking at the deadline
+its session sets for its save, the session then needs no tick until the next event: a tick at
+the deadline saves, and a tick before it leaves the deadline where it was. -/
 theorem ticks_settle (s : State) (now t₁ t₂ : Nat)
     (h₁ : (trace step s [.tick now]).1.nextTick = some t₁)
     (h₂ : (trace step s [.tick now, .tick t₁]).1.nextTick = some t₂) :
     (trace step s [.tick now, .tick t₁, .tick t₂]).1.nextTick = none := by
   simp only [trace] at h₁ h₂ ⊢
-  obtain ⟨q0, d0, f0, -⟩ := tick_facts s now
-  obtain ⟨q1, d1, f1, l1⟩ := tick_facts (step s (.tick now)).1 t₁
-  obtain ⟨-, d2, f2, l2⟩ := tick_facts (step (step s (.tick now)).1 (.tick t₁)).1 t₂
-  have n1 := nextTick_some _ h₁
-  have n2 := nextTick_some _ h₂
-  rw [nextTick_eq_none]
-  generalize (step s (.tick now)).1 = s0 at *
-  generalize (step s0 (.tick t₁)).1 = s1 at *
-  generalize (step s1 (.tick t₂)).1 = s2 at *
-  have l1 := l1 q0
-  have l2 := l2 q1
-  rw [l1] at l2
-  rw [l1] at f1 n2
-  rw [l2] at f2 ⊢
-  clear h₁ h₂ q0 q1 l1 l2
-  revert d0 d1 d2 f0 f1 f2 n1 n2
-  cases s0.lastOutMs <;> cases s0.dirty <;> cases s1.dirty <;> cases s2.dirty <;>
-    cases s0.freshFlag <;>
-    cases s1.freshFlag <;>
-    cases s2.freshFlag <;>
-    simp <;>
-    omega
+  generalize hs0 : (step s (.tick now)).1 = s0 at *
+  have hd0 : s0.dirty = true := by
+    cases hd : s0.dirty
+    · simp [State.nextTick, hd] at h₁
+    · rfl
+  have ht1 : t₁ = s0.lastCkptMs + ckptIntervalMs := by
+    rw [nextTick_save s0 hd0] at h₁; exact (Option.some.inj h₁).symm
+  have hd1 : (step s0 (.tick t₁)).1.dirty = false := by
+    cases hd : (step s0 (.tick t₁)).1.dirty
+    · rfl
+    · have := (tick_facts s0 t₁ hd).2.1; omega
+  rw [(nextTick_eq_none _).mpr hd1] at h₂
+  cases h₂
 
 theorem setClient_length (s : State) (c : Client) :
     (s.setClient c).clients.length = s.clients.length := by simp [State.setClient]
@@ -1108,12 +1051,14 @@ never a Nat-subtraction lie.
 theorem outSeq_ptyOut (s : State) (chunk : List UInt8) :
     (step s (.ptyOut chunk)).1.outSeq = s.outSeq + 1 := rfl
 
-/-- Output while somebody is attached is seen as it happens; output with
-nobody attached is not. This is the whole mechanism behind `wantsYou`. -/
-theorem unseen_ptyOut (s : State) (chunk : List UInt8) (h : s.lookSeq ≤ s.outSeq) :
-    unseen (step s (.ptyOut chunk)).1 = !(s.clients.any (·.attached)) := by
+/-- Output while somebody is attached is seen as it happens; output with nobody attached that
+adds lines to the history is not, and other output leaves what was unseen. This is the whole
+mechanism behind `wantsYou`. -/
+theorem unseen_ptyOut (s : State) (chunk : List UInt8) :
+    unseen (step s (.ptyOut chunk)).1 =
+      (!(s.clients.any (·.attached)) &&
+        (unseen s || (Terminal.Mediation.feed s.vt s.scan chunk).lines)) := by
   simp only [unseen, step]
-  grind
 
 /-- **A capture is a look.** The exact shape: the reply
 is `Render.screenText` — the grid, never the ring — chunked and closed with
@@ -1123,7 +1068,8 @@ touch, a label change) breaks it. -/
 theorem onMsg_screen (s : State) (c : Client) (ha : c.answered = false) :
     onMsg s c .screen =
       ({ s.setClient { c with answered := true } with
-          lookSeq := s.outSeq, asking := false, notice := none, finished := none },
+          lookSeq := s.outSeq, asking := false, notice := none, finished := none,
+          unseenLines := false },
         outputMsgs c.id (Render.screenText s.vt) ++ [.send c.id .done]) := by
   simp [onMsg, ha]
 
@@ -1750,7 +1696,7 @@ theorem onMsg_attach_focus (s : State) (c : Client) (cols rows : UInt32)
   let s1 : State :=
     { s.setClient c' with
       attachSeq := s.attachSeq + 1, lookSeq := s.outSeq, asking := false, notice := none,
-      finished := none }
+      finished := none, unseenLines := false }
   have hfocused : (resizeOwned s1 c').1.focused = true := by
     have hf : s1.focused = true := focused_setClient (c := c') hc rfl rfl
     simp only [State.focused, (resizeOwned_frame s1 c').1]
@@ -2719,7 +2665,7 @@ theorem onMsg_attach_writePty (t : State) (c : Client) (mode : Mode) (cols rows 
                     { c with
                       attached := true, mode, seq := t.attachSeq, cols, rows } with
                   attachSeq := t.attachSeq + 1, lookSeq := t.outSeq, asking := false,
-                  notice := none, finished := none }
+                  notice := none, finished := none, unseenLines := false }
                 { c with
                   attached := true, mode, seq := t.attachSeq, cols, rows }).1 := by
   let c' : Client :=
@@ -2728,7 +2674,7 @@ theorem onMsg_attach_writePty (t : State) (c : Client) (mode : Mode) (cols rows 
   let t1 : State :=
     { t.setClient c' with
       attachSeq := t.attachSeq + 1, lookSeq := t.outSeq, asking := false, notice := none,
-      finished := none }
+      finished := none, unseenLines := false }
   have hro := resizeOwned_effects t1 c'
   unfold onMsg
   dsimp only
@@ -2780,7 +2726,7 @@ theorem step_attach_focus (s : State) (id : Nat) (chunk : List UInt8) {c : Clien
   let t1 : State :=
     { t.setClient c' with
       attachSeq := t.attachSeq + 1, lookSeq := t.outSeq, asking := false, notice := none,
-      finished := none }
+      finished := none, unseenLines := false }
   show
     (c1.attached = false ∧
         Effect.writePty bytes ∈ focusEffects (mode == .writable) t.focused (resizeOwned t1 c').1) ↔
@@ -3444,7 +3390,7 @@ theorem onMsg_attach_repaint (t : State) (c : Client) (mode : Mode) (cols rows :
   let t1 : State :=
     { t.setClient c' with
       attachSeq := t.attachSeq + 1, lookSeq := t.outSeq, asking := false, notice := none,
-      finished := none }
+      finished := none, unseenLines := false }
   have hro := resizeOwned_effects t1 c'
   unfold onMsg
   simp only [fresh, Bool.false_eq_true, ↓reduceIte]
@@ -3691,7 +3637,7 @@ theorem onMsg_resizePty_source (s : State) (c : Client) (m : Msg) (ec er : UInt3
     let s1 : State :=
       { s.setClient c' with
         attachSeq := s.attachSeq + 1, lookSeq := s.outSeq, asking := false, notice := none,
-        finished := none }
+        finished := none, unseenLines := false }
     revert h
     unfold onMsg
     dsimp only
@@ -4158,7 +4104,7 @@ theorem unsaved_due (s : State) (ev : Event) (post : List Event) {t : Nat}
     (trace_unsaved_kept (step s ev).1 post unsaved.2).2 (step_changed_dirty s ev changed)
   refine
     ⟨(trace step (step s ev).1 post).1.lastCkptMs + ckptIntervalMs, by omega,
-      nextTick_save _ marked, fun now due => ?_⟩
+      ⟨_, nextTick_save _ marked, Nat.le_refl _⟩, fun now due => ?_⟩
   rw [(step_tick_checkpoint _ now
         (by
           simp [marked]; omega)).1]
@@ -4731,215 +4677,6 @@ theorem step_cmdline_le (s : State) (ev : Event) (hs : s.scan.Bounded)
         rw [hnone] at hfin
         cases hfin
 
-/-! ### A steady program keeps one status
-
-A program that redraws more often than the working window (`workingMs`) reads `⣷` at every poll
-round between its redraws, and once it stops it reads quiet from the round a working window after
-its last redraw, which its session sets a tick for. -/
-
-/-- The state a trace leaves is the one its second part leaves from where its first left. -/
-theorem trace_cons_state (s : State) (ev : Event) (evs : List Event) :
-    (trace step s (ev :: evs)).1 = (trace step (step s ev).1 evs).1 := rfl
-
-/-- …and of a second part after a first. -/
-theorem trace_append_state (s : State) (a b : List Event) :
-    (trace step s (a ++ b)).1 = (trace step (trace step s a).1 b).1 := by
-  induction a generalizing s with
-  | nil => rfl
-  | cons ev evs ih => exact ih (step s ev).1
-
-/-- Output counts one more output and leaves what the ticks recorded. -/
-theorem ptyOut_seqs (s : State) (chunk : List UInt8) :
-    (step s (.ptyOut chunk)).1.outSeq = s.outSeq + 1 ∧
-      (step s (.ptyOut chunk)).1.tickOutSeq = s.tickOutSeq ∧
-      (step s (.ptyOut chunk)).1.lastOutMs = s.lastOutMs := ⟨rfl, rfl, rfl⟩
-
-/-- A tick changes no output count. -/
-theorem tick_outSeq (s : State) (now : Nat) : (step s (.tick now)).1.outSeq = s.outSeq := by
-  simp only [step, State.ticked]
-  split <;> rfl
-
-/-- A tick after output records its own time as the last output's. -/
-theorem tick_records (s : State) (now : Nat) (h : s.tickOutSeq < s.outSeq) :
-    (step s (.tick now)).1.lastOutMs = some now := by
-  have ticked : (s.ticked now).lastOutMs = some now := by simp [State.ticked, h]
-  simp only [step]
-  split
-  · exact ticked
-  · exact ticked
-
-/-- Poll rounds with no output between keep the last output's time, and read fresh exactly while
-the latest is younger than the working window from it. -/
-theorem trace_ticks (s : State) (last : Nat) (settled : s.tickOutSeq = s.outSeq)
-    (known : s.lastOutMs = some last) (times : List Nat) :
-    (trace step s (times.map Event.tick)).1.tickOutSeq =
-        (trace step s (times.map Event.tick)).1.outSeq ∧
-      (trace step s (times.map Event.tick)).1.lastOutMs = some last ∧
-      ∀ t,
-        times.getLast? = some t →
-          (trace step s (times.map Event.tick)).1.freshFlag = decide (t < last + freshMs) := by
-  induction times generalizing s with
-  | nil => exact ⟨settled, known, fun t h => by cases h⟩
-  | cons now rest ih =>
-    obtain ⟨settled', -, fresh', kept⟩ := tick_facts s now
-    have known' : (step s (.tick now)).1.lastOutMs = some last := (kept settled).trans known
-    obtain ⟨a, b, c⟩ := ih (step s (.tick now)).1 settled' known'
-    rw [List.map_cons, trace_cons_state]
-    refine ⟨a, b, fun t ht => ?_⟩
-    cases rest with
-    | nil =>
-      simp only [List.getLast?_singleton, Option.some.injEq] at ht
-      subst ht
-      rw [List.map_nil]
-      show (step s (.tick now)).1.freshFlag = _
-      rw [fresh', known', Option.any_some]
-    | cons r rs => exact c t (by simpa using ht)
-
-/-- A redraw: after its output, the poll rounds at `time` plus its offsets, the first of which
-records `time` plus the first offset as the last output's. -/
-theorem trace_redraw (s : State) (settled : s.tickOutSeq = s.outSeq) (chunk : List UInt8)
-    (time d : Nat) (ds : List Nat) :
-    (trace step s (redraw chunk time (d :: ds))).1.tickOutSeq =
-        (trace step s (redraw chunk time (d :: ds))).1.outSeq ∧
-      (trace step s (redraw chunk time (d :: ds))).1.lastOutMs = some (time + d) ∧
-      ∀ e,
-        (d :: ds).getLast? = some e →
-          (trace step s (redraw chunk time (d :: ds))).1.freshFlag =
-            decide (time + e < time + d + freshMs) := by
-  obtain ⟨hout, htick, hlast⟩ := ptyOut_seqs s chunk
-  let o := (step s (.ptyOut chunk)).1
-  have pending : o.tickOutSeq < o.outSeq := by
-    show (step s (.ptyOut chunk)).1.tickOutSeq < (step s (.ptyOut chunk)).1.outSeq
-    omega
-  let t := (step o (.tick (time + d))).1
-  have recorded : t.lastOutMs = some (time + d) := tick_records o (time + d) pending
-  obtain ⟨settled', -, fresh', -⟩ := tick_facts o (time + d)
-  obtain ⟨a, b, c⟩ := trace_ticks t (time + d) settled' recorded (ds.map (time + ·))
-  have whole :
-    (trace step s (redraw chunk time (d :: ds))).1 =
-      (trace step t ((ds.map (time + ·)).map Event.tick)).1 := by
-    simp only [redraw, List.map_cons, trace, List.map_map]
-    rfl
-  rw [whole]
-  refine ⟨a, b, fun e he => ?_⟩
-  cases ds with
-  | nil =>
-    simp only [List.getLast?_singleton, Option.some.injEq] at he
-    subst he
-    simp only [List.map_nil, trace]
-    show t.freshFlag = _
-    rw [fresh', recorded, Option.any_some]
-  | cons x
-    xs =>
-    have :=
-      c (time + e)
-        (by
-          rw [List.getLast?_map]
-          simp only [List.getLast?_cons_cons] at he
-          rw [he]
-          rfl)
-    rw [this]
-
-/-- After `rounds` redraws a steady program's session has seen all its output, and the last
-output it knows of is the last redraw's. -/
-theorem trace_steady (s : State) (chunk : List UInt8) (start period : Nat)
-    (between : Nat → List Nat) (rounds : Nat) :
-    (trace step s (steady chunk start period between rounds)).1.tickOutSeq =
-        (trace step s (steady chunk start period between rounds)).1.outSeq ∧
-      ∀ n,
-        rounds = n + 1 →
-          (trace step s (steady chunk start period between rounds)).1.lastOutMs =
-            some (start + n * period) := by
-  induction rounds with
-  | zero =>
-    refine ⟨?_, fun n h => by cases h⟩
-    exact (tick_facts s start).1
-  | succ n ih =>
-    simp only [steady]
-    rw [trace_append_state]
-    obtain ⟨a, b, -⟩ := trace_redraw _ ih.1 chunk (start + n * period) 0 (between n)
-    refine ⟨a, fun m h => ?_⟩
-    cases h
-    simpa using b
-
-/-- Once a steady program stops, a poll round reads fresh exactly while it is younger than the
-working window from the last redraw, whatever rounds came between. -/
-theorem steady_then_tick (s : State) (chunk : List UInt8) (start period : Nat)
-    (between : Nat → List Nat) (rounds : Nat) (quiet : List Nat) (t : Nat) :
-    (trace step s
-          (steady chunk start period between (rounds + 1) ++ quiet.map Event.tick ++
-            [Event.tick t])).1.seen.fresh =
-      decide (t < start + rounds * period + freshMs) := by
-  obtain ⟨settled, known⟩ := trace_steady s chunk start period between (rounds + 1)
-  have ticks : quiet.map Event.tick ++ [Event.tick t] = (quiet ++ [t]).map Event.tick := by simp
-  rw [List.append_assoc, ticks, trace_append_state]
-  obtain ⟨-, -, fresh⟩ :=
-    trace_ticks _ (start + rounds * period) settled (known rounds rfl) (quiet ++ [t])
-  exact fresh t (by simp)
-
-/-- **A steady program keeps one status**: one that redraws more often than the working window
-reads fresh at every poll round of every redraw; once it stops, the session's next tick is due no
-later than a working window after its last redraw, and from then on every round reads quiet. -/
-theorem steady_working (s : State) (chunk : List UInt8) (start period : Nat)
-    (between : Nat → List Nat) (rounds : Nat) (gaps : period < workingMs)
-    (within : ∀ i d, d ∈ between i → d ≤ period) :
-    (∀ i ≤ rounds,
-        ∀ k ≤ (between i).length,
-          (trace step s
-                (steady chunk start period between i ++
-                  redraw chunk (start + i * period) ((0 :: between i).take (k + 1)))).1.seen.fresh =
-            true) ∧
-      (∃ due,
-        (trace step s (steady chunk start period between (rounds + 1))).1.nextTick = some due ∧
-          due ≤ start + rounds * period + freshMs) ∧
-      ∀ (quiet : List Nat) (t : Nat),
-        start + rounds * period + freshMs ≤ t →
-          (trace step s
-                (steady chunk start period between (rounds + 1) ++ quiet.map Event.tick ++
-                  [Event.tick t])).1.seen.fresh =
-            false := by
-  have window : freshMs = workingMs := rfl
-  have redrawn :
-    ∀ i k,
-      k ≤ (between i).length →
-        (trace step s
-              (steady chunk start period between i ++
-                redraw chunk (start + i * period) ((0 :: between i).take (k + 1)))).1.freshFlag =
-          true := by
-    intro i k hk
-    rw [trace_append_state]
-    obtain ⟨-, -, fresh⟩ :=
-      trace_redraw _ (trace_steady s chunk start period between i).1 chunk (start + i * period) 0
-        ((between i).take k)
-    have last : ∃ e, ((0 :: between i).take (k + 1)).getLast? = some e ∧ e ≤ period := by
-      cases k with
-      | zero => exact ⟨0, rfl, Nat.zero_le _⟩
-      | succ k =>
-        rcases hl : ((between i).take (k + 1)).getLast? with _ | e
-        · simp only [List.getLast?_eq_none_iff, List.take_eq_nil_iff] at hl
-          rcases hl with hl | hl
-          · cases hl
-          · simp [hl] at hk
-        · refine ⟨e, ?_, within i e (List.mem_of_mem_take (List.mem_of_getLast? hl))⟩
-          rw [List.take_succ_cons, List.getLast?_cons, hl]
-          rfl
-    obtain ⟨e, he, small⟩ := last
-    rw [List.take_succ_cons] at he ⊢
-    rw [fresh e he]
-    simp only [Nat.add_zero, decide_eq_true_eq]
-    omega
-  obtain ⟨settled, known⟩ := trace_steady s chunk start period between (rounds + 1)
-  have ended :
-    (trace step s (steady chunk start period between (rounds + 1))).1.freshFlag = true := by
-    have := redrawn rounds (between rounds).length (Nat.le_refl _)
-    rw [List.take_of_length_le (by simp)] at this
-    simpa [steady, trace_append_state] using this
-  refine ⟨fun i _ k hk => redrawn i k hk, ?_, fun quiet t late => ?_⟩
-  · exact nextTick_stale _ ended (known rounds rfl)
-  · rw [steady_then_tick]
-    simp only [decide_eq_false_iff_not, Nat.not_lt]
-    exact late
-
 /-! ## What the program owns
 
 Each field of `Owned` has one source, and the session machine reads each from it alone: output,
@@ -4969,6 +4706,16 @@ theorem onMsg_observed (s : State) (c : Client) (m : Msg) :
     repeat' split
   all_goals simp_all [State.setClient]
 
+/-- Every message keeps the progress the program declared. -/
+theorem onMsg_progress (s : State) (c : Client) (m : Msg) :
+    (onMsg s c m).1.progress = s.progress := by
+  cases m
+  all_goals
+    unfold onMsg controlResize resizeOwned resize focusEffects infoMsgs outputMsgs
+    dsimp only
+    repeat' split
+  all_goals simp_all [State.setClient]
+
 /-- Resizing on behalf of the size owner keeps what the program owns. -/
 theorem resizeOwned_owned (s : State) (c : Client) : (resizeOwned s c).1.owned = s.owned := by
   unfold resizeOwned resize
@@ -4991,7 +4738,7 @@ theorem onMsg_owned_kept (s : State) (c : Client) (m : Msg) (h : ¬m.Looks) :
   obtain ⟨ha, hn⟩ := onMsg_asking_kept s c m h
   obtain ⟨hr, hf⟩ := onMsg_commands_kept s c m h
   simp only [State.owned, State.commands, ha, hn, hr, hf, onMsg_title, onMsg_observed,
-    (onMsg_notified s c m).1, (onMsg_notified s c m).2]
+    (onMsg_notified s c m).1, (onMsg_notified s c m).2, onMsg_progress]
 
 /-- An attach from a connection not yet attached, and a capture of a read not yet answered, are
 looks; every other message keeps what the program owns. -/
@@ -5091,6 +4838,7 @@ theorem step_ptyOut_owned (s : State) (chunk : List UInt8) :
       s.owned.hear (Terminal.Mediation.feed s.terminal s.scanner chunk).vt.windowTitle
         (Terminal.Mediation.feed s.terminal s.scanner chunk).asks
         (Terminal.Mediation.feed s.terminal s.scanner chunk).notice
+        (Terminal.Mediation.feed s.terminal s.scanner chunk).progress
         (Terminal.Mediation.feed s.terminal s.scanner chunk).marks (seenBy s.roster) := by
   have h := foldl_hearMark (Terminal.Mediation.feed s.vt s.scan chunk).marks s.commands
   simp only [State.commands] at h
@@ -5138,6 +4886,168 @@ theorem rung_asks :
   rw [show State.terminal (State.boot (Vt.Vt.init 80 24) [] []) = Vt.Vt.init 80 24 from rfl,
     show State.scanner (State.boot (Vt.Vt.init 80 24) [] []) = .ground from rfl, feed_bel_asks]
   rfl
+
+/-! ## A status says only what a signal proves
+
+A session's `⣷` is what its program declared, its progress under way or a command its shell's
+marks say runs; its `⣿` is lines that entered its history while nobody looked; and no tick, the
+one event that tells a session the time, changes either, nor its ask. -/
+
+/-- A session works exactly while what its program owns says so. -/
+theorem seen_working (s : State) : s.seen.working = s.owned.working := rfl
+
+/-- A tick changes nothing a session's status reads. -/
+theorem step_tick_seen (s : State) (now : Nat) : (step s (.tick now)).1.seen = s.seen := by
+  unfold step
+  dsimp only
+  split <;> rfl
+
+/-- **Time alone changes no status**: any run of ticks leaves what the session sees as it was. -/
+theorem trace_ticks_seen (s : State) (times : List Nat) :
+    (trace step s (times.map Event.tick)).1.seen = s.seen := by
+  induction times generalizing s with
+  | nil => rfl
+  | cons t ts ih =>
+    simp only [List.map_cons, trace]
+    rw [ih, step_tick_seen]
+
+/-- No message raises the unseen lines: a look clears them, and every other message keeps
+them. -/
+theorem onMsg_unseen (s : State) (c : Client) (m : Msg) (h : (onMsg s c m).1.unseenLines = true) :
+    s.unseenLines = true := by
+  revert h
+  cases m
+  all_goals
+    unfold onMsg controlResize resizeOwned resize focusEffects infoMsgs outputMsgs
+    dsimp only
+    repeat' split
+  all_goals simp_all [State.setClient]
+
+/-- No event but output raises the unseen lines. -/
+theorem step_unseen_raised (s : State) (ev : Event) (out : ∀ chunk, ev ≠ .ptyOut chunk)
+    (h : (step s ev).1.seen.unseen = true) : s.seen.unseen = true := by
+  simp only [State.seen, unseen] at h ⊢
+  cases ev with
+  | ptyOut chunk => exact absurd rfl (out chunk)
+  | bytes id chunk =>
+    revert h
+    unfold step
+    dsimp only
+    split
+    · exact fun x => x
+    · rename_i c hc
+      split
+      · unfold closeClient; dsimp only; split <;> exact fun x => x
+      · intro h
+        exact
+          feedMsgs_preserves id (c.decoder.feed chunk).2 _ (P := fun t =>
+            t.unseenLines = true → s.unseenLines = true)
+            (fun t c' m _ ht hm => ht (onMsg_unseen t c' m hm)) (fun hx => hx) h
+  | connected id =>
+    revert h; unfold step; dsimp only; split <;> exact fun x => x
+  | closed id =>
+    revert h; unfold step closeClient; dsimp only; split <;> exact fun x => x
+  | childExited o =>
+    revert h; simp only [step, conclude]; exact fun x => x
+  | stopped o =>
+    revert h; simp only [step, conclude]; exact fun x => x
+  | signal n =>
+    revert h; simp only [step, conclude]; exact fun x => x
+  | tick now =>
+    revert h; unfold step; dsimp only; split <;> exact fun x => x
+  | observed o => exact h
+  | checkpointFailed => exact h
+  | notified d => exact h
+
+/-- Output's unseen lines are what the mediator read: lines that entered the history with
+nobody attached, kept until a look. -/
+theorem step_ptyOut_unseen (s : State) (chunk : List UInt8) :
+    (step s (.ptyOut chunk)).1.seen.unseen =
+      (!seenBy s.roster &&
+        (s.seen.unseen || (Terminal.Mediation.feed s.terminal s.scanner chunk).lines)) :=
+  unseen_ptyOut s chunk
+
+/-- A read that holds one look alone, from a connection not yet attached and a healthy decoder,
+leaves no line unseen. -/
+theorem step_look_unseen (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
+    {dec : Wire.Decoder} {m : Msg} (hc : s.client? id = some c) (fresh : c.attached = false)
+    (read : c.decoder.feed chunk = (dec, [m])) (healthy : dec.errored = false) (looks : m.Looks) :
+    (step s (.bytes id chunk)).1.seen.unseen = false := by
+  rw [step_bytes_single hc read healthy]
+  simp only [State.seen, unseen]
+  cases m <;> simp only [Msg.Looks] at looks
+  · unfold onMsg resizeOwned resize
+    simp only [fresh, Bool.false_eq_true, ↓reduceIte]
+    repeat' split
+    all_goals rfl
+  · rw [onMsg_screen _ _ rfl]
+
+/-- What a session sees of its program's asks is what the program owns. -/
+theorem seen_asks (s : State) : s.seen.asks = s.owned.asks := rfl
+
+/-- A reading of the world at time 0, the clock the window rule's witnesses read. -/
+def atZero : Observation := { nowMs := 0, wallS := 0, login := false, foreground := none }
+
+/-- A session whose program wrote, read at time 0 before its daemon's poll round ended. -/
+def wroteUnticked : State :=
+  (trace step (State.boot (Vt.Vt.init 2 1) [] []) [.ptyOut [], .observed atZero]).1
+
+/-- The age `info` reports of a session with no metadata, no record fields, no ending, no title,
+notification or ending to tell, once its daemon read the world: the seconds since the program
+last wrote, and none before any output. -/
+theorem lookup_idle (s : State) (o : Observation) (hm : s.metaKv = []) (hfs : s.fields = [])
+    (he : s.ended = none) (ho : s.observed = some o) (ht : s.vt.windowTitle = "")
+    (hn : s.notice = none) (hf : s.finished = none) :
+    (infoFields s).lookup "idle" = s.lastOutMs.map fun t => toString ((o.nowMs - t) / 1000) := by
+  cases hl : s.lastOutMs <;> cases hs : s.status <;> cases hfg : o.foreground <;>
+    cases hec : o.echo <;>
+    simp [infoFields, hm, hfs, he, ho, ht, hn, hf, hl, hs, hfg, hec, titleFields, noticeFields,
+      finishedFields, presentFields, notifiedFields, State.owned, State.commands, State.roster,
+      List.lookup] <;>
+    grind
+
+/-- The count `info` reports of the output since the last look, for a session with no
+metadata. -/
+theorem lookup_behind (s : State) (hm : s.metaKv = []) :
+    (infoFields s).lookup "behind" = some (toString (behind s)) := by
+  simp [infoFields, hm, List.lookup]
+
+/-- Before the tick, the window rule finds no output time, so it reads the session quiet… -/
+theorem windowed_unticked :
+    (Seen.windowed infoFields State.seen wroteUnticked).working = false := by decide +kernel
+
+/-- …and once the tick records the output's time, within three seconds, it reads it working… -/
+theorem windowed_ticked :
+    (Seen.windowed infoFields State.seen (step wroteUnticked (.tick 0)).1).working = true := by
+  simp only [Seen.windowed]
+  rw [lookup_idle _ atZero rfl rfl rfl rfl rfl rfl rfl,
+    show (step wroteUnticked (.tick 0)).1.lastOutMs = some 0 by decide +kernel]
+  simp [atZero, Nat.toNat?_repr]
+
+/-- …though the program declared nothing. -/
+theorem ticked_declares_nothing : (step wroteUnticked (.tick 0)).1.owned.working = false := by
+  decide +kernel
+
+/-- Any output since the last look counts as unseen for the rule that reads `behind`… -/
+theorem anyOutput_output :
+    (Seen.anyOutput infoFields State.seen
+          (step (State.boot (Vt.Vt.init 2 1) [] []) (.ptyOut [])).1).unseen =
+      true := by
+  simp only [Seen.anyOutput]
+  rw [lookup_behind _ rfl,
+    show behind (step (State.boot (Vt.Vt.init 2 1) [] []) (.ptyOut [])).1 = 1 from rfl]
+  simp [Nat.toNat?_repr]
+
+/-- …which reads nothing unseen before any output. -/
+theorem anyOutput_boot :
+    (Seen.anyOutput infoFields State.seen (State.boot (Vt.Vt.init 2 1) [] [])).unseen = false := by
+  simp only [Seen.anyOutput]
+  rw [lookup_behind _ rfl, show behind (State.boot (Vt.Vt.init 2 1) [] []) = 0 from rfl]
+  simp [Nat.toNat?_repr]
+
+/-- Empty output adds no line to the history. -/
+theorem feed_nil_lines (v : Vt.Vt) (scan : Terminal.Mediation.Scan) :
+    (Terminal.Mediation.feed v scan []).lines = false := rfl
 
 /-! ## Input is never recorded
 

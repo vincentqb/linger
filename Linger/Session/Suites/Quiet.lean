@@ -125,7 +125,7 @@ def run : IO UInt32 :=
     let (idleRc, _, _) ← e.cli #["start", "q-idle", "/bin/sh", "-c", "exec sleep 1000"]
     -- the marker is an expansion, so only the program's output, not an echo, can show it
     let (burstRc, _, _) ←
-      e.cli #["start", "q-burst", "/bin/sh", "-c", "echo QUIET-$((6*7)); exec sleep 1000"]
+      e.cli #["start", "q-burst", "/bin/sh", "-c", "seq 100; echo QUIET-$((6*7)); exec sleep 1000"]
     let idlePid ← e.daemonPid "q-idle"
     let burstPid ← e.daemonPid "q-burst"
     -- a `send -` that waits for input, connected before the settling sleep: it wakes only for
@@ -135,18 +135,17 @@ def run : IO UInt32 :=
           { cmd := e.bin, args := #["send", "q-idle", "-"], env := e.procEnv, stdin := .piped,
             stdout := .null, stderr := .null }
     let (senderIn, sender) ← sender0.takeStdin
-    -- longer than the freshness window, so the output's own deadline has passed, and the
-    -- questions that found the pids are long answered
-    IO.sleep (Linger.Session.freshMs + 1500).toUInt32
+    -- so that the questions that found the pids are long answered
+    IO.sleep 1500
     -- …which a loaded host may stretch, so each daemon must also have said in its end record
-    -- that its output is no longer fresh: it has nothing left to do, and sleeps
-    let stale (name : String) : IO Bool := do
+    -- what it sees, the burst's lines among it: it has nothing left to do, and sleeps
+    let says (name : String) (unseen : Bool) : IO Bool := do
       match ← (IO.FS.readBinFile s!"{e.dir}/{name}.end").toBaseIO with
       | .ok bytes =>
-        return (Linger.Session.Record.published bytes.toList).any (!·.fresh)
+        return (Linger.Session.Record.published bytes.toList).any (·.unseen == unseen)
       | .error _ =>
         return false
-    let settled ← waitFor patienceMs (return (← stale "q-idle") && (← stale "q-burst"))
+    let settled ← waitFor patienceMs (return (← says "q-idle" false) && (← says "q-burst" true))
     let (idle, burst, sending) ←
       do
         let measured ← IO.asTask (wakeupsOver idlePid 3000) Task.Priority.dedicated

@@ -346,7 +346,7 @@ def run : IO UInt32 :=
     -- `onMsg .attach` sets `lookSeq := s.outSeq` for ANY attach, 0x0 included, so
     -- Read-only attach clears `wants-you`. The status suite only ever exercised that
     -- through `attach`. Compared as a `Status`, not a string literal.
-    let _ ← e.cli #["send", "w", "echo unread-marker\n"]
+    let _ ← e.cli #["send", "w", "seq 100; echo unread-marker\n"]
     expect (← waitFor patienceMs (return (← e.status "w") == Status.wantsYou))
         "output with nobody watching reads wants-you"
     let obs2 ← e.spawn #["attach", "--read-only", "w"] 80 24

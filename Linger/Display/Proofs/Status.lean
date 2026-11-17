@@ -39,10 +39,10 @@ the state the row is actually in. This is the claim that would break if a
 guard were mis-ordered. -/
 theorem classify_sound (o : Obs) : Is (classify o) o := (classify_iff o _).mp rfl
 
-/-- A running session whose daemon answered shows `⚑` exactly when it asks, whatever it prints:
-a program waiting for you outranks one printing. -/
-theorem classify_running_asks (fresh unseen asks : Bool) :
-    classify { fresh, unseen, asks } = .asks ↔ asks = true := by
+/-- A running session whose daemon answered shows `⚑` exactly when it asks, whatever else it
+shows: a program waiting for you outranks one that says it is working. -/
+theorem classify_running_asks (working unseen asks : Bool) :
+    classify { working, unseen, asks } = .asks ↔ asks = true := by
   rw [classify_iff]
   simp [Is]
 
@@ -65,7 +65,7 @@ theorem reachable : ∀ s : Status, ∃ o : Obs, classify o = s := by
   · exact ⟨{ daemonUp := false }, rfl⟩
   · exact ⟨{ asks := true }, rfl⟩
   · exact ⟨{ unseen := true }, rfl⟩
-  · exact ⟨{ fresh := true }, rfl⟩
+  · exact ⟨{ working := true }, rfl⟩
   · exact ⟨{}, rfl⟩
 
 /-- **No glyph collision.** Distinct states get distinct glyphs — the design

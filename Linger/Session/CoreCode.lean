@@ -140,10 +140,8 @@ structure StateRec where
   /-- `outSeq` as of the previous `.tick`. Output since then is what the next tick records as
   the time of the last output (`lastOutMs`), so the output event itself needs no clock. -/
   private tickOutSeq : Nat := 0
-  /-- Whether the last output arrived within `freshMs` of the latest tick: `⣷`, which `info`
-  reports as `fresh`. -/
-  private freshFlag : Bool := false
-  /-- When the last output arrived, as the first tick after it saw it; `none` before any. -/
+  /-- When the last output arrived, as the first tick after it saw it, which `info` reports as
+  the age `idle`; `none` before any. No status reads it. -/
   private lastOutMs : Option Nat := none
   /-- What the daemon last read of the world, as it was about to answer; `none` before it read
   any. -/
@@ -152,6 +150,13 @@ structure StateRec where
   private ready : Bool := false
   /-- The status text the program gave in the last notification it sent with one, `STATUS=`. -/
   private status : Option (List UInt8) := none
+  /-- Whether new lines entered the terminal's history since the last look: `⣿`, which `info`
+  reports as `unseen`. Output with nobody attached that adds lines to the history raises it, as
+  the mediator reads the terminal, and every look clears it. -/
+  private unseenLines : Bool := false
+  /-- The progress the program last declared with ConEmu's OSC `9;4`, as the mediator heard it;
+  `none` before any report and after one that removes it. -/
+  private progress : Option Mediation.Progress := none
 
 /-- The session's state, as the headline theorems name it: a definition over the sealed record
 `StateRec`, because `Challenge.lean` declares the type as a hole the program fills. -/
@@ -178,7 +183,7 @@ the ask and its notification's text, the commands, the latest reading of the wor
 it said it is ready and the status text it last gave. -/
 def State.owned (s : State) : Owned :=
   { title := s.vt.windowTitle, asks := s.asking, notice := s.notice, commands := s.commands,
-    observed := s.observed, ready := s.ready, status := s.status }
+    observed := s.observed, ready := s.ready, status := s.status, progress := s.progress }
 
 -- No `deriving` clause at all. `Inhabited` would need `Inhabited Vt`, a public door out of
 -- the `Vt` seal admitting a zero-column screen, and `Repr` would need `Repr Vt`, whose
@@ -199,10 +204,6 @@ def State.boot (vt : Vt.Vt) (fields : List (String × String)) (metaKv : List (S
 
 /-- The emulator a daemon boots with: a restored checkpoint's, else a fresh 80×24 screen. -/
 def bootVt (restored : Option Vt.Vt) : Vt.Vt := restored.getD (Vt.Vt.init 80 24)
-
-/-- How long output counts as happening right now (`⣷`): from the tick that saw it, the spec's
-working window (`workingMs`). -/
-def freshMs : Nat := workingMs
 
 /-! ## Helpers -/
 
@@ -255,12 +256,12 @@ private def closeClient (s : State) (id : Nat) : State × List (Effect Plan) :=
     ({ s' with dirty := false }, focus ++ [.checkpoint])
   else (s', focus)
 
-/-- Unread: output arrived while nobody was watching. What
+/-- Unread: new lines entered the history while nobody was watching. What
 `Status.wantsYou` is derived from — a property of the **session**, since
 "last looked" is a session event rather than a viewer attribute, so a one-off
-connection creates no state. A bell or a notification is output too, and the session then asks
-(`asking`), which outranks it. -/
-private def unseen (s : State) : Bool := s.lookSeq < s.outSeq
+connection creates no state. A redraw in place, a title, a cursor move and anything on the
+alternate screen, which keeps no history, add no line. -/
+private def unseen (s : State) : Bool := s.unseenLines
 
 /-- How much arrived unseen — free from the counter, where a boolean would
 have thrown it away. -/
@@ -281,27 +282,31 @@ private def hearMark (heard : Option Mediation.Cmdline × Option Finished) :
     | none => heard
 
 /-- What a tick at `now` observes: output since the previous tick makes `now` the time of the
-last output, which stays fresh for `freshMs`. -/
+last output, which `info` reports as an age and no status reads. -/
 private def State.ticked (s : State) (now : Nat) : State :=
   let lastOut := if s.tickOutSeq < s.outSeq then some now else s.lastOutMs
   { s with
-    lastOutMs := lastOut, freshFlag := lastOut.any (now < · + freshMs), tickOutSeq := s.outSeq }
+    lastOutMs := lastOut, tickOutSeq := s.outSeq }
 
 /-- When the session next needs a tick, if ever: when its checkpoint falls due while it has
-unsaved changes, and when its last output stops being fresh. `none` when it needs neither, and
-the daemon then waits only for events. -/
+unsaved changes. `none` otherwise, and the daemon then waits only for events. No status waits
+on a clock. -/
 def State.nextTick (s : State) : Option Nat :=
-  let save := if s.dirty then some (s.lastCkptMs + ckptIntervalMs) else none
-  let stale := if s.freshFlag then s.lastOutMs.map (· + freshMs) else none
-  match save, stale with
-  | some a, some b => some (min a b)
-  | a, none => a
-  | none, b => b
+  if s.dirty then some (s.lastCkptMs + ckptIntervalMs) else none
 
-/-- What the daemon sees of the output, which its name's end record publishes for a summary that
-reads the record instead of asking: the `fresh`, `unseen` and `asks` that `info` reports
-(`infoFields_seen`). -/
-def State.seen (s : State) : Seen := ⟨s.freshFlag, unseen s, s.asking⟩
+/-- What the daemon sees of its program, which its name's end record publishes for a summary
+that reads the record instead of asking: the `working`, `unseen` and `asks` that `info` reports
+(`infoFields_seen`), each from its signal: the program's declared progress and its shell's
+marks, the lines that entered the history, and its bells and notifications. -/
+def State.seen (s : State) : Seen := ⟨s.owned.working, unseen s, s.asking⟩
+
+/-- How `info` reports the progress the program last declared: the state's name, or `none`. -/
+def progressText : Option Mediation.Progress → String
+  | some .normal => "normal"
+  | some .error => "error"
+  | some .indeterminate => "indeterminate"
+  | some .paused => "paused"
+  | none => "none"
 
 /-- How `info` reports an ending: `exit` holds the status a shell would report, and a field
 only a signal or an unseen ending has says which those are, so two endings never read the
@@ -408,8 +413,9 @@ def infoFields (s : State) : List (String × String) :=
     -- the observations `Status.classify` needs from the daemon; the rest
     -- (reachability, checkpoint loadability) only the caller can know
     ++
-    [("unseen", toString (unseen s)), ("fresh", toString s.freshFlag), ("asks", toString s.asking),
-      ("behind", toString (behind s))]
+    [("unseen", toString (unseen s)), ("working", toString s.owned.working),
+      ("asks", toString s.asking), ("behind", toString (behind s)),
+      ("progress", progressText s.owned.progress)]
     -- what an agent needs to see the session:
     -- geometry + cursor for `capture`, `alt` for "a full-screen app is live",
     -- `outseq` as the change cursor ("re-capture only when it moved"). Values
@@ -556,7 +562,7 @@ private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Pla
       let s :=
         { s.setClient c with
           attachSeq := s.attachSeq + 1, lookSeq := s.outSeq, asking := false, notice := none,
-          finished := none }
+          finished := none, unseenLines := false }
       let (s, effs) := resizeOwned s c
       -- Capture here: feedMsgs can change the VT again before effects run.
       (s,
@@ -610,7 +616,8 @@ private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Pla
     if c.answered then (s, [.send c.id (.err "one request per read".toUTF8.toList)])
     else
       ({ s.setClient { c with answered := true } with
-          lookSeq := s.outSeq, asking := false, notice := none, finished := none },
+          lookSeq := s.outSeq, asking := false, notice := none, finished := none,
+          unseenLines := false },
         outputMsgs c.id (Render.screenText s.vt) ++ [.send c.id .done])
   | .wait =>
     match s.ended with
@@ -735,7 +742,7 @@ def step (s : State) (ev : Event) : State × List (Effect Plan) :=
   | .closed id => closeClient s id
   | .ptyOut chunk =>
     -- output while a client is attached is a look: it is seen as it arrives, and a bell, a
-    -- notification or a command's ending in it leaves nothing to tell
+    -- notification, a command's ending or lines in it leave nothing to tell
     let r := Terminal.Mediation.feed s.vt s.scan chunk
     ({ s with
         vt := r.vt, scan := r.scan, dirty := true, outSeq := s.outSeq + 1,
@@ -745,7 +752,9 @@ def step (s : State) (ev : Event) : State × List (Effect Plan) :=
         running := (r.marks.foldl hearMark (s.running, s.finished)).1,
         finished :=
           if s.clients.any (·.attached) then none
-          else (r.marks.foldl hearMark (s.running, s.finished)).2 },
+          else (r.marks.foldl hearMark (s.running, s.finished)).2,
+        progress := r.progress.getD s.progress,
+        unseenLines := !s.clients.any (·.attached) && (s.unseenLines || r.lines) },
       (if r.replies.isEmpty then [] else [.writePty r.replies]) ++ broadcast s r.visible)
   | .childExited outcome =>
     -- an ended session is a result until someone sees it: told to an attached client, it is

@@ -311,7 +311,10 @@ or APC string. A notification is OSC 9, `ESC ] 9 ; text`, as iTerm2 and Ghostty 
 its payload is digits followed by `;`, a ConEmu sub-command such as `9;4;…` progress, or OSC 777,
 `ESC ] 777 ; notify ; title ; body`, ended by BEL or ST. The mediator hears either as it scans the
 byte that completes it (`Scan.hears`), beside the scanner, whose decisions it leaves as they were:
-a notification still reaches every client unchanged, so the outer terminal can show its own.
+a notification still reaches every client unchanged, so the outer terminal can show its own. A
+progress report, ConEmu's OSC `9;4` with a state from 0 to 4 (`progressOf`), is heard the same way,
+as BEL or ST completes it, and reaches every client unchanged too, so a terminal such as Ghostty
+still shows the program's progress.
 
 A notification longer than `oscCap`, which the scanner releases unclassified, is heard as the
 scanner releases it, with the text the scanner held: every buffer input fills has a cap, and this
@@ -324,18 +327,19 @@ structure Heard where
   /-- The text of the notification the byte posted: the OSC 9 text, or the OSC 777 title and
   body. -/
   notice : Option Bytes := none
+  /-- The progress report the byte completed, ConEmu's OSC `9;4`: the state it sets, `none` when
+  it removes the progress. -/
+  progress : Option (Option Progress) := none
   deriving Repr, DecidableEq
 
 /-- The payload of an OSC the scanner holds, from its reversed buffer: the bytes after `ESC ]`,
 without an ESC that may begin its terminator. -/
 def heldPayload (rev : Bytes) : Bytes := (rev.dropWhile (· == ESC)).reverse.drop 2
 
-/-- What an OSC payload tells: a notification asks, with its text, and any other payload tells
-nothing. -/
+/-- What an OSC payload tells: a notification asks, with its text, a progress report sets or
+removes the progress, and any other payload tells nothing. -/
 def heardOsc (payload : Bytes) : Heard :=
-  match noticeOf payload with
-  | some text => { asks := true, notice := some text }
-  | none => {}
+  { asks := (noticeOf payload).isSome, notice := noticeOf payload, progress := progressOf payload }
 
 /-- What scanning `b` from `s` hears of the program asking for someone: a bell, a BEL outside
 every string, or the notification an OSC posts, as BEL or ST completes it, or, past `oscCap`, as
@@ -534,6 +538,18 @@ def Scan.mark (s : Scan) (b : UInt8) : Option Mark :=
     else if rev.length < oscCap then none else markOf (heldPayload (b :: rev)) false
   | _ => none
 
+/-! ## Lines that enter the history
+
+A step of the emulator adds rows to the history exactly when it pushes them into the scrollback
+ring, which then holds more rows, or, full, has moved its oldest one: what the mediator reads of
+each byte. An erase of the history, `CSI 3 J`, empties the ring, which adds nothing. -/
+
+/-- Whether a step from `before` to `after` added rows to the history: the scrollback ring holds
+more rows, or as many and its oldest moved. -/
+def addedLines (before after : Vt) : Bool :=
+  before.sb.data.size < after.sb.data.size ||
+    (before.sb.data.size == after.sb.data.size && before.sb.start != after.sb.start)
+
 -- No `deriving Repr`: it would need `Repr Vt`, which the seal withholds because it would
 -- publicly read every private field of `VtRec`. Nothing used the instance.
 
@@ -548,6 +564,7 @@ def feed (v : Vt) (scan : Scan) : Bytes → Result Vt
       let rest := feed v' out.scan bs
       { vt := rest.vt, scan := rest.scan, visible := out.visible ++ rest.visible,
         replies := out.replies ++ rest.replies, asks := heard.asks || rest.asks,
-        notice := rest.notice.or heard.notice, marks := (scan.mark b).toList ++ rest.marks }
+        notice := rest.notice.or heard.notice, marks := (scan.mark b).toList ++ rest.marks,
+        progress := rest.progress.or heard.progress, lines := addedLines v v' || rest.lines }
 
 end Terminal.Mediation

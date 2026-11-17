@@ -49,13 +49,15 @@ def Outcome.answer : Outcome → Os.Answer
   | .unknown => .failed
   | outcome => .program outcome.status
 
-/-- What a daemon last saw of its program's output: whether output is fresh (`⣷`), whether some
-arrived since the session was last looked at (`⣿`), and whether, since then, the program rang the
-bell or posted a desktop notification (`⚑`), as `info` reports `fresh`, `unseen` and `asks`. -/
+/-- What a daemon last saw of its program: whether the program says it is working (`⣷`), whether
+new lines entered the session's history since it was last looked at (`⣿`), and whether, since
+then, the program rang the bell or posted a desktop notification (`⚑`), as `info` reports
+`working`, `unseen` and `asks`. -/
 structure Seen where
-  /-- Output within the freshness window. -/
-  fresh : Bool
-  /-- Output since the session was last looked at. -/
+  /-- The program says it is working: it declared progress under way, or its shell's marks
+  say a command runs. -/
+  working : Bool
+  /-- New lines entered the session's history since the session was last looked at. -/
   unseen : Bool
   /-- A bell or a notification since the session was last looked at. -/
   asks : Bool
@@ -656,9 +658,10 @@ standard names: its window's title, which OSC 0 and OSC 2 set on the session's t
 it rang the bell or posted a desktop notification, a BEL, an OSC 9 that is no ConEmu sub-command
 or an OSC 777 `notify`, since the session was last looked at, and that notification's text; what
 its shell's OSC 133 marks told of its commands; what the operating system last reported of its
-terminal, its foreground and its echo among it; and whether it said it is ready and the status
-text it last gave, through `sd_notify`'s socket. No other output and no client writes one; a look
-clears what is told only until someone sees it (`step_owned`). -/
+terminal, its foreground and its echo among it; whether it said it is ready and the status
+text it last gave, through `sd_notify`'s socket; and the progress it last declared with ConEmu's
+OSC `9;4`. No other output and no client writes one; a look clears what is told only until
+someone sees it (`step_owned`). -/
 structure Owned where
   /-- The window's title, as the session's terminal holds it. -/
   title : String
@@ -674,18 +677,47 @@ structure Owned where
   ready : Bool
   /-- The status text the program last gave. -/
   status : Option (List UInt8)
+  /-- The progress the program last declared, `none` before any or once it removed it. -/
+  progress : Option Terminal.Mediation.Progress
   deriving Repr, DecidableEq
+
+/-- Whether what the program owns says it is working: it declared progress that is under way
+(`Progress.underway`), or its shell's marks say a command runs, a `C` that no `D` or `A` has
+followed. -/
+@[expose]
+def Owned.working (o : Owned) : Bool :=
+  o.progress.any Terminal.Mediation.Progress.underway || o.commands.running.isSome
+
+/-- A wrong reading of a session: its program is working while it wrote within the last three
+seconds, as the `idle` field its `fields` report says, the window rule before programs declared
+their work. The headlines that a session works exactly while its program says so, and that its
+status never changes as time passes, are shown to reject it. -/
+@[expose]
+def Seen.windowed {S : Type} (fields : S → List (String × String)) (seen : S → Seen) (s : S) :
+    Seen :=
+  { seen s with working := ((fields s).lookup "idle").any fun age => age.toNat?.any (· < 3) }
+
+/-- A wrong reading of a session: any output since the last look is unseen, as the `behind` count
+its `fields` report says, a title or a line rewritten in place among it. The headline that a
+session's unseen lines are those that entered its history is shown to reject it. -/
+@[expose]
+def Seen.anyOutput {S : Type} (fields : S → List (String × String)) (seen : S → Seen) (s : S) :
+    Seen :=
+  { seen s with unseen := ((fields s).lookup "behind").any fun count => count.toNat?.any (0 < ·) }
 
 /-- What one chunk of output tells of what the program owns, as the terminal package's mediator
 heard it: the title the terminal holds after it, whether it rang the bell or posted a
-notification, the text of its last notification, and the shell's marks, in order, each as
-`Commands.hear` says it tells; `seen` says that a client is attached, which sees the output as it
-arrives, so that it leaves no ask, no notification and no ending to tell. -/
+notification, the text of its last notification, its last progress report, and the shell's marks,
+in order, each as `Commands.hear` says it tells; `seen` says that a client is attached, which sees
+the output as it arrives, so that it leaves no ask, no notification and no ending to tell. A
+progress report sets the progress, or removes it, whoever watches. -/
 @[expose]
 def Owned.hear (o : Owned) (title : String) (asks : Bool) (notice : Option (List UInt8))
-    (marks : List Terminal.Mediation.Mark) (seen : Bool) : Owned :=
+    (progress : Option (Option Terminal.Mediation.Progress)) (marks : List Terminal.Mediation.Mark)
+    (seen : Bool) : Owned :=
   { o with
     title, asks := !seen && (o.asks || asks), notice := if seen then none else notice.or o.notice,
+    progress := progress.getD o.progress,
     commands :=
       { running := (marks.foldl Commands.hear o.commands).running,
         finished := if seen then none else (marks.foldl Commands.hear o.commands).finished } }
@@ -717,28 +749,6 @@ def clock : List Event → Nat
   | [] => 0
   | .tick now :: evs => max now (clock evs)
   | _ :: evs => clock evs
-
-/-- How long output counts as happening right now, `⣷`, from the poll round that saw it: three
-seconds, so that a program that redraws every second or two, as `top`, `htop` and `zenith` do,
-stays `⣷` between its redraws instead of flipping to `⣿` or `⣀` and back on each. -/
-@[expose]
-def workingMs : Nat := 3000
-
-/-- One redraw of a steady program, as its daemon hears it: its output `chunk`, then the poll
-rounds at `time` plus each offset, the first of which that output ends. -/
-@[expose]
-def redraw (chunk : List UInt8) (time : Nat) (offsets : List Nat) : List Event :=
-  .ptyOut chunk :: offsets.map fun d => .tick (time + d)
-
-/-- A program that prints `chunk` once a `period`, `rounds` times, as its daemon hears it: a poll
-round at `start` before any of it, then each time its output, the poll round that output ends, at
-`start` plus `period` times the redraws before, and the rounds `between i` sets at those offsets
-after the `i`th. -/
-@[expose]
-def steady (chunk : List UInt8) (start period : Nat) (between : Nat → List Nat) : Nat → List Event
-  | 0 => [.tick start]
-  | n + 1 =>
-    steady chunk start period between n ++ redraw chunk (start + n * period) (0 :: between n)
 
 /-- What the runtime executes, given the type of a captured repaint. -/
 inductive Effect (Plan : Type) where
@@ -1175,13 +1185,13 @@ def magic : List UInt8 := [0x4C, 0x4E, 0x47, 0x48]
 
 /-- The format of the handoffs this version writes. -/
 @[expose]
-def version : Nat := 3
+def version : Nat := 4
 
 /-- The formats of the handoffs this version reads, the one it writes among them: a newer
 version reads every older format it lists here, and a daemon hands its session only to a
 binary that lists the format it writes. -/
 @[expose]
-def formats : List Nat := [1, 2, 3]
+def formats : List Nat := [1, 2, 3, 4]
 
 /-- The first bytes of a handoff of format `v`. -/
 @[expose]

@@ -639,6 +639,7 @@ theorem step_owned (s : State) (ev : Event) :
             s.owned.hear (Mediation.feed s.terminal s.scanner chunk).vt.windowTitle
               (Mediation.feed s.terminal s.scanner chunk).asks
               (Mediation.feed s.terminal s.scanner chunk).notice
+              (Mediation.feed s.terminal s.scanner chunk).progress
               (Mediation.feed s.terminal s.scanner chunk).marks (seenBy s.roster)) ∧
       (∀ o, ev = .observed o → (Session.step s ev).1.owned = s.owned.observe o) ∧
       (∀ d, ev = .notified d → (Session.step s ev).1.owned = s.owned.notify d) ∧
@@ -657,7 +658,7 @@ theorem step_owned (s : State) (ev : Event) :
         (∀ o, ev ≠ .observed o) →
         (∀ id chunk, ev ≠ .bytes id chunk) →
         (∀ d, ev ≠ .notified d) → (Session.step s ev).1.owned = s.owned) ∧
-      (Status.classify { fresh := s.seen.fresh, unseen := s.seen.unseen, asks := s.seen.asks } =
+      (Status.classify { working := s.seen.working, unseen := s.seen.unseen, asks := s.seen.asks } =
           .asks ↔
         s.owned.asks = true) :=
   ⟨fun chunk hev => by
@@ -682,6 +683,7 @@ theorem step_owned_rejects_rung :
                 s.owned.hear (Mediation.feed s.terminal s.scanner chunk).vt.windowTitle
                   (Mediation.feed s.terminal s.scanner chunk).asks
                   (Mediation.feed s.terminal s.scanner chunk).notice
+                  (Mediation.feed s.terminal s.scanner chunk).progress
                   (Mediation.feed s.terminal s.scanner chunk).marks (seenBy s.roster)) ∧
           (∀ o,
             ev = .observed o →
@@ -713,7 +715,8 @@ theorem step_owned_rejects_rung :
             (∀ d, ev ≠ .notified d) →
             ((fun (s : State) (_ : Event) => Session.step s (.ptyOut [0x07])) s ev).1.owned =
               s.owned) ∧
-          (Status.classify { fresh := s.seen.fresh, unseen := s.seen.unseen, asks := s.seen.asks } =
+          (Status.classify
+                { working := s.seen.working, unseen := s.seen.unseen, asks := s.seen.asks } =
               .asks ↔
             s.owned.asks = true) := by
   -- a session that rings the bell on a client's read asks, with no output and no look
@@ -734,6 +737,7 @@ theorem step_owned_rejects_lumped :
                 s.owned.hear (Mediation.feed s.terminal s.scanner chunk).vt.windowTitle
                   (Mediation.feed s.terminal s.scanner chunk).asks
                   (Mediation.feed s.terminal s.scanner chunk).notice
+                  (Mediation.feed s.terminal s.scanner chunk).progress
                   (Mediation.feed s.terminal s.scanner chunk).marks (seenBy s.roster)) ∧
           (∀ o, ev = .observed o → (Session.step s ev).1.owned = s.owned.observe o) ∧
           (∀ d, ev = .notified d → (Session.step s ev).1.owned = s.owned.notify d) ∧
@@ -753,7 +757,7 @@ theorem step_owned_rejects_lumped :
             (∀ id chunk, ev ≠ .bytes id chunk) →
             (∀ d, ev ≠ .notified d) → (Session.step s ev).1.owned = s.owned) ∧
           (Status.lumped Status.classify
-                { fresh := s.seen.fresh, unseen := s.seen.unseen, asks := s.seen.asks } =
+                { working := s.seen.working, unseen := s.seen.unseen, asks := s.seen.asks } =
               .asks ↔
             s.owned.asks = true) := by
   -- today's rule lists a session whose program rang the bell by its output, never as asking
@@ -1555,7 +1559,6 @@ theorem fields_owned_rejects_counted :
   revert this
   simp [Session.trace, Session.step, State.roster, State.boot, App.Fields.owns, App.Fields.table,
     Session.maxClients]
-  decide
 
 theorem listed_unrecorded (records : Session.Records) (panes : List Import.Resurrect.Pane)
     (pane : Import.Resurrect.Pane) :
@@ -3481,59 +3484,6 @@ theorem withColor_iff_rejects_presence :
     (h true (some "") (some "xterm")).mpr ⟨rfl, .inr rfl, "xterm", rfl, by simp, by simp⟩
   exact absurd colors (by decide)
 
-theorem steady_working (s : State) (chunk : List UInt8) (start period : Nat)
-    (between : Nat → List Nat) (rounds : Nat) (gaps : period < Session.workingMs)
-    (within : ∀ i d, d ∈ between i → d ≤ period) :
-    (∀ i ≤ rounds,
-        ∀ k ≤ (between i).length,
-          (Session.trace Session.step s
-                (Session.steady chunk start period between i ++
-                  Session.redraw chunk (start + i * period)
-                    ((0 :: between i).take (k + 1)))).1.seen.fresh =
-            true) ∧
-      (∃ due,
-        (Session.trace Session.step s
-                (Session.steady chunk start period between (rounds + 1))).1.nextTick =
-            some due ∧
-          due ≤ start + rounds * period + Session.freshMs) ∧
-      ∀ (quiet : List Nat) (t : Nat),
-        start + rounds * period + Session.freshMs ≤ t →
-          (Session.trace Session.step s
-                (Session.steady chunk start period between (rounds + 1) ++ quiet.map Event.tick ++
-                  [Event.tick t])).1.seen.fresh =
-            false := Session.steady_working s chunk start period between rounds gaps within
-
-theorem steady_working_rejects_second :
-    ¬∀ (s : State) (chunk : List UInt8) (start period : Nat) (between : Nat → List Nat)
-        (rounds : Nat),
-        period < Session.workingMs →
-          (∀ i d, d ∈ between i → d ≤ period) →
-          (∀ i ≤ rounds,
-              ∀ k ≤ (between i).length,
-                (Session.trace Session.step s
-                      (Session.steady chunk start period between i ++
-                        Session.redraw chunk (start + i * period)
-                          ((0 :: between i).take (k + 1)))).1.seen.fresh =
-                  true) ∧
-            (∃ due,
-              (Session.trace Session.step s
-                      (Session.steady chunk start period between (rounds + 1))).1.nextTick =
-                  some due ∧
-                due ≤ start + rounds * period + (1000 : Nat)) ∧
-            ∀ (quiet : List Nat) (t : Nat),
-              start + rounds * period + (1000 : Nat) ≤ t →
-                (Session.trace Session.step s
-                      (Session.steady chunk start period between (rounds + 1) ++
-                        quiet.map Event.tick ++
-                        [Event.tick t])).1.seen.fresh =
-                  false := by
-  intro h
-  have wrong :=
-    (h (State.boot (Vt.Vt.init 1 1) [] []) [] 0 1000 (fun _ => []) 0 (by decide) (by simp)).2.2 []
-      1000 (by decide)
-  rw [Session.steady_then_tick] at wrong
-  simp [Session.freshMs, Session.workingMs] at wrong
-
 theorem ticks_settle (s : State) (now t₁ t₂ : Nat)
     (h₁ : (Session.trace Session.step s [.tick now]).1.nextTick = some t₁)
     (h₂ : (Session.trace Session.step s [.tick now, .tick t₁]).1.nextTick = some t₂) :
@@ -3815,6 +3765,93 @@ theorem classify_iff_rejects_idle :
         (fun (_ : Status.Obs) => Status.Status.idle) o = s ↔ Status.Is s o := by
   intro h
   exact absurd ((h { known := false } .unknown).mpr rfl) (by decide)
+
+theorem working_declared (s : State) :
+    s.seen.working = s.owned.working ∧
+      (Status.classify { working := s.seen.working, unseen := s.seen.unseen, asks := s.seen.asks } =
+          .working ↔
+        s.owned.asks = false ∧ s.owned.working = true) := by
+  refine ⟨Session.seen_working s, ?_⟩
+  rw [Status.classify_iff, Session.seen_working, Session.seen_asks]
+  simp [Status.Is]
+
+theorem working_declared_rejects_window :
+    ¬∀ (s : State),
+        (Seen.windowed Session.infoFields State.seen s).working = s.owned.working ∧
+          (Status.classify
+                { working := (Seen.windowed Session.infoFields State.seen s).working,
+                  unseen := (Seen.windowed Session.infoFields State.seen s).unseen,
+                  asks := (Seen.windowed Session.infoFields State.seen s).asks } =
+              .working ↔
+            s.owned.asks = false ∧ s.owned.working = true) := by
+  -- a program that wrote a moment ago, and declared nothing, reads working by the window
+  intro h
+  have := (h (Session.step Session.wroteUnticked (.tick 0)).1).1
+  rw [Session.windowed_ticked, Session.ticked_declares_nothing] at this
+  cases this
+
+theorem unseen_lines (s : State) (ev : Event) :
+    (∀ chunk,
+        ev = .ptyOut chunk →
+          (Session.step s ev).1.seen.unseen =
+            (!seenBy s.roster &&
+              (s.seen.unseen || (Mediation.feed s.terminal s.scanner chunk).lines))) ∧
+      (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
+        ev = .bytes id chunk →
+          s.client? id = some c →
+          c.attached = false →
+          c.decoder.feed chunk = (dec, [m]) →
+          dec.errored = false → m.Looks → (Session.step s ev).1.seen.unseen = false) ∧
+      ((∀ chunk, ev ≠ .ptyOut chunk) →
+        (Session.step s ev).1.seen.unseen = true → s.seen.unseen = true) :=
+  ⟨fun chunk hev => by
+    subst hev
+    exact Session.step_ptyOut_unseen s chunk,
+    fun id chunk c dec m hev hc fresh read healthy looks => by
+    subst hev
+    exact Session.step_look_unseen s id chunk hc fresh read healthy looks, fun out raised =>
+    Session.step_unseen_raised s ev out raised⟩
+
+theorem unseen_lines_rejects_output :
+    ¬∀ (s : State) (ev : Event),
+        (∀ chunk,
+            ev = .ptyOut chunk →
+              (Seen.anyOutput Session.infoFields State.seen (Session.step s ev).1).unseen =
+                (!seenBy s.roster &&
+                  ((Seen.anyOutput Session.infoFields State.seen s).unseen ||
+                    (Mediation.feed s.terminal s.scanner chunk).lines))) ∧
+          (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
+            ev = .bytes id chunk →
+              s.client? id = some c →
+              c.attached = false →
+              c.decoder.feed chunk = (dec, [m]) →
+              dec.errored = false →
+              m.Looks →
+              (Seen.anyOutput Session.infoFields State.seen (Session.step s ev).1).unseen = false) ∧
+          ((∀ chunk, ev ≠ .ptyOut chunk) →
+            (Seen.anyOutput Session.infoFields State.seen (Session.step s ev).1).unseen = true →
+            (Seen.anyOutput Session.infoFields State.seen s).unseen = true) := by
+  -- output that adds no line to the history, here none at all, is unseen by any output
+  intro h
+  have := (h (State.boot (Vt.Vt.init 2 1) [] []) (.ptyOut [])).1 [] rfl
+  rw [Session.anyOutput_output, Session.anyOutput_boot, Session.feed_nil_lines] at this
+  simp at this
+
+theorem status_clockless (s : State) (times : List Nat) :
+    (Session.trace Session.step s (times.map Event.tick)).1.seen = s.seen :=
+  Session.trace_ticks_seen s times
+
+theorem status_clockless_rejects_window :
+    ¬∀ (s : State) (times : List Nat),
+        Seen.windowed Session.infoFields State.seen
+            (Session.trace Session.step s (times.map Event.tick)).1 =
+          Seen.windowed Session.infoFields State.seen s := by
+  -- by the window, a program that wrote reads working once a tick records when
+  intro h
+  have := congrArg Seen.working (h Session.wroteUnticked [0])
+  simp only [List.map_cons, List.map_nil, Session.trace] at this
+  rw [Session.windowed_ticked, Session.windowed_unticked] at this
+  cases this
 
 theorem icon_glyphs :
     (∀ a b, Status.icon a = Status.icon b → a = b) ∧

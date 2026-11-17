@@ -21,8 +21,8 @@ state is reachable (a state no observation produces would be a lie in the legend
 
 namespace Linger.Display.Status
 
-/-- The classifier: a priority cascade. A program that asks for you outranks one that
-prints. -/
+/-- The classifier: a priority cascade. A program that asks for you outranks one that says it
+is working, which outranks new lines. -/
 def classify (o : Obs) : Status :=
   if !o.known then .unknown
   else
@@ -33,7 +33,7 @@ def classify (o : Obs) : Status :=
       if !o.daemonUp then .resumable
       else
         if o.asks then .asks
-        else if o.fresh then .working else if o.unseen then .wantsYou else .idle
+        else if o.working then .working else if o.unseen then .wantsYou else .idle
 
 /-- The glyph for a state. All eight are single-column *by our own
 `charWidth`*, and East Asian Width neutral or narrow, none an emoji; note that table covers
@@ -104,8 +104,8 @@ def summary (statuses : List Status) : String :=
 /-- What linger saw, in the words `linger help` gives each status. -/
 def seen : Status → String
   | .asks => "a bell or a notification since you looked"
-  | .working => "output right now"
-  | .wantsYou => "new output, then it stopped"
+  | .working => "says it is working"
+  | .wantsYou => "new lines since you looked"
   | .idle => "nothing new since you looked"
   | .exitedOk => "ended with status 0"
   | .exitedBad => "ended with a failure status or a signal"

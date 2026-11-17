@@ -56,11 +56,11 @@ each with a kill, and says what it does not claim yet:
    session, every wait is bounded and says what it missed, and optional work is skipped or
    coalesced, never queued.
 
-The status rule: a session's status is one glyph for one observation, `⚑` a bell or a desktop
-notification since you looked, from a program still running, `⣷` output right now, `⣿` new output,
-then it stopped, `⣀` nothing new since you looked, `✓` ended with status 0, `✗` ended any other
-way, `~` saved with no daemon and `?` no answer; a program waiting for you outranks one printing,
-and titles and `ls --summary` count `⚑`, `⣿`, `✗` and `?`. No two statuses share a glyph, and
+The status rule: a session's status is one glyph for one observation, each a signal's and none
+a guess from timing, `⚑` a bell or a desktop notification since you looked, from a program still
+running, `⣷` its program says it is working, `⣿` new lines entered its history since you looked,
+`⣀` none of these, `✓` ended with status 0, `✗` ended any other way, `~` saved with no daemon and
+`?` no answer; a program waiting for you outranks one that says it is working, and titles and `ls --summary` count `⚑`, `⣿`, `✗` and `?`. No two statuses share a glyph, and
 `linger help`'s legend gives each glyph one line, which begins with it (`icon_glyphs`); a row of a
 session with no daemon shows the status the legend gives what its end record says, and a remote
 host's saved row only an ending or `~` (`rowStatus_saved`). Its section follows the ten parts, with
@@ -68,11 +68,20 @@ the titles, listings and selector views that show statuses: a view ranks rows by
 to act, `⚑`, then `✗` and `?`, then `⣿`, first, then by where the session is in its life, the
 running sessions, then the saved ones, `~`, then the ended ones, `✓` (`sort_two_keys`), so no row
 that ended well or can only be resumed sits above a live one, a finished session comes last, and a
-running session's row keeps its place whether it is printing or quiet. Output is `⣷` for a working
-window of three seconds from the poll round that saw it (`Session.workingMs`), so a program that
-redraws more often, as `top` does, reads `⣷` at every poll round of every redraw, and once it
-stops, it reads quiet from the round a working window after its last redraw, for which its
-session sets a tick (`steady_working`). A client attached to one session tells its terminal, with
+running session's row keeps its place whether it says it is working or not. A session is `⣷`
+exactly while its program has declared progress under way, with ConEmu's OSC `9;4` in state 1,
+normal, or 3, indeterminate, which the terminal package's mediator hears byte by byte
+(`progress_source`), or while its shell's OSC 133 marks say a command runs, a `C` that no `D` or
+`A` has followed (`working_declared`, killed by the window rule before it, output within three
+seconds): state 2, an error, and state 4, a pause, say the progress stopped, as the Windows
+taskbar progress ConEmu's report sets shows them halted in red and in yellow, so neither is
+working, and state 0 removes the progress. A session is `⣿` exactly while new lines entered its
+terminal's history with nobody attached since it was last looked at (`unseen_lines`, killed by
+any output since the last look, which a title or a line rewritten in place is): a redraw in place,
+a title, a status line's tick and a cursor move add no line, and a program on the alternate
+screen, which keeps no history, never sets it. No tick, the one event that tells a session the
+time, changes what its status reads (`status_clockless`, killed by the window rule), so a status
+changes only when a signal does, and a daemon sets a tick only for a save. A client attached to one session tells its terminal, with
 one OSC 9 desktop notification, of each other local session that changed into asking between two
 of the samples its title takes, and of none on the first, whose asks the title counts
 (`announce_changes`). Within a place a view keeps the listing's order,
@@ -245,8 +254,6 @@ def Linger.Session.Names.entryName : String → Option String := sorry
 def Linger.Session.ending : List Linger.Session.Stop.Send := sorry
 
 def Linger.Session.drainTimeoutMs : Nat := sorry
-
-def Linger.Session.freshMs : Nat := sorry
 
 def Linger.Session.pollTimeout : Nat → List Nat → Int32 := sorry
 
@@ -681,8 +688,9 @@ alone (`step_owned`): the title is what OSC 0 and OSC 2 set on the session's ter
 terminal it fed the output holds it, which the terminal package claims byte by byte
 (`title_source`); whether it asks, a bell or a notification since the last look, and the
 notification's text are what the terminal package's mediator hears of a BEL, an OSC 9 that is no
-ConEmu sub-command and an OSC 777 `notify`, which it claims byte by byte too (`asks_exact`); its
-commands are what its shell's OSC 133
+ConEmu sub-command and an OSC 777 `notify`, which it claims byte by byte too (`asks_exact`); the
+progress it declared is what the mediator hears of ConEmu's OSC `9;4`, the last report's state,
+none after one that removes it (`progress_source`); its commands are what its shell's OSC 133
 marks tell, each as `Commands.hear` says the marks' standard means it, so a `D` after a `C` is
 that command's ending, with the command line the `C` gave and the status the `D` gave, a later `C`
 replaces it, and a `D` with no `C` since the last `D` or `A` is no ending; its foreground and its
@@ -945,6 +953,7 @@ theorem step_owned (s : State) (ev : Event) :
             s.owned.hear (Mediation.feed s.terminal s.scanner chunk).vt.windowTitle
               (Mediation.feed s.terminal s.scanner chunk).asks
               (Mediation.feed s.terminal s.scanner chunk).notice
+              (Mediation.feed s.terminal s.scanner chunk).progress
               (Mediation.feed s.terminal s.scanner chunk).marks (seenBy s.roster)) ∧
       (∀ o, ev = .observed o → (Session.step s ev).1.owned = s.owned.observe o) ∧
       (∀ d, ev = .notified d → (Session.step s ev).1.owned = s.owned.notify d) ∧
@@ -963,7 +972,7 @@ theorem step_owned (s : State) (ev : Event) :
         (∀ o, ev ≠ .observed o) →
         (∀ id chunk, ev ≠ .bytes id chunk) →
         (∀ d, ev ≠ .notified d) → (Session.step s ev).1.owned = s.owned) ∧
-      (Status.classify { fresh := s.seen.fresh, unseen := s.seen.unseen, asks := s.seen.asks } =
+      (Status.classify { working := s.seen.working, unseen := s.seen.unseen, asks := s.seen.asks } =
           .asks ↔
         s.owned.asks = true) := by
   sorry
@@ -977,6 +986,7 @@ theorem step_owned_rejects_rung :
                 s.owned.hear (Mediation.feed s.terminal s.scanner chunk).vt.windowTitle
                   (Mediation.feed s.terminal s.scanner chunk).asks
                   (Mediation.feed s.terminal s.scanner chunk).notice
+                  (Mediation.feed s.terminal s.scanner chunk).progress
                   (Mediation.feed s.terminal s.scanner chunk).marks (seenBy s.roster)) ∧
           (∀ o,
             ev = .observed o →
@@ -1008,7 +1018,8 @@ theorem step_owned_rejects_rung :
             (∀ d, ev ≠ .notified d) →
             ((fun (s : State) (_ : Event) => Session.step s (.ptyOut [0x07])) s ev).1.owned =
               s.owned) ∧
-          (Status.classify { fresh := s.seen.fresh, unseen := s.seen.unseen, asks := s.seen.asks } =
+          (Status.classify
+                { working := s.seen.working, unseen := s.seen.unseen, asks := s.seen.asks } =
               .asks ↔
             s.owned.asks = true) := by
   sorry
@@ -1022,6 +1033,7 @@ theorem step_owned_rejects_lumped :
                 s.owned.hear (Mediation.feed s.terminal s.scanner chunk).vt.windowTitle
                   (Mediation.feed s.terminal s.scanner chunk).asks
                   (Mediation.feed s.terminal s.scanner chunk).notice
+                  (Mediation.feed s.terminal s.scanner chunk).progress
                   (Mediation.feed s.terminal s.scanner chunk).marks (seenBy s.roster)) ∧
           (∀ o, ev = .observed o → (Session.step s ev).1.owned = s.owned.observe o) ∧
           (∀ d, ev = .notified d → (Session.step s ev).1.owned = s.owned.notify d) ∧
@@ -1041,7 +1053,7 @@ theorem step_owned_rejects_lumped :
             (∀ id chunk, ev ≠ .bytes id chunk) →
             (∀ d, ev ≠ .notified d) → (Session.step s ev).1.owned = s.owned) ∧
           (Status.lumped Status.classify
-                { fresh := s.seen.fresh, unseen := s.seen.unseen, asks := s.seen.asks } =
+                { working := s.seen.working, unseen := s.seen.unseen, asks := s.seen.asks } =
               .asks ↔
             s.owned.asks = true) := by
   sorry
@@ -3522,56 +3534,6 @@ and an update over a terminal in insert or origin mode, without autowrap, with a
 region or a DEC line-drawing character set, none of which the picker sets. Not claimed yet: that
 an event's work follows its size. -/
 
-theorem steady_working (s : State) (chunk : List UInt8) (start period : Nat)
-    (between : Nat → List Nat) (rounds : Nat) (gaps : period < Session.workingMs)
-    (within : ∀ i d, d ∈ between i → d ≤ period) :
-    (∀ i ≤ rounds,
-        ∀ k ≤ (between i).length,
-          (Session.trace Session.step s
-                (Session.steady chunk start period between i ++
-                  Session.redraw chunk (start + i * period)
-                    ((0 :: between i).take (k + 1)))).1.seen.fresh =
-            true) ∧
-      (∃ due,
-        (Session.trace Session.step s
-                (Session.steady chunk start period between (rounds + 1))).1.nextTick =
-            some due ∧
-          due ≤ start + rounds * period + Session.freshMs) ∧
-      ∀ (quiet : List Nat) (t : Nat),
-        start + rounds * period + Session.freshMs ≤ t →
-          (Session.trace Session.step s
-                (Session.steady chunk start period between (rounds + 1) ++ quiet.map Event.tick ++
-                  [Event.tick t])).1.seen.fresh =
-            false := by
-  sorry
-
-@[kills steady_working]
-theorem steady_working_rejects_second :
-    ¬∀ (s : State) (chunk : List UInt8) (start period : Nat) (between : Nat → List Nat)
-        (rounds : Nat),
-        period < Session.workingMs →
-          (∀ i d, d ∈ between i → d ≤ period) →
-          (∀ i ≤ rounds,
-              ∀ k ≤ (between i).length,
-                (Session.trace Session.step s
-                      (Session.steady chunk start period between i ++
-                        Session.redraw chunk (start + i * period)
-                          ((0 :: between i).take (k + 1)))).1.seen.fresh =
-                  true) ∧
-            (∃ due,
-              (Session.trace Session.step s
-                      (Session.steady chunk start period between (rounds + 1))).1.nextTick =
-                  some due ∧
-                due ≤ start + rounds * period + (1000 : Nat)) ∧
-            ∀ (quiet : List Nat) (t : Nat),
-              start + rounds * period + (1000 : Nat) ≤ t →
-                (Session.trace Session.step s
-                      (Session.steady chunk start period between (rounds + 1) ++
-                        quiet.map Event.tick ++
-                        [Event.tick t])).1.seen.fresh =
-                  false := by
-  sorry
-
 theorem ticks_settle (s : State) (now t₁ t₂ : Nat)
     (h₁ : (Session.trace Session.step s [.tick now]).1.nextTick = some t₁)
     (h₂ : (Session.trace Session.step s [.tick now, .tick t₁]).1.nextTick = some t₂) :
@@ -3832,7 +3794,9 @@ theorem capture_waits_unlocked_rejects_held :
 And the titles, listings and selector views that show statuses; what makes a session ask and what
 it tells of its shell's commands is part 2's (`step_owned`). Not claimed: that the porcelain and
 a row report the text of the last notification since the last look and an ending's command line
-and status, which the status suite checks; repainting the marks after a reattach, which a repaint
+and status, and the porcelain the declared progress, which the status suite checks; that the
+mediator's `lines` is set exactly when rows enter the terminal's history, which the terminal
+package's tests and the status suite check; repainting the marks after a reattach, which a repaint
 does not carry; and that the daemon publishes what it sees to its name's end record, which the
 quiet and status suites check. -/
 
@@ -3843,6 +3807,74 @@ theorem classify_iff (o : Status.Obs) (s : Status.Status) :
 theorem classify_iff_rejects_idle :
     ¬∀ (o : Status.Obs) (s : Status.Status),
         (fun (_ : Status.Obs) => Status.Status.idle) o = s ↔ Status.Is s o := by
+  sorry
+
+theorem working_declared (s : State) :
+    s.seen.working = s.owned.working ∧
+      (Status.classify { working := s.seen.working, unseen := s.seen.unseen, asks := s.seen.asks } =
+          .working ↔
+        s.owned.asks = false ∧ s.owned.working = true) := by
+  sorry
+
+@[kills working_declared]
+theorem working_declared_rejects_window :
+    ¬∀ (s : State),
+        (Seen.windowed Session.infoFields State.seen s).working = s.owned.working ∧
+          (Status.classify
+                { working := (Seen.windowed Session.infoFields State.seen s).working,
+                  unseen := (Seen.windowed Session.infoFields State.seen s).unseen,
+                  asks := (Seen.windowed Session.infoFields State.seen s).asks } =
+              .working ↔
+            s.owned.asks = false ∧ s.owned.working = true) := by
+  sorry
+
+theorem unseen_lines (s : State) (ev : Event) :
+    (∀ chunk,
+        ev = .ptyOut chunk →
+          (Session.step s ev).1.seen.unseen =
+            (!seenBy s.roster &&
+              (s.seen.unseen || (Mediation.feed s.terminal s.scanner chunk).lines))) ∧
+      (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
+        ev = .bytes id chunk →
+          s.client? id = some c →
+          c.attached = false →
+          c.decoder.feed chunk = (dec, [m]) →
+          dec.errored = false → m.Looks → (Session.step s ev).1.seen.unseen = false) ∧
+      ((∀ chunk, ev ≠ .ptyOut chunk) →
+        (Session.step s ev).1.seen.unseen = true → s.seen.unseen = true) := by
+  sorry
+
+@[kills unseen_lines]
+theorem unseen_lines_rejects_output :
+    ¬∀ (s : State) (ev : Event),
+        (∀ chunk,
+            ev = .ptyOut chunk →
+              (Seen.anyOutput Session.infoFields State.seen (Session.step s ev).1).unseen =
+                (!seenBy s.roster &&
+                  ((Seen.anyOutput Session.infoFields State.seen s).unseen ||
+                    (Mediation.feed s.terminal s.scanner chunk).lines))) ∧
+          (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
+            ev = .bytes id chunk →
+              s.client? id = some c →
+              c.attached = false →
+              c.decoder.feed chunk = (dec, [m]) →
+              dec.errored = false →
+              m.Looks →
+              (Seen.anyOutput Session.infoFields State.seen (Session.step s ev).1).unseen = false) ∧
+          ((∀ chunk, ev ≠ .ptyOut chunk) →
+            (Seen.anyOutput Session.infoFields State.seen (Session.step s ev).1).unseen = true →
+            (Seen.anyOutput Session.infoFields State.seen s).unseen = true) := by
+  sorry
+
+theorem status_clockless (s : State) (times : List Nat) :
+    (Session.trace Session.step s (times.map Event.tick)).1.seen = s.seen := by sorry
+
+@[kills status_clockless]
+theorem status_clockless_rejects_window :
+    ¬∀ (s : State) (times : List Nat),
+        Seen.windowed Session.infoFields State.seen
+            (Session.trace Session.step s (times.map Event.tick)).1 =
+          Seen.windowed Session.infoFields State.seen s := by
   sorry
 
 theorem icon_glyphs :

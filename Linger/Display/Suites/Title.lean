@@ -43,7 +43,8 @@ def idleWindowMs : Nat := 3000
 
 /-- Raw foreground program: lower-case keys open a partial sequence, their
 upper-case partners finish it; `r` repeats an identical title, `p` answers a
-liveness probe, and `q` exits. No shell prompt or startup file supplies output. -/
+liveness probe with more lines than a screen holds, so that they enter its history, and `q`
+exits. No shell prompt or startup file supplies output. -/
 def probe : IO UInt32 := do
   let saved ← termRaw stdinFd
   try
@@ -73,7 +74,7 @@ def probe : IO UInt32 := do
           | 108 =>
             writeAll stdoutFd ("\x1b]2;" ++ longEditor ++ "\x07").toUTF8
           | 112 =>
-            writeAll stdoutFd "\r\nTITLE-PONG\r\n".toUTF8
+            writeAll stdoutFd (String.join (List.replicate 30 "\r\nTITLE-PONG")).toUTF8
           | 113 =>
             running := false
           | _ =>

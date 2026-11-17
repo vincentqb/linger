@@ -329,14 +329,16 @@ theorem feed_replies_noNl (v : Vt) (s : Scan) (bs : Bytes) : NoNl (feed v s bs).
 
 /-- The full chunk law: re-chunking preserves the final VT and scanner, concatenates visible
 bytes, child replies and marks in order, asks when either part asks, and keeps the later part's
-last notification, else the earlier one's. -/
+last notification, else the earlier one's, and its last progress report, else the earlier
+one's; it adds lines to the history when either part does. -/
 theorem feed_append (v : Vt) (s : Scan) (a b : Bytes) :
     feed v s (a ++ b) =
       let first := feed v s a
       let second := feed first.vt first.scan b
       { vt := second.vt, scan := second.scan, visible := first.visible ++ second.visible,
         replies := first.replies ++ second.replies, asks := first.asks || second.asks,
-        notice := second.notice.or first.notice, marks := first.marks ++ second.marks } := by
+        notice := second.notice.or first.notice, marks := first.marks ++ second.marks,
+        progress := second.progress.or first.progress, lines := first.lines || second.lines } := by
   induction a generalizing v s with
   | nil => simp [feed, Option.or_none]
   | cons x xs ih =>
@@ -512,9 +514,9 @@ theorem hears_osc_end (rev : Bytes) (escSeen : Bool) :
 
 /-- What an OSC payload tells is a notification exactly when it posts one. -/
 theorem heardOsc_eq (payload : Bytes) :
-    heardOsc payload = { asks := (noticeOf payload).isSome, notice := noticeOf payload } := by
-  unfold heardOsc
-  split <;> simp_all
+    heardOsc payload =
+      { asks := (noticeOf payload).isSome, notice := noticeOf payload,
+        progress := progressOf payload } := rfl
 
 /-- An OSC 9 payload posts its text, unless that is a ConEmu sub-command. -/
 theorem noticeOf_osc9 (text : Bytes) :
@@ -947,5 +949,82 @@ theorem feed_cmdline_le (v : Vt) (s : Scan) (bs : Bytes) (hs : s.Bounded) (cmdli
     rcases h with h | h
     · exact mark_cmdline_le hs b cmdline (Option.mem_toList.mp h)
     · exact ih (v.step b) _ hs.step h
+
+/-! ## A program's progress
+
+What the mediator hears of a program's progress report, ConEmu's OSC `9;4`, byte by byte: only
+where the scanner lets go of an OSC, as `Scan.hears` hears a notification. Over a whole stream:
+an OSC within the cap, with a plain payload and ended by BEL or ST, reports exactly the progress
+its payload is, whatever the chunks. -/
+
+/-- Feeding a byte, then the rest, reports the rest's last progress, else the byte's. -/
+theorem progress_feed_cons (v : Vt) (s : Scan) (b : UInt8) (bs : Bytes) :
+    (feed v s (b :: bs)).progress =
+      (feed (v.step b) (s.step (v.step b) b).scan bs).progress.or (s.hears b).progress := rfl
+
+/-- `feed_append`, read through the progress. -/
+theorem feed_append_progress (v : Vt) (s : Scan) (a b : Bytes) :
+    (feed v s (a ++ b)).progress =
+      (feed (feed v s a).vt (feed v s a).scan b).progress.or (feed v s a).progress := by
+  rw [feed_append]
+
+/-- One byte reports the progress `Scan.hears` hears. -/
+theorem feed_single_progress (v : Vt) (s : Scan) (b : UInt8) :
+    (feed v s [b]).progress = (s.hears b).progress := by simp [feed]
+
+/-- `ESC ]` from ground opens an OSC and reports no progress. -/
+theorem feed_osc_open_progress (v : Vt) : (feed v .ground [ESC, 0x5D]).progress = none := by
+  simp [feed, Scan.step, Scan.hears, ESC, BEL]
+
+/-- An OSC within its cap reads plain payload bytes and reports no progress yet. -/
+theorem feed_osc_plain_progress (v : Vt) (rev payload : Bytes) (h : Plain payload)
+    (fits : rev.length + payload.length ≤ oscCap) :
+    (feed v (.osc rev false) payload).progress = none := by
+  induction payload generalizing v rev with
+  | nil => rfl
+  | cons b bs ih =>
+    obtain ⟨hbel, hesc⟩ := h b List.mem_cons_self
+    simp only [List.length_cons] at fits
+    have hfit : rev.length < oscCap := by omega
+    have hstep : ((Scan.osc rev false).step (v.step b) b).scan = .osc (b :: rev) false := by
+      simp [Scan.step, hbel, hfit, hesc]
+    have hheard : (Scan.osc rev false).hears b = {} := by simp [Scan.hears, hbel, hfit]
+    rw [progress_feed_cons, hstep, hheard,
+      ih (v.step b) (b :: rev) (fun c hc => h c (List.mem_cons_of_mem b hc))
+        (by
+          simp only [List.length_cons]; omega)]
+    rfl
+
+/-- **A progress report is heard as its string ends**: an OSC with a plain payload, within its
+cap and ended by BEL or by ST, reports exactly the progress its payload is. ST needs one byte of
+the buffer more, for its ESC. -/
+theorem feed_osc_progress (v : Vt) (payload : Bytes) (h : Plain payload)
+    (fits : payload.length + 3 ≤ oscCap) (ending : Bytes)
+    (ends : ending = [BEL] ∨ ending = [ESC, STFinal]) :
+    (feed v .ground ([ESC, 0x5D] ++ payload ++ ending)).progress = progressOf payload := by
+  rw [List.append_assoc, feed_append_progress, feed_osc_open_progress, Option.or_none,
+    (feed_osc_open v).1]
+  generalize (feed v .ground [ESC, 0x5D]).vt = w
+  rw [feed_append_progress,
+    feed_osc_plain_progress w [0x5D, ESC] payload h
+      (by
+        simp only [List.length_cons, List.length_nil]; omega),
+    Option.or_none,
+    (feed_osc_plain w [0x5D, ESC] payload h
+        (by
+          simp only [List.length_cons, List.length_nil]; omega)).1]
+  generalize (feed w (.osc [0x5D, ESC] false) payload).vt = u
+  have hfit : payload.length + 2 < oscCap := by omega
+  rcases ends with rfl | rfl
+  · rw [feed_single_progress, hears_osc_end, (heldPayload_plain payload h).1, heardOsc_eq]
+  · have hne : ESC ≠ BEL := by decide
+    have hesc : (Scan.osc (payload.reverse ++ [0x5D, ESC]) false).hears ESC = {} := by
+      simp [Scan.hears, hfit, hne]
+    have hstep :
+      ((Scan.osc (payload.reverse ++ [0x5D, ESC]) false).step (u.step ESC) ESC).scan =
+        .osc (ESC :: (payload.reverse ++ [0x5D, ESC])) true := by
+      simp [Scan.step, hfit, hne]
+    rw [progress_feed_cons, hesc, hstep, feed_single_progress]
+    simp [Scan.hears, (heldPayload_plain payload h).2, heardOsc_eq]
 
 end Terminal.Mediation

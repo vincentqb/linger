@@ -11,7 +11,8 @@ predicates on that observation independently of the classifier that computes the
 namespace Linger.Display.Status
 
 /-- Eight mutually exclusive states. A row shows the first that applies, in the order `?`, the
-endings `✓` and `✗`, `~`, `⚑`, `⣷`, `⣿`, `⣀`: a program waiting for you outranks one printing. -/
+endings `✓` and `✗`, `~`, `⚑`, `⣷`, `⣿`, `⣀`: a program waiting for you outranks one that says
+it is working. -/
 inductive Status where
   /-- `?` — no answer: the daemon did not answer, or the saved session could not be read. -/
   | unknown
@@ -26,17 +27,19 @@ inductive Status where
   /-- `⚑` — since the session was last looked at, its program rang the bell or posted a desktop
   notification, and it is still running: it asks for you. -/
   | asks
-  /-- `⣿` — new output since the session was last looked at, then it stopped, and no bell or
-  notification. -/
+  /-- `⣿` — new lines entered the session's history since it was last looked at, and its program
+  neither asks nor says it is working. -/
   | wantsYou
-  /-- `⣷` — output right now. -/
+  /-- `⣷` — its program says it is working: it declared progress under way, or its shell's marks
+  say a command runs. -/
   | working
   /-- `⣀` — nothing new since you last looked. -/
   | idle
   deriving DecidableEq, Repr, Inhabited
 
 /-- What a row is classified from. Booleans the runtime computes, so the
-classifier depends on nothing else — no clock, no filesystem. -/
+classifier depends on nothing else — no clock, no filesystem. Each is a signal's: none is a guess
+from timing. -/
 structure Obs where
   /-- We got a trustworthy answer about this row. -/
   known : Bool := true
@@ -45,10 +48,10 @@ structure Obs where
   /-- The status a shell reports for how the program ended, once it has: from the daemon while
   it ends, then from the name's end record, which a socket-less row reads. -/
   exit : Option Nat := none
-  /-- Output within the "working" window. -/
-  fresh : Bool := false
-  /-- Output since the session was last looked at (attach, output while attached, or
-  capture). -/
+  /-- The program says it is working: its declared progress or its shell's marks. -/
+  working : Bool := false
+  /-- New lines entered the session's history since it was last looked at (attach, output while
+  attached, or capture). -/
   unseen : Bool := false
   /-- A bell or a desktop notification since the session was last looked at. -/
   asks : Bool := false
@@ -64,16 +67,16 @@ def Is : Status → Obs → Prop
   | .resumable, o => o.known = true ∧ o.exit = none ∧ o.daemonUp = false
   | .asks, o => o.known = true ∧ o.exit = none ∧ o.daemonUp = true ∧ o.asks = true
   | .working, o =>
-    o.known = true ∧ o.exit = none ∧ o.daemonUp = true ∧ o.asks = false ∧ o.fresh = true
+    o.known = true ∧ o.exit = none ∧ o.daemonUp = true ∧ o.asks = false ∧ o.working = true
   | .wantsYou, o =>
     o.known = true ∧
-      o.exit = none ∧ o.daemonUp = true ∧ o.asks = false ∧ o.fresh = false ∧ o.unseen = true
+      o.exit = none ∧ o.daemonUp = true ∧ o.asks = false ∧ o.working = false ∧ o.unseen = true
   | .idle, o =>
     o.known = true ∧
-      o.exit = none ∧ o.daemonUp = true ∧ o.asks = false ∧ o.fresh = false ∧ o.unseen = false
+      o.exit = none ∧ o.daemonUp = true ∧ o.asks = false ∧ o.working = false ∧ o.unseen = false
 
-/-- A wrong classifier: today's rule before asks, which lumps a bell and a notification in with
-output, so a running session that asks shows `⣿` once its output stops. The headline that a bell
+/-- A wrong classifier: the rule before asks, which lumps a bell and a notification in with the
+rest of what a session shows, so a running session that asks shows another status. The headline that a bell
 or a notification since the last look makes a running session ask is shown to reject it. -/
 @[expose]
 def lumped (classify : Obs → Status) (o : Obs) : Status := classify { o with asks := false }
@@ -109,9 +112,10 @@ inductive Row where
   and the peer's own `status` name, read by `Status.ofName`. -/
   | remote (live : Bool) (peerStatus : String)
   /-- A socket whose daemon holds the name, read from the name's end record instead of asking:
-  whether the daemon last saw fresh output, output since the session was last looked at, and a
-  bell or a notification since then (`Session.Record.published`). -/
-  | published (fresh unseen asks : Bool)
+  whether the daemon last saw its program say it is working, new lines in its history since the
+  session was last looked at, and a bell or a notification since then
+  (`Session.Record.published`). -/
+  | published (working unseen asks : Bool)
   deriving Repr
 
 /-- The fields of a listing record a human row reads, each from its one source: the socket's
@@ -261,8 +265,8 @@ view lists the sessions that want attention first is shown to reject it. -/
 @[expose]
 def View.arrival {α : Type} (_ : α → Status.Status) (rows : List α) : List α := rows
 
-/-- A wrong order: each status has its own place, a printing session's before a quiet one's, so
-a row moves whenever its session starts or stops printing. The headline that a running session's
+/-- A wrong order: each status has its own place, a working session's before a quiet one's, so
+a row moves whenever its program starts or stops saying it works. The headline that a running session's
 row keeps its place is shown to reject it. -/
 @[expose]
 def View.byActivity {α : Type} (status : α → Status.Status) (rows : List α) : List α :=

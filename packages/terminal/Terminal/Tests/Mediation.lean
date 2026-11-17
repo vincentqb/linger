@@ -272,6 +272,103 @@ example :
 
 example : passthroughWhole profileVt longNotice = true := by native_decide
 
+/-! ### A program's progress
+
+What a chunk reports of its program's progress, split at every byte: ConEmu's `9;4` with each
+state from 0 to 4, ended by BEL or ST, with or without a percentage and the `;` an agent's hook
+writes after the state; nothing from another state, another `9;` sub-command, a notification or
+a title; and the last report of two. A report still passes through unchanged, and it asks
+nothing. -/
+
+/-- The progress report the chunk split at `i` completes last. -/
+def progressAtSplit (v : Vt) (seq : Bytes) (i : Nat) : Option (Option Progress) :=
+  let a := feed v .ground (seq.take i)
+  (feed a.vt a.scan (seq.drop i)).progress.or a.progress
+
+/-- Whether every split of the chunk reports `expected`. -/
+def progressAllSplits (v : Vt) (seq : Bytes) (expected : Option (Option Progress)) : Bool :=
+  (List.range (seq.length + 1)).all fun i => progressAtSplit v seq i == expected
+
+example : progressAllSplits profileVt (osc "9;4;3;" false) (some (some .indeterminate)) = true := by
+  native_decide
+
+example : progressAllSplits profileVt (osc "9;4;0;" false) (some none) = true := by native_decide
+
+example : progressAllSplits profileVt (osc "9;4;0" true) (some none) = true := by native_decide
+
+example : progressAllSplits profileVt (osc "9;4;1;50" false) (some (some .normal)) = true := by
+  native_decide
+
+example : progressAllSplits profileVt (osc "9;4;2" true) (some (some .error)) = true := by
+  native_decide
+
+example : progressAllSplits profileVt (osc "9;4;4;10" false) (some (some .paused)) = true := by
+  native_decide
+
+example : progressAllSplits profileVt (osc "9;4;5" false) none = true := by native_decide
+
+example : progressAllSplits profileVt (osc "9;4;33" false) none = true := by native_decide
+
+example : progressAllSplits profileVt (osc "9;4" false) none = true := by native_decide
+
+example : progressAllSplits profileVt (osc "9;10;3" false) none = true := by native_decide
+
+example : progressAllSplits profileVt (osc "9;done" false) none = true := by native_decide
+
+example : progressAllSplits profileVt (osc "2;9;4;3" false) none = true := by native_decide
+
+example :
+    progressAllSplits profileVt (osc "9;4;3;" false ++ [0x78] ++ osc "9;4;0;" true) (some none) =
+      true := by
+  native_decide
+
+/-- A progress report passes through to clients unchanged, and asks nothing. -/
+example : passthroughAllSplits profileVt (osc "9;4;3;" false) = true := by native_decide
+
+example : heardAllSplits profileVt (osc "9;4;3;" false) (false, none) = true := by native_decide
+
+/-! ### Lines that enter the history
+
+Whether a chunk adds lines to the history, split at every byte: lines past the bottom of the
+screen do, and a line rewritten in place with CR, a title, a cursor move and an erase of the
+screen do not; nor does anything on the alternate screen, which keeps no history. -/
+
+/-- Whether the chunk split at `i` adds lines to the history. -/
+def linesAtSplit (v : Vt) (seq : Bytes) (i : Nat) : Bool :=
+  let a := feed v .ground (seq.take i)
+  a.lines || (feed a.vt a.scan (seq.drop i)).lines
+
+/-- Whether every split of the chunk adds lines as `expected` says. -/
+def linesAllSplits (v : Vt) (seq : Bytes) (expected : Bool) : Bool :=
+  (List.range (seq.length + 1)).all fun i => linesAtSplit v seq i == expected
+
+/-- A terminal two rows tall. -/
+def shortVt : Vt := Vt.init 4 2
+
+example : linesAllSplits shortVt [0x61, 0x0D, 0x0A, 0x62, 0x0D, 0x0A, 0x63] true = true := by
+  native_decide
+
+example : linesAllSplits shortVt [0x61, 0x0D, 0x0A, 0x62] false = true := by native_decide
+
+example :
+    linesAllSplits shortVt ([0x0D, 0x61, 0x0D, 0x62, 0x0D, 0x63] ++ osc "0;spin" false) false =
+      true := by
+  native_decide
+
+example : linesAllSplits shortVt [ESC, 0x5B, 0x32, 0x4A, ESC, 0x5B, 0x48, 0x78] false = true := by
+  native_decide
+
+/-- On the alternate screen, lines past its bottom enter no history. -/
+example :
+    linesAllSplits (shortVt.feed [ESC, 0x5B, 0x3F, 0x31, 0x30, 0x34, 0x39, 0x68])
+        [0x0A, 0x0A, 0x0A, 0x0A] false =
+      true := by
+  native_decide
+
+/-- A full history still tells each new line: it moves its oldest row out. -/
+example : (feed (shortVt.feed (List.replicate (sbCap + 4) 0x0A)) .ground [0x0A]).lines = true := by
+  native_decide
+
 /-! ### A shell's marks
 
 What a chunk's marks are, split at every byte: each of `A`, `B`, `C` and `D`, ended by BEL or ST,

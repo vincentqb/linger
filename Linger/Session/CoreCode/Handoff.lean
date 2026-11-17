@@ -157,6 +157,22 @@ def rScan : R Mediation.Scan := fun l =>
 /-- A command line as the mediator read it. -/
 def wCmdline (c : Mediation.Cmdline) : List UInt8 := wBytes c.bytes ++ wBool c.whole
 
+/-- A declared progress state as its number in ConEmu's report, 1 to 4. -/
+def wProgress : Mediation.Progress → List UInt8
+  | .normal => [1]
+  | .error => [2]
+  | .indeterminate => [3]
+  | .paused => [4]
+
+/-- Inverse of `wProgress`. -/
+def rProgress : R Mediation.Progress := fun l =>
+  match l with
+  | 1 :: rest => some (.normal, rest)
+  | 2 :: rest => some (.error, rest)
+  | 3 :: rest => some (.indeterminate, rest)
+  | 4 :: rest => some (.paused, rest)
+  | _ => none
+
 /-- Inverse of `wCmdline`. -/
 def rCmdline : R Mediation.Cmdline := fun l => do
   let (bytes, l) ← rBytes l
@@ -232,14 +248,17 @@ def wState (s : State) : List UInt8 :=
     wOpt wCmdline s.running ++
     wOpt wFinished s.finished ++
     wNat s.tickOutSeq ++
-    wBool s.freshFlag ++
     wOpt wNat s.lastOutMs ++
     wOpt wObservation s.observed ++
     wBool s.ready ++
-    wOpt wBytes s.status
+    wOpt wBytes s.status ++
+    wBool s.unseenLines ++
+    wOpt wProgress s.progress
 
 /-- Inverse of `wState` for a state whose terminal's parser is quiet, in a handoff of format
-`v`. -/
+`v`. A handoff of a format before 4 holds whether output was recent, which no status reads now,
+after `tickOutSeq`, and neither lines in the history nor a declared progress: nothing then
+recorded either, so the session starts with none. -/
 def rState (v : Nat) : R State := fun l => do
   let (vt, l) ← rTerminal l
   let (scan, l) ← rScan l
@@ -257,16 +276,18 @@ def rState (v : Nat) : R State := fun l => do
   let (running, l) ← rOpt rCmdline l
   let (finished, l) ← rOpt rFinished l
   let (tickOutSeq, l) ← rNat l
-  let (freshFlag, l) ← rBool l
+  let l ← if v < 4 then (rBool l).map (·.2) else some l
   let (lastOutMs, l) ← rOpt rNat l
   let (observed, l) ← rOpt (rObservation v) l
   -- a handoff of format 1 or 2 holds no notification
   let (ready, l) ← if v < 3 then some (false, l) else rBool l
   let (status, l) ← if v < 3 then some (none, l) else rOpt rBytes l
+  let (unseenLines, l) ← if v < 4 then some (false, l) else rBool l
+  let (progress, l) ← if v < 4 then some (none, l) else rOpt rProgress l
   some
     ({ vt, scan, clients, fields, metaKv, ended, dirty, lastCkptMs, attachSeq, outSeq, lookSeq,
-        asking, notice, running, finished, tickOutSeq, freshFlag, lastOutMs, observed, ready,
-        status },
+        asking, notice, running, finished, tickOutSeq, lastOutMs, observed, ready, status,
+        unseenLines, progress },
       l)
 
 /-- One connection a daemon hands over. -/

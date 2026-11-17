@@ -320,8 +320,8 @@ theorem csi_body :
       Body bs →
         (∃ rev, s = .csi rev) ∨ s = .csiPass →
         ((∃ rev, (feed v s bs).scan = .csi rev) ∨ (feed v s bs).scan = .csiPass) ∧
-          (feed v s bs).asks = false ∧ (feed v s bs).notice = none
-  | [], _, s, _, hs => ⟨hs, rfl, rfl⟩
+          (feed v s bs).asks = false ∧ (feed v s bs).notice = none ∧ (feed v s bs).progress = none
+  | [], _, s, _, hs => ⟨hs, rfl, rfl, rfl⟩
   | b :: bs, v, s, hb, hs => by
     obtain ⟨h1, h2⟩ := hb b (by simp)
     have hne : b ≠ ESC := by
@@ -348,11 +348,12 @@ theorem csi_body :
       rcases hs with ⟨rev, rfl⟩ | rfl
       · exact (hears_outside b hbel rev).2.2.1
       · exact (hears_outside b hbel []).2.2.2
-    obtain ⟨r1, r2, r3⟩ := csi_body bs (v.step b) _ (fun c hc => hb c (by simp [hc])) hstep
-    refine ⟨?_, ?_, ?_⟩
+    obtain ⟨r1, r2, r3, r4⟩ := csi_body bs (v.step b) _ (fun c hc => hb c (by simp [hc])) hstep
+    refine ⟨?_, ?_, ?_, ?_⟩
     · exact r1
     · rw [(hears_feed_cons v s b bs).1, hheard, r2]; rfl
     · rw [(hears_feed_cons v s b bs).2, hheard, r3]; rfl
+    · rw [progress_feed_cons, hheard, r4]; rfl
 
 /-- Where a DCS, SOS, PM or APC string's scanner stands within its data. -/
 def InStr (s : Scan) : Prop :=
@@ -362,8 +363,9 @@ theorem str_body :
     ∀ (bs : Bytes) (v : Vt) (s : Scan),
       (∀ b ∈ bs, b ≠ ESC) →
         InStr s →
-        InStr (feed v s bs).scan ∧ (feed v s bs).asks = false ∧ (feed v s bs).notice = none
-  | [], _, s, _, hs => ⟨hs, rfl, rfl⟩
+        InStr (feed v s bs).scan ∧
+          (feed v s bs).asks = false ∧ (feed v s bs).notice = none ∧ (feed v s bs).progress = none
+  | [], _, s, _, hs => ⟨hs, rfl, rfl, rfl⟩
   | b :: bs, v, s, hb, hs => by
     have hne : b ≠ ESC := hb b (by simp)
     have hstep : InStr (s.step (v.step b) b).scan := by
@@ -380,15 +382,17 @@ theorem str_body :
         · simp [InStr, hne]
       · simp [Scan.step, InStr, hne]
     have hheard : s.hears b = {} := by rcases hs with rfl | ⟨k, rfl⟩ | ⟨k, p, rfl⟩ | rfl <;> rfl
-    obtain ⟨r1, r2, r3⟩ := str_body bs (v.step b) _ (fun c hc => hb c (by simp [hc])) hstep
+    obtain ⟨r1, r2, r3, r4⟩ := str_body bs (v.step b) _ (fun c hc => hb c (by simp [hc])) hstep
     exact
       ⟨r1, by
         rw [(hears_feed_cons v s b bs).1, hheard, r2]; rfl, by
-        rw [(hears_feed_cons v s b bs).2, hheard, r3]; rfl⟩
+        rw [(hears_feed_cons v s b bs).2, hheard, r3]; rfl, by
+        rw [progress_feed_cons, hheard, r4]; rfl⟩
 
 theorem str_end (v : Vt) (s : Scan) (hs : InStr s) :
     (feed v s [ESC, STFinal]).scan = .ground ∧
-      (feed v s [ESC, STFinal]).asks = false ∧ (feed v s [ESC, STFinal]).notice = none := by
+      (feed v s [ESC, STFinal]).asks = false ∧
+      (feed v s [ESC, STFinal]).notice = none ∧ (feed v s [ESC, STFinal]).progress = none := by
   have hend :
     (s.step (v.step ESC) ESC).scan = .strPass true ∨
       ∃ k p, (s.step (v.step ESC) ESC).scan = .dcs k p true := by
@@ -403,7 +407,7 @@ theorem str_end (v : Vt) (s : Scan) (hs : InStr s) :
   have hheard : s.hears ESC = {} := by rcases hs with rfl | ⟨k, rfl⟩ | ⟨k, p, rfl⟩ | rfl <;> rfl
   obtain ⟨c1, c2⟩ := hears_feed_cons v s ESC [STFinal]
   obtain ⟨e1, e2, e3⟩ := feed_single (v.step ESC) (s.step (v.step ESC) ESC).scan STFinal
-  refine ⟨?_, ?_, ?_⟩
+  refine ⟨?_, ?_, ?_, ?_⟩
   · show (feed (v.step ESC) (s.step (v.step ESC) ESC).scan [STFinal]).scan = _
     rw [e3]
     rcases hend with h | ⟨k, p, h⟩ <;> rw [h]
@@ -413,6 +417,8 @@ theorem str_end (v : Vt) (s : Scan) (hs : InStr s) :
   · rw [c1, hheard, e1]
     rcases hend with h | ⟨k, p, h⟩ <;> rw [h] <;> rfl
   · rw [c2, hheard, e2]
+    rcases hend with h | ⟨k, p, h⟩ <;> rw [h] <;> rfl
+  · rw [progress_feed_cons, hheard, feed_single_progress]
     rcases hend with h | ⟨k, p, h⟩ <;> rw [h] <;> rfl
 
 theorem feed_three (v : Vt) (s : Scan) (a b c : Bytes) :
@@ -426,16 +432,24 @@ theorem feed_three (v : Vt) (s : Scan) (a b c : Bytes) :
       (feed v s (a ++ b ++ c)).notice =
         ((feed (feed (feed v s a).vt (feed v s a).scan b).vt
               (feed (feed v s a).vt (feed v s a).scan b).scan c).notice.or
-          ((feed (feed v s a).vt (feed v s a).scan b).notice.or (feed v s a).notice)) := by
+          ((feed (feed v s a).vt (feed v s a).scan b).notice.or (feed v s a).notice)) ∧
+      (feed v s (a ++ b ++ c)).progress =
+        ((feed (feed (feed v s a).vt (feed v s a).scan b).vt
+              (feed (feed v s a).vt (feed v s a).scan b).scan c).progress.or
+          ((feed (feed v s a).vt (feed v s a).scan b).progress.or (feed v s a).progress)) := by
   rw [List.append_assoc]
   obtain ⟨a1, a2, a3⟩ := feed_append_heard v s a (b ++ c)
   obtain ⟨b1, b2, b3⟩ := feed_append_heard (feed v s a).vt (feed v s a).scan b c
-  rw [a1, a2, a3, b1, b2, b3, Bool.or_assoc, Option.or_assoc]
-  exact ⟨rfl, rfl, rfl⟩
+  have a4 := feed_append_progress v s a (b ++ c)
+  have b4 := feed_append_progress (feed v s a).vt (feed v s a).scan b c
+  rw [a1, a2, a3, a4, b1, b2, b3, b4, Bool.or_assoc, Option.or_assoc, Option.or_assoc]
+  exact ⟨rfl, rfl, rfl, rfl⟩
 
 theorem token_heard (v : Vt) (t : Stream.Token) (ht : t.Ok) :
     (feed v .ground t.bytes).scan = .ground ∧
-      (feed v .ground t.bytes).asks = t.asks ∧ (feed v .ground t.bytes).notice = t.notice := by
+      (feed v .ground t.bytes).asks = t.asks ∧
+      (feed v .ground t.bytes).notice = t.notice ∧
+      (feed v .ground t.bytes).progress = t.progress := by
   cases t with
   | text c =>
     obtain ⟨h1, h2⟩ := ht
@@ -451,7 +465,8 @@ theorem token_heard (v : Vt) (t : Stream.Token) (ht : t.Ok) :
       ⟨by
         rw [e3]; simp [Scan.step, hne], by
         rw [e1]; simp [Scan.hears, hbel, Stream.Token.asks, Stream.Token.notice], by
-        rw [e2]; rfl⟩
+        rw [e2]; rfl, by
+        rw [feed_single_progress]; simp [Scan.hears, Stream.Token.progress]⟩
   | control b =>
     obtain ⟨_, h2⟩ := ht
     obtain ⟨e1, e2, e3⟩ := feed_single v .ground b
@@ -460,7 +475,8 @@ theorem token_heard (v : Vt) (t : Stream.Token) (ht : t.Ok) :
       ⟨by
         rw [e3]; simp [Scan.step, h2, ESC], by
         rw [e1]; simp [Scan.hears, Stream.Token.asks, BEL], by
-        rw [e2]; rfl⟩
+        rw [e2]; rfl, by
+        rw [feed_single_progress]; simp [Scan.hears, Stream.Token.progress]⟩
   | csi priv ps f =>
     obtain ⟨_, _, h1, h2⟩ := ht
     have hbody : Body ((if priv then [0x3F] else []) ++ Vt.Ref.params ps) := by
@@ -488,38 +504,43 @@ theorem token_heard (v : Vt) (t : Stream.Token) (ht : t.Ok) :
         [0x1B, 0x5B] ++ (if priv = true then [0x3F] else []) ++ Vt.Ref.params ps ++ [f] =
           [ESC, 0x5B] ++ ((if priv = true then [0x3F] else []) ++ Vt.Ref.params ps) ++ [f]
         from by simp [ESC]]
-    obtain ⟨t1, t2, t3⟩ :=
+    obtain ⟨t1, t2, t3, t4⟩ :=
       feed_three v .ground [ESC, 0x5B] ((if priv = true then [0x3F] else []) ++ Vt.Ref.params ps)
         [f]
     have o :
       (feed v .ground [ESC, 0x5B]).scan = .csi [0x5B, ESC] ∧
-        (feed v .ground [ESC, 0x5B]).asks = false ∧ (feed v .ground [ESC, 0x5B]).notice = none := by
+        (feed v .ground [ESC, 0x5B]).asks = false ∧
+        (feed v .ground [ESC, 0x5B]).notice = none ∧
+        (feed v .ground [ESC, 0x5B]).progress = none := by
       simp [feed, Scan.step, Scan.hears, ESC, BEL]
-    rw [t1, t2, t3, o.1, o.2.1, o.2.2]
-    obtain ⟨b1, b2, b3⟩ :=
+    rw [t1, t2, t3, t4, o.1, o.2.1, o.2.2.1, o.2.2.2]
+    obtain ⟨b1, b2, b3, b4⟩ :=
       csi_body _ (feed v .ground [ESC, 0x5B]).vt (.csi [0x5B, ESC]) hbody (.inl ⟨_, rfl⟩)
-    rw [b2, b3]
+    rw [b2, b3, b4]
     generalize
       (feed (feed v .ground [ESC, 0x5B]).vt (Scan.csi [0x5B, ESC])
           ((if priv = true then [0x3F] else []) ++ Vt.Ref.params ps)).vt =
       u at b1 ⊢
     obtain ⟨e1, e2, e3⟩ := feed_single u _ f
-    rw [e1, e2, e3]
+    rw [e1, e2, e3, feed_single_progress]
     rcases b1 with ⟨rev, h⟩ | h <;> rw [h]
     · refine
         ⟨?_, by simp [Scan.hears, hf.2.1, Stream.Token.asks, Stream.Token.notice], by
-          simp [Scan.hears, Stream.Token.notice]⟩
+          simp [Scan.hears, Stream.Token.notice], by simp [Scan.hears, Stream.Token.progress]⟩
       simp only [Scan.step, hf.1, beq_iff_eq, ite_false, hf.2.2, ite_true]
       exact complete_scan _ _
     · refine
         ⟨by simp [Scan.step, hf.1, hf.2.2], by
           simp [Scan.hears, hf.2.1, Stream.Token.asks, Stream.Token.notice], by
-          simp [Scan.hears, Stream.Token.notice]⟩
+          simp [Scan.hears, Stream.Token.notice], by simp [Scan.hears, Stream.Token.progress]⟩
   | osc pl st =>
     obtain ⟨hp, hcap⟩ := ht
     have hplain : Plain pl := hp
     have hn :=
       feed_osc_notice v pl hplain hcap (if st then [ESC, STFinal] else [BEL]) (by cases st <;> simp)
+    have hp :=
+      feed_osc_progress v pl hplain hcap (if st then [ESC, STFinal] else [BEL])
+        (by cases st <;> simp)
     rw [Stream.Token.bytes,
       show
         [0x1B, 0x5D] ++ pl ++ (if st = true then [0x1B, 0x5C] else [0x07]) =
@@ -528,7 +549,8 @@ theorem token_heard (v : Vt) (t : Stream.Token) (ht : t.Ok) :
     refine
       ⟨?_, by
         rw [hn.1]; rfl, by
-        rw [hn.2]; rfl⟩
+        rw [hn.2]; rfl, by
+        rw [hp]; rfl⟩
     obtain ⟨t1, -, -⟩ :=
       feed_three v .ground [ESC, 0x5D] pl (if st = true then [ESC, STFinal] else [BEL])
     rw [t1, (feed_osc_open v).1]
@@ -561,24 +583,25 @@ theorem token_heard (v : Vt) (t : Stream.Token) (ht : t.Ok) :
     obtain ⟨hi, hd⟩ := ht
     rw [Stream.Token.bytes,
       show [0x1B, i] ++ d ++ [0x1B, 0x5C] = [ESC, i] ++ d ++ [ESC, STFinal] from rfl]
-    obtain ⟨t1, t2, t3⟩ := feed_three v .ground [ESC, i] d [ESC, STFinal]
+    obtain ⟨t1, t2, t3, t4⟩ := feed_three v .ground [ESC, i] d [ESC, STFinal]
     have o :
       InStr (feed v .ground [ESC, i]).scan ∧
-        (feed v .ground [ESC, i]).asks = false ∧ (feed v .ground [ESC, i]).notice = none := by
+        (feed v .ground [ESC, i]).asks = false ∧
+        (feed v .ground [ESC, i]).notice = none ∧ (feed v .ground [ESC, i]).progress = none := by
       rcases hi with rfl | rfl | rfl | rfl <;> simp [feed, Scan.step, Scan.hears, ESC, BEL, InStr]
-    obtain ⟨s1, s2, s3⟩ := str_body d (feed v .ground [ESC, i]).vt _ hd o.1
-    obtain ⟨f1, f2, f3⟩ :=
+    obtain ⟨s1, s2, s3, s4⟩ := str_body d (feed v .ground [ESC, i]).vt _ hd o.1
+    obtain ⟨f1, f2, f3, f4⟩ :=
       str_end (feed (feed v .ground [ESC, i]).vt (feed v .ground [ESC, i]).scan d).vt _ s1
-    rw [t1, t2, t3, o.2.1, o.2.2, s2, s3, f1, f2, f3]
-    exact ⟨rfl, rfl, rfl⟩
+    rw [t1, t2, t3, t4, o.2.1, o.2.2.1, o.2.2.2, s2, s3, s4, f1, f2, f3, f4]
+    exact ⟨rfl, rfl, rfl, rfl⟩
   | esc f =>
     obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8⟩ := ht
     rw [Stream.Token.bytes]
     have hf : f ≠ ESC ∧ f ≠ BEL := by
       have := UInt8.le_iff_toNat_le.mp h1
       refine ⟨fun h => ?_, fun h => ?_⟩ <;> rw [h] at this <;> simp [ESC, BEL] at this
-    simp [feed, Scan.step, Scan.hears, Stream.Token.asks, Stream.Token.notice, ESC, BEL, hf.1, hf.2,
-      h3, h4, h5, h6, h7, h8]
+    simp [feed, Scan.step, Scan.hears, Stream.Token.asks, Stream.Token.notice,
+      Stream.Token.progress, ESC, BEL, hf.1, hf.2, h3, h4, h5, h6, h7, h8]
 
 theorem notice_foldl (ts : List Stream.Token) (acc : Option Bytes) :
     ts.foldl (fun n t => t.notice.or n) acc =
@@ -600,13 +623,49 @@ theorem heard_stream (v : Vt) (ts : List Stream.Token) (ok : ∀ t ∈ ts, t.Ok)
   | cons t ts
     ih =>
     obtain ⟨a1, a2, -⟩ := feed_append_heard v .ground t.bytes (ts.flatMap Stream.Token.bytes)
-    obtain ⟨h1, h2, h3⟩ := token_heard v t (ok t (by simp))
+    obtain ⟨h1, h2, h3, -⟩ := token_heard v t (ok t (by simp))
     obtain ⟨r1, r2⟩ := ih (feed v .ground t.bytes).vt (fun t' ht' => ok t' (by simp [ht']))
     rw [List.flatMap_cons, a1, a2, h1, h2, h3, r1, r2]
     refine ⟨by simp, ?_⟩
     unfold Stream.notice
     rw [List.foldl_cons, notice_foldl ts (t.notice.or none)]
     simp
+
+theorem progress_foldl (ts : List Stream.Token) (acc : Option (Option Progress)) :
+    ts.foldl (fun p t => t.progress.or p) acc =
+      (ts.foldl (fun p t => t.progress.or p) none).or acc := by
+  induction ts generalizing acc with
+  | nil => simp
+  | cons t ts
+    ih =>
+    rw [List.foldl_cons, List.foldl_cons, ih, ih (t.progress.or none), Option.or_assoc]
+    simp
+
+/-- The progress a program has declared after a stream, from `p`: the last report's state, as
+`Token.reprogress` folds it. -/
+theorem reprogress_foldl (ts : List Stream.Token) (p : Option Progress) :
+    ((ts.foldl (fun q t => t.progress.or q) none).getD p) = ts.foldl Stream.Token.reprogress p := by
+  induction ts generalizing p with
+  | nil => rfl
+  | cons t ts ih =>
+    rw [List.foldl_cons, List.foldl_cons, progress_foldl, ← ih]
+    cases h : (ts.foldl (fun q t => t.progress.or q) none) <;> cases ht : t.progress <;>
+      simp [Stream.Token.reprogress, ht]
+
+/-- The progress a stream reports, fed from ground: the last report among its tokens. -/
+theorem progress_stream (v : Vt) (ts : List Stream.Token) (ok : ∀ t ∈ ts, t.Ok) :
+    (feed v .ground (ts.flatMap Stream.Token.bytes)).progress =
+      ts.foldl (fun p t => t.progress.or p) none := by
+  induction ts generalizing v with
+  | nil => rfl
+  | cons t ts
+    ih =>
+    obtain ⟨-, -, a3⟩ := feed_append_heard v .ground t.bytes (ts.flatMap Stream.Token.bytes)
+    have a4 := feed_append_progress v .ground t.bytes (ts.flatMap Stream.Token.bytes)
+    obtain ⟨h1, -, -, h4⟩ := token_heard v t (ok t (by simp))
+    rw [List.flatMap_cons, a4, h1, h4,
+      ih (feed v .ground t.bytes).vt (fun t' ht' => ok t' (by simp [ht'])), List.foldl_cons,
+      progress_foldl ts (t.progress.or none), Option.or_none]
 
 end Terminal.Mediation
 

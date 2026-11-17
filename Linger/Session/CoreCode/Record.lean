@@ -18,12 +18,14 @@ running record needs the name held to read: whether its daemon still lives decid
 
 Format: the magic `LNGE`, version 1, then 0 for a running program, 1 and the ending as
 `Wire.outcomeBytes` writes it, 2 and the number of the signal that stopped the daemon, for a
-session it saved, or 3, for a saved tmux pane a kill dismissed, which no program ran; or version 2, 0 and one byte of what the daemon saw (1 for fresh output, 2 for
-unseen output, 4 for a bell or a notification since the last look), for a running program whose
+session it saved, or 3, for a saved tmux pane a kill dismissed, which no program ran; or version 3,
+0 and one byte of what the daemon saw (1 for a program that says it is working, 2 for new lines in
+the history, 4 for a bell or a notification since the last look), for a running program whose
 daemon says so. A reader from before saved sessions reads one as no record, so it answers that
-the ending is unknown, and lists it resumable, a reader from before dismissals reads one as no
-record too, and a reader from before asks reads a byte with 4
-as no record, so it asks the daemon. The record says nothing of how the shell's last command
+the ending is unknown, and lists it resumable, and a reader from before dismissals reads one as no
+record too. Version 2, whose byte said whether output was recent and whether any arrived unseen,
+is read as no record, as a reader from before version 3 reads a version 3 record, so each asks the
+daemon. The record says nothing of how the shell's last command
 ended: that is no status, and the summary that reads the record shows statuses alone, so what it
 reads is what asking would tell it (`rowStatus_published`). -/
 
@@ -31,23 +33,23 @@ namespace Linger.Session
 
 namespace Record
 
-/-- The byte of what a daemon saw: 1 for fresh output, plus 2 for unseen output, plus 4 for an
-ask. -/
+/-- The byte of what a daemon saw: 1 for a program that says it is working, plus 2 for new lines
+in the history, plus 4 for an ask. -/
 def seenByte (seen : Seen) : UInt8 :=
-  (if seen.fresh then 1 else 0) + (if seen.unseen then 2 else 0) + (if seen.asks then 4 else 0)
+  (if seen.working then 1 else 0) + (if seen.unseen then 2 else 0) + (if seen.asks then 4 else 0)
 
 /-- The record's bytes; `decode` reads them back (`decode_encode`). -/
 def encode : Record → List UInt8
   | .running none => [0x4C, 0x4E, 0x47, 0x45, 1, 0]
-  | .running (some seen) => [0x4C, 0x4E, 0x47, 0x45, 2, 0, seenByte seen]
+  | .running (some seen) => [0x4C, 0x4E, 0x47, 0x45, 3, 0, seenByte seen]
   | .ended outcome => [0x4C, 0x4E, 0x47, 0x45, 1, 1] ++ Wire.outcomeBytes outcome
   | .saved signal => [0x4C, 0x4E, 0x47, 0x45, 1, 2, signal]
   | .dismissed => [0x4C, 0x4E, 0x47, 0x45, 1, 3]
 
-/-- The record these bytes hold, or `none` for bytes no version 1 or 2 record has. -/
+/-- The record these bytes hold, or `none` for bytes no version 1 or 3 record has. -/
 def decode : List UInt8 → Option Record
   | [0x4C, 0x4E, 0x47, 0x45, 1, 0] => some (.running none)
-  | [0x4C, 0x4E, 0x47, 0x45, 2, 0, flags] =>
+  | [0x4C, 0x4E, 0x47, 0x45, 3, 0, flags] =>
     if flags < 8 then some (.running (some ⟨flags &&& 1 != 0, flags &&& 2 != 0, flags &&& 4 != 0⟩))
     else none
   | [0x4C, 0x4E, 0x47, 0x45, 1, 1, kind, code] => some (.ended (Wire.readOutcome [kind, code]))

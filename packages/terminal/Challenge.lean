@@ -62,8 +62,12 @@ that takes OSC 1, the icon name, for the title). The mediator feeds the terminal
 the stream asks for someone exactly when it holds BEL as a control or an OSC that posts a desktop
 notification, OSC 9 but not its ConEmu sub-commands such as `9;4` progress, or OSC 777 `notify`,
 and the notification's text is the last one's (`asks_exact`, killed by a mediator that hears the
-BEL ending a string as a bell and by one that hears `9;4` as a notification). Not claimed of the
-streams: an OSC whose payload exceeds the 253 bytes the mediator classifies, a string or sequence
+BEL ending a string as a bell and by one that hears `9;4` as a notification). The mediator hears
+a program's progress report, ConEmu's OSC `9;4` with a state from 0 to 4, which Windows Terminal
+and Ghostty read too, and the progress a program has declared after the stream is the last
+report's state, none after one that removes it, and changes by nothing else (`progress_source`,
+killed by a mediator that hears a change of the window title as a declaration of work). Not
+claimed of the streams: an OSC whose payload exceeds the 253 bytes the mediator classifies, a string or sequence
 cut short, a C0 control inside a sequence, and a CSI with an intermediate byte. -/
 
 public section
@@ -505,6 +509,23 @@ theorem asks_exact_rejects_progress :
             ((Stream.progressAsks Mediation.feed) v .ground
                   (ts.flatMap Stream.Token.bytes)).notice =
               Stream.notice ts := by
+  sorry
+
+theorem progress_source (v : Vt.Vt) (ts : List Stream.Token) (ok : ∀ t ∈ ts, t.Ok)
+    (p : Option Mediation.Progress) :
+    ((Mediation.feed v .ground (ts.flatMap Stream.Token.bytes)).progress).getD p =
+      ts.foldl Stream.Token.reprogress p := by
+  sorry
+
+@[kills progress_source]
+theorem progress_source_rejects_title :
+    ¬∀ (v : Vt.Vt) (ts : List Stream.Token),
+        (∀ t ∈ ts, t.Ok) →
+          ∀ (p : Option Mediation.Progress),
+            (((Stream.titleProgress Vt.Vt.windowTitle Mediation.feed) v .ground
+                      (ts.flatMap Stream.Token.bytes)).progress).getD
+                p =
+              ts.foldl Stream.Token.reprogress p := by
   sorry
 
 end Terminal

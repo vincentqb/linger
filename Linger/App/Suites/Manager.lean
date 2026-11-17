@@ -1683,7 +1683,7 @@ private def refreshChecks (e : Env) : IO Unit := do
         let retained := has screen "  › a" && has screen "  ▸ ? Beta  (busy)"
         return retained && (← acceptThenCancel s) && (← f.visits) == attachVisit ["Beta"]
   check e "refresh-activity"
-      "automatic refresh keeps each running session's row where it was when it starts or stops printing"
+      "automatic refresh keeps each running session's row where it was when it starts or stops saying it works"
       fun f => do
       f.listing "name\talpha\nstatus\tworking\nname\tbeta\nstatus\tidle\n"
       withPrompt f.picker #[] fun s => do

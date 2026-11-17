@@ -18,8 +18,8 @@ theorem decode_encode (r : Record) : decode (encode r) = some r := by
     cases seen with
     | none => rfl
     | some seen =>
-      obtain ⟨fresh, unseen, asks⟩ := seen
-      cases fresh <;> cases unseen <;> cases asks <;> rfl
+      obtain ⟨working, unseen, asks⟩ := seen
+      cases working <;> cases unseen <;> cases asks <;> rfl
   | ended outcome => cases outcome <;> rfl
   | saved signal => rfl
   | dismissed => rfl

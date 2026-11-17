@@ -626,4 +626,27 @@ theorem asks_exact_rejects_progress :
           intro t ht; simp at ht; subst ht; unfold Stream.Token.Ok; decide)).2.1
   exact absurd this (by decide +kernel)
 
+theorem progress_source (v : Vt.Vt) (ts : List Stream.Token) (ok : ∀ t ∈ ts, t.Ok)
+    (p : Option Mediation.Progress) :
+    ((Mediation.feed v .ground (ts.flatMap Stream.Token.bytes)).progress).getD p =
+      ts.foldl Stream.Token.reprogress p := by
+  rw [Mediation.progress_stream v ts ok, Mediation.reprogress_foldl]
+
+theorem progress_source_rejects_title :
+    ¬∀ (v : Vt.Vt) (ts : List Stream.Token),
+        (∀ t ∈ ts, t.Ok) →
+          ∀ (p : Option Mediation.Progress),
+            (((Stream.titleProgress Vt.Vt.windowTitle Mediation.feed) v .ground
+                      (ts.flatMap Stream.Token.bytes)).progress).getD
+                p =
+              ts.foldl Stream.Token.reprogress p := by
+  -- a title declares nothing; heard as work, it would
+  intro h
+  have :=
+    h (Vt.Vt.init 2 1) [.osc [0x32, 0x3B, 0x78] false]
+      (by
+        intro t ht; simp at ht; subst ht; unfold Stream.Token.Ok; decide)
+      none
+  exact absurd this (by decide +kernel)
+
 end Terminal

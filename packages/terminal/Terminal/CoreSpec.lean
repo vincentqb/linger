@@ -1030,6 +1030,46 @@ def noticeOf : List UInt8 → Option (List UInt8)
       else if body.isEmpty then title else title ++ [0x3A, 0x20] ++ body)
   | _ => none
 
+/-- A state a program declares with ConEmu's progress report, OSC `9;4`, as Windows Terminal and
+Ghostty read it too: the states of the Windows taskbar's progress indicator, which ConEmu's
+report sets. -/
+inductive Progress where
+  /-- State 1: progress under way, with a percentage. -/
+  | normal
+  /-- State 2: an error stopped the progress; the indicator turns red. -/
+  | error
+  /-- State 3: under way, by an amount the program does not tell. -/
+  | indeterminate
+  /-- State 4: the progress is stopped, and may resume; the indicator turns yellow. -/
+  | paused
+  deriving Repr, DecidableEq, Inhabited
+
+/-- Whether a progress state says the work goes on: normal and indeterminate progress do, as
+the taskbar shows them moving; an error and a pause say the progress stopped, as the taskbar
+shows them halted in red or yellow. -/
+@[expose]
+def Progress.underway : Progress → Bool
+  | .normal | .indeterminate => true
+  | .error | .paused => false
+
+/-- The progress report an OSC payload is, if it is one: ConEmu's `9;4;`, then the state, one
+digit from `0` to `4`, then nothing or `;` and the percentage. State 0 removes the progress
+(`some none`); 1 to 4 set it; any other payload reports nothing. -/
+@[expose]
+def progressOf : List UInt8 → Option (Option Progress)
+  | 0x39 :: 0x3B :: 0x34 :: 0x3B :: state :: rest =>
+    if rest.head?.all (· == 0x3B) then
+      if state == 0x30 then some none
+      else
+        if state == 0x31 then some (some .normal)
+        else
+          if state == 0x32 then some (some .error)
+          else
+            if state == 0x33 then some (some .indeterminate)
+            else if state == 0x34 then some (some .paused) else none
+    else none
+  | _ => none
+
 /-- After feeding a chunk to the mediator: the terminal, the scanner, the bytes released to
 presentation clients, the replies to owned requests, and what the chunk told of its program. -/
 structure Result (V : Type) where
@@ -1047,6 +1087,11 @@ structure Result (V : Type) where
   notice : Option Render.Bytes := none
   /-- The shell's marks the chunk completed, in order. -/
   marks : List Mark := []
+  /-- The last progress report the chunk completed, if any: the state it sets, `none` when it
+  removes the progress. -/
+  progress : Option (Option Progress) := none
+  /-- Whether the chunk added rows to the terminal's history. -/
+  lines : Bool := false
 
 end Terminal.Mediation
 
@@ -1118,6 +1163,18 @@ def Token.asks : Token → Bool
   | .control b => b == 0x07
   | t => t.notice.isSome
 
+/-- The progress report a token makes: an OSC whose payload is one (`progressOf`). -/
+@[expose]
+def Token.progress : Token → Option (Option Mediation.Progress)
+  | .osc p _ => Mediation.progressOf p
+  | _ => none
+
+/-- The progress a program has declared after a token: the state a report sets, none after one
+that removes it, and what it was before any other token. -/
+@[expose]
+def Token.reprogress (p : Option Mediation.Progress) (t : Token) : Option Mediation.Progress :=
+  t.progress.getD p
+
 /-- The last notification a stream posts. -/
 @[expose]
 def notice (ts : List Token) : Option (List UInt8) := ts.foldl (fun n t => t.notice.or n) none
@@ -1139,5 +1196,16 @@ def progressAsks {V : Type} (feed : V → Mediation.Scan → Render.Bytes → Me
     (s : Mediation.Scan) (bytes : Render.Bytes) : Mediation.Result V :=
   { feed v s bytes with
     asks := (feed v s bytes).asks || bytes.take 5 == [0x1B, 0x5D, 0x39, 0x3B, 0x34] }
+
+/-- A wrong mediator that hears a change of the window title as a declaration of work, as a
+spinner a program draws in its title would be read. -/
+@[expose]
+def titleProgress {V : Type} (title : V → String)
+    (feed : V → Mediation.Scan → Render.Bytes → Mediation.Result V) (v : V) (s : Mediation.Scan)
+    (bytes : Render.Bytes) : Mediation.Result V :=
+  { feed v s bytes with
+    progress :=
+      if title (feed v s bytes).vt = title v then (feed v s bytes).progress
+      else some (some .indeterminate) }
 
 end Terminal.Stream

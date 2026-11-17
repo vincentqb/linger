@@ -6,11 +6,12 @@ public section
 
 /-! # Linger.Display.Suites.Status — the status column, the unread mechanism end to end
 
-`unseen` is a property of the SESSION — output arrived while nobody was watching —
-so the two transitions that matter are: attaching marks a session seen, and output
-while detached marks it unread again. Both go through the counter pair in
-`Session.State` (`outSeq`/`lookSeq`), and this pins them against the rendered
-porcelain rather than against the internals. An ask is the same kind of property: a bell or a
+`unseen` is a property of the SESSION — new lines entered its history while nobody was
+watching — so the two transitions that matter are: attaching marks a session seen, and lines
+that enter the history while detached mark it unread again; this pins them against the
+rendered porcelain rather than against the internals. A session is `⣷` only while its program
+declares progress (`checkDeclared`), and a line rewritten in place or a title adds no line
+(`checkRedraw`). An ask is the same kind of property: a bell or a
 notification with nobody watching makes the session list `⚑`, first, until someone looks
 (`checkAsks`).
 
@@ -268,7 +269,7 @@ OSC 777, and its session lists `⚑`, first, until someone looks: an attach, or 
 client is attached. A notification's text is in `info`, the porcelain and the row. Each marker a
 command prints is computed by the shell, so the echo of the typed command cannot show it. -/
 def checkAsks (e : Env) : IO Unit := do
-  let _ ← e.typeIn "a-out" #["echo", "out-$((1+1))"]
+  let _ ← e.typeIn "a-out" #["seq", "100", "&&", "echo", "out-$((1+1))"]
   let _ ← e.typeIn "z-bell" #["printf", "'\\a'", "&&", "echo", "bell-$((1+1))"]
   let rang ← printed e "z-bell" "bell-2"
   expect (rang && (← e.field "z-bell" "status") == some asksName)
@@ -367,7 +368,7 @@ def checkEndings (e : Env) : IO Unit := do
   let row ← rowOf e "mk"
   expect (has row "make test: exit 2") s!"the row shows the command line and its exit status: {row}"
   let status ← e.status "mk"
-  expect (status == Status.wantsYou || status == .working)
+  expect (status == Status.idle)
       s!"a command's ending leaves the session's own status: {Linger.Display.Status.name status}"
   let before ← endingOf e "mk"
   let c ← e.spawn #["attach", "mk"] 80 24
@@ -401,35 +402,75 @@ def checkEndings (e : Env) : IO Unit := do
       "a shell that marks nothing reports no ending"
   e.killAll #["mk", "plain"]
 
-/-- How many times `checkSteady` reads a steady program's status. -/
-def steadySamples : Nat := 6
+/-- How many times a status check reads a session's status while its program holds still. -/
+def statusSamples : Nat := 10
 
-/-- A program that redraws once a second, as `top` does, keeps one status, `⣷`, between its
-redraws, and goes quiet once it stops. The program reads its own session's status each time,
-right after the second it sleeps between two outputs, when the latest output is oldest: a working
-window of a second has let it go quiet by then, and the session would flip between `⣷` and `⣿` on
-every redraw. Its reads go to a file, never to its terminal, so a read is no output. -/
-def checkSteady (e : Env) : IO Unit := do
-  let samples := s!"{e.dir}/steady-samples"
-  -- the suite's own state directory and tmux source, whatever the session's environment holds
-  let env :=
-    " ".intercalate (e.procEnv.toList.filterMap fun (k, v) => v.map fun v => s!"{k}={shellQuote v}")
-  let read :=
-    s!"env {env} {shellQuote e.bin} ls --porcelain -- steady | grep '^status' >> {shellQuote samples}"
+/-- Session `name`'s status, read back to back at least `statusSamples` times and over at least
+`spanMs`, so the reads cover that much of its program's time. -/
+private def sampleStatus (e : Env) (name : String) (spanMs : Nat) : IO (List Status) := do
+  let start ← Os.Shell.monotonicMs
+  let mut read := []
+  while read.length < statusSamples || (← Os.Shell.monotonicMs) < start + spanMs do
+    read := read ++ [← e.status name]
+  return read
+
+/-- The names of statuses, as the porcelain gives them. -/
+private def names (statuses : List Status) : List String := statuses.map Linger.Display.Status.name
+
+/-- A program that declares itself busy with ConEmu's progress report, `OSC 9;4;3`, the
+indeterminate state, reads `⣷` at every sample while it sleeps, whatever time passes, and once it
+clears the report with `OSC 9;4;0` it reads quiet at every sample, as `progress` says. Each marker
+the program prints is computed by the shell, so the echo of the typed command cannot show it. -/
+def checkDeclared (e : Env) : IO Unit := do
   let _ ←
-    e.typeIn "steady"
-        #[s!"i=0; while [ $i -lt {steadySamples} ]; do printf 'redraw\\n'; sleep 1; {read}; \
-            i=$((i+1)); done; echo steady-$((1+1))"]
-  let finished ←
-    waitFor (patienceMs + steadySamples * 2000)
-        (return has (← e.out #["capture", "--history", "steady"]) "steady-2")
-  let read ← (lines <$> readText samples) <|> pure []
-  let working := s!"status\t{Linger.Display.Status.name .working}"
-  expect (finished && read.length == steadySamples && read.all (· == working))
-      s!"a program that prints once a second stays working between its redraws: {read}"
-  let quiet ← waitFor patienceMs (return [Status.wantsYou, .idle].contains (← e.status "steady"))
-  expect (finished && quiet) "a steady program that stops goes quiet"
-  e.killAll #["steady"]
+    e.typeIn "decl"
+        #["printf", "'\\033]9;4;3;\\007'", "&&", "echo", "busy-$((1+1))", "&&", "sleep", "12", "&&",
+          "printf", "'\\033]9;4;0;\\007'", "&&", "echo", "done-$((1+1))", "&&", "sleep", "60"]
+  let busy ← printed e "decl" "busy-2"
+  let progress ← e.info "decl" "progress"
+  let during ← sampleStatus e "decl" 6000
+  expect (busy && progress == some "indeterminate" && during.all (· == .working))
+      s!"a program that declared itself busy reads working while it sleeps: {progress} \
+        {names during}"
+  let cleared ← printed e "decl" "done-2"
+  let progress ← e.info "decl" "progress"
+  let after ← sampleStatus e "decl" 3000
+  expect (cleared && progress == some "none" && after.all (· == .idle))
+      s!"a program that cleared its report reads idle, with no flips: {progress} {names after}"
+  e.killAll #["decl"]
+
+/-- A program that only rewrites one line in place, with a carriage return, and animates its
+window title, as an idle agent's status line and a working agent's spinner do, never reads `⣷`,
+`⣿` or `⚑`: no line enters its history and it declares nothing. -/
+def checkRedraw (e : Env) : IO Unit := do
+  let _ ←
+    e.typeIn "redraw"
+        #["i=0;", "while", "[", "$i", "-lt", "40", "];", "do", "printf", "'\\r t-%s'",
+          "$((i+100));", "printf", "'\\033]0;spin %s\\007'", "$i;", "sleep", "0.2;", "i=$((i+1));",
+          "done;", "echo;", "echo", "redrawn-$((1+1));", "sleep", "60"]
+  let started ← printed e "redraw" "t-10"
+  let during ← sampleStatus e "redraw" 4000
+  let finished ← printed e "redraw" "redrawn-2"
+  expect (started && finished && during.all (· == .idle))
+      s!"a line rewritten in place and an animated title read idle: {names during}"
+  e.killAll #["redraw"]
+
+/-- A program that prints a hundred lines with nobody attached, more than the screen holds, puts
+new lines in its history: it reads `⣿` at every sample, whatever time passes, until an attach. -/
+def checkLines (e : Env) : IO Unit := do
+  let _ ← e.typeIn "lines" #["seq", "100", "&&", "echo", "lines-$((1+1))", "&&", "sleep", "60"]
+  let printedAll ← printed e "lines" "lines-2"
+  let unread ← sampleStatus e "lines" 4000
+  let c ← e.spawn #["attach", "lines"] 80 24
+  let _ ← waitFor patienceMs (return (← e.info "lines" "clients") == some "1")
+  c.detach
+  let _ ← waitFor patienceMs (return (← e.info "lines" "clients") == some "0")
+  c.bye (sendDetach := false)
+  let seen ← e.status "lines"
+  expect (printedAll && unread.all (· == .wantsYou) && seen == .idle)
+      s!"a hundred lines with nobody attached read wants-you until an attach: {names unread} \
+        then {Linger.Display.Status.name seen}"
+  e.killAll #["lines"]
 
 /-- The status suite: attaching marks a session seen and detached output marks it unread. -/
 def run : IO UInt32 :=
@@ -437,8 +478,9 @@ def run : IO UInt32 :=
     let (emptyCode, empty, _) ← e.cli #["ls", "--summary"]
     expect (emptyCode == 0 && empty.isEmpty) "empty attention summary prints nothing"
     -- a long-lived child, so nothing exits under us and the row stays classifiable
-    -- as idle/wants-you rather than exited-ok
-    let _ ← e.typeIn "st" #["sh", "-c", "sleep 60"]
+    -- as idle/wants-you rather than exited-ok, after more lines than the screen holds, which
+    -- enter its history
+    let _ ← e.typeIn "st" #["seq", "100", "&&", "sleep", "60"]
     -- a settling time, so that `behind` below counts all the output the shell will print
     IO.sleep 1500
     -- 1. a session nobody has watched, that has produced output, is unread
@@ -457,7 +499,8 @@ def run : IO UInt32 :=
     expect ((← e.status "st") == Status.idle) "attach marks the session seen"
     expect (← summaryBecomes e "") "idle session does not clutter the summary"
     -- 3. output while detached makes it unread again
-    let _ ← e.cli #["send", "st", "echo", "later"]
+    -- the line is echoed by the terminal under the bottom of a full screen, so it enters the history
+    let _ ← e.cli #["send", "st", "echo later\n"]
     expect (← waitFor patienceMs (return (← e.status "st") == Status.wantsYou))
         "output while away reads wants-you"
     -- `behind` is `toString (Session.behind s)`, a decimal `Nat`, so parse it
@@ -511,7 +554,9 @@ def run : IO UInt32 :=
     checkInputUnowned e
     checkNotify e
     checkAsks e
-    checkSteady e
+    checkDeclared e
+    checkRedraw e
+    checkLines e
     checkEndings e
     checkDeadline e
     checkBacklog e

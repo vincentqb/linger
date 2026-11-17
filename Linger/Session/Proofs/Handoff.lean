@@ -57,6 +57,10 @@ theorem rt_scan : RT wScan rScan := by
     simp only [wScan, rScan, List.cons_append, List.nil_append, List.append_assoc, rt_bytes,
       rt_bool, Option.map_some, Option.bind_eq_bind, Option.bind_some]
 
+theorem rt_progress : RT wProgress rProgress := by
+  intro p rest
+  cases p <;> rfl
+
 theorem rt_cmdline : RT wCmdline rCmdline := by
   intro c rest
   simp only [wCmdline, rCmdline, List.append_assoc, rt_bytes, rt_bool, Option.bind_eq_bind,
@@ -99,8 +103,8 @@ theorem rState_wState (s : State) (live : Vt.LiveReachableVt s.vt) (quiet : s.vt
   unfold rState wState
   simp only [List.append_assoc, rTerminal_wTerminal s.vt live quiet, rt_scan, rt_list rt_client,
     rt_fields, rt_opt rt_ending, rt_bool, rt_nat, rt_opt rt_bytes, rt_opt rt_cmdline,
-    rt_opt rt_finished, rt_opt rt_nat,
-    rt_opt (show RT wObservation (rObservation 3) from rt_observation), version, Nat.reduceLT,
+    rt_opt rt_finished, rt_opt rt_nat, rt_opt rt_progress,
+    rt_opt (show RT wObservation (rObservation 4) from rt_observation), version, Nat.reduceLT,
     ↓reduceIte, Option.bind_eq_bind, Option.bind_some]
 
 theorem rt_conn : RT wConn rConn := by
