@@ -635,7 +635,7 @@ def run : IO UInt32 :=
         ((← e.info "ag" "unseen") == some (toString false) &&
           num (← e.info "ag" "behind") == some 0)
         "capture marks the session seen"
-    let _ ← e.typeIn "ag" #["echo", "again"]
+    let _ ← e.typeIn "ag" #["seq", "100"]
     expect (← waitFor 4000 (return (← e.info "ag" "unseen") == some (toString true)))
         "output after a capture reads unseen again"
     -- capture is the screen, not the transcript: flood past one screen and the
