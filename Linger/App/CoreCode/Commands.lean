@@ -40,8 +40,7 @@ def table : List Command :=
       summary := "Print the live or saved screen" },
     { word := "resize", op := .resize, args := "<name> <cols> <rows>",
       summary := "Resize a detached session" },
-    { word := "wait", op := .wait, args := "[--timeout SECONDS] <name>...",
-      summary := "Wait for programs to end; 124 on timeout" },
+    { word := "wait", op := .wait, args := "<name>...", summary := "Wait for programs to end" },
     { word := "upgrade", op := .upgrade, args := "[name...]",
       summary := "Move live sessions onto this linger; programs keep running" }]
 

@@ -1304,53 +1304,16 @@ private def waitNamed (deadline : Option Nat) (name : String) : IO Answer := do
   | none =>
     noSession name
 
-/-- Milliseconds in `text`, a number of seconds such as `timeout(1)` takes: digits, a point and
-digits, or both, counting at most three decimals. -/
-private def parseSeconds (text : String) : Option Nat :=
-  let digits (part : String) := !part.isEmpty && part.all Char.isDigit
-  match text.splitOn "." with
-  | [whole] => if digits whole then whole.toNat?.map (· * 1000) else none
-  | [whole, fraction] =>
-    if (whole.isEmpty || digits whole) && digits fraction then
-      let millis := (fraction.toList.take 3 ++ List.replicate (3 - fraction.length) '0')
-      do
-      let seconds ←
-        if whole.isEmpty then
-          some 0
-        else
-          whole.toNat?
-      let millis ← (String.ofList millis).toNat?
-      return seconds * 1000 + millis
-    else none
-  | _ => none
-
-/-- Milliseconds as seconds, with three decimals, as `parseSeconds` reads them back. -/
-private def secondsText (ms : Nat) : String :=
-  let millis := toString (ms % 1000)
-  s!"{ms / 1000}.{"".pushn '0' (3 - millis.length)}{millis}"
-
 /-- `wait` for each named session in turn and give the last one's answer, as a shell's `wait`
-does with several jobs. With a time limit in milliseconds, all of them share one deadline, and
-`timedOut` means it passed. -/
-private def waitAll (names : List String) (limit : Option Nat) : IO Answer := do
-  if names.isEmpty then
+does with several jobs. It takes no time limit: `timeout(1)` gives it one, and answers 124 as
+its own. -/
+private def waitAll (names : List String) : IO Answer := do
+  if names.isEmpty || names.any (·.startsWith "-") then
     return ← usageError "wait"
   let some targets := names.mapM Linger.Target.Remote.parseTarget | invalidTarget
-  let deadline ←
-    limit.mapM fun ms => do
-        return (← monotonicMs) + ms
   let mut answer : Answer := .done
   for target in targets do
-    let now ← monotonicMs
-    let options :=
-      match deadline with
-      | some due => ["--timeout", secondsText (due - now)]
-      | none => []
-    answer ← runTarget "wait" target [] (waitNamed deadline) options
-    -- a remote wait's answer is its status, so the codes tell whether its time ran out
-    if let some due := deadline then
-      if answer.code == Answer.timedOut.code && (← monotonicMs) ≥ due then
-        return answer
+    answer ← runTarget "wait" target [] (waitNamed none)
   return answer
 
 /-- Whether `name` had a checkpoint, which this discards. -/
@@ -1730,14 +1693,8 @@ private def runOp (source : Source) (op : Linger.App.Commands.Op) (args : List S
       usageError "resize"
   | .resize, _ =>
     usageError "resize"
-  | .wait, "--timeout" :: seconds :: names =>
-    match parseSeconds seconds with
-    | some ms =>
-      waitAll names (some ms)
-    | none =>
-      usageError "wait"
   | .wait, names =>
-    waitAll names none
+    waitAll names
   | .list, rest =>
     listArgs source rest
 

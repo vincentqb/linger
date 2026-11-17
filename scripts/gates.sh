@@ -1263,8 +1263,8 @@ printf '%s\n' "$cli_code" | CG_RE='(^|[[:space:]])match Linger[.]App[.]Commands[
   || fail "a command word is matched outside the command table (Commands.lookup)"
 for tie in \
   'match Linger[.]Target[.]Remote[.]parseTarget target with [|] none => invalidTarget [|] some parsed => runTarget verb parsed args localAction options' \
-  'let some targets := names[.]mapM Linger[.]Target[.]Remote[.]parseTarget [|] invalidTarget let deadline ← limit[.]mapM' \
-  'answer ← runTarget "wait" target [[]] [(]waitNamed deadline[)] options' \
+  'let some targets := names[.]mapM Linger[.]Target[.]Remote[.]parseTarget [|] invalidTarget let mut answer : Answer := [.]done' \
+  'answer ← runTarget "wait" target [[]] [(]waitNamed none[)]' \
   'let [(]heard, why[)] ← hear s silenceMs match Wait[.]decide deadline heldSince [(]← monotonicMs[)] heard with' \
   'heldSince := since if let some first := since then discard <[|] nap [(]first [+] Wait[.]heldNameMs[)] 20' \
   'let interactive := verb == "attach" if interactive && [(]![(]← stdinIsTty[)] [|][|] ![(]← [(]← IO[.]getStdout[)][.]isTty[)][)] then' \

@@ -3661,9 +3661,8 @@ waits in place of any that waited, and the last one asked for is the last to sta
 soon as the running one ends (`offloop_coalesces`). Every wait sleeps as `Os.Wait.next`
 decides (`scripts/gates.sh`), so it gives up once its deadline has passed, which the os package
 claims (`packages/os`), and then reports what
-it missed: `start` that its daemon did not answer, `ls` a remote host as `?`, `wait --timeout`
-124. A `capture` of a saved session loads and renders it holding the name's locks and lets them
-go before it writes, so no step it takes holding them waits on a party outside linger, and an
+it missed: `start` that its daemon did not answer and `ls` a remote host as `?`. A `capture` of
+a saved session loads and renders it holding the name's locks and lets them go before it writes, so no step it takes holding them waits on a party outside linger, and an
 attach or a resume that starts the session while a pager or a pipe nobody reads holds up the
 capture's write waits for the locks only as long as the load and the render take
 (`capture_waits_unlocked`): the shell runs these steps in the phases `Capture.phases` cuts them
@@ -3672,7 +3671,8 @@ for every capture of a saved session (`scripts/gates.sh`). A write that
 finds its descriptor full, as one another program left nonblocking is, waits for the reader and
 goes on, never taken for a reader that is gone, which the os package claims. Not claimed: the
 waits with no deadline, each on something that ends without waiting itself, or on purpose:
-`wait` without `--timeout`, an idle daemon's poll, `start` or `resume` once their daemon took the
+`wait`, which takes no time limit of its own, since `timeout(1)` composes with it, an idle
+daemon's poll, `start` or `resume` once their daemon took the
 request's ticket, a daemon's last disk write, which it reports after a second, and a command's
 write to a reader that does not read, as a blocking write waits too. How long a wait takes under
 load the robust, resume and status suites measure. -/

@@ -37,7 +37,7 @@ private def lockChecks (e : Env) : IO Unit := do
   for args in
     [#["ls", "ghost", "--porcelain"], #["kill", "ghost"], #["resume", "ghost"],
       #["capture", "ghost"], #["capture", "--history", "ghost"], #["send", "ghost", "x"],
-      #["detach", "ghost"], #["resize", "ghost", "80", "24"], #["wait", "--timeout", "0", "ghost"],
+      #["detach", "ghost"], #["resize", "ghost", "80", "24"], #["wait", "ghost"],
       #["attach", "--read-only", "ghost"]] do
     let _ ← e.cli args
     unless ← locksGone e "ghost" do

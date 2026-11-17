@@ -742,18 +742,27 @@ def run : IO UInt32 :=
     let (bothRc, _, _) ← e.cli #["wait", "w3", "w5"]
     expect (bothRc == 37) s!"wait reports the last of several sessions (rc={bothRc})"
     unseenChecks e
-    -- A time limit stops the wait with 124 and leaves the session running. Its program runs for
-    -- 30 s, so a 124 says the limit, not the program, ended the wait, and the wait lasted at least
-    -- the limit: load can only lengthen it.
+    -- `wait` takes no time limit of its own: `timeout` composes with it, which stops the wait
+    -- with 124 and leaves the session running, and `--timeout` is a usage error. Its program
+    -- runs for 30 s, so a 124 says the limit, not the program, ended the wait.
     let _ ← e.typeIn "w6" #["exec sleep 30"]
+    let (optionRc, _, optionErr) ← e.cli #["wait", "--timeout", "0.5", "w6"]
+    expect (optionRc == 2 && has optionErr "usage: linger wait")
+        s!"wait takes no --timeout of its own (rc={optionRc})"
+    -- what `timeout 0.5 linger wait w6` relies on: a wait that SIGTERM stops ends at once, and
+    -- the session runs on
+    let waiter ←
+      IO.Process.spawn
+          { cmd := e.bin, args := #["wait", "w6"], env := e.procEnv, stdin := .null,
+            stdout := .null, stderr := .null }
+    Os.Shell.pause 500
     let limitStart ← Os.Shell.monotonicMs
-    let limited ← e.cliTimeout #["wait", "--timeout", "0.5", "w6"] hangMs
+    Os.Shell.kill waiter.pid 15
+    let limitRc ← waiter.wait
     let limitMs := (← Os.Shell.monotonicMs) - limitStart
     let running := (← e.info "w6" "pid").isSome
-    expect
-        (limited.map (·.1) == some 124 && limited.any (has ·.2.2 "timed out") && 400 ≤ limitMs &&
-          running)
-        s!"wait --timeout stops waiting and leaves the session running ({limitMs} ms)"
+    expect (limitRc == 128 + 15 && limitMs < hangMs && running)
+        s!"timeout's SIGTERM stops a wait at once and leaves the session running (rc={limitRc})"
     -- kill returns once the session has ended, and the record says how: by its hangup.
     let (killRc, _, _) ← e.cli #["kill", "w6"]
     let (_, killedInfo, _) ← e.cli #["ls", "w6", "--porcelain"]
