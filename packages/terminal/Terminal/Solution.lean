@@ -3,6 +3,7 @@ module
 meta import SoftwareChallenge
 public import Terminal.CoreCode.Render
 public import Terminal.CoreCode.Replay
+public import Terminal.CoreCode.Mediation
 public import Terminal.CoreSpec
 import all Terminal.CoreCode.Vt
 import all Terminal.Proofs.Vt
@@ -20,6 +21,7 @@ import all Terminal.Proofs.Render.Scrollback
 import all Terminal.Proofs.Render.Shows
 import all Terminal.Proofs.Replay
 import all Terminal.Proofs.Conform
+import all Terminal.Proofs.Stream
 
 /-! The VT toolkit's headline theorems, proved of the toolkit: `lake comparator` checks that
 these are exactly the statements of `Challenge.lean`. -/
@@ -558,5 +560,70 @@ theorem vt_keeps_rejects_unescaped :
             unfold Vt.Ref.Kept.Ok; decide)).1
       0
   exact absurd (congrArg (fun r : Vt.Row => (r.getD 0 {}).base) row) (by decide +kernel)
+
+theorem title_source (v : Vt.Vt) (ts : List Stream.Token) (between : v.atBoundary = true)
+    (ok : ∀ t ∈ ts, t.Ok) :
+    (v.feed (ts.flatMap Stream.Token.bytes)).windowTitle =
+        ts.foldl Stream.Token.retitle v.windowTitle ∧
+      (v.feed (ts.flatMap Stream.Token.bytes)).atBoundary = true :=
+  Vt.Conform.title_stream between ts ok
+
+theorem title_source_rejects_icon :
+    ¬∀ (v : Vt.Vt) (ts : List Stream.Token),
+        v.atBoundary = true →
+          (∀ t ∈ ts, t.Ok) →
+          ((Stream.iconAsTitle Vt.Vt.feed) v (ts.flatMap Stream.Token.bytes)).windowTitle =
+              ts.foldl Stream.Token.retitle v.windowTitle ∧
+            ((Stream.iconAsTitle Vt.Vt.feed) v (ts.flatMap Stream.Token.bytes)).atBoundary =
+              true := by
+  -- OSC 1 names the icon; taken for the title, it sets one
+  intro h
+  have :=
+    (h (Vt.Vt.init 2 1) [.osc [0x31, 0x3B, 0x78] false] (by decide +kernel)
+        (by
+          intro t ht; simp at ht; subst ht; unfold Stream.Token.Ok; decide)).1
+  exact absurd this (by decide +kernel)
+
+theorem asks_exact (v : Vt.Vt) (ts : List Stream.Token) (ok : ∀ t ∈ ts, t.Ok) :
+    (Mediation.feed v .ground (ts.flatMap Stream.Token.bytes)).vt =
+        v.feed (ts.flatMap Stream.Token.bytes) ∧
+      (Mediation.feed v .ground (ts.flatMap Stream.Token.bytes)).asks = ts.any Stream.Token.asks ∧
+      (Mediation.feed v .ground (ts.flatMap Stream.Token.bytes)).notice = Stream.notice ts :=
+  Mediation.heard_stream v ts ok
+
+theorem asks_exact_rejects_ending :
+    ¬∀ (v : Vt.Vt) (ts : List Stream.Token),
+        (∀ t ∈ ts, t.Ok) →
+          ((Stream.endingRings Mediation.feed) v .ground (ts.flatMap Stream.Token.bytes)).vt =
+              v.feed (ts.flatMap Stream.Token.bytes) ∧
+            ((Stream.endingRings Mediation.feed) v .ground (ts.flatMap Stream.Token.bytes)).asks =
+              ts.any Stream.Token.asks ∧
+            ((Stream.endingRings Mediation.feed) v .ground (ts.flatMap Stream.Token.bytes)).notice =
+              Stream.notice ts := by
+  -- the BEL that ends a title rings no bell
+  intro h
+  have :=
+    (h (Vt.Vt.init 2 1) [.osc [0x32, 0x3B, 0x78] false]
+        (by
+          intro t ht; simp at ht; subst ht; unfold Stream.Token.Ok; decide)).2.1
+  exact absurd this (by decide +kernel)
+
+theorem asks_exact_rejects_progress :
+    ¬∀ (v : Vt.Vt) (ts : List Stream.Token),
+        (∀ t ∈ ts, t.Ok) →
+          ((Stream.progressAsks Mediation.feed) v .ground (ts.flatMap Stream.Token.bytes)).vt =
+              v.feed (ts.flatMap Stream.Token.bytes) ∧
+            ((Stream.progressAsks Mediation.feed) v .ground (ts.flatMap Stream.Token.bytes)).asks =
+              ts.any Stream.Token.asks ∧
+            ((Stream.progressAsks Mediation.feed) v .ground
+                  (ts.flatMap Stream.Token.bytes)).notice =
+              Stream.notice ts := by
+  -- ConEmu's progress report posts no notification
+  intro h
+  have :=
+    (h (Vt.Vt.init 2 1) [.osc [0x39, 0x3B, 0x34, 0x3B, 0x31] false]
+        (by
+          intro t ht; simp at ht; subst ht; unfold Stream.Token.Ok; decide)).2.1
+  exact absurd this (by decide +kernel)
 
 end Terminal

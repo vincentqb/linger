@@ -678,9 +678,11 @@ locks while it places the name, which the rename suite checks, and that a client
 a rename titles its terminal with the new name, which it does from its next attach.
 What a session's program owns has one source each, and the session machine reads each from it
 alone (`step_owned`): the title is what OSC 0 and OSC 2 set on the session's terminal, as the
-terminal it fed the output holds it; whether it asks, a bell or a notification since the last
-look, and the notification's text are what the terminal package's mediator hears of a BEL, an OSC
-9 that is no ConEmu sub-command and an OSC 777 `notify`; its commands are what its shell's OSC 133
+terminal it fed the output holds it, which the terminal package claims byte by byte
+(`title_source`); whether it asks, a bell or a notification since the last look, and the
+notification's text are what the terminal package's mediator hears of a BEL, an OSC 9 that is no
+ConEmu sub-command and an OSC 777 `notify`, which it claims byte by byte too (`asks_exact`); its
+commands are what its shell's OSC 133
 marks tell, each as `Commands.hear` says the marks' standard means it, so a `D` after a `C` is
 that command's ending, with the command line the `C` gave and the status the `D` gave, a later `C`
 replaces it, and a `D` with no `C` since the last `D` or `A` is no ending; its foreground and its
@@ -699,10 +701,10 @@ assignments of each and `Notify.perRound` of them a poll round, and a listing sh
 clean text. The program's fields a listing reports, as `Fields.table` gives the program each,
 are readings of these alone: two sessions whose programs own the same report the same program
 fields (`fields_owned`). Not claimed: a notification sent while a daemon upgrades, which the
-image that replaces it binds its socket afresh for; which bytes the mediator hears as a bell, a
-notification or a mark, which `Terminal.Mediation` decides and its fixtures and the status suite check, and which
-set the title, which `Terminal.Vt` decides and its fixtures check; a mark inside a full-screen
-program, which the session hears as its shell's.
+image that replaces it binds its socket afresh for; which bytes the mediator hears as a mark, which
+`Terminal.Mediation` decides and its fixtures and the status suite check; what output outside the
+terminal package's whole tokens tells; a mark inside a full-screen program, which the session hears
+as its shell's.
 The fields of a session's record, the description an older linger saved and an import's
 provenance, come from the checkpoint the session booted from, and no event changes them
 (`step_fields_kept`); they, the boot metadata and the terminal a session reports each have

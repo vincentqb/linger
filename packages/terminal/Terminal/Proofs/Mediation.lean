@@ -522,7 +522,7 @@ theorem noticeOf_osc9 (text : Bytes) :
 
 /-- ConEmu's progress report, `9;4;…`, posts nothing. -/
 theorem noticeOf_progress (rest : Bytes) :
-    noticeOf (0x39 :: 0x3B :: 0x34 :: 0x3B :: rest) = none := by simp [noticeOf, subcommand, digit]
+    noticeOf (0x39 :: 0x3B :: 0x34 :: 0x3B :: rest) = none := by simp [noticeOf, subcommand]
 
 /-- A byte is heard as a notification only where the scanner lets go of an OSC: as BEL or ST
 completes it, or as the scanner releases one past its cap unclassified. -/

@@ -326,27 +326,6 @@ structure Heard where
   notice : Option Bytes := none
   deriving Repr, DecidableEq
 
-/-- Whether a byte is an ASCII digit. -/
-private def digit (b : UInt8) : Bool := 0x30 ≤ b && b ≤ 0x39
-
-/-- Whether an OSC 9 text is a ConEmu sub-command instead: digits, then `;`, as `4;1;50`
-reports progress. -/
-def subcommand (text : Bytes) : Bool :=
-  !(text.takeWhile digit).isEmpty && (text.dropWhile digit).head? == some 0x3B
-
-/-- The text of the desktop notification an OSC payload posts, if it posts one: what follows
-`9;`, unless that is a ConEmu sub-command, or what follows `777;notify;`, its title and its body,
-joined by `: ` when it has both. -/
-def noticeOf : Bytes → Option Bytes
-  | 0x39 :: 0x3B :: text => if subcommand text then none else some text
-  | 0x37 :: 0x37 :: 0x37 :: 0x3B :: 0x6E :: 0x6F :: 0x74 :: 0x69 :: 0x66 :: 0x79 :: 0x3B :: rest =>
-    let title := rest.takeWhile (· != 0x3B)
-    let body := (rest.dropWhile (· != 0x3B)).drop 1
-    some
-      (if title.isEmpty then body
-      else if body.isEmpty then title else title ++ [0x3A, 0x20] ++ body)
-  | _ => none
-
 /-- The payload of an OSC the scanner holds, from its reversed buffer: the bytes after `ESC ]`,
 without an ESC that may begin its terminator. -/
 def heldPayload (rev : Bytes) : Bytes := (rev.dropWhile (· == ESC)).reverse.drop 2
@@ -516,6 +495,9 @@ def cmdlineOf (whole : Bool) : Bytes → Cmdline
       else cmdlineOf whole rest
   | _ :: rest => cmdlineOf whole rest
 
+/-- Whether a byte is an ASCII digit. -/
+private def digit (b : UInt8) : Bool := 0x30 ≤ b && b ≤ 0x39
+
 /-- A number's value from its decimal digits, most significant first. -/
 private def decimal (digits : Bytes) : Nat := digits.foldl (fun n d => 10 * n + (d - 0x30).toNat) 0
 
@@ -552,29 +534,12 @@ def Scan.mark (s : Scan) (b : UInt8) : Option Mark :=
     else if rev.length < oscCap then none else markOf (heldPayload (b :: rev)) false
   | _ => none
 
-/-- After feeding a chunk: the terminal, the scanner, client-visible bytes and child replies. -/
-structure Result where
-  /-- The terminal after every byte of the chunk. -/
-  vt : Vt
-  /-- The scanner after the chunk, possibly holding an incomplete request. -/
-  scan : Scan
-  /-- Bytes released to presentation clients, in order. -/
-  visible : Bytes
-  /-- Replies to owned requests, in order. -/
-  replies : Bytes
-  /-- Whether the chunk rang the bell or posted a notification (`Scan.hears`). -/
-  asks : Bool := false
-  /-- The text of the chunk's last notification, if it posted one. -/
-  notice : Option Bytes := none
-  /-- The shell's marks the chunk completed (`Scan.mark`), in order. -/
-  marks : List Mark := []
-
 -- No `deriving Repr`: it would need `Repr Vt`, which the seal withholds because it would
 -- publicly read every private field of `VtRec`. Nothing used the instance.
 
 /-- Feed child output byte-by-byte. Per-step output is prepended with a bounded
 left append (normally a singleton), so megabyte passthrough remains linear. -/
-def feed (v : Vt) (scan : Scan) : Bytes → Result
+def feed (v : Vt) (scan : Scan) : Bytes → Result Vt
   | [] => { vt := v, scan, visible := [], replies := [] }
   | b :: bs =>
       let v' := v.step b

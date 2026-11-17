@@ -1006,3 +1006,138 @@ inductive Mark where
   deriving Repr, DecidableEq
 
 end Terminal.Mediation
+
+namespace Terminal.Mediation
+
+/-- Whether an OSC 9 text is a ConEmu sub-command instead of a notification: digits, then `;`, as
+`4;1;50` reports progress. -/
+@[expose]
+def subcommand (text : List UInt8) : Bool :=
+  !(text.takeWhile fun b => 0x30 ≤ b && b ≤ 0x39).isEmpty &&
+    (text.dropWhile fun b => 0x30 ≤ b && b ≤ 0x39).head? == some 0x3B
+
+/-- The text of the desktop notification an OSC payload posts, if it posts one: what follows
+`9;`, as iTerm2 and Ghostty post it, unless that is a ConEmu sub-command, or what follows
+`777;notify;`, its title and its body, joined by `: ` when it has both. -/
+@[expose]
+def noticeOf : List UInt8 → Option (List UInt8)
+  | 0x39 :: 0x3B :: text => if subcommand text then none else some text
+  | 0x37 :: 0x37 :: 0x37 :: 0x3B :: 0x6E :: 0x6F :: 0x74 :: 0x69 :: 0x66 :: 0x79 :: 0x3B :: rest =>
+    let title := rest.takeWhile (· != 0x3B)
+    let body := (rest.dropWhile (· != 0x3B)).drop 1
+    some
+      (if title.isEmpty then body
+      else if body.isEmpty then title else title ++ [0x3A, 0x20] ++ body)
+  | _ => none
+
+/-- After feeding a chunk to the mediator: the terminal, the scanner, the bytes released to
+presentation clients, the replies to owned requests, and what the chunk told of its program. -/
+structure Result (V : Type) where
+  /-- The terminal after every byte of the chunk. -/
+  vt : V
+  /-- The scanner after the chunk, possibly holding an incomplete request. -/
+  scan : Scan
+  /-- Bytes released to presentation clients, in order. -/
+  visible : Render.Bytes
+  /-- Replies to owned requests, in order. -/
+  replies : Render.Bytes
+  /-- Whether the chunk rang the bell or posted a notification. -/
+  asks : Bool := false
+  /-- The text of the chunk's last notification, if it posted one. -/
+  notice : Option Render.Bytes := none
+  /-- The shell's marks the chunk completed, in order. -/
+  marks : List Mark := []
+
+end Terminal.Mediation
+
+namespace Terminal.Stream
+
+/-- A whole unit of terminal output, as ECMA-48 divides a stream and DEC's parser (vt100.net)
+reads it: a printable ASCII character, a C0 control other than ESC, a control sequence (`CSI`,
+with or without the private marker `?`), an operating system command (`OSC`) ended by BEL or by
+ST, a DCS, SOS, PM or APC string ended by ST, or an escape sequence with a final byte. -/
+inductive Token where
+  /-- A printable ASCII character. -/
+  | text (c : Char)
+  /-- A C0 control other than ESC. -/
+  | control (b : UInt8)
+  /-- `CSI`, `?` when `priv`, parameters and a final byte. -/
+  | csi (priv : Bool) (params : List Nat) (final : UInt8)
+  /-- `OSC` and a payload, ended by ST when `st`, else by BEL. -/
+  | osc (payload : List UInt8) (st : Bool)
+  /-- `ESC` and `P`, `X`, `^` or `_`, the data, and ST. -/
+  | str (intro : UInt8) (data : List UInt8)
+  /-- `ESC` and a final byte. -/
+  | esc (final : UInt8)
+
+/-- The bytes of a token. -/
+@[expose]
+def Token.bytes : Token → List UInt8
+  | .text c => [UInt8.ofNat c.toNat]
+  | .control b => [b]
+  | .csi priv ps f => [0x1B, 0x5B] ++ (if priv then [0x3F] else []) ++ Vt.Ref.params ps ++ [f]
+  | .osc p st => [0x1B, 0x5D] ++ p ++ (if st then [0x1B, 0x5C] else [0x07])
+  | .str i d => [0x1B, i] ++ d ++ [0x1B, 0x5C]
+  | .esc f => [0x1B, f]
+
+/-- A token as a program writes one: a character is printable ASCII, a control is no ESC, a
+control sequence has at most 16 parameters of at most 65535 and a final byte from `@` to `~`, a
+string's data holds no ESC and an OSC's payload neither BEL nor ESC, and fits the 256 bytes the
+mediator holds of a possible request, `ESC ]` and an ending ESC included; an escape sequence's final
+byte is from `0` to `~` and begins no control sequence or string. -/
+@[expose]
+def Token.Ok : Token → Prop
+  | .text c => 0x20 ≤ c.toNat ∧ c.toNat < 0x7F
+  | .control b => b < 0x20 ∧ b ≠ 0x1B
+  | .csi _ ps f => ps.length ≤ 16 ∧ (∀ n ∈ ps, n ≤ 65535) ∧ 0x40 ≤ f ∧ f ≤ 0x7E
+  | .osc p _ => (∀ b ∈ p, b ≠ 0x07 ∧ b ≠ 0x1B) ∧ p.length + 3 ≤ Mediation.oscCap
+  | .str i d => (i = 0x50 ∨ i = 0x58 ∨ i = 0x5E ∨ i = 0x5F) ∧ ∀ b ∈ d, b ≠ 0x1B
+  | .esc f => 0x30 ≤ f ∧ f ≤ 0x7E ∧ f ≠ 0x50 ∧ f ≠ 0x58 ∧ f ≠ 0x5B ∧ f ≠ 0x5D ∧ f ≠ 0x5E ∧ f ≠ 0x5F
+
+/-- The window title after a token: OSC 0 and OSC 2 (xterm's `ctlseqs`) set it to their text when
+it is UTF-8, and `0` or `2` alone to the empty one; RIS (`ESC c`) resets the terminal, its title
+with it; nothing else sets it, OSC 1, the icon name, among them. -/
+@[expose]
+def Token.retitle (title : String) : Token → String
+  | .osc [0x30] _ | .osc [0x32] _ => ""
+  | .osc (0x30 :: 0x3B :: rest) _ | .osc (0x32 :: 0x3B :: rest) _ =>
+    (String.fromUTF8? ⟨rest.toArray⟩).getD title
+  | .esc 0x63 => ""
+  | _ => title
+
+/-- The text of the notification a token posts: an OSC whose payload posts one (`noticeOf`). -/
+@[expose]
+def Token.notice : Token → Option (List UInt8)
+  | .osc p _ => Mediation.noticeOf p
+  | _ => none
+
+/-- Whether a token asks for someone: BEL as a control, which a terminal executes, never a BEL
+that ends a string, or a notification. -/
+@[expose]
+def Token.asks : Token → Bool
+  | .control b => b == 0x07
+  | t => t.notice.isSome
+
+/-- The last notification a stream posts. -/
+@[expose]
+def notice (ts : List Token) : Option (List UInt8) := ts.foldl (fun n t => t.notice.or n) none
+
+/-- A wrong emulator that takes OSC 1, the icon name, for the title. -/
+@[expose]
+def iconAsTitle {V : Type} (feed : V → List UInt8 → V) (v : V) (bytes : List UInt8) : V :=
+  feed v (if bytes.take 3 = [0x1B, 0x5D, 0x31] then [0x1B, 0x5D, 0x32] ++ bytes.drop 3 else bytes)
+
+/-- A wrong mediator that hears a BEL ending a string as a bell. -/
+@[expose]
+def endingRings {V : Type} (feed : V → Mediation.Scan → Render.Bytes → Mediation.Result V) (v : V)
+    (s : Mediation.Scan) (bytes : Render.Bytes) : Mediation.Result V :=
+  { feed v s bytes with asks := (feed v s bytes).asks || bytes.contains 0x07 }
+
+/-- A wrong mediator that hears ConEmu's progress report, OSC `9;4`, as a notification. -/
+@[expose]
+def progressAsks {V : Type} (feed : V → Mediation.Scan → Render.Bytes → Mediation.Result V) (v : V)
+    (s : Mediation.Scan) (bytes : Render.Bytes) : Mediation.Result V :=
+  { feed v s bytes with
+    asks := (feed v s bytes).asks || bytes.take 5 == [0x1B, 0x5D, 0x39, 0x3B, 0x34] }
+
+end Terminal.Stream

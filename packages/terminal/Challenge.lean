@@ -52,7 +52,19 @@ graphics and OSC 8 hyperlinks are skipped. Not claimed of the reference: a termi
 character or a combining mark on its screen, insert mode, DEC line drawing, a parameter above
 65535, an SGR of more than 16 parameters, a title past an OSC payload's 2048 bytes, a sequence that
 starts inside another or a character, a sequence outside the set, and the history, which
-`history_grows` covers. -/
+`history_grows` covers.
+
+What a program's output tells is decided byte by byte, over any stream of whole tokens
+(`Stream.Token`): printable ASCII characters, C0 controls other than ESC, control sequences, OSC
+strings ended by BEL or ST, DCS, SOS, PM and APC strings and escape sequences. The window title
+changes only as OSC 0 and OSC 2 set it and RIS resets it (`title_source`, killed by an emulator
+that takes OSC 1, the icon name, for the title). The mediator feeds the terminal every byte, and
+the stream asks for someone exactly when it holds BEL as a control or an OSC that posts a desktop
+notification, OSC 9 but not its ConEmu sub-commands such as `9;4` progress, or OSC 777 `notify`,
+and the notification's text is the last one's (`asks_exact`, killed by a mediator that hears the
+BEL ending a string as a bell and by one that hears `9;4` as a notification). Not claimed of the
+streams: an OSC whose payload exceeds the 253 bytes the mediator classifies, a string or sequence
+cut short, a C0 control inside a sequence, and a CSI with an intermediate byte. -/
 
 public section
 
@@ -101,6 +113,9 @@ def Terminal.Render.screenText : Vt.Vt → Render.Bytes := sorry
 def Terminal.Render.history : Vt.Vt → Render.Bytes := sorry
 
 def Terminal.Render.leaveAnsi : Render.Bytes := sorry
+
+def Terminal.Mediation.feed :
+    Vt.Vt → Mediation.Scan → Render.Bytes → Mediation.Result Vt.Vt := sorry
 
 def Terminal.Replay.Plan : Type := sorry
 
@@ -440,6 +455,56 @@ theorem vt_keeps_rejects_unescaped :
             Vt.stick ((Vt.Ref.unescaped Vt.Vt.feed) v k.bytes) = Vt.stick v ∧
             ((Vt.Ref.unescaped Vt.Vt.feed) v k.bytes).windowTitle = v.windowTitle ∧
             ((Vt.Ref.unescaped Vt.Vt.feed) v k.bytes).atBoundary = true := by
+  sorry
+
+theorem title_source (v : Vt.Vt) (ts : List Stream.Token) (between : v.atBoundary = true)
+    (ok : ∀ t ∈ ts, t.Ok) :
+    (v.feed (ts.flatMap Stream.Token.bytes)).windowTitle =
+        ts.foldl Stream.Token.retitle v.windowTitle ∧
+      (v.feed (ts.flatMap Stream.Token.bytes)).atBoundary = true := by
+  sorry
+
+@[kills title_source]
+theorem title_source_rejects_icon :
+    ¬∀ (v : Vt.Vt) (ts : List Stream.Token),
+        v.atBoundary = true →
+          (∀ t ∈ ts, t.Ok) →
+          ((Stream.iconAsTitle Vt.Vt.feed) v (ts.flatMap Stream.Token.bytes)).windowTitle =
+              ts.foldl Stream.Token.retitle v.windowTitle ∧
+            ((Stream.iconAsTitle Vt.Vt.feed) v (ts.flatMap Stream.Token.bytes)).atBoundary =
+              true := by
+  sorry
+
+theorem asks_exact (v : Vt.Vt) (ts : List Stream.Token) (ok : ∀ t ∈ ts, t.Ok) :
+    (Mediation.feed v .ground (ts.flatMap Stream.Token.bytes)).vt =
+        v.feed (ts.flatMap Stream.Token.bytes) ∧
+      (Mediation.feed v .ground (ts.flatMap Stream.Token.bytes)).asks = ts.any Stream.Token.asks ∧
+      (Mediation.feed v .ground (ts.flatMap Stream.Token.bytes)).notice = Stream.notice ts := by
+  sorry
+
+@[kills asks_exact]
+theorem asks_exact_rejects_ending :
+    ¬∀ (v : Vt.Vt) (ts : List Stream.Token),
+        (∀ t ∈ ts, t.Ok) →
+          ((Stream.endingRings Mediation.feed) v .ground (ts.flatMap Stream.Token.bytes)).vt =
+              v.feed (ts.flatMap Stream.Token.bytes) ∧
+            ((Stream.endingRings Mediation.feed) v .ground (ts.flatMap Stream.Token.bytes)).asks =
+              ts.any Stream.Token.asks ∧
+            ((Stream.endingRings Mediation.feed) v .ground (ts.flatMap Stream.Token.bytes)).notice =
+              Stream.notice ts := by
+  sorry
+
+@[kills asks_exact]
+theorem asks_exact_rejects_progress :
+    ¬∀ (v : Vt.Vt) (ts : List Stream.Token),
+        (∀ t ∈ ts, t.Ok) →
+          ((Stream.progressAsks Mediation.feed) v .ground (ts.flatMap Stream.Token.bytes)).vt =
+              v.feed (ts.flatMap Stream.Token.bytes) ∧
+            ((Stream.progressAsks Mediation.feed) v .ground (ts.flatMap Stream.Token.bytes)).asks =
+              ts.any Stream.Token.asks ∧
+            ((Stream.progressAsks Mediation.feed) v .ground
+                  (ts.flatMap Stream.Token.bytes)).notice =
+              Stream.notice ts := by
   sorry
 
 end Terminal
