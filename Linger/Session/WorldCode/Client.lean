@@ -102,10 +102,10 @@ def replySilenceMs : Int32 := 10000
 A nonnegative `silenceMs` gives up after that much *silence*: a daemon that never answers, as a
 pre-upgrade daemon that drops a verb it does not know without a trace, or a stopped one, would
 hang the untimed drain forever, so the deadline has to be owned here. Output payloads stream to
-stdout as they come (`capture` is such a stream); the timeout is per poll round, so a long reply
+`sink` as they come (`capture` is such a stream); the timeout is per poll round, so a long reply
 that keeps arriving never trips it. -/
-private def drainReplies (fd : UInt32) (untilDone : Bool) (silenceMs : Int32 := -1) : IO Drained :=
-  do
+private def drainReplies (fd : UInt32) (untilDone : Bool) (sink : ByteArray → IO Unit)
+    (silenceMs : Int32 := -1) : IO Drained := do
   let mut dec : Decoder := {}
   repeat
     let revs ← poll #[fd] #[POLLIN] silenceMs
@@ -132,7 +132,7 @@ private def drainReplies (fd : UInt32) (untilDone : Bool) (silenceMs : Int32 := 
       for m in msgs do
         match m with
         | .output payload | .infoReply payload =>
-          writeAll stdoutFd (ByteArray.mk payload.toArray)
+          sink (ByteArray.mk payload.toArray)
         -- a daemon that says how its program ended says so before `exited`
         | .ended outcome =>
           return .exited (.outcome outcome)
@@ -163,9 +163,10 @@ def sendOnly (name : String) (ms : List Msg) : IO Bool := do
       close fd
 
 /-- One-shot request/reply, given up after `silenceMs` of silence (`replySilenceMs` unless the
-caller passes a negative budget, as a wait for a program's end does). `none` means no live
-daemon; every connected conversation preserves its actual outcome. -/
-def oneShot (name : String) (m : Msg) (untilDone : Bool := true)
+caller passes a negative budget, as a wait for a program's end does), the output a reply carries
+going to `sink`. `none` means no live daemon; every connected conversation preserves its actual
+outcome. -/
+def oneShot (name : String) (m : Msg) (sink : ByteArray → IO Unit) (untilDone : Bool := true)
     (silenceMs : Int32 := replySilenceMs) : IO (Option Drained) := do
   match ← connect name with
   | none =>
@@ -177,7 +178,7 @@ def oneShot (name : String) (m : Msg) (untilDone : Bool := true)
         sendMsg fd m
       catch _ =>
         return some (.lost "connection lost")
-      return some (← drainReplies fd untilDone silenceMs)
+      return some (← drainReplies fd untilDone sink silenceMs)
     finally
       close fd
 

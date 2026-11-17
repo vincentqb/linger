@@ -16,12 +16,12 @@ The session library and VT toolkit do not import the manager. -/
 
 /-- The latest tmux-resurrect save as the session CLI's source of saved sessions, which the
 session library reads only through what this supplies. -/
-private def source : Linger.App.Shell.Source where
+private def source : Linger.App.Api.Source where
   rows := Linger.Import.Shell.sourceRows
   row := Linger.Import.Shell.sourceRow?
   adopt name := (· matches .recorded) <$> Linger.Import.Shell.adopt name
   dismiss := Linger.Import.Shell.dismiss
-  writeSave := Linger.Import.Shell.exportSave
+  save := Linger.Import.Shell.exportSave
 
 /-- The executable: `Entry.route` sends the argv to interactive selection or a session command,
 each of which answers, and refuses an encoded command line that does not decode as a usage

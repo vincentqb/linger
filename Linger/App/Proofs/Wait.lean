@@ -15,10 +15,11 @@ ending. -/
 
 namespace Linger.App.Wait
 
-/-- **An ending is the answer**: how the session ended, from its daemon or the end record. -/
+/-- **An ending is what `wait` finds**: how the session ended, from its daemon or the end
+record. -/
 theorem wait_ending (deadline heldSince : Option Nat) (now : Nat) (e : Linger.Session.Ending) :
-    decide deadline heldSince now (.ended e) = .answer e.answer ∧
-      decide deadline heldSince now (.recorded (some e)) = .answer e.answer := ⟨rfl, rfl⟩
+    decide deadline heldSince now (.ended e) = .answer (.ended e) ∧
+      decide deadline heldSince now (.recorded (some e)) = .answer (.ended e) := ⟨rfl, rfl⟩
 
 /-- A session a signal to its daemon saved answers `saved` with that signal, never a status of its
 program. -/
@@ -43,7 +44,7 @@ theorem ending_failed (e : Linger.Session.Ending) : e.answer = .failed ↔ e = .
 stayed held, with no daemon answering, for `heldNameMs` since the look that first found it so.
 Within that window and before the deadline it looks again, keeping when the window began. -/
 theorem wait_held (deadline heldSince : Option Nat) (now : Nat) (heard : Heard) :
-    (decide deadline heldSince now heard = .answer .failed ↔
+    ((decide deadline heldSince now heard).told = some .failed ↔
         heard = .ended (.program .unknown) ∨
           heard = .recorded (some (.program .unknown)) ∨
           heard = .held ∧ ∃ since, heldSince = some since ∧ since + heldNameMs ≤ now) ∧
@@ -53,27 +54,27 @@ theorem wait_held (deadline heldSince : Option Nat) (now : Nat) (heard : Heard) 
         decide deadline heldSince now heard = .again (some (heldSince.getD now))) := by
   refine ⟨?_, ?_⟩
   · cases heard with
-    | ended e => simp [decide, ending_failed]
-    | status s => simp [decide]
+    | ended e => simp [decide, Next.told, Api.Found.answer, ending_failed]
+    | status s => simp [decide, Next.told, Api.Found.answer]
     | silent =>
-      simp only [decide]; split <;> simp
-    | refused => simp [decide]
+      simp only [decide]; split <;> simp [Next.told, Api.Found.answer]
+    | refused => simp [decide, Next.told, Api.Found.answer]
     | recorded r =>
       cases r with
-      | none => simp [decide]
-      | some e => simp [decide, ending_failed]
+      | none => simp [decide, Next.told, Api.Found.answer]
+      | some e => simp [decide, Next.told, Api.Found.answer, ending_failed]
     | held =>
       simp only [decide]
       cases heldSince with
       | none =>
         have : ¬now + heldNameMs ≤ now := by simp [heldNameMs_eq]
         simp only [Option.getD_none, this, ↓reduceIte]
-        split <;> simp
+        split <;> simp [Next.told, Api.Found.answer]
       | some since =>
         by_cases late : since + heldNameMs ≤ now
-        · simp [late]
+        · simp [late, Next.told, Api.Found.answer]
         · simp only [Option.getD_some, late, ↓reduceIte]
-          split <;> simp [late]
+          split <;> simp [late, Next.told, Api.Found.answer]
   · rintro rfl early within
     simp only [decide]
     have notLate : ¬heldSince.getD now + heldNameMs ≤ now := by

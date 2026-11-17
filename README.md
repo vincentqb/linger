@@ -34,6 +34,22 @@ add-zsh-hook preexec _linger_preexec
 
 A command's ending is no session status: `✓` and `✗` stay for the session's own program.
 
+## Waiting
+
+`linger wait NAME...` waits for each session's program to end and exits with its status, as a
+shell's `wait` does. It takes no time limit: `timeout 5 linger wait NAME` exits 124 when the
+time runs out first, as `timeout` does, and leaves the session running.
+
+## A Lean library
+
+`Linger.App.Api` gives each command as a Lean function with typed arguments and results: what the
+command found, whose answer is its exit status, and what it shows, a listing's records or a
+capture's bytes. It works in the namespace its caller names, writes nothing to standard output or
+standard error, tells what it says to its caller, and reaches a remote host only through a
+transport its caller passes. Its `wait` takes a deadline, since a Lean caller cannot run
+`timeout` around a call. The command line parses its words into such a request and renders the
+reply.
+
 ## Upgrades
 
 `linger upgrade [name...]`, run by a newer linger, moves each named live session, or every one,

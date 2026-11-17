@@ -1086,7 +1086,8 @@ private def upgradeTo (id : String) (login : Bool) (rt : Rt) (asker : Nat) (exe 
   -- the exec keeps every descriptor the handoff names (`upgrade_keeps`)
   let keep := ((Linger.Session.Handoff.kept world).map UInt32.ofNat).toArray
   try
-    execImage exe #["__upgraded", id, path, toString rt.childPid] keep
+    execImage exe ((← Paths.childArgs) ++ ["__upgraded", id, path, toString rt.childPid]).toArray
+        keep
     return (rt, s!"{exe} returned from its exec, so the session keeps running")
   catch err =>
     try

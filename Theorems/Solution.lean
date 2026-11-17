@@ -1,5 +1,6 @@
 module
 
+public import Linger.App.CoreCode.Api
 public import Linger.App.CoreCode.Capture
 public import Linger.App.CoreCode.Commands
 public import Linger.App.CoreCode.Entry
@@ -35,6 +36,7 @@ public import Terminal.CoreCode.Render
 public import Terminal.CoreCode.Replay
 public import Terminal.CoreSpec
 public import Terminal.CoreCode.Title
+import all Linger.App.Proofs.Api
 import all Linger.App.Proofs.Capture
 import all Linger.App.Proofs.Commands
 import all Linger.App.Proofs.Entry
@@ -1377,6 +1379,59 @@ theorem route_exact_rejects_selector :
   intro h
   exact absurd (h ["attach"]) (by simp [App.Entry.Route.of, Remote.marker])
 
+theorem op_meaning (args argv : List String) (request : App.Api.Request) (found : App.Api.Found) :
+    App.Entry.route args = .session argv →
+      App.Api.parse argv = some request →
+      (App.Commands.lookup (argv.headD "")).map (·.op) = some request.op ∧
+        App.Api.plan request = request.act ∧
+        (request.op.finds found = true → App.Api.answer found = found.answer) :=
+  -- the entry's route only says which words reach the session CLI
+  fun _ parsed =>
+  ⟨App.Api.parse_op parsed, App.Api.plan_act request, fun _ => App.Api.answer_eq found⟩
+
+theorem op_meaning_rejects_crossed :
+    ¬∀ (args argv : List String) (request : App.Api.Request) (found : App.Api.Found),
+        App.Entry.route args = .session argv →
+          App.Api.parse argv = some request →
+          (App.Commands.lookup (argv.headD "")).map (·.op) = some request.op ∧
+            App.Api.Request.crossed request = request.act ∧
+            (request.op.finds found = true → App.Api.answer found = found.answer) := by
+  intro h
+  -- `detach x` would take `kill`'s transition
+  have :=
+    (h ["detach", "x"] ["detach", "x"] (.detach "x") .done App.Api.route_detach
+        App.Api.parse_detach).2.1
+  simp [App.Api.Request.crossed, App.Api.Request.act] at this
+
+theorem op_meaning_rejects_outside :
+    ¬∀ (args argv : List String) (request : App.Api.Request) (found : App.Api.Found),
+        App.Entry.route args = .session argv →
+          App.Api.parse argv = some request →
+          (App.Commands.lookup (argv.headD "")).map (·.op) = some request.op ∧
+            App.Api.plan request = request.act ∧
+            (request.op.finds found = true →
+              (fun (_ : App.Api.Found) => Os.Answer.timedOut) found = found.answer) := by
+  intro h
+  -- a `detach` that did what was asked would answer that its time ran out
+  have :=
+    (h ["detach", "x"] ["detach", "x"] (.detach "x") .done App.Api.route_detach
+          App.Api.parse_detach).2.2
+      rfl
+  simp [App.Api.Found.answer] at this
+
+theorem said_rendered (said : App.Api.Said) :
+    App.Api.Said.render said =
+      (if said.fresh then "\r\n" else "") ++ "linger: " ++ said.text ++ "\n" := by
+  rfl
+
+theorem said_rendered_rejects_bare :
+    ¬∀ (said : App.Api.Said),
+        (fun (said : App.Api.Said) => said.text ++ "\n") said =
+          (if said.fresh then "\r\n" else "") ++ "linger: " ++ said.text ++ "\n" := by
+  intro h
+  have := h { text := "" }
+  simp at this
+
 theorem commands_minimal :
     (∀ op : App.Commands.Op,
         ∃ word,
@@ -1579,9 +1634,10 @@ theorem dismiss_hides_rejects_memory :
 theorem dismissal_happened (afterSave : List UInt8 → Option (List UInt8))
     (kept : Record.Kept afterSave) (deadline heldSince : Option Nat) (now : Nat) :
     Record.answer (afterSave (Record.encode Import.Resurrect.dismissal)) = some .dismissed ∧
-      App.Wait.decide deadline heldSince now
-          (.recorded (Record.answer (afterSave (Record.encode Import.Resurrect.dismissal)))) =
-        .answer .notFound := by
+      App.Wait.Next.told
+          (App.Wait.decide deadline heldSince now
+            (.recorded (Record.answer (afterSave (Record.encode Import.Resurrect.dismissal))))) =
+        some .notFound := by
   have read :
     Record.answer (afterSave (Record.encode Import.Resurrect.dismissal)) = some .dismissed := by
     rw [kept]; rfl
@@ -1595,10 +1651,11 @@ theorem dismissal_happened_rejects_hangup :
           ∀ (deadline heldSince : Option Nat) (now : Nat),
             Record.answer (afterSave (Record.encode (Record.ended (.signaled 1)))) =
                 some .dismissed ∧
-              App.Wait.decide deadline heldSince now
-                  (.recorded
-                    (Record.answer (afterSave (Record.encode (Record.ended (.signaled 1)))))) =
-                .answer .notFound := by
+              App.Wait.Next.told
+                  (App.Wait.decide deadline heldSince now
+                    (.recorded
+                      (Record.answer (afterSave (Record.encode (Record.ended (.signaled 1))))))) =
+                some .notFound := by
   intro h
   have := (h some (fun _ => rfl) none none 0).1
   rw [Record.answer_ended] at this
@@ -2355,24 +2412,24 @@ theorem record_answer_rejects_running :
   simp [Record.answer_running] at ended
 
 theorem wait_ending (deadline heldSince : Option Nat) (now : Nat) (e : Ending) :
-    App.Wait.decide deadline heldSince now (.ended e) = .answer e.answer ∧
-      App.Wait.decide deadline heldSince now (.recorded (some e)) = .answer e.answer :=
+    App.Wait.decide deadline heldSince now (.ended e) = .answer (.ended e) ∧
+      App.Wait.decide deadline heldSince now (.recorded (some e)) = .answer (.ended e) :=
   App.Wait.wait_ending deadline heldSince now e
 
 theorem wait_ending_rejects_failed :
     ¬∀ (deadline heldSince : Option Nat) (now : Nat) (e : Ending),
-        (fun (_ _ : Option Nat) (_ : Nat) (_ : App.Wait.Heard) => App.Wait.Next.answer .failed)
+        (fun (_ _ : Option Nat) (_ : Nat) (_ : App.Wait.Heard) => App.Wait.Next.answer .unknown)
               deadline heldSince now (.ended e) =
-            .answer e.answer ∧
-          (fun (_ _ : Option Nat) (_ : Nat) (_ : App.Wait.Heard) => App.Wait.Next.answer .failed)
+            .answer (.ended e) ∧
+          (fun (_ _ : Option Nat) (_ : Nat) (_ : App.Wait.Heard) => App.Wait.Next.answer .unknown)
               deadline heldSince now (.recorded (some e)) =
-            .answer e.answer := by
+            .answer (.ended e) := by
   intro h
   have told := (h none none 0 (.program (.exited 0))).1
-  simp [Ending.answer, Outcome.answer] at told
+  simp at told
 
 theorem wait_held (deadline heldSince : Option Nat) (now : Nat) (heard : App.Wait.Heard) :
-    (App.Wait.decide deadline heldSince now heard = .answer .failed ↔
+    (App.Wait.Next.told (App.Wait.decide deadline heldSince now heard) = some .failed ↔
         heard = .ended (.program .unknown) ∨
           heard = .recorded (some (.program .unknown)) ∨
           heard = .held ∧ ∃ since, heldSince = some since ∧ since + App.Wait.heldNameMs ≤ now) ∧
@@ -2384,7 +2441,7 @@ theorem wait_held (deadline heldSince : Option Nat) (now : Nat) (heard : App.Wai
         ∀ since,
           heldSince = some since →
             now < since + (Session.drainTimeoutMs + (Session.ending.map (·.wait)).sum) →
-            App.Wait.decide deadline heldSince now heard ≠ .answer .failed) := by
+            App.Wait.Next.told (App.Wait.decide deadline heldSince now heard) ≠ some .failed) := by
   refine
     ⟨(App.Wait.wait_held deadline heldSince now heard).1,
       (App.Wait.wait_held deadline heldSince now heard).2, ?_⟩
@@ -2401,33 +2458,36 @@ theorem wait_held (deadline heldSince : Option Nat) (now : Nat) (heard : App.Wai
 
 theorem wait_held_rejects_eager :
     ¬∀ (deadline heldSince : Option Nat) (now : Nat) (heard : App.Wait.Heard),
-        ((fun (_ _ : Option Nat) (_ : Nat) (_ : App.Wait.Heard) => App.Wait.Next.answer .failed)
-                deadline heldSince now heard =
-              .answer .failed ↔
+        (App.Wait.Next.told
+                ((fun (_ _ : Option Nat) (_ : Nat) (_ : App.Wait.Heard) =>
+                    App.Wait.Next.answer .unknown)
+                  deadline heldSince now heard) =
+              some .failed ↔
             heard = .ended (.program .unknown) ∨
               heard = .recorded (some (.program .unknown)) ∨
               heard = .held ∧ ∃ since, heldSince = some since ∧ since + App.Wait.heldNameMs ≤ now) ∧
           (heard = .held →
             (∀ due, deadline = some due → now < due) →
             (∀ since, heldSince = some since → now < since + App.Wait.heldNameMs) →
-            (fun (_ _ : Option Nat) (_ : Nat) (_ : App.Wait.Heard) => App.Wait.Next.answer .failed)
+            (fun (_ _ : Option Nat) (_ : Nat) (_ : App.Wait.Heard) => App.Wait.Next.answer .unknown)
                 deadline heldSince now heard =
               .again (some (heldSince.getD now))) ∧
           (heard = .held →
             ∀ since,
               heldSince = some since →
                 now < since + (Session.drainTimeoutMs + (Session.ending.map (·.wait)).sum) →
-                (fun (_ _ : Option Nat) (_ : Nat) (_ : App.Wait.Heard) =>
-                      App.Wait.Next.answer .failed)
-                    deadline heldSince now heard ≠
-                  .answer .failed) := by
+                App.Wait.Next.told
+                    ((fun (_ _ : Option Nat) (_ : Nat) (_ : App.Wait.Heard) =>
+                        App.Wait.Next.answer .unknown)
+                      deadline heldSince now heard) ≠
+                  some .failed) := by
   intro h
   have failed := ((h none none 0 .held).1).mp rfl
   simp at failed
 
 theorem wait_held_rejects_drain :
     ¬∀ (deadline heldSince : Option Nat) (now : Nat) (heard : App.Wait.Heard),
-        (App.Wait.decide deadline heldSince now heard = .answer .failed ↔
+        (App.Wait.Next.told (App.Wait.decide deadline heldSince now heard) = some .failed ↔
             heard = .ended (.program .unknown) ∨
               heard = .recorded (some (.program .unknown)) ∨
               heard = .held ∧
@@ -2440,7 +2500,8 @@ theorem wait_held_rejects_drain :
             ∀ since,
               heldSince = some since →
                 now < since + (Session.drainTimeoutMs + (Session.ending.map (·.wait)).sum) →
-                App.Wait.decide deadline heldSince now heard ≠ .answer .failed) := by
+                App.Wait.Next.told (App.Wait.decide deadline heldSince now heard) ≠
+                  some .failed) := by
   intro h
   -- a wait that fails once a drain has passed, while the ending's signals still wait
   have k := h none (some 0) Session.drainTimeoutMs .held

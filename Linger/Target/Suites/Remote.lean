@@ -215,7 +215,7 @@ private def discoveryChecks (e : Env) : IO Unit := do
   finally
     reapOrKill server 0
   let (state, root, path) ← discoverySetup e "deadline"
-  let limit := Linger.App.Shell.remoteQueryLimit
+  let limit := Linger.App.Api.remoteQueryLimit
   let hosts := (List.range (limit + 1)).map (fun i => s!"stall-{i}")
   let active := hosts.take limit
   let start ← Os.Shell.monotonicMs
@@ -234,7 +234,7 @@ private def discoveryChecks (e : Env) : IO Unit := do
     -- The stalled hosts hold every slot until the deadline, so with one deadline for all of them
     -- the last host never starts, while a deadline per job would free a slot for it; and their
     -- descendants outlive `hangMs`, so a command that waited for the pipes would too.
-    let code ← waitProcess command (Linger.App.Shell.remoteQueryTimeoutMs + hangMs)
+    let code ← waitProcess command (Linger.App.Api.remoteQueryTimeoutMs + hangMs)
     let elapsed := (← Os.Shell.monotonicMs) - start
     let lastStarted ← System.FilePath.pathExists last
     let stopped ← waitFor patienceMs (active.allM (discoveryGone root))
@@ -297,7 +297,7 @@ private def discoveryChecks (e : Env) : IO Unit := do
     chooser.type "\x03"
     let code ← chooser.reap patienceMs
     let lived := (← Os.Shell.monotonicMs) - spawned
-    expect (ready && code == 130 && lived < Linger.App.Shell.remoteQueryTimeoutMs)
+    expect (ready && code == 130 && lived < Linger.App.Api.remoteQueryTimeoutMs)
         s!"cancelling bare attach retires discovery before the remote deadline ({lived} ms)"
     let stopped ← waitFor patienceMs (discoveryGone root "stall-cancel")
     expect (ready && stopped) "chooser cancellation reaches SSH descendants"
@@ -378,7 +378,7 @@ private def transportChecks (e : Env) (procPath : Array (String × Option String
           { cmd := e.bin, args := #["ls", "-r"], env := e.procEnv ++ procPath, stdout := .piped,
             stderr := .null }
     let printed ← IO.asTask listing.stdout.readToEnd Task.Priority.dedicated
-    let code ← waitOrKill listing (Linger.App.Shell.remoteQueryTimeoutMs + hangMs)
+    let code ← waitOrKill listing (Linger.App.Api.remoteQueryTimeoutMs + hangMs)
     let human ←
       if code.isSome then
         pure ((← IO.wait printed).toOption.getD "")
@@ -616,15 +616,14 @@ def run : IO UInt32 :=
       expect
           ([["--porcelain", "-r", s!"{devHost},{deadHost}"],
                 ["-r", s!"{devHost},{deadHost}", "--porcelain"]].all
-            (fun args =>
-              Linger.App.Shell.parseLs args == some (true, some [devHost, deadHost], [])))
+            (fun args => Linger.App.Api.parseLs args == some (true, some [devHost, deadHost], [])))
           "ls accepts explicit hosts in either option order"
       expect
-          (Linger.App.Shell.parseLs ["-r", "--porcelain"] == some (true, some [], []) &&
-            Linger.App.Shell.parseLs ["--porcelain", "--remote"] == none &&
-            Linger.App.Shell.parseLs ["--remote", devHost] == none &&
-            Linger.App.Shell.parseLs ["work", "-r"] == none &&
-            Linger.App.Shell.parseLs ["-r", "--typo"] == none)
+          (Linger.App.Api.parseLs ["-r", "--porcelain"] == some (true, some [], []) &&
+            Linger.App.Api.parseLs ["--porcelain", "--remote"] == none &&
+            Linger.App.Api.parseLs ["--remote", devHost] == none &&
+            Linger.App.Api.parseLs ["work", "-r"] == none &&
+            Linger.App.Api.parseLs ["-r", "--typo"] == none)
           "ls preserves options after -r, spells -r one way, takes no names with it and rejects unknown options"
       -- Only a nonempty HOME configures hosts (`remotesFile_eq_none_iff`). Decoy files
       -- under the working, XDG and temporary directories would run SSH if a fallback

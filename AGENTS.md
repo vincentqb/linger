@@ -72,7 +72,9 @@ or `WorldCode`, as the Lean Software Challenge reads it, and any other module is
   a terminal.
 - `Linger/Import/`: the latest tmux-resurrect save, a source linger reads and never writes: the
   `Resurrect` policy, and `WorldCode.lean` reads it for `ls`, an attach and a kill.
-- `Linger/App/`: the command line: the `Entry` route and, in `WorldCode.lean`, the commands;
+- `Linger/App/`: the command line and the Lean API: the `Entry` route, and the typed requests
+  `CoreCode/Api.lean` parses and plans; `WorldCode/Api.lean`, the Lean API, performs them and
+  writes to no standard stream, and `WorldCode.lean`, the command line, renders their replies;
   `WorldCode/Main.lean` holds `main`.
 - `Challenge.lean`: the program parts headline theorems name, declared as holes, and the
   headline theorems and their kills, stated with `sorry`. It imports only `CoreSpec` and
@@ -159,8 +161,8 @@ size: Lean erases proofs regardless of file placement.
   fixes with a failing check and verify that new assertions detect a deliberate break;
   a check of a failure or cleanup path also asserts that the path was reached.
 - A command exists only for an `Op` of `Linger/App/CoreSpec.lean`, with one spelling and each
-  option one parameter of it: adding one changes the owned `Op`, a claim change
-  (`commands_minimal`).
+  option one parameter of its `Api.Request`: adding one changes the owned `Op` and `Request`, a
+  claim change (`commands_minimal`, `op_meaning`).
 - One signal, one meaning: every signal that crosses linger's boundary means what its standard
   says, and linger gives none a meaning of its own. That covers a sequence a program writes
   (ECMA-48 and the xterm, OSC 9, 52, 133 and 777 conventions), a key a person presses (readline

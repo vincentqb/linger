@@ -24,20 +24,20 @@ def heldNameMs : Nat := Linger.Session.drainTimeoutMs + 5000
 
 /-- What `wait` does after a look that heard `heard` at `now` on the monotonic clock, with an
 optional `deadline` on the same clock and `heldSince`, when the looks before this one first found
-the name held with no daemon answering. An ending, from the daemon or the end record, is the
-answer (`Ending.answer`); so are a refusal and a name no session took. A held name is looked at
-again until it has been held for `heldNameMs`, and then `wait` could not find out; silence and a
-held name end in `timedOut` once the deadline has passed. -/
+the name held with no daemon answering. An ending, from the daemon or the end record, is what it
+found; so are a refusal and a name no session took. A held name is looked at again until it has
+been held for `heldNameMs`, and then `wait` could not find out; silence and a held name are late
+once the deadline has passed. -/
 def decide (deadline heldSince : Option Nat) (now : Nat) : Heard → Next
-  | .ended ending => .answer ending.answer
-  | .status status => .answer (.program status)
-  | .refused => .answer .notDone
-  | .recorded none => .answer .notFound
-  | .recorded (some ending) => .answer ending.answer
-  | .silent => if deadline.any (· ≤ now) then .answer .timedOut else .again none
+  | .ended ending => .answer (.ended ending)
+  | .status status => .answer (.status status)
+  | .refused => .answer .refused
+  | .recorded none => .answer .missing
+  | .recorded (some ending) => .answer (.ended ending)
+  | .silent => if deadline.any (· ≤ now) then .answer .late else .again none
   | .held =>
     let since := heldSince.getD now
-    if since + heldNameMs ≤ now then .answer .failed
-    else if deadline.any (· ≤ now) then .answer .timedOut else .again (some since)
+    if since + heldNameMs ≤ now then .answer .unknown
+    else if deadline.any (· ≤ now) then .answer .late else .again (some since)
 
 end Linger.App.Wait

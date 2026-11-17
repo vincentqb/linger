@@ -452,14 +452,14 @@ import_closure Linger.lean "$(printf 'public import %s;' Linger.Session.CoreCode
   Linger.Session.WorldCode.Inventory Linger.App.CoreCode.Commands Linger.App.WorldCode \
   Linger.Session.WorldCode.Resume)"
 module_imports ':(glob)Linger/Session/*.lean' 'Linger/Session/CoreCode/*' 'Linger/Session/WorldCode/*' \
-    packages/os/Os/WorldCode/Command.lean Linger/App/WorldCode.lean packages/os/Os/WorldSpec.lean packages/os/Os/WorldCode.lean \
+    packages/os/Os/WorldCode/Command.lean Linger/App/WorldCode.lean Linger/App/WorldCode/Api.lean packages/os/Os/WorldSpec.lean packages/os/Os/WorldCode.lean \
     Linger/Os/CoreCode/Env.lean Linger/Target/CoreCode/Name.lean Linger/Target/CoreCode/Remote.lean Linger/Display/CoreCode/Status.lean \
     Linger/Display/CoreCode/Title.lean Linger/Display/CoreCode/Listing.lean packages/terminal/Terminal/CoreCode/Vt.lean \
     packages/terminal/Terminal/CoreCode/Render.lean packages/terminal/Terminal/CoreCode/Mediation.lean packages/terminal/Terminal/CoreCode/Title.lean \
     packages/terminal/Terminal/CoreCode/Replay.lean Linger.lean \
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
-    if (mod !~ /^(Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](WorldCode|CoreSpec|CoreCode[.](Commands|Fields|Wait|Recovery|Capture))|Std[.]Async[.](System|Signal))$/ \
+    if (mod !~ /^(Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](WorldCode([.]Api)?|CoreSpec|CoreCode[.](Commands|Fields|Wait|Recovery|Capture|Api))|Std[.]Async[.](System|Signal))$/ \
         && mod != "SoftwareChallenge.Commands") {
       print "  " $0; bad = 1
     }
@@ -607,7 +607,7 @@ import_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Import/WorldCode.lean)
 ! code_grep '(IO[.]FS[.](writeFile|writeBinFile|removeFile|removeDir|removeDirAll|rename|createDir|createDirAll|hardLink|withFile|Handle[.]mk)|Os[.]Shell[.](replaceFile|chmod)|setAccessRights)' Linger/Import/WorldCode.lean \
   || fail "the save reader names a call that writes, moves or deletes a file; it writes only a checkpoint (Os.Shell.createFile) and an end record (Record.save)"
 for tie in \
-  'def exportSave : IO Unit := do IO[.]print [(]← IO[.]ofExcept [(]renderSave [(]← snapshot[)][)][)]' \
+  'def exportSave : IO String := do IO[.]ofExcept [(]renderSave [(]← snapshot[)][)]' \
   'let some [(]_, panes[)] ← latest [|] return [[][]] return [(]Linger[.]Display[.]View[.]byName [(]·[.]name[)] [(]listed records panes[)][)][.]map sourceRow' \
   'let contents ← capturedPane [(]← readArchive save[)] pane Paths[.]withSessionLock name do match Linger[.]Import[.]Resurrect[.]adopt [(]← recordsOf name[)] pane contents with [|] none => return [.]recorded [|] some ck => if ← Os[.]Shell[.]createFile [(]← Paths[.]ckptPath name[)] [(]Linger[.]Session[.]Checkpoint[.]saveBytes ck[)] then return [.]written return [.]recorded' \
   'Paths[.]withSessionLock name do let records ← recordsOf name if records[.]holds name then return false' \
@@ -731,16 +731,18 @@ done
 # and color only where Env.withColor allows it. A host that does not answer in time is one `?`
 # record, its `host` with the status no answer gives. Prompt sampling shares one reply deadline; a
 # busy nonblocking connect remains unknown and cannot authorize stale-socket removal.
-cli_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/WorldCode.lean)"
+cli_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/WorldCode.lean Linger/App/WorldCode/Api.lean Linger/App/CoreCode/Api.lean)"
 for tie in \
-  'match Linger[.]Target[.]Remote[.]checkHosts hosts with [|] [.]ok l => return l[.]map fun host => [(]host, Linger[.]Target[.]Remote[.]transportFor config host[)] [|] [.]error e => throw [(]IO[.]userError e[)]' \
+  'match Linger[.]Target[.]Remote[.]checkHosts hosts with [|] [.]ok l => return some [(]l[.]map fun host => [(]host, Linger[.]Target[.]Remote[.]transportFor config host[)][)] [|] [.]error e => throw [(]IO[.]userError e[)]' \
   'for [(][(]host, _[)], output[)] in remotes[.]zip remote[.]toList do match output with [|] none => rows := rows [+][+] [[][[][(]"host", host[)], [(]"status", Linger[.]Display[.]Status[.]name [.]unknown[)][]][]] [|] some output => for row in Linger[.]Target[.]Remote[.]parse output do' \
-  '[|] some [(]porcelain, remoteFlag, [[][]][)] => cmdList source porcelain [(]← resolveRemotes remoteFlag[)]' \
+  '[|] some [(]porcelain, hosts, [[][]][)] => some [(][.]every porcelain hosts[)]' \
+  '[|] [.]every porcelain hosts => do match ← resolveRemotes env hosts with [|] some remotes => cmdList env porcelain remotes' \
   'let withColor := Linger[.]Os[.]Env[.]withColor [(]← [(]← IO[.]getStdout[)][.]isTty[)] [(]← IO[.]getEnv "NO_COLOR"[)] [(]← IO[.]getEnv "TERM"[)] let named := rows[.]map fun info => [(]match info[.]lookup "name", info[.]lookup "host" with [|] none, some host => [(]"name", "@" [+][+] host[)] :: info [|] _, _ => info[)][.]filter fun kv => [(]Linger[.]App[.]Fields[.]table[.]map Linger[.]App[.]Fields[.]Field[.]key[)][.]contains kv[.]1 let ordered := Linger[.]Display[.]View[.]sort [(]fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD ""[)][)] named let width ← humanWidth let home ← accountHome writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor width [(]ordered[.]map [(]Linger[.]Display[.]Listing[.]atHome home[)][)][)][.]toArray[)]' \
   'def summaryText : IO String := do let rows ← localRows [(]some [(][(]← monotonicMs[)] [+] 250[)][)] [(]statusOnly := true[)] return Linger[.]Display[.]Status[.]summary [(]rows[.]map fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD "unknown"[)][)]' \
-  'def cmdSummary : IO Answer := do let summary ← summaryText if !summary[.]isEmpty then IO[.]println summary return [.]done' \
-  'match ← connectUpsert s cmd with [|] [.]ok fd => attachSpoken s[.]name fd false' \
-  'if args == [[]"--summary"[]] then return ← cmdSummary'; do
+  '[|] [.]summary => do return [{] found := [.]done, shown := [.]text [(]← summaryText[)] [}]' \
+  '[|] [.]list [.]summary => unless text[.]isEmpty do IO[.]println text' \
+  'match ← connectUpsert env s cmd with [|] [.]ok fd => attachSpoken env s[.]name fd mode' \
+  'if args = [[]"--summary"[]] then some [.]summary'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "listing or prompt bypassed its shared policy: $tie"
 done
@@ -748,10 +750,10 @@ done
 # attach's own connection, within the one-shot reply budget, that it speaks this version's
 # protocol (`admits_level`); the chooser runs `linger attach`. Linger.Session.Suites.Attach checks
 # the refusals against older daemons' answers and against silence.
-tie='let heard ← [(]Inventory[.]readInfo fd [(]some [(][(]← monotonicMs[)] [+] Client[.]replySilenceMs[.]toNatClampNeg[)][)][)][.]toBaseIO let level := [(]heard[.]toOption[.]bind [(]·[.]lookup "protocol"[)][)][.]bind String[.]toNat[?] if Linger[.]Session[.]Wire[.]admits level then return [.]ok [(]← Client[.]attach name fd [(]attentionSample name[)] readOnly[)] close fd'
+tie='let heard ← [(]Inventory[.]readInfo fd [(]some [(][(]← monotonicMs[)] [+] Client[.]replySilenceMs[.]toNatClampNeg[)][)][)][.]toBaseIO let level := [(]heard[.]toOption[.]bind [(]·[.]lookup "protocol"[)][)][.]bind String[.]toNat[?] if Linger[.]Session[.]Wire[.]admits level then return [.]ok [(]← Client[.]attach name fd [(]attentionSample name[)] [(]mode == [.]readOnly[)][)] close fd'
 printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
   || fail "an attach bypasses its daemon's protocol level (Wire.admits): $tie"
-[ "$(code_count 'Client[.]attach([^[:alnum:]_]|$)' Linger/App/WorldCode.lean)" -eq 1 ] \
+[ "$(code_count 'Client[.]attach([^[:alnum:]_]|$)' Linger/App/WorldCode.lean Linger/App/WorldCode/Api.lean)" -eq 1 ] \
   || fail "Client.attach is called outside attachSpoken, which first asks the daemon's protocol level"
 # `linger --help` lists the exit statuses from the vocabulary every command answers in
 # (`code_documented`), one line per answer of linger's own.
@@ -1002,11 +1004,11 @@ shim_n="$(code_count 'LEAN_EXPORT' 'packages/os/c/shim.c')"
 # the CLI's info-reply accumulator, and two .extract compactions). `code_grep` prints
 # the hits, so each regex is spelled once: two copies of a pattern is two things to
 # keep in step.
-! code_grep '^[[:space:]]+[a-zA-Z_]+ : ByteArray' 'Linger/App/WorldCode.lean' 'packages/os/Os/WorldCode/Command.lean' 'Linger/Session/WorldCode/*' \
+! code_grep '^[[:space:]]+[a-zA-Z_]+ : ByteArray' 'Linger/App/WorldCode.lean' 'Linger/App/WorldCode/Api.lean' 'packages/os/Os/WorldCode/Command.lean' 'Linger/Session/WorldCode/*' \
   || fail "a ByteArray field in a runtime shell (use Linger.Session.Buf, which is proved)"
-! code_grep 'mut [a-zA-Z_]+ : ByteArray' 'Linger/App/WorldCode.lean' 'packages/os/Os/WorldCode/Command.lean' 'Linger/Session/WorldCode/*' \
+! code_grep 'mut [a-zA-Z_]+ : ByteArray' 'Linger/App/WorldCode.lean' 'Linger/App/WorldCode/Api.lean' 'packages/os/Os/WorldCode/Command.lean' 'Linger/Session/WorldCode/*' \
   || fail "an accumulating ByteArray local in a runtime shell (use Linger.Session.Buf: it is capped)"
-! code_grep '[.]extract([^[:alnum:]_]|$)' 'Linger/App/WorldCode.lean' 'packages/os/Os/WorldCode/Command.lean' 'Linger/Session/WorldCode/*' \
+! code_grep '[.]extract([^[:alnum:]_]|$)' 'Linger/App/WorldCode.lean' 'Linger/App/WorldCode/Api.lean' 'packages/os/Os/WorldCode/Command.lean' 'Linger/Session/WorldCode/*' \
   || fail "buffer arithmetic in a runtime shell (Buf.bufAdvance owns it, and is proved)"
 
 # The cursor proofs describe pure values. These ties keep the runtime on the
@@ -1172,7 +1174,7 @@ code_grep '^[[:space:]]+match Os[.]Wait[.]next deadline step [(]← monotonicMs[
   packages/os/Os/WorldCode.lean >/dev/null \
   || fail "Os.Shell.nap sleeps other than as Os.Wait.next decides"
 [ "$(code_count '(^|[^A-Za-z0-9_.])pause [0-9]' 'Linger/*.lean')" -eq 1 ] \
-  && code_grep '^[[:space:]]+pause 10$' Linger/App/WorldCode.lean >/dev/null \
+  && code_grep '^[[:space:]]+pause 10$' Linger/App/WorldCode/Api.lean >/dev/null \
   || fail "a wait with no deadline sleeps other than where start and resume wait on their daemon"
 # A resume runs in its saved directory, else in a nonempty HOME, else nowhere
 # (resumeDir_absent): the daemon reads HOME for it into Env.resumeDir, and the resume suite
@@ -1244,36 +1246,47 @@ attach_words="$(code_grep '"attach"[[:space:]]*(,|[]]|::)' 'Linger/*/WorldCode.l
 [ "$attach_words" = "$(printf '%s\n' \
     'Linger/Selector/WorldCode.lean: ("attach" :: (if readOnly then ["--read-only"] else []) ++')" ] \
   || fail "a literal attach argv: build it with Picker.attachArgs, whose operands come from Remote.targetOperands: $attach_words"
-! code_grep '(^|[^A-Za-z0-9_.])Fuzzy[.]|Name[.]sanitize' Linger/App/WorldCode.lean Linger/Session/WorldCode/Client.lean \
+! code_grep '(^|[^A-Za-z0-9_.])Fuzzy[.]|Name[.]sanitize' Linger/App/WorldCode.lean Linger/App/WorldCode/Api.lean Linger/App/CoreCode/Api.lean Linger/Session/WorldCode/Client.lean \
   || fail "noninteractive command lookup must not fuzzy-match or rewrite a name"
 code_grep '^[[:space:]]+Linger[.]Target[.]Remote[.]targetValid target = true ∧ target ∉ candidates := by$' Linger/Selector/Proofs/Picker.lean >/dev/null \
   || fail "selector creation and command arguments no longer share the target grammar"
 # `withSession` and `withNew` are `withTarget`, their local action given the session the name
 # leads to (`Names.find`, `Names.claim`).
 for verb in attach start resume send detach kill capture resize rename; do
-  code_grep "^[[:space:]]+(withTarget|withSession|withNew) \"$verb\" " Linger/App/WorldCode.lean >/dev/null \
+  code_grep "(withTarget|withSession|withNew) env \"$verb\" " Linger/App/WorldCode/Api.lean >/dev/null \
     || fail "session command bypassed the common exact target boundary: $verb"
 done
-# A command line reaches its operation only through the command table (`commands_minimal`): the
-# session CLI looks up its first word and performs that row's `Op`, and no pattern of its own
-# names a command word, which would be a second spelling no headline sees.
-printf '%s\n' "$cli_code" | CG_RE='(^|[[:space:]])match Linger[.]App[.]Commands[.]lookup word with [|] some command => runOp source command[.]op args[.]tail([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
-  || fail "the session CLI no longer dispatches through Commands.lookup to the row's Op"
-! code_grep '^[[:space:]]*[|] [[]?"[a-z][a-z-]*"' Linger/App/WorldCode.lean \
+# A command line reaches its operation only through its request (`op_meaning`): the session CLI
+# parses it with `Api.parse`, which looks up its first word in the command table and reads the rest
+# as that row's `Op`'s request, `Api.perform` takes the transition `Api.plan` gives the request, and
+# the exit status is `Api.answer`'s; no pattern of its own names a command word, which would be a
+# second spelling no headline sees.
+for tie in \
+  'match Linger[.]App[.]Api[.]parse args with [|] some request =>' \
+  'let reply ← Linger[.]App[.]Api[.]perform env request render request reply[.]shown return Linger[.]App[.]Api[.]answer reply[.]found' \
+  'def parse : List String → Option Request [|] word :: args => [(]Commands[.]lookup word[)][.]bind fun command => parseOp command[.]op args [|] [[][]] => none' \
+  'Paths[.]withDirs env[.]dirs do try match request, plan request with'; do
+  printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "the session CLI no longer reaches its operation through Api.parse, Api.perform and Api.plan: $tie"
+done
+! code_grep '^[[:space:]]*[|] [[]?"[a-z][a-z-]*"' Linger/App/WorldCode.lean Linger/App/WorldCode/Api.lean Linger/App/CoreCode/Api.lean \
   || fail "a command word is matched outside the command table (Commands.lookup)"
 for tie in \
-  'match Linger[.]Target[.]Remote[.]parseTarget target with [|] none => invalidTarget [|] some parsed => runTarget verb parsed args localAction options' \
-  'let some targets := names[.]mapM Linger[.]Target[.]Remote[.]parseTarget [|] invalidTarget let mut answer : Answer := [.]done' \
-  'answer ← runTarget "wait" target [[]] [(]waitNamed none[)]' \
-  'let [(]heard, why[)] ← hear s silenceMs match Wait[.]decide deadline heldSince [(]← monotonicMs[)] heard with' \
+  'match Linger[.]Target[.]Remote[.]parseTarget target with [|] none => invalidTarget env [|] some parsed => runTarget env verb parsed args localAction options' \
+  'let some targets := names[.]mapM Linger[.]Target[.]Remote[.]parseTarget [|] invalidTarget env let mut found : Found := [.]done' \
+  'found ← runTarget env "wait" target [[]] [(]waitNamed env m deadline[)]' \
+  'let [(]heard, why[)] ← hear s m silenceMs match Wait[.]decide deadline heldSince [(]← monotonicMs[)] heard with' \
   'heldSince := since if let some first := since then discard <[|] nap [(]first [+] Wait[.]heldNameMs[)] 20' \
   'let interactive := verb == "attach" if interactive && [(]![(]← stdinIsTty[)] [|][|] ![(]← [(]← IO[.]getStdout[)][.]isTty[)][)] then' \
-  'let transport := Linger[.]Target[.]Remote[.]transportFor [(]← remoteConfig[)] host match Linger[.]Target[.]Remote[.]targetArgv transport verb options target[.]name args with' \
-  '[|] cmd :: argv => let child ← IO[.]Process[.]spawn [{] cmd, args := argv[.]toArray, stdin := [.]inherit [}] try return [.]program [(]← child[.]wait[)] finally if interactive then writeAll stdoutFd [(]ByteArray[.]mk Terminal[.]Render[.]leaveAnsi[.]toArray[)]' \
-  'let readOnly := args[.]head[?] == some "--read-only" let args := if readOnly then args[.]tail else args let some [(]name, cmd[)] := Linger[.]Target[.]Remote[.]targetArgs args [|]' \
-  'let history := args[.]head[?] == some "--history" let args := if history then args[.]tail else args let some [(]name, [[][]][)] := Linger[.]Target[.]Remote[.]targetArgs args [|]' \
-  'if readOnly then withSession "attach" name cmd [(]cmdAttach source · cmd true[)] [[]"--read-only"[]] else withNew "attach" name cmd [(]cmdAttach source · cmd false[)]' \
-  'withSession "capture" name [[][]] [(]cmdRead · [(]if history then [.]history else [.]screen[)] [(]if history then Terminal[.]Render[.]history else Terminal[.]Render[.]screenText[)][)] [(]if history then [[]"--history"[]] else [[][]][)]'; do
+  'let transport := Linger[.]Target[.]Remote[.]transportFor [(]← remote[.]config[)] host match Linger[.]Target[.]Remote[.]targetArgv transport verb options target[.]name args with' \
+  '[|] argv => return [.]status [(]← remote[.]run interactive argv[)]' \
+  '[|] cmd :: argv => do let child ← IO[.]Process[.]spawn [{] cmd, args := argv[.]toArray, stdin := [.]inherit [}] try child[.]wait finally if interactive then writeAll stdoutFd [(]ByteArray[.]mk Terminal[.]Render[.]leaveAnsi[.]toArray[)]' \
+  'remote := some [{] config := remoteConfig, run := runRemote [}],' \
+  'if args[.]head[?] = some flag then [(]true, Linger[.]Target[.]Remote[.]targetArgs args[.]tail[)] else [(]false, Linger[.]Target[.]Remote[.]targetArgs args[)]' \
+  'match flagged "--read-only" args with [|] [(]true, some [(]target, [[][]][)][)] => some [(][.]attach true target [[][]][)] [|] [(]false, some [(]target, command[)][)] => some [(][.]attach false target command[)]' \
+  'match flagged "--history" args with [|] [(]history, some [(]target, [[][]][)][)] => some [(][.]capture history target[)]' \
+  'if mode == [.]readOnly then reply [(]withSession env "attach" target command [(]cmdAttach env · mode command[)] [[]"--read-only"[]][)] else reply [(]withNew env "attach" target command [(]cmdAttach env · mode command[)][)]' \
+  'withSession env "capture" target [[][]] [(]fun s => do let captured ← cmdRead env s m [(]if history then Terminal[.]Render[.]history else Terminal[.]Render[.]screenText[)] shown[.]set captured[.]shown return captured[.]found[)] [(]if history then [[]"--history"[]] else [[][]][)]'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "command transport lost exact targets, argv, stdin or terminal ownership: $tie"
 done
@@ -1366,9 +1379,9 @@ for tie in \
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "a command started from a checkpoint other than as Recovery.decide says: $tie"
 done
-[ "$(code_count '[(]recoverFor [{] name, id [}][)]' Linger/App/WorldCode.lean)" -eq 3 ] \
+[ "$(code_count '[(]recoverFor [{] name, id [}][)]' Linger/App/WorldCode/Api.lean)" -eq 3 ] \
   || fail "every daemon a command begins, for attach, start and resume, recovers through recoverFor"
-! code_grep '(^|[^[:alnum:]_])loadBytes([^[:alnum:]_]|$)' Linger/App/WorldCode.lean Linger/Session/WorldCode/Resume.lean \
+! code_grep '(^|[^[:alnum:]_])loadBytes([^[:alnum:]_]|$)' Linger/App/WorldCode.lean Linger/App/WorldCode/Api.lean Linger/Session/WorldCode/Resume.lean \
   || fail "a command decodes a checkpoint itself: ask Recovery.decide, which never takes bytes that do not decode for no checkpoint"
 # A request's answer is true (`start_answer_true`). The command makes the request's ticket before
 # it begins the daemon. The daemon takes it once, before its first report and at the commit point
@@ -1386,16 +1399,16 @@ done
 for tie in \
   'private def takeTicket [(]report : String[)] : IO Bool := do try IO[.]FS[.]removeFile [(]ticketPath report[)] return true catch _ => return false' \
   'let take : IO Bool := do if let some held← took[.]get then return held let held ← takeTicket report took[.]set [(]some held[)] return held let tell [(]r : Linger[.]Session[.]Start[.]Report[)] : IO Unit := do if ← take then writeReport report r return [{] take, tell [}]' \
-  'IO[.]FS[.]withFile [(]ticketPath report[)] [.]writeNew fun _ => pure [(][)] try spawnDetached [(]← IO[.]appPath[)][.]toString ⟨args⟩ log catch err => discard <[|] takeTicket report throw err' \
+  'IO[.]FS[.]withFile [(]ticketPath report[)] [.]writeNew fun _ => pure [(][)] try spawnDetached env[.]exe [(][(]← Paths[.]childArgs[)] [+][+] args[)][.]toArray log catch err => discard <[|] takeTicket report throw err' \
   'if bounded then unless ← nap deadline 10 do if ← takeTicket report then return [.]took true bounded := false else pause 10' \
   'match Linger[.]Session[.]Start[.]answer [(]waited matches [.]took _[)] [(]waited matches [.]told [(]some [.]started[)][)], waited with [|] [.]started, _ => return [.]done [|] [.]notStarted,' \
-  'let runs := waited matches [.]told [(]some [.]started[)] [|][|] waited matches [.]told [(]some [.]running[)] match Linger[.]Session[.]Start[.]answer [(]waited matches [.]took _[)] runs, waited with [|] [.]started, [.]told [(]some [.]started[)] => do sayMoved s return [.]done [|] [.]started, _ => return [.]done [|] [.]notStarted,' \
-  'let pid ← beginRequest report log [(][[]"__start", report, s[.]id, s[.]name, cwd[]] [+][+] argv[)] startStatus s log [(]← awaitReport pid report[)]' \
-  'let pid ← beginRequest report log [[]"__resume", report, s[.]id, s[.]name, cwd[]] resumeStatus s log [(]← awaitReport pid report[)]'; do
+  'let runs := waited matches [.]told [(]some [.]started[)] [|][|] waited matches [.]told [(]some [.]running[)] match Linger[.]Session[.]Start[.]answer [(]waited matches [.]took _[)] runs, waited with [|] [.]started, [.]told [(]some [.]started[)] => do sayMoved env s return [.]done [|] [.]started, _ => return [.]done [|] [.]notStarted,' \
+  'let pid ← beginRequest env report log [(][[]"__start", report, s[.]id, s[.]name, cwd[]] [+][+] argv[)] startStatus env s log [(]← awaitReport pid report[)]' \
+  'let pid ← beginRequest env report log [[]"__resume", report, s[.]id, s[.]name, cwd[]] resumeStatus env s log [(]← awaitReport pid report[)]'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "start or resume answered without its request's ticket: $tie"
 done
-[ "$(code_count 'takeTicket report' Linger/App/WorldCode.lean)" -eq 4 ] \
+[ "$(code_count 'takeTicket report' Linger/App/WorldCode/Api.lean)" -eq 4 ] \
   || fail "only the daemon's take-once, a failed begin and the command's wait take a request's ticket"
 # An offline reader holds both locks briefly, while it loads and renders, so the daemon's
 # startup claim retries a held lock for a bounded, positive time, and stops at once when a live
@@ -1445,9 +1458,9 @@ printf '%s\n' "$os_shell_code" | CG_RE='(^|[[:space:]])def replaceFile [(]path :
 # waits on a pipe nobody reads.
 for tie in \
   'private def runHolding [(]s : Names[.]Ref[)] [(]plan : List Linger[.]App[.]Capture[.]Step[)] [(]run : Linger[.]App[.]Capture[.]Step → IO Unit[)] : IO Unit := do for phase in Linger[.]App[.]Capture[.]phases plan do match phase with [|] [.]locked inside => Paths[.]withSessionLock s[.]id [(]inside[.]forM run[)] [|] [.]unlocked step => run step' \
-  'requestStatus s[.]name result [|] none => let file ← IO[.]mkRef [(]none : Option ByteArray[)] let shown ← IO[.]mkRef [(]Shown[.]refusal [.]notFound [(]← refusalText s [.]notFound[)][)] let answer ← IO[.]mkRef Answer[.]failed runHolding s Linger[.]App[.]Capture[.]plan fun [|] [.]load => do file[.]set [(]← Resume[.]readCkpt s[.]id[)] [|] [.]render => do match Linger[.]App[.]Recovery[.]decide false [(]← file[.]get[)] with [|] [.]resume ck => shown[.]set [(][.]session [(]render ck[.]vt[)][)]' \
-  '[|] [.]write => do match ← shown[.]get with [|] [.]session bytes => writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] answer[.]set [.]done [|] [.]refusal said why => IO[.]eprintln s!"linger: [{]why[}]" answer[.]set said [|] [.]acquire [|] [.]release => pure [(][)] answer[.]get' \
-  'if readOnly then match ← Client[.]connect s[.]id with [|] some fd => attachSpoken s[.]name fd true [|] none => match ← visitOffline s true with' \
+  '[|] none => let file ← IO[.]mkRef [(]none : Option ByteArray[)] let shown ← IO[.]mkRef [(]Captured[.]refusal [.]missing [(]← refusalText s [.]notFound[)][)] let found ← IO[.]mkRef Found[.]unknown runHolding s Linger[.]App[.]Capture[.]plan fun [|] [.]load => do file[.]set [(]← Resume[.]readCkpt s[.]id[)] [|] [.]render => do match Linger[.]App[.]Recovery[.]decide false [(]← file[.]get[)] with [|] [.]resume ck => shown[.]set [(][.]session [(]render ck[.]vt[)][)]' \
+  '[|] [.]write => do match ← shown[.]get with [|] [.]session bytes => sink [(]ByteArray[.]mk bytes[.]toArray[)] found[.]set [.]done [|] [.]refusal said why => say env why found[.]set said [|] [.]acquire [|] [.]release => pure [(][)] return [{] found := ← found[.]get, shown := [.]bytes [(]← out[.]get[)] [}]' \
+  'if mode == [.]readOnly then match ← Client[.]connect s[.]id with [|] some fd => attachSpoken env s[.]name fd mode [|] none => match ← visitOffline env s true with' \
   'let [(]steps, record, file[)] ← Paths[.]withSessionLock s[.]id do let record ← [(]Record[.]load s[.]id[)][.]toBaseIO let steps := Linger[.]App[.]Recovery[.]visit readOnly record[.]toOption[.]join if steps == [[][.]resume[]] then return [(]steps, record, none[)] return [(]steps, record, ← Resume[.]readCkpt s[.]id[)]' \
   'Paths[.]withSessionLock s[.]id do if [(]← Resume[.]readCkpt s[.]id[)][.]map [(]·[.]data[)] == some shown[.]data then Resume[.]dropCkpt s[.]id'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
@@ -1914,7 +1927,7 @@ ed_n="$(code_count '(^|[^[:alnum:]_.])drain(Str)?[[:space:]]+[^[:space:]]+[[:spa
 # its bound, or waits on an event instead. Every bounded wait naps as `Os.Wait.next` decides
 # (`wait_ends`); the one sleep with no deadline is `pause`, named below. The checks of the world
 # claims are no part of the program: they run apart from it, and its modules never import them.
-#   App/WorldCode: a started daemon's report, every 10 ms for at most startWaitMs (30 s), then, once
+#   App/WorldCode/Api: a started daemon's report, every 10 ms for at most startWaitMs (30 s), then, once
 #     the daemon took the request's ticket, every 10 ms while it lives (`pause`); a spawned
 #     daemon's socket, every 30 ms for socketWaitFloorMs (3 s), then while that daemon lives,
 #     up to socketWaitCapMs (30 s); remote listings, every 5 ms for at most
@@ -1942,13 +1955,13 @@ timers="$(code_grep '(IO[.]sleep [^[:space:]]|← poll [^[:space:]]|(^|[[:space:
     'packages/*.lean' ':!packages/*/Suites/*' ':!packages/*/Proofs/*' ':!packages/*/Tests/*' \
     ':!packages/*/WorldCode/Checks.lean' \
   | sed -E 's/^([^:]+):[0-9]+:[[:space:]]*/\1: /')"
-expected_timers='Linger/App/WorldCode.lean: unless ← nap deadline 10 do
-Linger/App/WorldCode.lean: pause 10
-Linger/App/WorldCode.lean: unless ← nap (start + socketWaitCapMs) 30 do
-Linger/App/WorldCode.lean: unless ← nap deadline 5 do
-Linger/App/WorldCode.lean: let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] (-1)
-Linger/App/WorldCode.lean: discard <| nap (first + Wait.heldNameMs) 20
-Linger/App/WorldCode.lean: unless ← nap deadline 20 do
+expected_timers='Linger/App/WorldCode/Api.lean: unless ← nap deadline 10 do
+Linger/App/WorldCode/Api.lean: pause 10
+Linger/App/WorldCode/Api.lean: unless ← nap (start + socketWaitCapMs) 30 do
+Linger/App/WorldCode/Api.lean: unless ← nap deadline 5 do
+Linger/App/WorldCode/Api.lean: let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] (-1)
+Linger/App/WorldCode/Api.lean: discard <| nap (first + Wait.heldNameMs) 20
+Linger/App/WorldCode/Api.lean: unless ← nap deadline 20 do
 Linger/Import/WorldCode.lean: unless ← Os.Shell.nap deadline 10 do
 Linger/Import/WorldCode.lean: unless ← Os.Shell.nap deadline 10 do
 Linger/Selector/WorldCode.lean: let ready ← poll fds events 50
@@ -1977,15 +1990,14 @@ $timers"
 # output and the repaint of its screen. A new write joins this list, and the headline when its
 # bytes are linger's own.
 #   App/WorldCode: the handback after a remote command (`leaveAnsi`); `ls` (`terminalListing`), at
-#     the terminal's width;
-#     `capture` of a saved session (`screenText` or `history`, as `cmdRead`'s caller passes,
-#     rendered at the plan's `render` step and written at its `write` step, tied above).
+#     the terminal's width; the bytes of a `capture` the API returns: a live session's reply, the
+#     daemon's `screenText` or `history` in frames, or a saved session's, rendered at the plan's
+#     `render` step and kept at its `write` step (tied above), once the locks are let go.
 #   Selector/WorldCode: taking the terminal (`enterAnsi`) and naming it, the window size, the frame
 #     (`frame`, the first, after a resize and on the refresh key, or the `update` between the
 #     `frameRows` of two frames of one size), giving the terminal back (`exitAnsi`) and clearing
 #     its title.
-#   Session/WorldCode/Client: a one-shot reply, which is the daemon's `infoText`, `screenText` or
-#     `history` in frames; a saved view's repaint (the session's), title (`Title.update`) and
+#   Session/WorldCode/Client: a saved view's repaint (the session's), title (`Title.update`) and
 #     handback; an attach's output (the session's), title, notifications of other sessions' asks
 #     (`Alert.notification`) and handback.
 term_writes="$(code_grep 'stdoutFd' 'Linger/*.lean' \
@@ -1995,14 +2007,13 @@ term_writes="$(code_grep 'stdoutFd' 'Linger/*.lean' \
 expected_term_writes='Linger/App/WorldCode.lean: writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
 Linger/App/WorldCode.lean: let (cols, _) ← winsizeGet stdoutFd
 Linger/App/WorldCode.lean: writeAll stdoutFd
-Linger/App/WorldCode.lean: writeAll stdoutFd (ByteArray.mk bytes.toArray)
+Linger/App/WorldCode.lean: | .bytes bytes => writeAll stdoutFd bytes
 Linger/Selector/WorldCode.lean: writeAll stdoutFd (ByteArray.mk Linger.Selector.Picker.enterAnsi.toArray)
 Linger/Selector/WorldCode.lean: writeAll stdoutFd (ByteArray.mk (Terminal.Title.ansi "linger").toArray)
 Linger/Selector/WorldCode.lean: let current ← winsizeGet stdoutFd
 Linger/Selector/WorldCode.lean: writeAll stdoutFd (ByteArray.mk frame.toArray)
 Linger/Selector/WorldCode.lean: writeAll stdoutFd (ByteArray.mk Linger.Selector.Picker.exitAnsi.toArray)
 Linger/Selector/WorldCode.lean: writeAll stdoutFd (ByteArray.mk (Terminal.Title.ansi "").toArray)
-Linger/Session/WorldCode/Client.lean: writeAll stdoutFd (ByteArray.mk payload.toArray)
 Linger/Session/WorldCode/Client.lean: writeAll stdoutFd (ByteArray.mk bytes.toArray)
 Linger/Session/WorldCode/Client.lean: writeAll stdoutFd (ByteArray.mk (Terminal.Title.update view title).toArray)
 Linger/Session/WorldCode/Client.lean: writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
@@ -2014,9 +2025,20 @@ packages/os/Os/WorldCode.lean: def stdoutFd : UInt32 := 1'
 [ "$term_writes" = "$expected_term_writes" ] \
   || fail "the program's terminal writes changed; name each here with whose bytes it writes:
 $term_writes"
-tie='[|] [.]output payload [|] [.]infoReply payload => writeAll stdoutFd [(]ByteArray[.]mk payload[.]toArray[)]'
+tie='[|] [.]output payload [|] [.]infoReply payload => sink [(]ByteArray[.]mk payload[.]toArray[)]'
 printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
   || fail "a one-shot reply is written other than as the daemon's frames: $tie"
+# The Lean API writes nothing to standard output or standard error (`Linger.App.Api`): what a
+# command says goes to its caller's `Env.say`, and what it shows is returned, which the command
+# line renders (`Linger.App.Shell`); and it reads no environment variable, so it finds its
+# sessions only where the caller's `Env.dirs` says. An attach asks only whether standard output
+# is a terminal. Linger.App.Suites.Api runs each operation but attach with both streams on pipes.
+api_streams="$(code_grep '(stdoutFd|stderrFd|IO[.]e?print|getStdout|getStderr|getEnv|IO[.]Process[.](spawn|output|run))' \
+    Linger/App/WorldCode/Api.lean Linger/App/CoreCode/Api.lean \
+  | grep -v ':[[:space:]]*if interactive && [(]![(]← stdinIsTty[)] [|][|] ![(]← [(]← IO[.]getStdout[)][.]isTty[)][)] then$' \
+  || true)"
+[ -z "$api_streams" ] \
+  || fail "the Lean API writes to a standard stream, runs a process of its own or reads the environment: $api_streams"
 # No other way to write bytes to standard output: no literal descriptor, and no stream write in
 # the program, whose files `Os.Shell.replaceFile` writes. A stream write is a call on a value,
 # `handle.write`; a match arm `| .write` names a step or a decision.
@@ -2028,7 +2050,7 @@ printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$
   || fail "a stream write could reach standard output: write files through Os.Shell.replaceFile"
 # One command table: help prints it and every usage error quotes its command's row, so no usage
 # text is written anywhere else.
-! code_grep '"usage: linger' Linger/App/WorldCode.lean \
+! code_grep '"usage: linger' Linger/App/WorldCode.lean Linger/App/WorldCode/Api.lean Linger/App/CoreCode/Api.lean \
   || fail "a usage error bypasses the command table (Commands.usageLine)"
 printf '%s\n' "$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/WorldCode.lean)" \
   | CG_RE='(^|[[:space:]])private def usage : String := Linger[.]App[.]Commands[.]helpText([[:space:]]|$)' \
@@ -2038,11 +2060,11 @@ printf '%s\n' "$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/WorldCode.lean)"
 # budget, its deadline's, or none when it has none, since it waits for a program to end, and
 # `upgrade` its own, `upgradeWaitMs`, since the new image answers only once it serves.
 printf '%s\n' "$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/WorldCode/Client.lean)" \
-  | CG_RE='(^|[[:space:]])def oneShot [(]name : String[)] [(]m : Msg[)] [(]untilDone : Bool := true[)] [(]silenceMs : Int32 := replySilenceMs[)] : IO [(]Option Drained[)] := do([[:space:]]|$)' \
+  | CG_RE='(^|[[:space:]])def oneShot [(]name : String[)] [(]m : Msg[)] [(]sink : ByteArray → IO Unit[)] [(]untilDone : Bool := true[)] [(]silenceMs : Int32 := replySilenceMs[)] : IO [(]Option Drained[)] := do([[:space:]]|$)' \
     awk "$CODE_AWK" >/dev/null \
   || fail "a one-shot request must default to the reply silence budget"
 [ "$(code_count 'silenceMs := ' 'Linger/App/*.lean' 'Linger/Session/WorldCode/*.lean')" -eq 2 ] \
-  && code_grep '[(]silenceMs := upgradeWaitMs[)]' Linger/App/WorldCode.lean >/dev/null \
+  && code_grep '[(]silenceMs := upgradeWaitMs[)]' Linger/App/WorldCode/Api.lean >/dev/null \
   || fail "only wait and upgrade may choose a one-shot request's silence budget"
 
 printf 'gates OK — purity, the OS and unsafe surfaces, the Vt friend set, the runtime ties, declaration citations, and the ratchets\n'

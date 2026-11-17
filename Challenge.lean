@@ -123,6 +123,14 @@ def Linger.App.Commands.helpLine : App.Commands.Command → String := sorry
 
 def Linger.App.Commands.helpLines : List String := sorry
 
+def Linger.App.Api.parse : List String → Option App.Api.Request := sorry
+
+def Linger.App.Api.plan : App.Api.Request → App.Api.Act := sorry
+
+def Linger.App.Api.answer : App.Api.Found → Os.Answer := sorry
+
+def Linger.App.Api.Said.render : App.Api.Said → String := sorry
+
 def Linger.App.Fields.table : List App.Fields.Field := sorry
 
 def Linger.Os.Answer.code : Os.Answer → UInt32 := sorry
@@ -1583,10 +1591,21 @@ only for an `Op`, so adding one changes `Op`, and with it what linger claims. Ev
 listing reports is human, shown in rows as clean text, or machine, exact and only in `--porcelain`;
 each has one owner, the user, through one command, the program or linger (`fields_owned`): the
 name is the one field the user owns, which `rename` writes, and says what the session is, and the
-program's fields are readings of what its session keeps of it alone, as part 2 says. Not claimed: that
-the session CLI dispatches each command line through `lookup` to its row's operation, which its IO
-code does and the manager suite checks, with any other word a usage error; nor that each option is
-one parameter of one operation with one spelling, which the suites check.
+program's fields are readings of what its session keeps of it alone, as part 2 says.
+
+The model is the interface. A session command line that parses (`Api.parse`) is the typed
+request of its first word's operation, the row `lookup` finds, each of the operation's options and
+operands one typed parameter (`Api.Request`); the program takes exactly that request's
+transition, what its operation means, the message it sends each session's daemon or the step it
+runs (`Request.act`, through `Api.plan`), and exits with the answer true of what the command found
+(`Found.answer`, through `Api.answer`), for each finding its operation can make (`Op.finds`)
+(`op_meaning`). Any other command line is a usage error. The command line and the Lean API reach
+an operation only through `Api.perform`, which takes the transition `plan` gives, and the command
+line renders the reply: what the command says to standard error, what it shows to standard output
+and its answer as the exit status; the API writes to neither (`scripts/gates.sh`), and what it
+says the command line writes as `linger: ` and the text, on a line of its own (`said_rendered`).
+Not claimed:
+that what the IO code finds is what happened, which the suites check.
 
 A tmux-resurrect save is a source linger reads and never writes. A pane takes its name from its
 window, as a key, a later pane's name that an earlier one took made unique with a natural-order
@@ -1617,6 +1636,47 @@ theorem route_exact_rejects_selector :
           if args.head? = some Remote.marker then
             (Remote.decode args.tail).elim .malformed App.Entry.Route.of
           else App.Entry.Route.of args := by
+  sorry
+
+theorem op_meaning (args argv : List String) (request : Api.Request) (found : Api.Found) :
+    App.Entry.route args = .session argv →
+      App.Api.parse argv = some request →
+      (App.Commands.lookup (argv.headD "")).map (·.op) = some request.op ∧
+        App.Api.plan request = request.act ∧
+        (request.op.finds found = true → App.Api.answer found = found.answer) := by
+  sorry
+
+@[kills op_meaning]
+theorem op_meaning_rejects_crossed :
+    ¬∀ (args argv : List String) (request : Api.Request) (found : Api.Found),
+        App.Entry.route args = .session argv →
+          App.Api.parse argv = some request →
+          (App.Commands.lookup (argv.headD "")).map (·.op) = some request.op ∧
+            Api.Request.crossed request = request.act ∧
+            (request.op.finds found = true → App.Api.answer found = found.answer) := by
+  sorry
+
+@[kills op_meaning]
+theorem op_meaning_rejects_outside :
+    ¬∀ (args argv : List String) (request : Api.Request) (found : Api.Found),
+        App.Entry.route args = .session argv →
+          App.Api.parse argv = some request →
+          (App.Commands.lookup (argv.headD "")).map (·.op) = some request.op ∧
+            App.Api.plan request = request.act ∧
+            (request.op.finds found = true →
+              (fun (_ : Api.Found) => Os.Answer.timedOut) found = found.answer) := by
+  sorry
+
+theorem said_rendered (said : Api.Said) :
+    App.Api.Said.render said =
+      (if said.fresh then "\r\n" else "") ++ "linger: " ++ said.text ++ "\n" := by
+  sorry
+
+@[kills said_rendered]
+theorem said_rendered_rejects_bare :
+    ¬∀ (said : Api.Said),
+        (fun (said : Api.Said) => said.text ++ "\n") said =
+          (if said.fresh then "\r\n" else "") ++ "linger: " ++ said.text ++ "\n" := by
   sorry
 
 theorem commands_minimal :
@@ -1788,9 +1848,10 @@ theorem dismiss_hides_rejects_memory :
 theorem dismissal_happened (afterSave : List UInt8 → Option (List UInt8))
     (kept : Record.Kept afterSave) (deadline heldSince : Option Nat) (now : Nat) :
     Record.answer (afterSave (Record.encode Import.Resurrect.dismissal)) = some .dismissed ∧
-      Wait.decide deadline heldSince now
-          (.recorded (Record.answer (afterSave (Record.encode Import.Resurrect.dismissal)))) =
-        .answer .notFound := by
+      Wait.Next.told
+          (Wait.decide deadline heldSince now
+            (.recorded (Record.answer (afterSave (Record.encode Import.Resurrect.dismissal))))) =
+        some .notFound := by
   sorry
 
 @[kills dismissal_happened]
@@ -1800,10 +1861,11 @@ theorem dismissal_happened_rejects_hangup :
           ∀ (deadline heldSince : Option Nat) (now : Nat),
             Record.answer (afterSave (Record.encode (Record.ended (.signaled 1)))) =
                 some .dismissed ∧
-              Wait.decide deadline heldSince now
-                  (.recorded
-                    (Record.answer (afterSave (Record.encode (Record.ended (.signaled 1)))))) =
-                .answer .notFound := by
+              Wait.Next.told
+                  (Wait.decide deadline heldSince now
+                    (.recorded
+                      (Record.answer (afterSave (Record.encode (Record.ended (.signaled 1))))))) =
+                some .notFound := by
   sorry
 
 theorem names_round_trip (s name : String) :
@@ -2490,23 +2552,23 @@ theorem record_answer_rejects_running :
   sorry
 
 theorem wait_ending (deadline heldSince : Option Nat) (now : Nat) (e : Ending) :
-    Wait.decide deadline heldSince now (.ended e) = .answer e.answer ∧
-      Wait.decide deadline heldSince now (.recorded (some e)) = .answer e.answer := by
+    Wait.decide deadline heldSince now (.ended e) = .answer (.ended e) ∧
+      Wait.decide deadline heldSince now (.recorded (some e)) = .answer (.ended e) := by
   sorry
 
 @[kills wait_ending]
 theorem wait_ending_rejects_failed :
     ¬∀ (deadline heldSince : Option Nat) (now : Nat) (e : Ending),
-        (fun (_ _ : Option Nat) (_ : Nat) (_ : Wait.Heard) => Wait.Next.answer .failed) deadline
+        (fun (_ _ : Option Nat) (_ : Nat) (_ : Wait.Heard) => Wait.Next.answer .unknown) deadline
               heldSince now (.ended e) =
-            .answer e.answer ∧
-          (fun (_ _ : Option Nat) (_ : Nat) (_ : Wait.Heard) => Wait.Next.answer .failed) deadline
+            .answer (.ended e) ∧
+          (fun (_ _ : Option Nat) (_ : Nat) (_ : Wait.Heard) => Wait.Next.answer .unknown) deadline
               heldSince now (.recorded (some e)) =
-            .answer e.answer := by
+            .answer (.ended e) := by
   sorry
 
 theorem wait_held (deadline heldSince : Option Nat) (now : Nat) (heard : Wait.Heard) :
-    (Wait.decide deadline heldSince now heard = .answer .failed ↔
+    (Wait.Next.told (Wait.decide deadline heldSince now heard) = some .failed ↔
         heard = .ended (.program .unknown) ∨
           heard = .recorded (some (.program .unknown)) ∨
           heard = .held ∧ ∃ since, heldSince = some since ∧ since + Wait.heldNameMs ≤ now) ∧
@@ -2518,37 +2580,40 @@ theorem wait_held (deadline heldSince : Option Nat) (now : Nat) (heard : Wait.He
         ∀ since,
           heldSince = some since →
             now < since + (Session.drainTimeoutMs + (Session.ending.map (·.wait)).sum) →
-            Wait.decide deadline heldSince now heard ≠ .answer .failed) := by
+            Wait.Next.told (Wait.decide deadline heldSince now heard) ≠ some .failed) := by
   sorry
 
 @[kills wait_held]
 theorem wait_held_rejects_eager :
     ¬∀ (deadline heldSince : Option Nat) (now : Nat) (heard : Wait.Heard),
-        ((fun (_ _ : Option Nat) (_ : Nat) (_ : Wait.Heard) => Wait.Next.answer .failed) deadline
-                heldSince now heard =
-              .answer .failed ↔
+        (Wait.Next.told
+                ((fun (_ _ : Option Nat) (_ : Nat) (_ : Wait.Heard) => Wait.Next.answer .unknown)
+                  deadline heldSince now heard) =
+              some .failed ↔
             heard = .ended (.program .unknown) ∨
               heard = .recorded (some (.program .unknown)) ∨
               heard = .held ∧ ∃ since, heldSince = some since ∧ since + Wait.heldNameMs ≤ now) ∧
           (heard = .held →
             (∀ due, deadline = some due → now < due) →
             (∀ since, heldSince = some since → now < since + Wait.heldNameMs) →
-            (fun (_ _ : Option Nat) (_ : Nat) (_ : Wait.Heard) => Wait.Next.answer .failed) deadline
-                heldSince now heard =
+            (fun (_ _ : Option Nat) (_ : Nat) (_ : Wait.Heard) => Wait.Next.answer .unknown)
+                deadline heldSince now heard =
               .again (some (heldSince.getD now))) ∧
           (heard = .held →
             ∀ since,
               heldSince = some since →
                 now < since + (Session.drainTimeoutMs + (Session.ending.map (·.wait)).sum) →
-                (fun (_ _ : Option Nat) (_ : Nat) (_ : Wait.Heard) => Wait.Next.answer .failed)
-                    deadline heldSince now heard ≠
-                  .answer .failed) := by
+                Wait.Next.told
+                    ((fun (_ _ : Option Nat) (_ : Nat) (_ : Wait.Heard) =>
+                        Wait.Next.answer .unknown)
+                      deadline heldSince now heard) ≠
+                  some .failed) := by
   sorry
 
 @[kills wait_held]
 theorem wait_held_rejects_drain :
     ¬∀ (deadline heldSince : Option Nat) (now : Nat) (heard : Wait.Heard),
-        (Wait.decide deadline heldSince now heard = .answer .failed ↔
+        (Wait.Next.told (Wait.decide deadline heldSince now heard) = some .failed ↔
             heard = .ended (.program .unknown) ∨
               heard = .recorded (some (.program .unknown)) ∨
               heard = .held ∧
@@ -2561,7 +2626,7 @@ theorem wait_held_rejects_drain :
             ∀ since,
               heldSince = some since →
                 now < since + (Session.drainTimeoutMs + (Session.ending.map (·.wait)).sum) →
-                Wait.decide deadline heldSince now heard ≠ .answer .failed) := by
+                Wait.Next.told (Wait.decide deadline heldSince now heard) ≠ some .failed) := by
   sorry
 
 theorem code_documented (status : UInt32) (signal : UInt8) :

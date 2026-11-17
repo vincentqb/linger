@@ -18,7 +18,9 @@ Resolution order:
 Empty XDG and HOME values fall through to the next fallback. `LINGER_DIR`
 is an explicit override even when empty. The last fallback is `/tmp`, not `$TMPDIR`:
 like tmux's `/tmp/tmux-$UID`, it is a short, stable location that every login context
-of the same user agrees on, and `LINGER_DIR` overrides it.
+of the same user agrees on, and `LINGER_DIR` overrides it. A caller that names its namespace,
+as the Lean API's does, replaces all of this for the process (`withDirs`), and the daemons it
+begins work in that namespace too (`childArgs`).
 
 Every path is keyed by a session's ID (`Linger.Session.Names`): a valid name, which is the ID of
 every session whose name was free when it was created, an older linger's sessions among them, or
@@ -30,9 +32,24 @@ namespace Linger.Session.Shell.Paths
 
 open Linger.Target.Name (sanitize)
 
-/-- Sockets and their name locks: `$LINGER_DIR` verbatim, else `$XDG_RUNTIME_DIR/linger`
-when that is nonempty, else `/tmp/linger-$UID`. -/
+/-- A namespace: the directory of its sockets and their name locks, and the directory of its
+state. -/
+structure Dirs where
+  /-- Sockets and their name locks. -/
+  sockets : String
+  /-- Checkpoints, end records, names, logs and reports. -/
+  state : String
+  deriving Repr, DecidableEq
+
+/-- The namespace `withDirs` named for this process, which replaces the environment's. -/
+private initialize named : IO.Ref (Option Dirs) ←
+  IO.mkRef none
+
+/-- Sockets and their name locks: the named namespace's, else `$LINGER_DIR` verbatim, else
+`$XDG_RUNTIME_DIR/linger` when that is nonempty, else `/tmp/linger-$UID`. -/
 def socketDir : IO String := do
+  if let some d← named.get then
+    return d.sockets
   if let some d← IO.getEnv "LINGER_DIR" then
     return d
   if let some d← IO.getEnv "XDG_RUNTIME_DIR" then
@@ -46,8 +63,10 @@ running a session called `work` would otherwise clobber one another's
 checkpoint — and resuming machine B's terminal on machine A is wrong
 anyway (different working tree, different process world). An explicit
 `LINGER_DIR` is taken verbatim: an override is an instruction, not an
-accident. -/
+accident. The named namespace's comes first. -/
 def stateDir : IO String := do
+  if let some d← named.get then
+    return d.state
   if let some d← IO.getEnv "LINGER_DIR" then
     return d
   let host := sanitize (← Os.Shell.gethostname)
@@ -58,6 +77,30 @@ def stateDir : IO String := do
     unless home.isEmpty do
       return s!"{home}/.local/state/linger/{host}"
   return s!"/tmp/linger-{← Os.Shell.getuid}/state/{host}"
+
+/-- The namespace this process works in: the named one, else the environment's. -/
+def dirs : IO Dirs := do
+  return { sockets := ← socketDir, state := ← stateDir }
+
+/-- Run `action` in the namespace `d`, whatever the environment names, and then in the one named
+before. A process works in one namespace at a time. -/
+def withDirs {α : Type} (d : Dirs) (action : IO α) : IO α := do
+  let before ← named.get
+  named.set (some d)
+  try
+    action
+  finally
+    named.set before
+
+/-- The words that come first in the command line of a linger this process begins, a daemon or
+its new image, so that it works in this process's named namespace: `__dirs`, the sockets'
+directory and the state's, or none when the environment names it. -/
+def childArgs : IO (List String) := do
+  match ← named.get with
+  | some d =>
+    return ["__dirs", d.sockets, d.state]
+  | none =>
+    return []
 
 /-- Create `d` and any missing parents, then restrict `d` itself to its owner (0700). -/
 def ensureDir (d : String) : IO Unit := do

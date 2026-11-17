@@ -196,6 +196,200 @@ inductive Step where
 
 end Linger.App.Visit
 
+namespace Linger.App.Api
+
+/-- What `ls` reports. -/
+inductive View where
+  /-- The attention counts, `--summary`. -/
+  | summary
+  /-- The local sessions' names and directories as a tmux-resurrect save, `--resurrect`. -/
+  | resurrect
+  /-- Every local session, with the panes of the latest tmux-resurrect save no record names, and
+  with `-r` the remote hosts' too: those named, `some []` for the remotes file's, `none` for
+  none; as records with `--porcelain`. -/
+  | every (porcelain : Bool) (hosts : Option (List String))
+  /-- The named sessions, in the order named; as records with `--porcelain`. -/
+  | named (porcelain : Bool) (names : List String)
+  deriving Repr, DecidableEq
+
+/-- What `send` delivers to a session's program. -/
+inductive Input where
+  /-- These words, joined by spaces, as one input. -/
+  | text (words : List String)
+  /-- Standard input's bytes, exactly, as they arrive, until it ends: `-`. -/
+  | stdin
+  deriving Repr, DecidableEq
+
+/-- What a command line asks for: its operation, with each of the operation's options and operands
+one typed parameter. A target is an exact session name or `name@host`. -/
+inductive Request where
+  /-- `attach`: connect this terminal to the target, read-only on request, starting the session
+  with this command, or the shell when it is empty, when none holds the name. -/
+  | attach (readOnly : Bool) (target : String) (command : List String)
+  /-- `ls`: report sessions. -/
+  | list (view : View)
+  /-- `start`: run `program` with `args`, exactly, in a new session under the target. -/
+  | start (target program : String) (args : List String)
+  /-- `resume`: run a saved or ended session's program again. -/
+  | resume (target : String)
+  /-- `send`: deliver input to the session's program. -/
+  | send (target : String) (input : Input)
+  /-- `detach`: disconnect every client attached to the session. -/
+  | detach (target : String)
+  /-- `kill`: end the session, or discard a saved one or a saved tmux pane. -/
+  | kill (target : String)
+  /-- `rename`: give the session the name `new`. -/
+  | rename (target new : String)
+  /-- `capture`: read the session's screen, or its history. -/
+  | capture (history : Bool) (target : String)
+  /-- `resize`: set the size of a session no client is attached to. -/
+  | resize (target : String) (cols rows : Nat)
+  /-- `wait`: wait for the sessions' programs to end. -/
+  | wait (targets : List String)
+  /-- `upgrade`: carry the live sessions named, or every local one when none is, over to this
+  linger's image. -/
+  | upgrade (targets : List String)
+  deriving Repr, DecidableEq
+
+/-- The operation a request performs. -/
+@[expose]
+def Request.op : Request → Commands.Op
+  | .attach .. => .attach
+  | .list _ => .list
+  | .start .. => .start
+  | .resume _ => .resume
+  | .send .. => .send
+  | .detach _ => .detach
+  | .kill _ => .kill
+  | .rename .. => .rename
+  | .capture .. => .capture
+  | .resize .. => .resize
+  | .wait _ => .wait
+  | .upgrade _ => .upgrade
+
+/-- What a request does to the sessions it names, as the session model reads it: the message it
+sends each one's daemon, or the transition it takes. -/
+inductive Act where
+  /-- Connect as a client in this mode, `Wire.Msg.attach`, starting the session with this command
+  when none holds the name. -/
+  | attach (mode : Session.Mode) (command : List String)
+  /-- Read the sessions' records, asking each live daemon `Wire.Msg.info`, as the view says. -/
+  | list (view : View)
+  /-- Start a new session running this program with these arguments, as `Start.plan` decides. -/
+  | start (program : String) (args : List String)
+  /-- Run a saved session's program again, as `Start.resumePlan` decides. -/
+  | resume
+  /-- Deliver these bytes to the program, in the input frames `Wire.inputFrames` cuts, which no
+  reply answers. -/
+  | deliver (bytes : List UInt8)
+  /-- Deliver standard input's bytes as they arrive, in the same frames. -/
+  | pipe
+  /-- Send each named session's daemon this one request, and answer from its reply. -/
+  | ask (request : Session.Wire.Msg)
+  /-- Give the session this name, as `Names.Rename.plan` decides and `Names.rename` moves it. -/
+  | rename (new : String)
+  /-- Ask each named session's daemon to replace its image with this linger's,
+  `Wire.Msg.upgrade`. -/
+  | upgrade
+  deriving Repr, DecidableEq
+
+/-- **What each request means**: the transition its operation takes. -/
+@[expose]
+def Request.act : Request → Act
+  | .attach readOnly _ command => .attach (if readOnly then .readOnly else .writable) command
+  | .list view => .list view
+  | .start _ program args => .start program args
+  | .resume _ => .resume
+  | .send _ (.text words) => .deliver (String.intercalate " " words).toUTF8.toList
+  | .send _ .stdin => .pipe
+  | .detach _ => .ask .detachAll
+  | .kill _ => .ask .kill
+  | .rename _ new => .rename new
+  | .capture history _ => .ask (if history then .history else .screen)
+  | .resize _ cols rows => .ask (.resize cols.toUInt32 rows.toUInt32)
+  | .wait _ => .ask .wait
+  | .upgrade _ => .upgrade
+
+/-- A wrong part: a route on which `detach` takes `kill`'s transition, and every other request
+its own. -/
+@[expose]
+def Request.crossed : Request → Act
+  | .detach target => (Request.kill target).act
+  | request => request.act
+
+/-- What a command found, each the condition of the answer it gives (`Found.answer`). -/
+inductive Found where
+  /-- It did what was asked. -/
+  | done
+  /-- No session has the name it was given. -/
+  | missing
+  /-- It did not do what was asked, and says why: the daemon refused or went silent, the
+  connection was lost, the session ended first, another process holds the name, or a session
+  holds a name the request was to take. -/
+  | refused
+  /-- An operand is not one linger takes: a malformed target or name, or a size outside the
+  emulator's. -/
+  | invalid
+  /-- Its deadline passed first, or the daemon it began did not answer in time, so nothing
+  started. -/
+  | late
+  /-- linger failed, or could not find out what was asked. -/
+  | unknown
+  /-- The program it was to run did not start, and a shell or `env -C` reports this status for
+  that: 125 for a directory it cannot enter, 126 for a program it cannot run, 127 for one it
+  cannot find. -/
+  | unstarted (status : UInt8)
+  /-- The session it attached to or waited for ended this way. -/
+  | ended (ending : Session.Ending)
+  /-- What it ran exited with this status, as a shell reports it: a remote linger, through its
+  host's transport, or the program of a session whose daemon, an older linger's, told no more. -/
+  | status (status : UInt32)
+  /-- A signal stopped it, once it had handed its terminal back. -/
+  | stopped (signal : UInt8)
+  deriving Repr, DecidableEq
+
+/-- **The answer true of what a command found**, whose code is its exit status. -/
+@[expose]
+def Found.answer : Found → Os.Answer
+  | .done => .done
+  | .missing => .notFound
+  | .refused => .notDone
+  | .invalid => .usage
+  | .late => .timedOut
+  | .unknown => .failed
+  | .unstarted code => if code = 126 then .cannotRun else if code = 127 then .notFound else .failed
+  | .ended ending => ending.answer
+  | .status code => .program code
+  | .stopped signal => .stopped signal
+
+/-- One thing a command says about its request as it goes, which the command line writes to
+standard error and a Lean caller reads as it likes. -/
+structure Said where
+  /-- What it says. -/
+  text : String
+  /-- Whether it says it on a terminal it has just handed back, where it starts a line of its
+  own. -/
+  fresh : Bool := false
+  deriving Repr, DecidableEq
+
+end Linger.App.Api
+
+namespace Linger.App.Commands
+
+/-- **What each operation can find**, and so the answers it gives: every operation can find
+that it did what was asked, refused, met an operand linger does not take, could not find out, or
+relayed a remote linger's status; each other finding belongs to the operations named. -/
+@[expose]
+def Op.finds : Op → Api.Found → Bool
+  | _, .done | _, .refused | _, .invalid | _, .unknown | _, .status _ => true
+  | op, .missing => op != .start
+  | op, .late => op == .start || op == .resume || op == .wait
+  | op, .unstarted _ => op == .attach || op == .start || op == .resume
+  | op, .ended _ => op == .attach || op == .wait
+  | op, .stopped _ => op == .attach || op == .list
+
+end Linger.App.Commands
+
 namespace Linger.App.Wait
 
 /-- What one look at a name tells `wait`: its daemon's reply, or, with no daemon to answer, the
@@ -221,12 +415,18 @@ inductive Heard where
 /-- What `wait` does after a look: answer, or look again, keeping when it first found the name
 held with no daemon answering, while it still finds it so. -/
 inductive Next where
-  /-- The wait is over, with this answer. -/
-  | answer (answer : Os.Answer)
+  /-- The wait is over, having found this. -/
+  | answer (found : Api.Found)
   /-- Look again; `heldSince` is when the name was first found held, or `none` when it was not
   on this look. -/
   | again (heldSince : Option Nat)
   deriving Repr, DecidableEq
+
+/-- The answer a wait gives after a look, if it is over. -/
+@[expose]
+def Next.told : Next → Option Os.Answer
+  | .answer found => some found.answer
+  | .again _ => none
 
 end Linger.App.Wait
 

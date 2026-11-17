@@ -340,10 +340,10 @@ private def snapshot : IO (List (String × String)) := do
         throw (IO.userError s!"could not read working directory for session: {name}")
       return (name, (← IO.FS.realPath dir).toString)
 
-/-- `ls --resurrect`: the local sessions' names and directories, as `ls` lists them, written to
-standard output as a tmux-resurrect save, with one window and pane a session (`renderSave`).
-linger writes no file. -/
-def exportSave : IO Unit := do
-  IO.print (← IO.ofExcept (renderSave (← snapshot)))
+/-- `ls --resurrect`: the local sessions' names and directories, as `ls` lists them, as the text
+of a tmux-resurrect save, with one window and pane a session (`renderSave`), which the command
+line writes to standard output. linger writes no file. -/
+def exportSave : IO String := do
+  IO.ofExcept (renderSave (← snapshot))
 
 end Linger.Import.Shell
