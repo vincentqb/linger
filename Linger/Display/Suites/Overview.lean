@@ -79,6 +79,24 @@ def present (e : Env) : IO Unit :=
         s!"a shell at its prompt shows its directory but not its shell: {← rowOf e "prompt"}"
     e.killAll #["renamed-now", "sleeper", "prompt"]
 
+/-- Whether a program's terminal echoes, as the program last set it, is a machine field of its
+own: `ls NAME --porcelain` gives `echo true` for a program whose terminal echoes and `echo false`
+once it turns echo off, and no human row shows it. The program is a script file, so that its row
+names no word of what it runs. -/
+def echoes (e : Env) : IO Unit :=
+  IO.FS.withTempDir fun scratch => do
+    let script := scratch / "quiet.sh"
+    IO.FS.writeFile script "read -r line\nstty -echo\nexec sleep 100\n"
+    let _ ← e.cli #["start", "hushed", "sh", script.toString]
+    let on ← waitFor patienceMs (return (← e.info "hushed" "echo") == some "true")
+    let _ ← e.cli #["send", "hushed", "go\n"]
+    let off ← waitFor patienceMs (return (← e.info "hushed" "echo") == some "false")
+    expect (on && off) "the porcelain says whether the program's terminal echoes, as it set it"
+    let row ← rowOf e "hushed"
+    expect (has row "sleep 100" && !has row "echo" && !has row "false")
+        s!"no human row shows whether a terminal echoes: {row}"
+    e.killAll #["hushed"]
+
 /-- The display column where `needle` starts in `row`, counting each character as wide as a
 terminal shows it, or none when the row lacks it. -/
 def columnOf (row needle : String) : Option Nat :=
@@ -165,5 +183,6 @@ def run : IO UInt32 :=
     IO.FS.removeFile ((System.FilePath.mk e.dir) / hostile)
     present e
     aligned e
+    echoes e
 
 end Linger.Display.Suites.Overview

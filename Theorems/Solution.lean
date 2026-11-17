@@ -1044,6 +1044,33 @@ theorem info_foreground_rejects_unreported :
       { nowMs := 0, wallS := 0, login := false, foreground := some shell } rfl rfl
   simp at missing
 
+theorem info_echo (reported set : UInt32 → Option Bool) (echo : Pty.Echo reported set) (s : State)
+    (master : UInt32) (o : Observation) (read : o.echo = reported master) {on : Bool}
+    (found : reported master = some on) :
+    set master = some on ∧
+      ("echo", toString on) ∈ Session.infoFields (Session.step s (.observed o)).1 := by
+  rw [found] at read
+  exact ⟨echo master on found, Session.infoFields_echo s o read⟩
+
+theorem info_echo_rejects_unreported :
+    ¬∀ (reported set : UInt32 → Option Bool),
+        Pty.Echo reported set →
+          ∀ (s : State) (master : UInt32) (o : Observation),
+            o.echo = reported master →
+              ∀ {on : Bool},
+                reported master = some on →
+                  set master = some on ∧
+                    ("echo", toString on) ∈
+                      (fun (_ : State) => ([] : List (String × String)))
+                        (Session.step s (.observed o)).1 := by
+  intro h
+  -- a report that leaves the echo out
+  obtain ⟨-, missing⟩ :=
+    h (fun _ => some true) (fun _ => some true) (fun _ _ found => found)
+      (State.boot (Vt.Vt.init 1 1) [] []) 0
+      { nowMs := 0, wallS := 0, login := false, foreground := none, echo := some true } rfl rfl
+  simp at missing
+
 theorem rowText_fits (width : Option Nat) (layout : Listing.Layout)
     (info : List (String × String)) :
     (Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
@@ -2862,9 +2889,9 @@ theorem handoff_versioned_rejects_unread :
   intro h
   let s := State.boot (Vt.Vt.init 1 1) [] []
   let rest := (Handoff.encode s someWorld).drop (Handoff.header Handoff.version).length
-  have refused := (h s someWorld 2 rest).2.2 (by decide) (by decide)
+  have refused := (h s someWorld 200 rest).2.2 (by decide) (by decide)
   have dropped :
-    (Handoff.header 2 ++ rest).drop (Handoff.header Handoff.version).length = rest := by
+    (Handoff.header 200 ++ rest).drop (Handoff.header Handoff.version).length = rest := by
     simp [Handoff.header]
   have whole : Handoff.header Handoff.version ++ rest = Handoff.encode s someWorld := by
     simp [rest, Handoff.encode]

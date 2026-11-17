@@ -701,7 +701,9 @@ them while the name fits its column, so each field starts at one column in every
 (`columns_aligned`), and each cell reads only its own fields (`cells_sources`); the layout may
 depend on the view, a cell's content may not. A session's `info` reports the foreground the
 operating system reports of its terminal as that process sees itself, its words, its process and
-its directory (`info_foreground`, over `Pty.Foreground`, which its check tests). Not claimed:
+its directory (`info_foreground`, over `Pty.Foreground`, which its check tests), and whether its
+terminal echoes what is typed, its `ECHO` flag as the program last set it (`info_echo`, over
+`Pty.Echo`, which its check tests), a machine field no human row shows. Not claimed:
 that the daemon reports the title, foreground and idle time it read, which the overview suite
 checks, and that a row shows the text of a notification right after its caption
 while its session asks, and only then, and how the last command that finished unseen ended right
@@ -1248,6 +1250,27 @@ theorem info_foreground_rejects_unreported :
                       ("fgdir", process.dir) ∈
                         (fun (_ : State) => ([] : List (String × String)))
                           (Session.step s (.observed o)).1 := by
+  sorry
+
+theorem info_echo (reported set : UInt32 → Option Bool) (echo : Pty.Echo reported set) (s : State)
+    (master : UInt32) (o : Observation) (read : o.echo = reported master) {on : Bool}
+    (found : reported master = some on) :
+    set master = some on ∧
+      ("echo", toString on) ∈ Session.infoFields (Session.step s (.observed o)).1 := by
+  sorry
+
+@[kills info_echo]
+theorem info_echo_rejects_unreported :
+    ¬∀ (reported set : UInt32 → Option Bool),
+        Pty.Echo reported set →
+          ∀ (s : State) (master : UInt32) (o : Observation),
+            o.echo = reported master →
+              ∀ {on : Bool},
+                reported master = some on →
+                  set master = some on ∧
+                    ("echo", toString on) ∈
+                      (fun (_ : State) => ([] : List (String × String)))
+                        (Session.step s (.observed o)).1 := by
   sorry
 
 theorem rowText_fits (width : Option Nat) (layout : Listing.Layout)

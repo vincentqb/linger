@@ -26,13 +26,13 @@ theorem user_one_writer :
   intro f hf op hop
   simp only [table, List.mem_cons, List.not_mem_nil, or_false] at hf
   rcases hf with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
-      rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+      rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
     simp only [Owner.user.injEq, reduceCtorEq] at hop
   subst hop
   refine ⟨by decide, fun g hg hown => ?_⟩
   simp only [table, List.mem_cons, List.not_mem_nil, or_false] at hg
   rcases hg with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
-      rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+      rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
     simp_all
 
 /-- Distinct images make a map injective on its list. -/

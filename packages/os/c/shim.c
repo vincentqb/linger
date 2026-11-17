@@ -1277,6 +1277,16 @@ LEAN_EXPORT lean_obj_res linger_tcgetpgrp(uint32_t fd) {
     return lean_io_result_mk_ok(lean_box_uint64((uint64_t)r));
 }
 
+/* linger_tty_echo : UInt32 -> IO Int64
+ * Whether the terminal open on fd, a pty master, echoes what is typed: its
+ * termios ECHO flag, as the program last set it through its own end, 1 or 0,
+ * or -errno. A pty's two ends share one termios. */
+LEAN_EXPORT lean_obj_res linger_tty_echo(uint32_t fd) {
+    struct termios t;
+    int64_t r = tcgetattr((int)fd, &t) < 0 ? -(int64_t)errno : ((t.c_lflag & ECHO) ? 1 : 0);
+    return lean_io_result_mk_ok(lean_box_uint64((uint64_t)r));
+}
+
 /* linger_cmdline_of : UInt32 -> IO ByteArray
  * The words pid runs with, each ended by NUL, as the process holds them,
  * at most CMDLINE_MAX bytes; empty when unreadable, as for a process that

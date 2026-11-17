@@ -666,9 +666,10 @@ def pump (rt : Rt) (evs : List Event) : BaseIO Rt := do
 
 /-- A round's events, after what the daemon reads of the world when a connection that has not
 attached sent bytes, as a request does: the clocks, whether the session's program is its login
-shell, and its terminal's foreground as the operating system reports it (`Os.Shell.foreground`,
-whose report the world claim `Pty.Foreground` is about), as one `observed` event ahead of the
-round's, which `info` then reports. An attached client's keys read nothing. -/
+shell, its terminal's foreground as the operating system reports it (`Os.Shell.foreground`,
+whose report the world claim `Pty.Foreground` is about), and whether its terminal echoes what is
+typed (`Os.Shell.echoOf`, whose report the world claim `Pty.Echo` is about), as one `observed`
+event ahead of the round's, which `info` then reports. An attached client's keys read nothing. -/
 def observing (rt : Rt) (login : Bool) (events : List Event) : IO (List Event) := do
   let asks :=
     events.any fun
@@ -681,9 +682,14 @@ def observing (rt : Rt) (login : Bool) (events : List Event) : IO (List Event) :
       foreground rt.ptyFd
     catch _ =>
       pure none
+  let echo ←
+    try
+      echoOf rt.ptyFd
+    catch _ =>
+      pure none
   let observation : Linger.Session.Observation :=
     { nowMs := ← monotonicMs, wallS := (← realtimeS).toNat, login,
-      foreground := reported.map fun (pid, argv, dir) => { pid := pid.toNat, argv, dir } }
+      foreground := reported.map fun (pid, argv, dir) => { pid := pid.toNat, argv, dir }, echo }
   return .observed observation :: events
 
 /-- poll(2) skips a negative descriptor: the pty's slot holds this one after the terminal

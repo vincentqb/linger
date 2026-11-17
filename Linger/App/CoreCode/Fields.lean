@@ -54,6 +54,8 @@ def table : List Field :=
     { key := "pid", kind := .machine, owner := .linger, role := "the program's process" },
     { key := "fgpid", kind := .machine, owner := .program,
       role := "the foreground program's process" },
+    { key := "echo", kind := .machine, owner := .program,
+      role := "whether the program's terminal echoes what is typed" },
     { key := "login", kind := .machine, owner := .linger,
       role := "whether the foreground program is the login shell" },
     { key := "protocol", kind := .machine, owner := .linger,

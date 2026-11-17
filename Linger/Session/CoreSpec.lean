@@ -530,8 +530,8 @@ structure Foreground where
   deriving DecidableEq, Repr
 
 /-- What the daemon read of the world as it was about to answer a request: the clocks, so that
-`info` can say how long ago the program last wrote, and its terminal's foreground, so that
-`info` can say what runs there. -/
+`info` can say how long ago the program last wrote, its terminal's foreground, so that `info` can
+say what runs there, and whether its terminal echoes what is typed. -/
 structure Observation where
   /-- The monotonic clock in milliseconds, as `.tick` reads it. -/
   nowMs : Nat
@@ -541,6 +541,9 @@ structure Observation where
   login : Bool
   /-- The terminal's foreground, when the operating system reports one. -/
   foreground : Option Foreground
+  /-- Whether the terminal echoes what is typed, its `ECHO` flag as the program last set it, when
+  the operating system reports it. -/
+  echo : Option Bool := none
   deriving DecidableEq, Repr
 
 /-- What the runtime feeds in. All byte payloads are `List UInt8`; the
@@ -1074,13 +1077,13 @@ def magic : List UInt8 := [0x4C, 0x4E, 0x47, 0x48]
 
 /-- The format of the handoffs this version writes. -/
 @[expose]
-def version : Nat := 1
+def version : Nat := 2
 
 /-- The formats of the handoffs this version reads, the one it writes among them: a newer
 version reads every older format it lists here, and a daemon hands its session only to a
 binary that lists the format it writes. -/
 @[expose]
-def formats : List Nat := [1]
+def formats : List Nat := [1, 2]
 
 /-- The first bytes of a handoff of format `v`. -/
 @[expose]

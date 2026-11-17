@@ -124,6 +124,9 @@ private opaque getcwdOf (pid : UInt32) : IO String
 @[extern "linger_tcgetpgrp"]
 private opaque tcgetpgrp (fd : UInt32) : IO Int64
 
+@[extern "linger_tty_echo"]
+private opaque ttyEcho (fd : UInt32) : IO Int64
+
 @[extern "linger_cmdline_of"]
 private opaque cmdlineOf (pid : UInt32) (valid : 0 < pid ∧ pid ≤ 0x7FFFFFFF) : IO ByteArray
 

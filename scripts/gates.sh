@@ -979,7 +979,9 @@ code_grep "$VT_ALL_RE" '*.lean' \
 # program's group at once (`Os.Signal.Group`); `kill` refuses a selector.
 # 32: the names of the process's environment, so that a session's program gets none of linger's
 # own variables; Lean core reads a variable only by name.
-SHIM_CAP=32
+# 33: a pty's termios ECHO flag (tcgetattr), so that `info` says whether the program's terminal
+# echoes (`Pty.Echo`); Lean core reads no termios.
+SHIM_CAP=33
 shim_n="$(code_count 'LEAN_EXPORT' 'packages/os/c/shim.c')"
 [ "$shim_n" -le "$SHIM_CAP" ] \
   || fail "shim grew to $shim_n wrappers (cap $SHIM_CAP); justify the new syscall and bump the cap"

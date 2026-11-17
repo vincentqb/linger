@@ -360,8 +360,9 @@ def finishedFields : Option Finished → List (String × String)
 /-- How `info` reports the session's present, as the daemon last read it before it answered:
 `idle`, the whole seconds since the program last wrote, and `lastout`, that time on the real-time
 clock in seconds, once it wrote at all; `login` when the session's program is its login shell;
-and the foreground of its terminal, `fg` its words joined by spaces, `fgpid` its process and
-`fgdir` its directory, when the operating system reports one. -/
+the foreground of its terminal, `fg` its words joined by spaces, `fgpid` its process and
+`fgdir` its directory, when the operating system reports one; and `echo`, whether its terminal
+echoes what is typed, when the operating system reports it. -/
 def presentFields (observed : Option Observation) (lastOutMs : Option Nat) :
     List (String × String) :=
   match observed with
@@ -373,9 +374,12 @@ def presentFields (observed : Option Observation) (lastOutMs : Option Nat) :
           ("lastout", toString (o.wallS - (o.nowMs - t) / 1000))]
       | none => []) ++
       (if o.login then [("login", "true")] else []) ++
-      match o.foreground with
+      (match o.foreground with
       | some fg =>
         [("fg", String.intercalate " " fg.argv), ("fgpid", toString fg.pid), ("fgdir", fg.dir)]
+      | none => []) ++
+      match o.echo with
+      | some echo => [("echo", toString echo)]
       | none => []
 
 /-- The fields one listing record carries, as a named stage. Split out from

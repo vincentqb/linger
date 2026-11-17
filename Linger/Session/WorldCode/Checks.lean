@@ -286,6 +286,49 @@ Check Pty.Foreground reportedForeground seenForeground := do
       finally
         stop shell master
 
+/-- What linger reads of whether the terminal whose master is the argument echoes: the observation
+`Pty.Echo` constrains. -/
+opaque reportedEcho : UInt32 → Option Bool
+
+/-- Whether the terminal whose master is the argument echoes, as its program last set it on its
+own end: the observation `Pty.Echo` compares the report with. -/
+opaque setEcho : UInt32 → Option Bool
+
+/-- What `Os.Shell.echoOf` reports of the terminal `master`, once it reports `wanted` or the clock
+reaches `deadline`. -/
+def echoWithin (master : UInt32) (wanted : Bool) (deadline : Nat) : IO (Option Bool) := do
+  let mut report ← echoOf master
+  while report != some wanted && (← monotonicMs) < deadline do
+    IO.sleep 20
+    report ← echoOf master
+  return report
+
+-- A pty reports its echo as its program last set it: a shell in a new terminal turns echo off on
+-- its own end, says so in a file, and waits for a line, then turns echo on again and says so;
+-- after each, linger reads the flag through the master, and it is what the shell set. The shell
+-- reads its line with echo off, and the master reads no echo of it.
+Check Pty.Echo reportedEcho setEcho := do
+  IO.FS.withTempDir fun dir => do
+      let off := (dir / "off").toString
+      let on := (dir / "on").toString
+      let script :=
+        "stty -echo && : > \"$1\" && read -r line && stty echo && : > \"$2\" && exec sleep 60"
+      let (pid, master) ← spawnPty 80 24 dir.toString "/bin/sh" #["-c", script, "sh", off, on] #[]
+      try
+        unless ← within ((← monotonicMs) + 10000) (System.FilePath.pathExists off) do
+          refute "the started shell did not turn echo off"
+        let silent ← echoWithin master false ((← monotonicMs) + 10000)
+        unless silent == some false do
+          refute s!"a terminal whose program turned echo off reported echo {silent}"
+        writeAll master ("go\n".toUTF8)
+        unless ← within ((← monotonicMs) + 10000) (System.FilePath.pathExists on) do
+          refute "the started shell did not turn echo on"
+        let echoing ← echoWithin master true ((← monotonicMs) + 10000)
+        unless echoing == some true do
+          refute s!"a terminal whose program turned echo on reported echo {echoing}"
+      finally
+        stop pid master
+
 -- A started program holds no more than its start asks for, whatever the process that starts it
 -- holds: that process ignores SIGHUP, as a daemon does, and the program, a shell, finds its
 -- terminal on descriptors 0, 1 and 2, no other descriptor from 3 to 64 open, and SIGHUP and

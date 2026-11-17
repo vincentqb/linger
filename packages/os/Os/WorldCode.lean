@@ -525,6 +525,12 @@ def foregroundGroup (fd : UInt32) : IO (Option UInt32) := do
   let group ← Boundary.tcgetpgrp fd
   return if 0 < group && group ≤ 0x7FFFFFFF then some group.toNatClampNeg.toUInt32 else none
 
+/-- Whether the terminal open on `fd`, a pty master, echoes what is typed, its termios `ECHO`
+flag as the program last set it on its own end (`tcgetattr`): `none` when `fd` is no terminal. -/
+def echoOf (fd : UInt32) : IO (Option Bool) := do
+  let flag ← Boundary.ttyEcho fd
+  return if flag < 0 then none else some (flag == 1)
+
 /-- The words `pid` runs with, as the process holds them (`/proc/<pid>/cmdline` on Linux,
 sysctl's `KERN_PROCARGS2` on macOS, untested there), at most 4096 bytes of them: `[]` when they
 cannot be read, as for a process that has ended. A word that is no UTF-8 shows its bytes as

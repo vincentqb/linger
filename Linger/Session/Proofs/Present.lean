@@ -23,4 +23,10 @@ theorem infoFields_foreground (s : State) (o : Observation) {fg : Foreground}
   rw [step_observed]
   simp [infoFields, presentFields, State.owned, h]
 
+/-- **`info` says whether the terminal echoes, as it was told.** -/
+theorem infoFields_echo (s : State) (o : Observation) {on : Bool} (h : o.echo = some on) :
+    ("echo", toString on) ∈ infoFields (step s (.observed o)).1 := by
+  rw [step_observed]
+  simp [infoFields, presentFields, State.owned, h]
+
 end Linger.Session

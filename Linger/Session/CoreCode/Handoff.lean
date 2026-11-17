@@ -184,15 +184,21 @@ def rForeground : R Foreground := fun l => do
 
 /-- What the daemon last read of the world. -/
 def wObservation (o : Observation) : List UInt8 :=
-  wNat o.nowMs ++ wNat o.wallS ++ wBool o.login ++ wOpt wForeground o.foreground
+  wNat o.nowMs ++ wNat o.wallS ++ wBool o.login ++ wOpt wForeground o.foreground ++
+    wOpt wBool o.echo
 
-/-- Inverse of `wObservation`. -/
-def rObservation : R Observation := fun l => do
+/-- Inverse of `wObservation` in a handoff of format `v`: one of format 1 holds no echo. -/
+def rObservation (v : Nat) : R Observation := fun l => do
   let (nowMs, l) ← rNat l
   let (wallS, l) ← rNat l
   let (login, l) ← rBool l
   let (foreground, l) ← rOpt rForeground l
-  some ({ nowMs, wallS, login, foreground }, l)
+  let (echo, l) ←
+    if v < 2 then
+      some (none, l)
+    else
+      rOpt rBool l
+  some ({ nowMs, wallS, login, foreground, echo }, l)
 
 /-- The record's fields or the metadata of a session, as a checkpoint writes its fields. -/
 def wFields (kvs : List (String × String)) : List UInt8 := wList (wPair wStr wStr) kvs
@@ -230,8 +236,9 @@ def wState (s : State) : List UInt8 :=
     wOpt wNat s.lastOutMs ++
     wOpt wObservation s.observed
 
-/-- Inverse of `wState` for a state whose terminal's parser is quiet. -/
-def rState : R State := fun l => do
+/-- Inverse of `wState` for a state whose terminal's parser is quiet, in a handoff of format
+`v`. -/
+def rState (v : Nat) : R State := fun l => do
   let (vt, l) ← rTerminal l
   let (scan, l) ← rScan l
   let (clients, l) ← rList rClient l
@@ -250,7 +257,7 @@ def rState : R State := fun l => do
   let (tickOutSeq, l) ← rNat l
   let (freshFlag, l) ← rBool l
   let (lastOutMs, l) ← rOpt rNat l
-  let (observed, l) ← rOpt rObservation l
+  let (observed, l) ← rOpt (rObservation v) l
   some
     ({ vt, scan, clients, fields, metaKv, ended, dirty, lastCkptMs, attachSeq, outSeq, lookSeq,
         asking, notice, running, finished, tickOutSeq, freshFlag, lastOutMs, observed },
@@ -303,8 +310,8 @@ def stripHeader (l : List UInt8) : Option (Nat × List UInt8) :=
 /-- The session and what the daemon kept for it, from a handoff of a format this version reads:
 `none` for one of another format, one cut short, or one with bytes after its end. -/
 def decode (l : List UInt8) : Option (State × World) := do
-  let (_, l) ← stripHeader l
-  let (s, l) ← rState l
+  let (v, l) ← stripHeader l
+  let (s, l) ← rState v l
   let (w, l) ← rWorld l
   if l.isEmpty then
     some (s, w)

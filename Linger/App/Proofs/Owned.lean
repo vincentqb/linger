@@ -23,27 +23,22 @@ def programFields (o : Owned) : List (String × String) :=
   titleFields o.title ++ noticeFields o.notice ++ finishedFields o.commands.finished ++
     match o.observed with
     | some obs =>
-      match obs.foreground with
-      | some fg =>
-        [("fg", String.intercalate " " fg.argv), ("fgpid", toString fg.pid), ("fgdir", fg.dir)]
-      | none => []
+      (match obs.foreground with
+        | some fg =>
+          [("fg", String.intercalate " " fg.argv), ("fgpid", toString fg.pid), ("fgdir", fg.dir)]
+        | none => []) ++
+        match obs.echo with
+        | some echo => [("echo", toString echo)]
+        | none => []
     | none => []
-
-/-- The keys the field table gives the program. -/
-theorem owns_program (key : String) (h : owns table .program key = true) :
-    key = "title" ∨
-      key = "notice" ∨
-      key = "lastcmd" ∨ key = "lastexit" ∨ key = "fg" ∨ key = "fgdir" ∨ key = "fgpid" := by
-  simp [owns, table] at h
-  rcases h with h | h | h | h | h | h | h <;> simp [h]
 
 /-- A record's own field is no program's. -/
 theorem owns_recordField (key : String) (h : recordField key = true) :
     owns table .program key = false := by
   cases hk : owns table .program key
   · rfl
-  · rcases owns_program key hk with rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
-      simp [recordField] at h
+  · simp [owns, table] at hk
+    rcases hk with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> simp [recordField] at h
 
 /-- How a session ended is no program's field. -/
 theorem endingFields_programs (e : Ending) :
@@ -58,16 +53,19 @@ theorem presentFields_programs (observed : Option Observation) (lastOutMs : Opti
     (presentFields observed lastOutMs).filter (fun kv => owns table .program kv.1) =
       match observed with
       | some obs =>
-        match obs.foreground with
-        | some fg =>
-          [("fg", String.intercalate " " fg.argv), ("fgpid", toString fg.pid), ("fgdir", fg.dir)]
-        | none => []
+        (match obs.foreground with
+          | some fg =>
+            [("fg", String.intercalate " " fg.argv), ("fgpid", toString fg.pid), ("fgdir", fg.dir)]
+          | none => []) ++
+          match obs.echo with
+          | some echo => [("echo", toString echo)]
+          | none => []
       | none => [] := by
   cases observed with
   | none => rfl
   | some o =>
-    cases lastOutMs <;> cases hl : o.login <;> cases hf : o.foreground <;>
-      simp [presentFields, hl, hf, owns, table]
+    cases lastOutMs <;> cases hl : o.login <;> cases hf : o.foreground <;> cases he : o.echo <;>
+      simp [presentFields, hl, hf, he, owns, table]
 
 /-- The program's fields `info` reports, of a session whose boot metadata holds none, are readings
 of what its program owns. -/

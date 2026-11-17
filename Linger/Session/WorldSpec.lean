@@ -10,7 +10,7 @@ public section
 The world claims the session headlines take as hypotheses, each over the foreign behaviour it
 constrains, which it takes as a parameter, and each with the observation that would falsify it:
 what the file system keeps of what linger saves, what a program in raw mode reads, what a started
-program sees of its start, what a pty reports of its foreground, how SIGKILL and poll(2) behave, that the effect executor answers every
+program sees of its start, what a pty reports of its foreground and of its echo, how SIGKILL and poll(2) behave, that the effect executor answers every
 effect, and that the operating system grants a lock only when no process holds it. -/
 
 namespace Linger.Session
@@ -57,6 +57,16 @@ says nothing. On Linux `/proc` answers; on macOS `sysctl` and `libproc` do, whic
 has checked yet. -/
 WorldClaim Pty.Foreground (reported seen : UInt32 → Option Foreground) :=
   ∀ master fg, reported master = some fg → seen master = some fg
+
+/-- A pty reports whether it echoes what is typed as its program last set it. `reported master` is
+what linger reads of the terminal whose master is `master` (`Os.Shell.echoOf`), its termios `ECHO`
+flag, and `set master` is that flag as the program last set it on its own end of the terminal, as
+`stty echo` and `stty -echo` do: the two ends share one setting. A report of echo off from a
+terminal whose program last turned it on, or of echo on from one whose program turned it off,
+falsifies it. Of a descriptor that is no terminal the report is `none`, and the claim says
+nothing. -/
+WorldClaim Pty.Echo (reported set : UInt32 → Option Bool) :=
+  ∀ master echo, reported master = some echo → set master = some echo
 
 /-- The operating system runs what linger asks, and nothing else. A program that `start dir prog
 args extra reset` starts sees the words `prog` and then `args`, runs in `dir`, and reads each
