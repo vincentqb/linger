@@ -206,7 +206,7 @@ theorem respects_insertLines (n : Nat) : Respects (·.insertLines n) := by
   dsimp only
   split
   · rfl
-  · exact respects_repeatAtMost _ _ (respects_scrollDownIn _ _) v
+  · exact ((respects_repeatAtMost _ _ (respects_scrollDownIn _ _)).comp respects_carriageReturn) v
 
 theorem respects_deleteLines (n : Nat) : Respects (·.deleteLines n) := by
   intro v
@@ -214,7 +214,7 @@ theorem respects_deleteLines (n : Nat) : Respects (·.deleteLines n) := by
   dsimp only
   split
   · rfl
-  · exact respects_repeatAtMost _ _ (respects_scrollUpIn _ _ _) v
+  · exact ((respects_repeatAtMost _ _ (respects_scrollUpIn _ _ _)).comp respects_carriageReturn) v
 
 theorem respects_enterAlt (s : Bool) : Respects (·.enterAlt s) := by
   intro v

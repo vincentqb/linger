@@ -762,10 +762,10 @@ private def Vt.moveTo (v : Vt) (x y : Nat) : Vt :=
 private def Vt.moveRel (v : Vt) (dx dy : Int) : Vt :=
   let nx := (Int.ofNat v.cursor.x + dx).toNat -- Int.toNat clamps at 0
   let ny := (Int.ofNat v.cursor.y + dy).toNat
-  -- vertical motion is confined to the scroll region when starting inside it
-  let inRegion := v.cursor.y ≥ v.top && v.cursor.y ≤ v.bot
-  let lo := if inRegion then v.top else 0
-  let hi := if inRegion then v.bot else v.rows - 1
+  -- upward motion stops at the top margin unless it starts above it, and downward motion at
+  -- the bottom margin unless it starts below it (the VT510's CUU and CUD, as xterm does)
+  let lo := if v.cursor.y ≥ v.top then v.top else 0
+  let hi := if v.cursor.y ≤ v.bot then v.bot else v.rows - 1
   { v with cursor := { x := min nx (v.cols - 1), y := min (max ny lo) hi, pending := false } }
 
 /-- LF / IND: down one; scrolls when at the region bottom. -/
@@ -1002,13 +1002,18 @@ private def Vt.eraseScreen (v : Vt) (mode : Nat) : Vt :=
     { v with sb := {} }
   | _ => (List.range v.rows).foldl (fun v' y => v'.eraseRowSpan y 0 v'.cols) v
 
+/-- IL: insert blank lines at the cursor row, within the region, and move the cursor to the line
+home position, column 0 (ECMA-48 8.3.67). Outside the region it does nothing. -/
 private def Vt.insertLines (v : Vt) (n : Nat) : Vt :=
   if v.cursor.y < v.top || v.cursor.y > v.bot then v
-  else v.repeatAtMost (v.bot - v.cursor.y + 1) n (·.scrollDownIn v.cursor.y v.bot)
+  else (v.repeatAtMost (v.bot - v.cursor.y + 1) n (·.scrollDownIn v.cursor.y v.bot)).carriageReturn
 
+/-- DL: delete lines at the cursor row, within the region, and move the cursor to the line home
+position, column 0 (ECMA-48 8.3.32). Outside the region it does nothing. -/
 private def Vt.deleteLines (v : Vt) (n : Nat) : Vt :=
   if v.cursor.y < v.top || v.cursor.y > v.bot then v
-  else v.repeatAtMost (v.bot - v.cursor.y + 1) n (·.scrollUpIn v.cursor.y v.bot false)
+  else
+    (v.repeatAtMost (v.bot - v.cursor.y + 1) n (·.scrollUpIn v.cursor.y v.bot false)).carriageReturn
 
 private def Vt.deleteChars (v : Vt) (n : Nat) : Vt :=
   let x := v.cursor.x

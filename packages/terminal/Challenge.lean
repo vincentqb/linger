@@ -32,7 +32,27 @@ window title, which it scrubs of C0 controls and DEL and a receiver may cut shor
 once later output arrives, or at all when it is other than off, 1000, 1002 and 1003, which only a
 decoded checkpoint holds; the bell, which stays the receiver's; and what later output shows of a
 terminal repainted inside a control sequence or a character, whose partial one the receiver does
-not hold. -/
+not hold.
+
+The emulator does what the standards say each of a small set of sequences does (`vt_conforms`):
+`Vt.Ref` is a reference model of an abstract screen, its cells, cursor and deferred wrap, pen,
+modes, scroll region, tab stops, saved cursor, stashed main screen, title and bell, written from
+ECMA-48, xterm's `ctlseqs` and the VT510 manual, and `Vt.Ref.Seq` its sequences: printing ASCII
+with autowrap and the deferred wrap, CR, LF, BS, HT, BEL, CUU, CUD, CUF, CUB, CUP, CHA, VPA, ED and
+EL 0 to 2, IL, DL, ICH, DCH, ECH, SGR's reset, bold, faint, italic, underline, inverse and 8, 256 and
+24-bit colours, DECSTBM, IND and RI, DECSC and DECRC, DECSET and DECRST 25, 7, 1049, 2004 and 2026,
+and OSC 0 and 2 titles. Some reading of every terminal as a reference screen shows what the
+terminal's accessors show, and feeding any sequence of the set, as a program writes it, to a live
+terminal between control sequences and characters changes that reading exactly as the reference
+says. Where linger departs from xterm the reference says so: 1049 homes the cursor and makes the
+whole screen the region, and BS and the erases keep a deferred wrap, as tmux does. What linger
+keeps or skips outside the set changes nothing a terminal shows (`vt_keeps`): DECSCUSR sets the
+cursor's shape alone, which a repaint replays, and sixel images, APC strings such as kitty's
+graphics and OSC 8 hyperlinks are skipped. Not claimed of the reference: a terminal with a wide
+character or a combining mark on its screen, insert mode, DEC line drawing, a parameter above
+65535, an SGR of more than 16 parameters, a title past an OSC payload's 2048 bytes, a sequence that
+starts inside another or a character, a sequence outside the set, and the history, which
+`history_grows` covers. -/
 
 public section
 
@@ -304,6 +324,122 @@ theorem leave_canonical_all_rejects_escape :
                 so := false, alt := false } ∧
             (w.feed ([0x1B] : Render.Bytes)).getPen = ({} : Vt.Pen) ∧
             (w.feed ([0x1B] : Render.Bytes)).windowTitle = "" := by
+  sorry
+
+theorem vt_conforms :
+    ∃ screen : Vt.Vt → Vt.Ref.Screen,
+      (∀ v,
+          Vt.Ref.Reads Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.cursorPos Vt.Vt.getPen
+            Vt.Vt.getModes Vt.stick Vt.Vt.windowTitle v (screen v)) ∧
+        ∀ (v : Vt.Vt) (s : Vt.Ref.Seq),
+          Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v →
+            v.atBoundary = true →
+            Vt.Ref.Plain Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.getModes Vt.stick v →
+            s.Ok → Vt.Ref.Same (screen (v.feed s.bytes)) (Vt.Ref.Seq.apply (screen v) s) := by
+  sorry
+
+@[kills vt_conforms]
+theorem vt_conforms_rejects_elWhole :
+    ¬∃ screen : Vt.Vt → Vt.Ref.Screen,
+        (∀ v,
+            Vt.Ref.Reads Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.cursorPos Vt.Vt.getPen
+              Vt.Vt.getModes Vt.stick Vt.Vt.windowTitle v (screen v)) ∧
+          ∀ (v : Vt.Vt) (s : Vt.Ref.Seq),
+            Vt.Live Vt.Vt.init (Vt.Ref.elWhole Vt.Vt.feed) Vt.Vt.resize Vt.Vt.quiesce
+                Vt.Vt.Decodable v →
+              v.atBoundary = true →
+              Vt.Ref.Plain Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.getModes Vt.stick v →
+              s.Ok →
+              Vt.Ref.Same (screen ((Vt.Ref.elWhole Vt.Vt.feed) v s.bytes))
+                (Vt.Ref.Seq.apply (screen v) s) := by
+  sorry
+
+@[kills vt_conforms]
+theorem vt_conforms_rejects_cupFromZero :
+    ¬∃ screen : Vt.Vt → Vt.Ref.Screen,
+        (∀ v,
+            Vt.Ref.Reads Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.cursorPos Vt.Vt.getPen
+              Vt.Vt.getModes Vt.stick Vt.Vt.windowTitle v (screen v)) ∧
+          ∀ (v : Vt.Vt) (s : Vt.Ref.Seq),
+            Vt.Live Vt.Vt.init (Vt.Ref.cupFromZero Vt.Vt.feed) Vt.Vt.resize Vt.Vt.quiesce
+                Vt.Vt.Decodable v →
+              v.atBoundary = true →
+              Vt.Ref.Plain Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.getModes Vt.stick v →
+              s.Ok →
+              Vt.Ref.Same (screen ((Vt.Ref.cupFromZero Vt.Vt.feed) v s.bytes))
+                (Vt.Ref.Seq.apply (screen v) s) := by
+  sorry
+
+@[kills vt_conforms]
+theorem vt_conforms_rejects_eagerWrap :
+    ¬∃ screen : Vt.Vt → Vt.Ref.Screen,
+        (∀ v,
+            Vt.Ref.Reads Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.cursorPos Vt.Vt.getPen
+              Vt.Vt.getModes Vt.stick Vt.Vt.windowTitle v (screen v)) ∧
+          ∀ (v : Vt.Vt) (s : Vt.Ref.Seq),
+            Vt.Live Vt.Vt.init (Vt.Ref.eagerWrap Vt.Vt.feed Vt.Vt.colCount Vt.Vt.cursorPos)
+                Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v →
+              v.atBoundary = true →
+              Vt.Ref.Plain Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.getModes Vt.stick v →
+              s.Ok →
+              Vt.Ref.Same
+                (screen ((Vt.Ref.eagerWrap Vt.Vt.feed Vt.Vt.colCount Vt.Vt.cursorPos) v s.bytes))
+                (Vt.Ref.Seq.apply (screen v) s) := by
+  sorry
+
+@[kills vt_conforms]
+theorem vt_conforms_rejects_resetKeepsBold :
+    ¬∃ screen : Vt.Vt → Vt.Ref.Screen,
+        (∀ v,
+            Vt.Ref.Reads Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.cursorPos Vt.Vt.getPen
+              Vt.Vt.getModes Vt.stick Vt.Vt.windowTitle v (screen v)) ∧
+          ∀ (v : Vt.Vt) (s : Vt.Ref.Seq),
+            Vt.Live Vt.Vt.init (Vt.Ref.resetKeepsBold Vt.Vt.feed Vt.Vt.getPen) Vt.Vt.resize
+                Vt.Vt.quiesce Vt.Vt.Decodable v →
+              v.atBoundary = true →
+              Vt.Ref.Plain Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.getModes Vt.stick v →
+              s.Ok →
+              Vt.Ref.Same (screen ((Vt.Ref.resetKeepsBold Vt.Vt.feed Vt.Vt.getPen) v s.bytes))
+                (Vt.Ref.Seq.apply (screen v) s) := by
+  sorry
+
+@[kills vt_conforms]
+theorem vt_conforms_rejects_ilKeepsColumn :
+    ¬∃ screen : Vt.Vt → Vt.Ref.Screen,
+        (∀ v,
+            Vt.Ref.Reads Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.cursorPos Vt.Vt.getPen
+              Vt.Vt.getModes Vt.stick Vt.Vt.windowTitle v (screen v)) ∧
+          ∀ (v : Vt.Vt) (s : Vt.Ref.Seq),
+            Vt.Live Vt.Vt.init (Vt.Ref.ilKeepsColumn Vt.Vt.feed Vt.Vt.cursorPos) Vt.Vt.resize
+                Vt.Vt.quiesce Vt.Vt.Decodable v →
+              v.atBoundary = true →
+              Vt.Ref.Plain Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.getModes Vt.stick v →
+              s.Ok →
+              Vt.Ref.Same (screen ((Vt.Ref.ilKeepsColumn Vt.Vt.feed Vt.Vt.cursorPos) v s.bytes))
+                (Vt.Ref.Seq.apply (screen v) s) := by
+  sorry
+
+theorem vt_keeps (v : Vt.Vt) (k : Vt.Ref.Kept) (between : v.atBoundary = true) (ok : k.Ok) :
+    (∀ y, (v.feed k.bytes).getRow y = v.getRow y) ∧
+      (v.feed k.bytes).cursorPos = v.cursorPos ∧
+      (v.feed k.bytes).getPen = v.getPen ∧
+      (v.feed k.bytes).getModes = Vt.Ref.Kept.modes v.getModes k ∧
+      Vt.stick (v.feed k.bytes) = Vt.stick v ∧
+      (v.feed k.bytes).windowTitle = v.windowTitle ∧ (v.feed k.bytes).atBoundary = true := by
+  sorry
+
+@[kills vt_keeps]
+theorem vt_keeps_rejects_unescaped :
+    ¬∀ (v : Vt.Vt) (k : Vt.Ref.Kept),
+        v.atBoundary = true →
+          k.Ok →
+          (∀ y, ((Vt.Ref.unescaped Vt.Vt.feed) v k.bytes).getRow y = v.getRow y) ∧
+            ((Vt.Ref.unescaped Vt.Vt.feed) v k.bytes).cursorPos = v.cursorPos ∧
+            ((Vt.Ref.unescaped Vt.Vt.feed) v k.bytes).getPen = v.getPen ∧
+            ((Vt.Ref.unescaped Vt.Vt.feed) v k.bytes).getModes = Vt.Ref.Kept.modes v.getModes k ∧
+            Vt.stick ((Vt.Ref.unescaped Vt.Vt.feed) v k.bytes) = Vt.stick v ∧
+            ((Vt.Ref.unescaped Vt.Vt.feed) v k.bytes).windowTitle = v.windowTitle ∧
+            ((Vt.Ref.unescaped Vt.Vt.feed) v k.bytes).atBoundary = true := by
   sorry
 
 end Terminal

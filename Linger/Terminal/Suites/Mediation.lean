@@ -2,6 +2,7 @@ module
 
 public import Verify.Harness
 import Terminal.CoreCode.Mediation
+import Linger.Terminal.Suites.Conform
 
 public section
 
@@ -264,6 +265,7 @@ def runCase (e : Env) (index clients : Nat) (inheritedTerm : Option String)
 presentation clients attached. -/
 def run : IO UInt32 :=
   Env.suite "terminal" fun e => do
+    Linger.Terminal.Suites.Conform.checks
     -- zero, one and two presentation clients — and a different inherited `TERM`
     -- each time, with none at all in the first, so the override is exercised from
     -- three different starting environments

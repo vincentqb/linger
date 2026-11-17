@@ -19,6 +19,7 @@ import all Terminal.Proofs.Render.PendingWrap
 import all Terminal.Proofs.Render.Scrollback
 import all Terminal.Proofs.Render.Shows
 import all Terminal.Proofs.Replay
+import all Terminal.Proofs.Conform
 
 /-! The VT toolkit's headline theorems, proved of the toolkit: `lake comparator` checks that
 these are exactly the statements of `Challenge.lean`. -/
@@ -376,5 +377,186 @@ theorem leave_canonical_all_rejects_escape :
             (w.feed ([0x1B] : Render.Bytes)).windowTitle = "" := by
   intro h
   exact absurd (h (Vt.Vt.init 2 2) (by decide +kernel)).1 (by decide +kernel)
+
+theorem vt_conforms :
+    ∃ screen : Vt.Vt → Vt.Ref.Screen,
+      (∀ v,
+          Vt.Ref.Reads Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.cursorPos Vt.Vt.getPen
+            Vt.Vt.getModes Vt.stick Vt.Vt.windowTitle v (screen v)) ∧
+        ∀ (v : Vt.Vt) (s : Vt.Ref.Seq),
+          Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v →
+            v.atBoundary = true →
+            Vt.Ref.Plain Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.getModes Vt.stick v →
+            s.Ok → Vt.Ref.Same (screen (v.feed s.bytes)) (Vt.Ref.Seq.apply (screen v) s) :=
+  ⟨Vt.Conform.screenOf, Vt.Conform.reads_screenOf, fun _ s hv hb hp hs =>
+    Vt.Conform.conforms hv hb hp s hs⟩
+
+theorem vt_conforms_rejects_elWhole :
+    ¬∃ screen : Vt.Vt → Vt.Ref.Screen,
+        (∀ v,
+            Vt.Ref.Reads Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.cursorPos Vt.Vt.getPen
+              Vt.Vt.getModes Vt.stick Vt.Vt.windowTitle v (screen v)) ∧
+          ∀ (v : Vt.Vt) (s : Vt.Ref.Seq),
+            Vt.Live Vt.Vt.init (Vt.Ref.elWhole Vt.Vt.feed) Vt.Vt.resize Vt.Vt.quiesce
+                Vt.Vt.Decodable v →
+              v.atBoundary = true →
+              Vt.Ref.Plain Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.getModes Vt.stick v →
+              s.Ok →
+              Vt.Ref.Same (screen ((Vt.Ref.elWhole Vt.Vt.feed) v s.bytes))
+                (Vt.Ref.Seq.apply (screen v) s) := by
+  -- EL 0 at column 2 of `ab` leaves the `a` that a whole-line erase blanks
+  rintro ⟨scr, hR, hS⟩
+  have h :=
+    hS _ (.el 0) (.feed (.init 3 1) [0x61, 0x62]) (by decide +kernel)
+      (by
+        unfold Vt.Ref.Plain; decide +kernel)
+      trivial
+  have hc :=
+    Vt.Conform.Same.cell_at h (x := 0) (y := 0)
+      (by
+        rw [(hR _).2.1]; decide +kernel)
+      (by
+        rw [(hR _).1]; decide +kernel)
+  rw [Vt.Conform.Reads.cell_at (hR _) (by decide +kernel) (by decide +kernel)] at hc
+  simp only [Vt.Ref.Seq.apply, Vt.Ref.Screen.erase, (hR _).2.2.2.1, (hR _).2.2.2.2.1,
+    (hR _).2.2.2.2.2.1] at hc
+  rw [Vt.Conform.Reads.cell_at (hR _) (by decide +kernel) (by decide +kernel)] at hc
+  exact absurd (congrArg Vt.Cell.base hc) (by decide +kernel)
+
+theorem vt_conforms_rejects_cupFromZero :
+    ¬∃ screen : Vt.Vt → Vt.Ref.Screen,
+        (∀ v,
+            Vt.Ref.Reads Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.cursorPos Vt.Vt.getPen
+              Vt.Vt.getModes Vt.stick Vt.Vt.windowTitle v (screen v)) ∧
+          ∀ (v : Vt.Vt) (s : Vt.Ref.Seq),
+            Vt.Live Vt.Vt.init (Vt.Ref.cupFromZero Vt.Vt.feed) Vt.Vt.resize Vt.Vt.quiesce
+                Vt.Vt.Decodable v →
+              v.atBoundary = true →
+              Vt.Ref.Plain Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.getModes Vt.stick v →
+              s.Ok →
+              Vt.Ref.Same (screen ((Vt.Ref.cupFromZero Vt.Vt.feed) v s.bytes))
+                (Vt.Ref.Seq.apply (screen v) s) := by
+  -- `CSI 1 ; 1 H` homes the cursor; read from 0 it lands on the second column
+  rintro ⟨scr, hR, hS⟩
+  have h :=
+    (hS _ (.cup 1 1) (.init 3 3) (by decide +kernel)
+        (by
+          unfold Vt.Ref.Plain; decide +kernel)
+        (by
+          unfold Vt.Ref.Seq.Ok; decide)).2.2.2.1
+  simp only [Vt.Ref.Seq.apply, (hR _).2.2.2.1, (hR _).1] at h
+  exact absurd h (by decide +kernel)
+
+theorem vt_conforms_rejects_eagerWrap :
+    ¬∃ screen : Vt.Vt → Vt.Ref.Screen,
+        (∀ v,
+            Vt.Ref.Reads Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.cursorPos Vt.Vt.getPen
+              Vt.Vt.getModes Vt.stick Vt.Vt.windowTitle v (screen v)) ∧
+          ∀ (v : Vt.Vt) (s : Vt.Ref.Seq),
+            Vt.Live Vt.Vt.init (Vt.Ref.eagerWrap Vt.Vt.feed Vt.Vt.colCount Vt.Vt.cursorPos)
+                Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v →
+              v.atBoundary = true →
+              Vt.Ref.Plain Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.getModes Vt.stick v →
+              s.Ok →
+              Vt.Ref.Same
+                (screen ((Vt.Ref.eagerWrap Vt.Vt.feed Vt.Vt.colCount Vt.Vt.cursorPos) v s.bytes))
+                (Vt.Ref.Seq.apply (screen v) s) := by
+  -- a print into the last column holds the cursor there; wrapping at once moves it
+  rintro ⟨scr, hR, hS⟩
+  have h :=
+    (hS _ (.print 'b') (.feed (.init 2 2) [0x61]) (by decide +kernel)
+        (by
+          unfold Vt.Ref.Plain; decide +kernel)
+        (by
+          unfold Vt.Ref.Seq.Ok; decide)).2.2.2.1
+  simp only [Vt.Ref.Seq.apply] at h
+  rw [Vt.Conform.print_x _ _
+      (by
+        rw [(hR _).1]; decide +kernel)
+      (by
+        rw [(hR _).2.2.2.1]; decide +kernel),
+    (hR _).2.2.2.1] at h
+  exact absurd h (by decide +kernel)
+
+theorem vt_conforms_rejects_resetKeepsBold :
+    ¬∃ screen : Vt.Vt → Vt.Ref.Screen,
+        (∀ v,
+            Vt.Ref.Reads Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.cursorPos Vt.Vt.getPen
+              Vt.Vt.getModes Vt.stick Vt.Vt.windowTitle v (screen v)) ∧
+          ∀ (v : Vt.Vt) (s : Vt.Ref.Seq),
+            Vt.Live Vt.Vt.init (Vt.Ref.resetKeepsBold Vt.Vt.feed Vt.Vt.getPen) Vt.Vt.resize
+                Vt.Vt.quiesce Vt.Vt.Decodable v →
+              v.atBoundary = true →
+              Vt.Ref.Plain Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.getModes Vt.stick v →
+              s.Ok →
+              Vt.Ref.Same (screen ((Vt.Ref.resetKeepsBold Vt.Vt.feed Vt.Vt.getPen) v s.bytes))
+                (Vt.Ref.Seq.apply (screen v) s) := by
+  -- SGR 0 turns bold off
+  rintro ⟨scr, hR, hS⟩
+  have h :=
+    (hS _ (.sgr [.reset]) (.feed (.init 1 1) (Vt.Ref.Seq.sgr [.bold]).bytes) (by decide +kernel)
+        (by
+          unfold Vt.Ref.Plain; decide +kernel)
+        (by
+          unfold Vt.Ref.Seq.Ok; decide)).2.2.2.2.2.2.1
+  simp only [Vt.Ref.Seq.apply, (hR _).2.2.2.2.2.1] at h
+  exact absurd (congrArg Vt.Pen.bold h) (by decide +kernel)
+
+theorem vt_conforms_rejects_ilKeepsColumn :
+    ¬∃ screen : Vt.Vt → Vt.Ref.Screen,
+        (∀ v,
+            Vt.Ref.Reads Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.cursorPos Vt.Vt.getPen
+              Vt.Vt.getModes Vt.stick Vt.Vt.windowTitle v (screen v)) ∧
+          ∀ (v : Vt.Vt) (s : Vt.Ref.Seq),
+            Vt.Live Vt.Vt.init (Vt.Ref.ilKeepsColumn Vt.Vt.feed Vt.Vt.cursorPos) Vt.Vt.resize
+                Vt.Vt.quiesce Vt.Vt.Decodable v →
+              v.atBoundary = true →
+              Vt.Ref.Plain Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.getModes Vt.stick v →
+              s.Ok →
+              Vt.Ref.Same (screen ((Vt.Ref.ilKeepsColumn Vt.Vt.feed Vt.Vt.cursorPos) v s.bytes))
+                (Vt.Ref.Seq.apply (screen v) s) := by
+  -- IL moves the cursor to the line home position
+  rintro ⟨scr, hR, hS⟩
+  have h :=
+    (hS _ (.il 1) (.feed (.init 3 2) [0x61, 0x62]) (by decide +kernel)
+        (by
+          unfold Vt.Ref.Plain; decide +kernel)
+        (by
+          unfold Vt.Ref.Seq.Ok; decide)).2.2.2.1
+  rw [Vt.Conform.il_x _ _
+      (by
+        rw [(hR _).2.2.2.2.1, (hR _).2.2.2.2.2.2.2.1, (hR _).2.2.2.2.2.2.2.2.1]
+        decide +kernel),
+    (hR _).2.2.2.1] at h
+  exact absurd h (by decide +kernel)
+
+theorem vt_keeps (v : Vt.Vt) (k : Vt.Ref.Kept) (between : v.atBoundary = true) (ok : k.Ok) :
+    (∀ y, (v.feed k.bytes).getRow y = v.getRow y) ∧
+      (v.feed k.bytes).cursorPos = v.cursorPos ∧
+      (v.feed k.bytes).getPen = v.getPen ∧
+      (v.feed k.bytes).getModes = Vt.Ref.Kept.modes v.getModes k ∧
+      Vt.stick (v.feed k.bytes) = Vt.stick v ∧
+      (v.feed k.bytes).windowTitle = v.windowTitle ∧
+      (v.feed k.bytes).atBoundary = true := Vt.Conform.keeps_all between k ok
+
+theorem vt_keeps_rejects_unescaped :
+    ¬∀ (v : Vt.Vt) (k : Vt.Ref.Kept),
+        v.atBoundary = true →
+          k.Ok →
+          (∀ y, ((Vt.Ref.unescaped Vt.Vt.feed) v k.bytes).getRow y = v.getRow y) ∧
+            ((Vt.Ref.unescaped Vt.Vt.feed) v k.bytes).cursorPos = v.cursorPos ∧
+            ((Vt.Ref.unescaped Vt.Vt.feed) v k.bytes).getPen = v.getPen ∧
+            ((Vt.Ref.unescaped Vt.Vt.feed) v k.bytes).getModes = Vt.Ref.Kept.modes v.getModes k ∧
+            Vt.stick ((Vt.Ref.unescaped Vt.Vt.feed) v k.bytes) = Vt.stick v ∧
+            ((Vt.Ref.unescaped Vt.Vt.feed) v k.bytes).windowTitle = v.windowTitle ∧
+            ((Vt.Ref.unescaped Vt.Vt.feed) v k.bytes).atBoundary = true := by
+  -- a sixel image's data prints once its ESCs are gone
+  intro h
+  have row :=
+    (h (Vt.Vt.init 4 1) (.sixel [0x41]) (by decide +kernel)
+          (by
+            unfold Vt.Ref.Kept.Ok; decide)).1
+      0
+  exact absurd (congrArg (fun r : Vt.Row => (r.getD 0 {}).base) row) (by decide +kernel)
 
 end Terminal

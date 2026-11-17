@@ -422,12 +422,11 @@ theorem moveRel {v : Vt} (dx dy : Int) (h : Good v) : Good (v.moveRel dx dy) := 
   unfold Vt.moveRel
   refine set_cursor v _ ?_ ?_ ?_ (pend_of_false rfl) h
   · dsimp only; omega
-  · by_cases hr : (v.cursor.y ≥ v.top && v.cursor.y ≤ v.bot) <;> simp [hr] <;> omega
+  · by_cases hl : v.cursor.y ≥ v.top <;> by_cases hh : v.cursor.y ≤ v.bot <;> simp [hl, hh] <;>
+      omega
   · intro ho
     have hin := h.originIn ho
-    have hr : (v.cursor.y ≥ v.top && v.cursor.y ≤ v.bot) = true := by
-      simp only [ge_iff_le, Bool.and_eq_true, decide_eq_true_eq]; exact hin
-    simp only [hr, ↓reduceIte]
+    simp only [ge_iff_le, hin.1, hin.2, ↓reduceIte]
     omega
 
 theorem carriageReturn {v : Vt} (h : Good v) : Good v.carriageReturn :=
@@ -536,13 +535,13 @@ theorem insertLines {v : Vt} (n : Nat) (h : Good v) : Good (v.insertLines n) := 
   unfold Vt.insertLines
   split
   · exact h
-  · exact good_foldl (fun v a hh => scrollDownIn _ _ hh) _ h
+  · exact carriageReturn (good_foldl (fun v a hh => scrollDownIn _ _ hh) _ h)
 
 theorem deleteLines {v : Vt} (n : Nat) (h : Good v) : Good (v.deleteLines n) := by
   unfold Vt.deleteLines
   split
   · exact h
-  · exact good_foldl (fun v a hh => scrollUpIn _ _ _ hh) _ h
+  · exact carriageReturn (good_foldl (fun v a hh => scrollUpIn _ _ _ hh) _ h)
 
 theorem deleteChars {v : Vt} (n : Nat) (h : Good v) : Good (v.deleteChars n) := { h with }
 
@@ -1267,24 +1266,28 @@ theorem frame_grid_foldl {α : Type} (f : Vt → α → Vt)
   intro w a hw
   exact (hf w a).trans (congrArg (fun u => { u with grid := (f w a).grid }) hw)
 
-/-- Inserting lines leaves the cursor, history and all metadata unchanged,
-even for an arbitrary incoming record. -/
+/-- Inserting lines leaves history and all metadata unchanged, even for an arbitrary incoming
+record: it writes the grid and the cursor alone. -/
 theorem frame_insertLines (v : Vt) (n : Nat) :
-    v.insertLines n = { v with grid := (v.insertLines n).grid } := by
+    v.insertLines n =
+      { v with grid := (v.insertLines n).grid, cursor := (v.insertLines n).cursor } := by
   unfold Vt.insertLines Vt.repeatAtMost
   dsimp only
   split
   · rfl
-  · exact frame_grid_foldl _ (fun w _ => frame_scrollDownIn w _ _) _ _
+  · rw [frame_grid_foldl _ (fun w _ => frame_scrollDownIn w _ _) _ _]
+    rfl
 
 /-- Deleting lines never adds history, including at the full-screen region. -/
 theorem frame_deleteLines (v : Vt) (n : Nat) :
-    v.deleteLines n = { v with grid := (v.deleteLines n).grid } := by
+    v.deleteLines n =
+      { v with grid := (v.deleteLines n).grid, cursor := (v.deleteLines n).cursor } := by
   unfold Vt.deleteLines Vt.repeatAtMost
   dsimp only
   split
   · rfl
-  · exact frame_grid_foldl _ (fun _ _ => rfl) _ _
+  · rw [frame_grid_foldl _ (fun _ _ => rfl) _ _]
+    rfl
 
 /-- Screen erasure writes only cells and, in mode 3, clears the history.
 Every other field, including complete tab contents and saved state, is exact. -/

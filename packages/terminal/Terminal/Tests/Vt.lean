@@ -374,6 +374,31 @@ example :
       true := by
   native_decide
 
+/-- CUD from above the scroll region stops at its bottom margin, and CUU from below it at its
+top margin, as the VT510 manual and xterm do: a cursor outside the region stops at the screen's
+edge only on the side away from the region. -/
+example :
+    (let v := screen 5 6 "\x1b[2;3r"
+     (feedStr v "\x1b[1;1H\x1b[10B").cursor.y == 2 && (feedStr v "\x1b[6;1H\x1b[10A").cursor.y == 1 &&
+       (feedStr v "\x1b[1;1H\x1b[10A").cursor.y == 0 && (feedStr v "\x1b[6;1H\x1b[10B").cursor.y == 5 &&
+       (feedStr v "\x1b[2;1H\x1b[10A").cursor.y == 1 && (feedStr v "\x1b[3;1H\x1b[10B").cursor.y == 2) =
+      true := by
+  native_decide
+
+/-- IL and DL move the cursor to the line home position, column 0, as ECMA-48 (8.3.67, 8.3.32)
+says, and a deferred wrap goes with it. -/
+example :
+    (let v := screen 5 3 "ab"
+     let il := feedStr v "\x1b[LX"
+      let dl := feedStr v "\x1b[MX"
+      let w := feedStr (screen 3 3 "abc") "\x1b[L"
+      rowStr il 0 == "X" && rowStr il 1 == "ab" && il.cursor.x == 1 && rowStr dl 0 == "X" &&
+        dl.cursor.x == 1 &&
+        w.cursor.x == 0 &&
+        !w.cursor.pending) =
+      true := by
+  native_decide
+
 /-- With a stop in every column, CHT and CBT need `cols - 1` moves to cross the screen,
 so their clamped counts still reach the margins. -/
 example :

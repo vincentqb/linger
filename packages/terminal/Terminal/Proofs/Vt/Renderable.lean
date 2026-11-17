@@ -2080,14 +2080,16 @@ theorem renderable_insertLines {v : Vt} (h : Renderable v) (n : Nat) :
   unfold Vt.insertLines Vt.repeatAtMost
   split
   · exact h
-  · exact renderable_foldl (fun u i hu => renderable_scrollDownIn hu _ _) _ _ h
+  · exact renderable_carriageReturn
+      (renderable_foldl (fun u i hu => renderable_scrollDownIn hu _ _) _ _ h)
 
 theorem renderable_deleteLines {v : Vt} (h : Renderable v) (n : Nat) :
     Renderable (v.deleteLines n) := by
   unfold Vt.deleteLines Vt.repeatAtMost
   split
   · exact h
-  · exact renderable_foldl (fun u i hu => renderable_scrollUpIn hu _ _ _) _ _ h
+  · exact renderable_carriageReturn
+      (renderable_foldl (fun u i hu => renderable_scrollUpIn hu _ _ _) _ _ h)
 
 /-! #### Cursor, pen, modes, and the alt screen -/
 

@@ -236,6 +236,639 @@ def Restores {S : Type} (live : S → Prop) (feed : S → List UInt8 → S) (col
                 { getModes (feed v later) with mouse := 0 } ∧
               atBoundary (feed u later) = atBoundary (feed v later)))
 
+/-! ## A reference model of the core sequences
+
+What each sequence of a small standard set does to an abstract screen, written from the
+standards rather than from the emulator: ECMA-48 (5th edition, 1991) for the controls and
+control functions, xterm's `ctlseqs` (Thomas Dickey) for the private modes and OSC titles, and
+the DEC VT510 manual for the margins and DECSC. A screen is its cells, as a function of column and
+row, the cursor and its deferred wrap, the pen, the modes, the scroll region, the tab stops, what
+DECSC saved, the main screen the alternate one stashes, the title and whether the bell rang.
+
+The deferred wrap is DEC's: a print in the last column leaves the cursor there with a wrap
+pending, which the next print resolves by wrapping first, under autowrap (DECAWM). Every cursor
+movement drops it, as does a backspace, which then stays in the last column, and an erase or an
+insertion or deletion of characters, which moves no cursor, keeps it, as tmux does.
+
+Where linger departs from xterm it says so: entering the alternate screen (1049) homes the cursor
+and makes the whole screen the scroll region, as leaving it does, where xterm keeps both, and
+clears it with the default pen; synchronized output (2026) changes no state a screen holds. The
+character sets, insert mode and wide characters are outside the model. -/
+
+namespace Ref
+
+/-- What DECSC (`ESC 7`) saves, as the VT510 says: the cursor's position and its deferred wrap,
+the pen and origin mode. -/
+structure Saved where
+  /-- The saved column, from 0. -/
+  x : Nat := 0
+  /-- The saved row, from 0. -/
+  y : Nat := 0
+  /-- The saved deferred wrap. -/
+  pending : Bool := false
+  /-- The saved pen. -/
+  pen : Pen := {}
+  /-- The saved origin mode. -/
+  origin : Bool := false
+  deriving DecidableEq
+
+/-- Cells by column and row, from 0. -/
+abbrev Grid := Nat → Nat → Cell
+
+/-- An abstract terminal screen. -/
+structure Screen where
+  /-- Width. -/
+  cols : Nat
+  /-- Height. -/
+  rows : Nat
+  /-- The cell at each column and row. -/
+  cell : Grid
+  /-- The cursor's column, from 0. -/
+  x : Nat
+  /-- The cursor's row, from 0. -/
+  y : Nat
+  /-- A print in the last column left a wrap pending. -/
+  pending : Bool
+  /-- The pen new text is drawn with. -/
+  pen : Pen
+  /-- The modes. -/
+  modes : Modes
+  /-- The scroll region's top row, from 0. -/
+  top : Nat
+  /-- The scroll region's bottom row, from 0, inclusive. -/
+  bot : Nat
+  /-- The tab stops, by column. -/
+  tabs : Nat → Bool
+  /-- What DECSC saved. -/
+  saved : Saved
+  /-- The main screen and the cursor 1049 stashed, while the alternate screen is shown. -/
+  main : Option (Grid × Saved)
+  /-- The window title. -/
+  title : String
+  /-- The bell rang. -/
+  bell : Bool
+
+/-- An erased cell: blank, in the background of the pen that erased it, as xterm erases with
+its background colour erase. -/
+@[expose]
+def blank (p : Pen) : Cell := { pen := { bg := p.bg } }
+
+/-- A count parameter: 0, which is also what an omitted one reads as, means 1 (ECMA-48 5.4.2). -/
+@[expose]
+def count (n : Nat) : Nat := if n = 0 then 1 else n
+
+/-- The first tab stop at or after column `i`, or the last column when there is none (ECMA-48
+8.3.60). -/
+@[expose]
+def nextStop (tabs : Nat → Bool) (cols i : Nat) : Nat :=
+  ((List.range' i (cols - i)).find? tabs).getD (cols - 1)
+
+namespace Screen
+
+/-- The screen with `c` at column `x` and row `y`. -/
+@[expose]
+def put (s : Screen) (x y : Nat) (c : Cell) : Screen :=
+  { s with cell := fun x' y' => if x' = x ∧ y' = y then c else s.cell x' y' }
+
+/-- What DECSC saves of the screen. -/
+@[expose]
+def cursor (s : Screen) : Saved :=
+  { x := s.x, y := s.y, pending := s.pending, pen := s.pen, origin := s.modes.origin }
+
+/-- Scroll the region up a row: its top row leaves, and its bottom row comes in blank. -/
+@[expose]
+def scrollUp (s : Screen) : Screen :=
+  { s with
+    cell := fun x y =>
+      if s.top ≤ y ∧ y < s.bot then s.cell x (y + 1)
+      else if y = s.bot then blank s.pen else s.cell x y }
+
+/-- Scroll the region down a row: its bottom row leaves, and its top row comes in blank. -/
+@[expose]
+def scrollDown (s : Screen) : Screen :=
+  { s with
+    cell := fun x y =>
+      if s.top < y ∧ y ≤ s.bot then s.cell x (y - 1)
+      else if y = s.top then blank s.pen else s.cell x y }
+
+/-- CR: to the first column (ECMA-48 8.3.15). -/
+@[expose]
+def cr (s : Screen) :
+    Screen := { s with
+    x := 0, pending := false }
+
+/-- LF and IND: down a row, scrolling the region up at its bottom margin, and staying put on the
+last row below it (ECMA-48 8.3.74, the VT510's IND). -/
+@[expose]
+def lineFeed (s : Screen) : Screen :=
+  if s.y = s.bot then { s.scrollUp with pending := false }
+  else
+    if s.y + 1 < s.rows then
+      { s with
+        y := s.y + 1, pending := false }
+    else { s with pending := false }
+
+/-- RI: up a row, scrolling the region down at its top margin (ECMA-48 8.3.104). -/
+@[expose]
+def reverseIndex (s : Screen) : Screen :=
+  if s.y = s.top then { s.scrollDown with pending := false }
+  else
+    { s with
+      y := s.y - 1, pending := false }
+
+/-- A printable character: a pending wrap wraps first under autowrap, the character takes the
+cursor's cell with the pen, and the cursor advances, holding at the last column with a wrap
+pending under autowrap (DECAWM). -/
+@[expose]
+def print (s : Screen) (c : Char) : Screen :=
+  let s := if s.pending ∧ s.modes.wrap then s.cr.lineFeed else { s with pending := false }
+  let s := s.put s.x s.y { base := c, pen := s.pen }
+  if s.cols ≤ s.x + 1 then
+    { s with
+      x := s.cols - 1, pending := s.modes.wrap }
+  else { s with x := s.x + 1 }
+
+/-- BS: back a column (ECMA-48 8.3.5); with a wrap pending, the wrap is dropped and the cursor
+stays in the last column, as tmux does. -/
+@[expose]
+def backspace (s : Screen) : Screen :=
+  if s.pending then { s with pending := false } else { s with x := s.x - 1 }
+
+/-- HT: to the next tab stop, or the last column (ECMA-48 8.3.60). -/
+@[expose]
+def tab (s : Screen) : Screen :=
+  { s with
+    x := min (nextStop s.tabs s.cols (s.x + 1)) (s.cols - 1), pending := false }
+
+/-- The row a CUP or VPA parameter names: from the region's top under origin mode, and confined
+to it (DECOM), else from the screen's top. -/
+@[expose]
+def rowAt (s : Screen) (row : Nat) : Nat :=
+  if s.modes.origin then min (s.top + (count row - 1)) s.bot else min (count row - 1) (s.rows - 1)
+
+/-- Home: the top left, the region's under origin mode. -/
+@[expose]
+def home (s : Screen) :
+    Screen := { s with
+    x := 0, y := s.rowAt 1, pending := false }
+
+/-- Erase the cells `erases` picks, in the pen's background. -/
+@[expose]
+def erase (s : Screen) (erases : Nat → Nat → Bool) : Screen :=
+  { s with cell := fun x y => if erases x y then blank s.pen else s.cell x y }
+
+/-- Switch to the alternate screen, unless it is shown: save the cursor as DECSC does, stash
+the main screen with it, and show a cleared screen, homed, with the whole screen as the region. -/
+@[expose]
+def enterAlt (s : Screen) : Screen :=
+  match s.main with
+  | some _ => s
+  | none =>
+    { s with
+      main := some (s.cell, s.cursor), saved := s.cursor, cell := fun _ _ => {}, x := 0, y := 0,
+      pending := false, top := 0, bot := s.rows - 1 }
+
+/-- Switch back to the main screen, if the alternate one is shown, restoring the cursor it stashed
+as DECRC does, with the whole screen as the region. -/
+@[expose]
+def leaveAlt (s : Screen) : Screen :=
+  match s.main with
+  | none => s
+  | some (g, c) =>
+    { s with
+      main := none, cell := g, x := c.x, y := c.y, pending := c.pending, pen := c.pen,
+      modes := { s.modes with origin := c.origin }, top := 0, bot := s.rows - 1 }
+
+end Screen
+
+/-- An SGR attribute (ECMA-48 8.3.117, and xterm's 256-colour and direct-colour forms). -/
+inductive Sgr where
+  /-- 0: every attribute off, both colours the default. -/
+  | reset
+  /-- 1: bold. -/
+  | bold
+  /-- 2: faint. -/
+  | faint
+  /-- 3: italic. -/
+  | italic
+  /-- 4: underlined. -/
+  | underline
+  /-- 7: inverse. -/
+  | inverse
+  /-- 30 to 37: one of the eight colours as the foreground. -/
+  | fg8 (i : Fin 8)
+  /-- 40 to 47: one of the eight colours as the background. -/
+  | bg8 (i : Fin 8)
+  /-- 38;5;i: a palette colour as the foreground. -/
+  | fg256 (i : UInt8)
+  /-- 48;5;i: a palette colour as the background. -/
+  | bg256 (i : UInt8)
+  /-- 38;2;r;g;b: a direct colour as the foreground. -/
+  | fgRgb (r g b : UInt8)
+  /-- 48;2;r;g;b: a direct colour as the background. -/
+  | bgRgb (r g b : UInt8)
+  /-- 39: the default foreground. -/
+  | fgDefault
+  /-- 49: the default background. -/
+  | bgDefault
+
+/-- The parameters that write an attribute. -/
+@[expose]
+def Sgr.params : Sgr → List Nat
+  | .reset => [0]
+  | .bold => [1]
+  | .faint => [2]
+  | .italic => [3]
+  | .underline => [4]
+  | .inverse => [7]
+  | .fg8 i => [30 + i.val]
+  | .bg8 i => [40 + i.val]
+  | .fg256 i => [38, 5, i.toNat]
+  | .bg256 i => [48, 5, i.toNat]
+  | .fgRgb r g b => [38, 2, r.toNat, g.toNat, b.toNat]
+  | .bgRgb r g b => [48, 2, r.toNat, g.toNat, b.toNat]
+  | .fgDefault => [39]
+  | .bgDefault => [49]
+
+/-- What an attribute does to the pen. -/
+@[expose]
+def Sgr.apply (p : Pen) : Sgr → Pen
+  | .reset => {}
+  | .bold => { p with bold := true }
+  | .faint => { p with dim := true }
+  | .italic => { p with italic := true }
+  | .underline => { p with underline := true }
+  | .inverse => { p with reverse := true }
+  | .fg8 i => { p with fg := .idx (UInt8.ofNat i.val) }
+  | .bg8 i => { p with bg := .idx (UInt8.ofNat i.val) }
+  | .fg256 i => { p with fg := .idx i }
+  | .bg256 i => { p with bg := .idx i }
+  | .fgRgb r g b => { p with fg := .rgb r g b }
+  | .bgRgb r g b => { p with bg := .rgb r g b }
+  | .fgDefault => { p with fg := .default }
+  | .bgDefault => { p with bg := .default }
+
+/-- The private modes of the model (xterm's DECSET and DECRST numbers). -/
+inductive Mode where
+  /-- 25: the cursor is shown (DECTCEM). -/
+  | cursor
+  /-- 7: autowrap (DECAWM). -/
+  | wrap
+  /-- 1049: the alternate screen, with the cursor saved as DECSC does. -/
+  | alt
+  /-- 2004: bracketed paste. -/
+  | paste
+  /-- 2026: synchronized output. -/
+  | sync
+
+/-- A mode's number. -/
+@[expose]
+def Mode.number : Mode → Nat
+  | .cursor => 25
+  | .wrap => 7
+  | .alt => 1049
+  | .paste => 2004
+  | .sync => 2026
+
+/-- A number in decimal ASCII digits. -/
+@[expose]
+def dec (n : Nat) : List UInt8 :=
+  if n < 10 then [UInt8.ofNat (0x30 + n)] else dec (n / 10) ++ [UInt8.ofNat (0x30 + n % 10)]
+termination_by n
+decreasing_by omega
+
+/-- Parameters, `;`-separated. -/
+@[expose]
+def params : List Nat → List UInt8
+  | [] => []
+  | [n] => dec n
+  | n :: ns => dec n ++ [0x3B] ++ params ns
+
+/-- `CSI` with parameters and a final byte. -/
+@[expose]
+def csi (ps : List Nat) (final : UInt8) : List UInt8 := [0x1B, 0x5B] ++ params ps ++ [final]
+
+/-- A sequence of the set. -/
+inductive Seq where
+  /-- A printable ASCII character. -/
+  | print (c : Char)
+  /-- CR. -/
+  | cr
+  /-- LF. -/
+  | lf
+  /-- BS. -/
+  | bs
+  /-- HT. -/
+  | ht
+  /-- BEL. -/
+  | bel
+  /-- CUU: up `n` rows. -/
+  | cuu (n : Nat)
+  /-- CUD: down `n` rows. -/
+  | cud (n : Nat)
+  /-- CUF: right `n` columns. -/
+  | cuf (n : Nat)
+  /-- CUB: left `n` columns. -/
+  | cub (n : Nat)
+  /-- CUP: to a row and a column, from 1. -/
+  | cup (row col : Nat)
+  /-- CHA: to a column, from 1. -/
+  | cha (col : Nat)
+  /-- VPA: to a row, from 1. -/
+  | vpa (row : Nat)
+  /-- ED: erase below (0), above (1) or all (2) of the screen. -/
+  | ed (mode : Fin 3)
+  /-- EL: erase right of (0), left of (1) or all (2) of the line. -/
+  | el (mode : Fin 3)
+  /-- IL: insert `n` lines. -/
+  | il (n : Nat)
+  /-- DL: delete `n` lines. -/
+  | dl (n : Nat)
+  /-- ICH: insert `n` blank characters. -/
+  | ich (n : Nat)
+  /-- DCH: delete `n` characters. -/
+  | dch (n : Nat)
+  /-- ECH: erase `n` characters. -/
+  | ech (n : Nat)
+  /-- SGR: set attributes, in order; none resets. -/
+  | sgr (attrs : List Sgr)
+  /-- DECSTBM: the scroll region, from 1, its bottom 0 for the last row. -/
+  | decstbm (top bot : Nat)
+  /-- IND (`ESC D`). -/
+  | ind
+  /-- RI (`ESC M`). -/
+  | ri
+  /-- DECSC (`ESC 7`). -/
+  | decsc
+  /-- DECRC (`ESC 8`). -/
+  | decrc
+  /-- DECSET (`CSI ? n h`) when `on`, else DECRST (`CSI ? n l`). -/
+  | set (mode : Mode) (on : Bool)
+  /-- OSC 0 when `both`, which also names the icon, else OSC 2: the window title, ended by BEL. -/
+  | title (both : Bool) (text : String)
+
+/-- The bytes of a sequence. -/
+@[expose]
+def Seq.bytes : Seq → List UInt8
+  | .print c => [UInt8.ofNat c.toNat]
+  | .cr => [0x0D]
+  | .lf => [0x0A]
+  | .bs => [0x08]
+  | .ht => [0x09]
+  | .bel => [0x07]
+  | .cuu n => csi [n] 0x41
+  | .cud n => csi [n] 0x42
+  | .cuf n => csi [n] 0x43
+  | .cub n => csi [n] 0x44
+  | .cup row col => csi [row, col] 0x48
+  | .cha col => csi [col] 0x47
+  | .vpa row => csi [row] 0x64
+  | .ed m => csi [m.val] 0x4A
+  | .el m => csi [m.val] 0x4B
+  | .il n => csi [n] 0x4C
+  | .dl n => csi [n] 0x4D
+  | .ich n => csi [n] 0x40
+  | .dch n => csi [n] 0x50
+  | .ech n => csi [n] 0x58
+  | .sgr attrs => csi (attrs.flatMap Sgr.params) 0x6D
+  | .decstbm t b => csi [t, b] 0x72
+  | .ind => [0x1B, 0x44]
+  | .ri => [0x1B, 0x4D]
+  | .decsc => [0x1B, 0x37]
+  | .decrc => [0x1B, 0x38]
+  | .set m on => [0x1B, 0x5B, 0x3F] ++ dec m.number ++ [if on then 0x68 else 0x6C]
+  | .title both text =>
+    [0x1B, 0x5D, if both then 0x30 else 0x32, 0x3B] ++ text.toUTF8.data.toList ++ [0x07]
+
+/-- A sequence of the set as a program writes it: a printable character is ASCII, a parameter is
+at most 65535, the largest xterm reads, an SGR has at most 16 parameters, and a title holds no
+BEL or ESC and fits the 2048 bytes an OSC payload keeps, `0;` or `2;` included. -/
+@[expose]
+def Seq.Ok : Seq → Prop
+  | .print c => 0x20 ≤ c.toNat ∧ c.toNat < 0x7F
+  | .cuu n | .cud n | .cuf n | .cub n | .cha n | .vpa n | .il n | .dl n | .ich n | .dch n |
+    .ech n => n ≤ 65535
+  | .cup a b | .decstbm a b => a ≤ 65535 ∧ b ≤ 65535
+  | .sgr attrs => (attrs.flatMap Sgr.params).length ≤ 16
+  | .title _ text =>
+    (∀ b ∈ text.toUTF8.data.toList, b ≠ 0x07 ∧ b ≠ 0x1B) ∧ text.toUTF8.data.size + 2 ≤ 2048
+  | _ => True
+
+/-- What a sequence does to a screen. -/
+@[expose]
+def Seq.apply (s : Screen) : Seq → Screen
+  | .print c => s.print c
+  | .cr => s.cr
+  | .lf | .ind => s.lineFeed
+  | .bs => s.backspace
+  | .ht => s.tab
+  | .bel => { s with bell := true }
+  | .cuu n =>
+    { s with
+      y := max (s.y - count n) (if s.top ≤ s.y then s.top else 0), pending := false }
+  | .cud n =>
+    { s with
+      y := min (s.y + count n) (if s.y ≤ s.bot then s.bot else s.rows - 1), pending := false }
+  | .cuf n =>
+    { s with
+      x := min (s.x + count n) (s.cols - 1), pending := false }
+  | .cub n =>
+    { s with
+      x := s.x - count n, pending := false }
+  | .cup row col =>
+    { s with
+      x := min (count col - 1) (s.cols - 1), y := s.rowAt row, pending := false }
+  | .cha col =>
+    { s with
+      x := min (count col - 1) (s.cols - 1), pending := false }
+  | .vpa row =>
+    { s with
+      y := s.rowAt row, pending := false }
+  | .ed m =>
+    s.erase fun x y =>
+      (m.val = 0 && (y == s.y && decide (s.x ≤ x) || decide (s.y < y))) ||
+        (m.val = 1 && (y == s.y && decide (x ≤ s.x) || decide (y < s.y))) ||
+        m.val = 2
+  | .el m =>
+    s.erase fun x y =>
+      y == s.y && ((m.val = 0 && decide (s.x ≤ x)) || (m.val = 1 && decide (x ≤ s.x)) || m.val = 2)
+  | .il n =>
+    if s.y < s.top ∨ s.bot < s.y then s
+    else
+      { s with
+        cell := fun x y =>
+          if s.y ≤ y ∧ y ≤ s.bot then
+            if y < s.y + count n then blank s.pen else s.cell x (y - count n)
+          else s.cell x y,
+        x := 0, pending := false }
+  | .dl n =>
+    if s.y < s.top ∨ s.bot < s.y then s
+    else
+      { s with
+        cell := fun x y =>
+          if s.y ≤ y ∧ y ≤ s.bot then
+            if y + count n ≤ s.bot then s.cell x (y + count n) else blank s.pen
+          else s.cell x y,
+        x := 0, pending := false }
+  | .ich n =>
+    { s with
+      cell := fun x y =>
+        if y = s.y ∧ s.x ≤ x then if s.x + count n ≤ x then s.cell (x - count n) y else blank s.pen
+        else s.cell x y }
+  | .dch n =>
+    { s with
+      cell := fun x y =>
+        if y = s.y ∧ s.x ≤ x then
+          if x + count n < s.cols then s.cell (x + count n) y else blank s.pen
+        else s.cell x y }
+  | .ech n => s.erase fun x y => y == s.y && decide (s.x ≤ x) && decide (x < s.x + count n)
+  | .sgr attrs =>
+    { s with pen := (if attrs.isEmpty then [Sgr.reset] else attrs).foldl Sgr.apply s.pen }
+  | .decstbm t b =>
+    if
+        count t - 1 < (if b = 0 then s.rows else b) - 1 ∧
+          (if b = 0 then s.rows else b) - 1 < s.rows then
+      { s with
+          top := count t - 1, bot := (if b = 0 then s.rows else b) - 1 }.home
+    else s
+  | .decsc => { s with saved := s.cursor }
+  | .decrc =>
+    { s with
+      x := s.saved.x, y := if s.saved.origin then min (max s.saved.y s.top) s.bot else s.saved.y,
+      pending := s.saved.pending, pen := s.saved.pen,
+      modes := { s.modes with origin := s.saved.origin } }
+  | .ri => s.reverseIndex
+  | .set .cursor on => { s with modes := { s.modes with cursorVisible := on } }
+  | .set .wrap on => { s with modes := { s.modes with wrap := on } }
+  | .set .paste on => { s with modes := { s.modes with bracketedPaste := on } }
+  | .set .sync _ => s
+  | .set .alt on => if on then s.enterAlt else s.leaveAlt
+  | .title _ text => { s with title := text }
+
+/-- `s` is what a terminal shows through its accessors: its size, each cell on the screen, the
+cursor, the pen, the modes, the scroll region, which screen is shown and the title. -/
+@[expose]
+def Reads {V : Type} (colCount rowCount : V → Nat) (getRow : V → Nat → Row)
+    (cursorPos : V → Nat × Nat) (getPen : V → Pen) (getModes : V → Modes) (stick : V → Sticky)
+    (windowTitle : V → String) (v : V) (s : Screen) : Prop :=
+  s.cols = colCount v ∧
+    s.rows = rowCount v ∧
+    (∀ y < s.rows, ∀ x < s.cols, s.cell x y = (getRow v y).getD x default) ∧
+    s.x = (cursorPos v).1 ∧
+    s.y = (cursorPos v).2 ∧
+    s.pen = getPen v ∧
+    s.modes = getModes v ∧
+    s.top = (stick v).top ∧
+    s.bot = (stick v).bot ∧ s.main.isSome = (stick v).alt ∧ s.title = windowTitle v
+
+/-- Two screens agree on everything a screen holds, each grid on the screen's cells. -/
+@[expose]
+def Same (a b : Screen) : Prop :=
+  a.cols = b.cols ∧
+    a.rows = b.rows ∧
+    (∀ y < a.rows, ∀ x < a.cols, a.cell x y = b.cell x y) ∧
+    a.x = b.x ∧
+    a.y = b.y ∧
+    a.pending = b.pending ∧
+    a.pen = b.pen ∧
+    a.modes = b.modes ∧
+    a.top = b.top ∧
+    a.bot = b.bot ∧
+    (∀ x < a.cols, a.tabs x = b.tabs x) ∧
+    a.saved = b.saved ∧
+    (∀ g c,
+      a.main = some (g, c) →
+        ∃ g', b.main = some (g', c) ∧ ∀ y < a.rows, ∀ x < a.cols, g x y = g' x y) ∧
+    (a.main = none → b.main = none) ∧ a.title = b.title ∧ a.bell = b.bell
+
+/-- A terminal the model covers, through its accessors: every cell on its screen is one column
+wide, insert mode is off and neither G0 nor G1 is DEC line drawing. -/
+@[expose]
+def Plain {V : Type} (colCount rowCount : V → Nat) (getRow : V → Nat → Row) (getModes : V → Modes)
+    (stick : V → Sticky) (v : V) : Prop :=
+  (∀ y < rowCount v, ∀ x < colCount v, ((getRow v y).getD x default).width = 1) ∧
+    (getModes v).insert = false ∧ (stick v).g0 = false ∧ (stick v).g1 = false
+
+/-! ### What linger keeps without drawing, and what it skips -/
+
+/-- A sequence outside the model that linger keeps or skips: DECSCUSR (`CSI Ps SP q`) sets the
+cursor's shape, which a repaint replays, and changes nothing a screen shows; a sixel image (`DCS
+q … ST`), an APC string such as a kitty graphics command (`APC … ST`) and an OSC 8 hyperlink
+(`OSC 8 ; params ; uri BEL`) are skipped as strings, so they change nothing a terminal shows. -/
+inductive Kept where
+  /-- DECSCUSR with shape `k`. -/
+  | shape (k : Fin 7)
+  /-- A sixel image's data. -/
+  | sixel (data : List UInt8)
+  /-- An APC string's data. -/
+  | apc (data : List UInt8)
+  /-- A hyperlink's parameters and URI. -/
+  | hyperlink (params uri : List UInt8)
+
+/-- The bytes of a kept or skipped sequence. -/
+@[expose]
+def Kept.bytes : Kept → List UInt8
+  | .shape k => [0x1B, 0x5B] ++ dec k.val ++ [0x20, 0x71]
+  | .sixel d => [0x1B, 0x50, 0x71] ++ d ++ [0x1B, 0x5C]
+  | .apc d => [0x1B, 0x5F] ++ d ++ [0x1B, 0x5C]
+  | .hyperlink p u => [0x1B, 0x5D, 0x38, 0x3B] ++ p ++ [0x3B] ++ u ++ [0x07]
+
+/-- A string's data holds no ESC, and a hyperlink's no BEL either, so the string ends where its
+terminator is. -/
+@[expose]
+def Kept.Ok : Kept → Prop
+  | .shape _ => True
+  | .sixel d | .apc d => ∀ b ∈ d, b ≠ 0x1B
+  | .hyperlink p u => ∀ b ∈ p ++ u, b ≠ 0x07 ∧ b ≠ 0x1B
+
+/-- The modes after a kept sequence: DECSCUSR sets the cursor's shape, and the others none. -/
+@[expose]
+def Kept.modes (m : Modes) : Kept → Modes
+  | .shape k => { m with cursorShape := k }
+  | _ => m
+
+/-- A wrong emulator that does not skip strings: it drops every ESC, so a string's data prints. -/
+@[expose]
+def unescaped {V : Type} (feed : V → List UInt8 → V) (v : V) (bytes : List UInt8) : V :=
+  feed v (bytes.filter (· != 0x1B))
+
+/-! ### Wrong emulators the reference refutes -/
+
+/-- An emulator whose EL 0 erases the whole line. -/
+@[expose]
+def elWhole {V : Type} (feed : V → List UInt8 → V) (v : V) (bytes : List UInt8) : V :=
+  feed v (if bytes = Seq.bytes (.el 0) then Seq.bytes (.el 2) else bytes)
+
+/-- An emulator that reads CUP's row and column from 0: `CSI 1 ; 1 H` goes to the second row
+and column. -/
+@[expose]
+def cupFromZero {V : Type} (feed : V → List UInt8 → V) (v : V) (bytes : List UInt8) : V :=
+  feed v (if bytes = Seq.bytes (.cup 1 1) then Seq.bytes (.cup 2 2) else bytes)
+
+/-- An emulator without the deferred wrap: a print into the last column wraps at once. -/
+@[expose]
+def eagerWrap {V : Type} (feed : V → List UInt8 → V) (colCount : V → Nat)
+    (cursorPos : V → Nat × Nat) (v : V) (bytes : List UInt8) : V :=
+  if bytes.length = 1 ∧ (cursorPos v).1 + 1 = colCount v then feed (feed v bytes) [0x0D, 0x0A]
+  else feed v bytes
+
+/-- An emulator whose SGR 0 keeps bold. -/
+@[expose]
+def resetKeepsBold {V : Type} (feed : V → List UInt8 → V) (getPen : V → Pen) (v : V)
+    (bytes : List UInt8) : V :=
+  if bytes = Seq.bytes (.sgr [.reset]) ∧ (getPen v).bold = true then
+    feed v (Seq.bytes (.sgr [.reset, .bold]))
+  else feed v bytes
+
+/-- An emulator whose IL keeps the cursor's column. -/
+@[expose]
+def ilKeepsColumn {V : Type} (feed : V → List UInt8 → V) (cursorPos : V → Nat × Nat) (v : V)
+    (bytes : List UInt8) : V :=
+  if bytes = Seq.bytes (.il 1) then feed (feed v bytes) (Seq.bytes (.cha ((cursorPos v).1 + 1)))
+  else feed v bytes
+
+end Ref
+
 end Terminal.Vt
 
 namespace Terminal.Render
