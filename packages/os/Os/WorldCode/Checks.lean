@@ -179,9 +179,12 @@ opaque groupReached : Nat → Nat → Bool
 Check Os.Signal.Group grouped groupReached := do
   IO.FS.withTempDir fun dir => do
       let note (who : String) := s!"trap ': > {dir}/{who}; exit 0' TERM"
-      let member (who : String) := s!"({note who}; while :; do sleep 0.05; done) &"
+      let member (who : String) :=
+        s!"({note who}; : > {dir}/{who}.ready; while :; do sleep 0.05; done) &"
+      -- the group is announced once each job has set its trap, so the signal finds them set
       let script :=
         s!"{member "first"} {member "second"} {note "leader"}; " ++
+          s!"while [ ! -e {dir}/first.ready ] || [ ! -e {dir}/second.ready ]; do sleep 0.05; done; " ++
           s!"ps -o pgid= -p $! > {dir}/group.part && mv {dir}/group.part {dir}/group; " ++
           "while :; do sleep 0.05; done"
       let (pid, master) ← Os.Shell.spawnPty 80 24 "" "/bin/sh" #["-c", script] #[]
