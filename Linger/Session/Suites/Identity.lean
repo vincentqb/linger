@@ -89,6 +89,19 @@ private def lockChecks (e : Env) : IO Unit := do
       (renameRc == 0 && (← System.FilePath.pathExists s!"{e.dir}/renamed.lock") &&
         !(← System.FilePath.pathExists s!"{e.dir}/names/.lock"))
       "a renamed session keeps its ID's lock files, which its entry names, and the names lock goes once let go"
+  -- A check that starts a daemon ends it: the renamed session ends by its new name, and its daemon
+  -- with it, so no run leaves one behind.
+  let renamedDaemon ← e.daemonPid "renamed2"
+  let (renamedRc, _, _) ← e.cli #["kill", "renamed2"]
+  let renamedEnded ←
+    match renamedDaemon with
+    | some pid =>
+      waitFor 5000 (return !(← alive pid))
+    | none =>
+      pure false
+  expect
+      (renamedRc == 0 && renamedEnded && !(← System.FilePath.pathExists s!"{e.dir}/renamed.sock"))
+      "a renamed session ends by its new name, and its daemon ends with it"
   -- Deleting lock files keeps a name to one owner: while commands on a name no record names
   -- delete its lock files, as many `start`s of it race, exactly one takes the name.
   let mut owners : List Nat := []
