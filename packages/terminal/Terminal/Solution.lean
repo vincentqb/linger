@@ -55,7 +55,7 @@ theorem replay_restores_rejects_resaved :
   have streamed :
     Replay.Emits Replay.next 1
       (Replay.start (((Vt.Vt.init 2 1).feed [0x1B, 0x37, 0x41]).feed [0x1B, 0x37]))
-      (Render.restore (((Vt.Vt.init 2 1).feed [0x1B, 0x37, 0x41]).feed [0x1B, 0x37])) := by
+      (Render.synced (((Vt.Vt.init 2 1).feed [0x1B, 0x37, 0x41]).feed [0x1B, 0x37])) := by
     rw [← Replay.start_faithful]
     exact Replay.emits_remaining 1 Nat.one_pos _
   have same := Replay.Emits.unique emits streamed
@@ -74,9 +74,14 @@ theorem replay_history (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
     ∃ bytes,
       Replay.Emits Replay.next budget (Replay.start v) bytes ∧
         (w.feed bytes).scrollback = (Render.sbRows v).toList := by
-  refine ⟨Render.restore v, ?_, Render.restore_sb_reachable v w (hw) (hv) hcols hrows retained⟩
-  rw [← Replay.start_faithful v]
-  exact Replay.emits_remaining budget positive (Replay.start v)
+  obtain ⟨hc, hr, hlive⟩ := Render.syncBegin_keeps w
+  refine ⟨Render.synced v, ?_, ?_⟩
+  · rw [← Replay.start_faithful v]
+    exact Replay.emits_remaining budget positive (Replay.start v)
+  · rw [Render.feed_synced]
+    exact
+      Render.restore_sb_reachable v (w.feed Render.syncBegin) (hlive hw) hv (hc.trans hcols)
+        (hr.trans hrows) retained
 
 theorem replay_history_rejects_silence :
     ¬∀ (budget : Nat),
@@ -101,6 +106,42 @@ theorem replay_history_rejects_silence :
   | done =>
     rw [Render.sbRows_observed] at history
     exact absurd (congrArg List.length history) (by decide +kernel)
+
+theorem replay_synchronized (budget : Nat) (positive : 0 < budget) (v : Vt.Vt)
+    (bytes : Render.Bytes) (emits : Replay.Emits Replay.next budget (Replay.start v) bytes) :
+    ∃ body,
+      bytes = Render.syncBegin ++ body ++ Render.syncEnd ∧
+        ¬Render.syncBegin <:+: body ∧ ¬Render.syncEnd <:+: body := by
+  have streamed : Replay.Emits Replay.next budget (Replay.start v) (Render.synced v) := by
+    rw [← Replay.start_faithful v]
+    exact Replay.emits_remaining budget positive (Replay.start v)
+  rw [Replay.Emits.unique emits streamed]
+  exact ⟨Render.restore v, rfl, (Render.restore_noBracket v).1, (Render.restore_noBracket v).2.1⟩
+
+theorem replay_synchronized_rejects_bare :
+    ¬∀ (budget : Nat),
+        0 < budget →
+          ∀ (v : Vt.Vt),
+            ∀ (bytes : Render.Bytes),
+              Replay.Emits Replay.next budget (Replay.unbracketed Replay.start Replay.next v)
+                  bytes →
+                ∃ body,
+                  bytes = Render.syncBegin ++ body ++ Render.syncEnd ∧
+                    ¬Render.syncBegin <:+: body ∧ ¬Render.syncEnd <:+: body := by
+  intro h
+  -- past its first step, the opening bracket, a repaint starts with the ST that grounds its
+  -- receiver, `ESC \`, where a synchronized update has `ESC [`
+  obtain ⟨body, eq, -, -⟩ :=
+    h 1 Nat.one_pos (Vt.Vt.init 1 1) _
+      (Replay.emits_remaining 1 Nat.one_pos
+        (Replay.unbracketed Replay.start Replay.next (Vt.Vt.init 1 1)))
+  have lead := congrArg (List.take 2) eq
+  have bare :
+    (Replay.remaining (Replay.unbracketed Replay.start Replay.next (Vt.Vt.init 1 1))).take 2 =
+      [0x1B, 0x5C] := by
+    decide +kernel
+  rw [bare] at lead
+  simp [Render.syncBegin] at lead
 
 theorem history_grows (v : Vt.Vt)
     (hv : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v) :

@@ -103,8 +103,8 @@ theorem clean_sgr (params : List Nat) : Clean (Listing.sgr params) := by
   rw [sgr_bytes]
   exact clean_piece (by simp [Piece.Ok])
 
-/-- Resetting any DEC private mode is clean, and so is setting mode 7, 25, 1049 or 2004. -/
-theorem clean_modeSet (n : Nat) (on : Bool) (h : on = true → n ∈ [7, 25, 1049, 2004]) :
+/-- Resetting any DEC private mode is clean, and so is setting mode 7, 25, 1049, 2004 or 2026. -/
+theorem clean_modeSet (n : Nat) (on : Bool) (h : on = true → n ∈ [7, 25, 1049, 2004, 2026]) :
     Clean (Terminal.Render.modeSet n on) := by
   rw [modeSet_bytes]
   refine clean_piece ?_

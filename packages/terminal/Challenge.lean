@@ -24,8 +24,10 @@ no later output tells the two apart, so the receiver also holds what the emulato
 accessor shows, such as the deferred wrap, the tab ruler, the cursor DECSC saved and the main
 screen the alternate one stashes, its rows among them. When
 `Render.sbRows` picks any history rows, the newest that fit the repaint's budget for history, the
-receiver's history is those rows (`replay_history`). Not claimed of a repaint: more than that of
-a receiver of another size, or of a terminal or receiver no session holds; older history; the
+receiver's history is those rows (`replay_history`). A repaint, at any budget, is one
+synchronized update: it opens with `CSI ? 2026 h`, closes with `CSI ? 2026 l` and holds neither
+inside (`replay_synchronized`), so a terminal that knows DEC mode 2026 shows it whole. Not claimed
+of a repaint: more than that of a receiver of another size, or of a terminal or receiver no session holds; older history; the
 window title, which it scrubs of C0 controls and DEL and a receiver may cut short; the mouse mode
 once later output arrives, or at all when it is other than off, 1000, 1002 and 1003, which only a
 decoded checkpoint holds; the bell, which stays the receiver's; and what later output shows of a
@@ -134,6 +136,26 @@ theorem replay_history_rejects_silence :
               ∃ bytes,
                 Replay.Emits (fun _ _ => none) budget (Replay.start v) bytes ∧
                   (w.feed bytes).scrollback = (Render.sbRows v).toList := by
+  sorry
+
+theorem replay_synchronized (budget : Nat) (positive : 0 < budget) (v : Vt.Vt)
+    (bytes : Render.Bytes) (emits : Replay.Emits Replay.next budget (Replay.start v) bytes) :
+    ∃ body,
+      bytes = Render.syncBegin ++ body ++ Render.syncEnd ∧
+        ¬Render.syncBegin <:+: body ∧ ¬Render.syncEnd <:+: body := by
+  sorry
+
+@[kills replay_synchronized]
+theorem replay_synchronized_rejects_bare :
+    ¬∀ (budget : Nat),
+        0 < budget →
+          ∀ (v : Vt.Vt),
+            ∀ (bytes : Render.Bytes),
+              Replay.Emits Replay.next budget (Replay.unbracketed Replay.start Replay.next v)
+                  bytes →
+                ∃ body,
+                  bytes = Render.syncBegin ++ body ++ Render.syncEnd ∧
+                    ¬Render.syncBegin <:+: body ∧ ¬Render.syncEnd <:+: body := by
   sorry
 
 theorem history_grows (v : Vt.Vt)

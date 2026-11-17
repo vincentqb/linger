@@ -696,6 +696,10 @@ private def restoreBody (v : Vt) : Bytes :=
 /-- The reattach byte stream. -/
 def restore (v : Vt) : Bytes := restoreBody v ++ cursorAnsi v ++ cursorPendingAnsi v
 
+/-- The reattach byte stream as one synchronized update: `restore` between `syncBegin` and
+`syncEnd`, which is what `Replay.start` streams. -/
+def synced (v : Vt) : Bytes := syncBegin ++ restore v ++ syncEnd
+
 /-! ## Leave -/
 
 /-- Establish the default window title with an empty, BEL-terminated OSC 2.

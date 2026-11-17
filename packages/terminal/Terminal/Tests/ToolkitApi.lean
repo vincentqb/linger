@@ -17,7 +17,7 @@ example (budget : Nat) (p q : Replay.Plan) (bytes : Render.Bytes)
   Replay.next_bounded step
 
 example (budget : Nat) (positive : 0 < budget) (v : Vt) :
-    Replay.drain budget positive (Replay.start v) = Render.restore v :=
+    Replay.drain budget positive (Replay.start v) = Render.synced v :=
   Replay.drain_start budget positive v
 
 example (v : Vt) (title : String) : Title.update v title ≠ [] ↔ v.atBoundary = true :=

@@ -9,6 +9,7 @@ import all Terminal.Proofs.Render.PendingWrap
 import all Terminal.Proofs.Render.Grid
 import all Terminal.Proofs.Render.Tabs
 import all Terminal.Proofs.Replay
+import all Terminal.Proofs.Render.Sync
 
 /-! # A repaint restores its terminal
 
@@ -989,9 +990,8 @@ theorem shows_readable {u v : Vt} (h : readable u = readable v) :
   ⟨(congrArg Vt.colCount h :), (congrArg Vt.rowCount h :), fun y _ =>
     (congrArg (Vt.getRow · y) h :), (congrArg Vt.cursorPos h :), (congrArg stick h :)⟩
 
-/-- **A repaint restores its terminal.** Any receiver of the repaint of any terminal, streamed at
-any positive budget, holds the terminal's pen and every mode but the mouse mode
-(`restore_pen_any`, `restore_modes_unmoused`), the mouse mode too when a program could have set
+/-- **A repaint restores its terminal.** Any receiver of the repaint of any terminal holds the
+terminal's pen and every mode but the mouse mode (`restore_pen_any`, `restore_modes_unmoused`), the mouse mode too when a program could have set
 it (`restore_modes_any`), and sits between control sequences and characters
 (`restore_quiesced_any`); one as tall as the terminal holds its sticky fields when DECSTBM could
 have set its region (`restore_sticky_any`). A live receiver of a live terminal's size shows the
@@ -999,18 +999,14 @@ terminal's screen, since it reads as the terminal does once the terminal's parti
 is forgotten (`restore_readable_quiesce`). When the terminal sits between control sequences and
 characters too, the receiver reads the same as the terminal (`restore_readable`), and later
 output cannot tell apart two terminals it reads the same of (`readable_feed`). -/
-theorem restores (budget : Nat) (positive : 0 < budget) (v w : Vt) :
-    ∃ bytes,
-      Replay.Emits Replay.next budget (Replay.start v) bytes ∧
-        Restores LiveReachableVt Vt.feed Vt.colCount Vt.rowCount Vt.getRow Vt.cursorPos Vt.getPen
-          Vt.getModes stick Vt.atBoundary v w (w.feed bytes) := by
+theorem restore_restores (v w : Vt) :
+    Restores LiveReachableVt Vt.feed Vt.colCount Vt.rowCount Vt.getRow Vt.cursorPos Vt.getPen
+      Vt.getModes stick Vt.atBoundary v w (w.feed (restore v)) := by
   refine
-    ⟨restore v, ?_, restore_pen_any v w, ?_, fun mouse =>
-      congrArg Modes.mouse (restore_modes_any v w mouse), ?_, fun height region inside fits =>
-      restore_sticky_any v w height region inside fits, fun hv hw hcols hrows =>
+    ⟨restore_pen_any v w, ?_, fun mouse => congrArg Modes.mouse (restore_modes_any v w mouse), ?_,
+      fun height region inside fits => restore_sticky_any v w height region inside fits,
+      fun hv hw hcols hrows =>
       ⟨(shows_readable (restore_readable_quiesce v w hv hw hcols hrows) :), fun hb later => ?_⟩⟩
-  · rw [← Replay.start_faithful v]
-    exact Replay.emits_remaining budget positive (Replay.start v)
   · -- stated through `modes` itself, so no check unfolds the receiver's feed
     unfold Vt.getModes
     exact restore_modes_unmoused v w
@@ -1020,5 +1016,44 @@ theorem restores (budget : Nat) (positive : 0 < budget) (v w : Vt) :
     exact
       ⟨shows_readable h, (congrArg Vt.getPen h :), (congrArg Vt.getModes h :),
         (congrArg Vt.atBoundary h :)⟩
+
+/-- The repaint as one synchronized update: the closing bracket finds the receiver between
+control sequences and characters, where it changes nothing (`feed_syncEnd`). -/
+theorem feed_synced (v w : Vt) : w.feed (synced v) = (w.feed syncBegin).feed (restore v) := by
+  unfold synced
+  rw [feed_append, feed_append, feed_syncEnd]
+  obtain ⟨hp, hn⟩ := restore_quiesced_any v (w.feed syncBegin)
+  simp [Vt.atBoundary, hp, hn]
+
+/-- The opening bracket keeps what `Restores` asks of the receiver: its size, and that a session
+holds it. -/
+theorem syncBegin_keeps (w : Vt) :
+    (w.feed syncBegin).cols = w.cols ∧
+      (w.feed syncBegin).rows = w.rows ∧
+      (LiveReachableVt w → LiveReachableVt (w.feed syncBegin)) := by
+  have h := dims_feed_ne_ris syncBegin (v := w) (by decide)
+  simp only [dims, Prod.mk.injEq] at h
+  exact ⟨h.1, h.2, fun hw => .feed hw syncBegin⟩
+
+/-- **A repaint restores its terminal**, streamed at any positive budget as one synchronized
+update: the receiver the repaint meets is the one the opening bracket left, of the same size and
+held by a session when the first is (`syncBegin_keeps`), and the closing bracket changes nothing
+(`feed_synced`), so `restore_restores` carries over. -/
+theorem restores (budget : Nat) (positive : 0 < budget) (v w : Vt) :
+    ∃ bytes,
+      Replay.Emits Replay.next budget (Replay.start v) bytes ∧
+        Restores LiveReachableVt Vt.feed Vt.colCount Vt.rowCount Vt.getRow Vt.cursorPos Vt.getPen
+          Vt.getModes stick Vt.atBoundary v w (w.feed bytes) := by
+  refine ⟨synced v, ?_, ?_⟩
+  · rw [← Replay.start_faithful v]
+    exact Replay.emits_remaining budget positive (Replay.start v)
+  · obtain ⟨hcols, hrows, hlive⟩ := syncBegin_keeps w
+    obtain ⟨h1, h2, h3, h4, h5, h6⟩ := restore_restores v (w.feed syncBegin)
+    rw [feed_synced]
+    refine
+      ⟨h1, h2, h3, h4, fun height => h5 (by simpa [stick, hrows] using height), fun hv hw hc hr =>
+        h6 hv (hlive hw) ?_ ?_⟩
+    · simpa [Vt.colCount, hcols] using hc
+    · simpa [Vt.rowCount, hrows] using hr
 
 end Terminal.Render

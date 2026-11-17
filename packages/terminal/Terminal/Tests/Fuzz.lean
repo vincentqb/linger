@@ -100,11 +100,11 @@ def failingDeep (count : Nat) : List Nat :=
 example : failingDeep 150 = [] := by native_decide
 
 /-- Whether a receiver that parsed `v`'s repaint shows every row `v` shows once `later` reaches
-both. A stream of any positive budget is `restore v` (`Replay.drain_start`). A repaint taken
+both. A stream of any positive budget is `synced v` (`Replay.drain_start`). A repaint taken
 inside a control sequence or a character is outside the claim, so such a case passes. -/
 def keepsShowing (v : Vt.Vt) (later : String) : Bool :=
   let bytes := later.toUTF8.toList
-  let w := (Vt.Vt.init v.colCount v.rowCount).feed (restore v)
+  let w := (Vt.Vt.init v.colCount v.rowCount).feed (synced v)
   !v.atBoundary ||
     (List.range (v.feed bytes).rowCount).all fun y =>
       (w.feed bytes).getRow y == (v.feed bytes).getRow y

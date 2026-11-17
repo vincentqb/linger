@@ -135,7 +135,7 @@ private def largeReplay (dir : String) (marks : Bool) : IO Unit := do
   let some vt := Linger.Session.Tests.Delivery.acceptedScreen marks
     | throw (IO.userError "large delivery fixture is not an accepted checkpoint")
   let label := if marks then "marks" else "colours"
-  let repaint := ByteArray.mk (Render.restore vt).toArray
+  let repaint := ByteArray.mk (Render.synced vt).toArray
   let live := "\r\nlive-after-replay!".toUTF8
   let expected := repaint ++ live
   withPair dir label vt fun rt peer fd => do
@@ -185,7 +185,7 @@ private def exitTail (dir : String) : IO Unit :=
 runtime state would paint the resized screen instead of the attach snapshot. -/
 def snapshotOrder (dir : String) : IO Unit := do
   let vt := (Terminal.Vt.Vt.init 20 5).feed "snapshot".toUTF8.toList
-  let expected := ByteArray.mk (Render.restore vt).toArray
+  let expected := ByteArray.mk (Render.synced vt).toArray
   withPair dir "snapshot" vt fun rt peer fd => do
       let rt ←
         pump rt
@@ -204,7 +204,7 @@ def pendingWrap (dir : String) : IO Unit := do
         ("stash", "\x1b[?1049h", "\x1b[?1049lX")] do
       let vt := (Vt.Vt.init 4 2).feed (text ++ before).toUTF8.toList
       let live := after.toUTF8
-      let expected := ByteArray.mk (Render.restore vt).toArray ++ live
+      let expected := ByteArray.mk (Render.synced vt).toArray ++ live
       withPair dir s!"pending-{slot}-{glyph}" vt fun rt peer fd => do
           let rt ←
             pump rt [.bytes fd.toNat (Wire.encode (.attach .readOnly 0 0)), .ptyOut live.toList]
@@ -219,7 +219,7 @@ def pendingWrap (dir : String) : IO Unit := do
 
 private def repeatedAttach (dir : String) : IO Unit := do
   let vt := Terminal.Vt.Vt.init 20 5
-  let expected := ByteArray.mk (Render.restore vt).toArray
+  let expected := ByteArray.mk (Render.synced vt).toArray
   withPair dir "repeat" vt fun rt peer fd => do
       let request := Wire.encode (.attach .writable 20 5)
       let rt ← pump rt [.bytes fd.toNat (request ++ request)]
@@ -262,7 +262,7 @@ def prefixOrder (dir : String) : IO Unit := do
           runEffect rt (.send fd.toNat (.output (List.replicate Session.outputChunk 0x41)))
         rt ← pump rt' events
       rt ← pump rt [.bytes fd.toNat (Wire.encode (.attach .readOnly 0 0)), .ptyOut [0x5A]]
-      let expected := preceding ++ ByteArray.mk (Render.restore vt).toArray ++ "Z".toUTF8
+      let expected := preceding ++ ByteArray.mk (Render.synced vt).toArray ++ "Z".toUTF8
       let (_, got) ← collect rt peer expected.size
       expect (got.bytes == expected && !got.eof && !got.decoder.errored)
           "delivery/prefix/queued-reply-replay-live"
@@ -274,7 +274,7 @@ def titleChunks (dir : String) : IO Unit := do
     | throw (IO.userError "delivery title fixture was refused")
   withPair dir "title" vt fun rt peer fd => do
       let rt ← pump rt [.bytes fd.toNat (Wire.encode (.attach .readOnly 0 0))]
-      let expected := ByteArray.mk (Render.restore vt).toArray
+      let expected := ByteArray.mk (Render.synced vt).toArray
       let (_, got) ← collect rt peer expected.size
       expect (got.bytes == expected && !got.decoder.errored && got.bounded)
           "delivery/title/exact-sanitized-chunks"
@@ -404,7 +404,7 @@ private def serveTail (dir : String) : IO Unit := do
     peer.set (some fd)
     setNonblock fd
     writeAll fd (ByteArray.mk (Wire.encode (.attach .readOnly 0 0)).toArray)
-    let repaint := ByteArray.mk (Render.restore (Terminal.Vt.Vt.init 20 5)).toArray
+    let repaint := ByteArray.mk (Render.synced (Terminal.Vt.Vt.init 20 5)).toArray
     let mut got : Received := {}
     let attachedBy := (← IO.monoMsNow) + 10000
     while !got.eof && got.bytes.size < repaint.size && (← IO.monoMsNow) < attachedBy do

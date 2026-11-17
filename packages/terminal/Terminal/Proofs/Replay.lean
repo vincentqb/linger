@@ -27,9 +27,11 @@ def partsBytes (parts : List Part) : Render.Bytes := parts.flatMap partBytes
 def remaining (p : Plan) : Render.Bytes := p.pending ++ partsBytes p.parts
 
 /-- The snapshot cursor denotes the same stream as the complete renderer,
-including both screens, inherited row pens, separators and final controls. -/
-theorem start_faithful (v : Vt) : remaining (start v) = Render.restore v := by
-  unfold start remaining partsBytes Render.restore Render.restoreBody Render.screensAnsi
+including both screens, inherited row pens, separators and final controls, between the
+brackets of one synchronized update. -/
+theorem start_faithful (v : Vt) : remaining (start v) = Render.synced v := by
+  unfold start remaining partsBytes Render.synced Render.restore Render.restoreBody
+    Render.screensAnsi
   cases v.altGrid with
   | none => simp [partBytes, Render.gridAnsi_eq, Render.titleAnsi, List.append_assoc]
   | some saved =>
@@ -242,7 +244,7 @@ decreasing_by exact next_progress positive (by assumption)
 
 /-- End-to-end exactness without any assumption on the snapshot's contents. -/
 public theorem drain_start (budget : Nat) (positive : 0 < budget) (v : Vt) :
-    drain budget positive (start v) = Render.restore v := by rw [drain_faithful, start_faithful]
+    drain budget positive (start v) = Render.synced v := by rw [drain_faithful, start_faithful]
 
 /-- **Streaming emits exactly what remains.** With a positive budget the walk from any plan
 ends, and its chunks, each within the budget, concatenate to the plan's remaining bytes. -/

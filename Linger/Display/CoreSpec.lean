@@ -233,7 +233,8 @@ def Piece.bytes : Piece → List UInt8
 /-- The pieces linger may write. Text, titles and notifications are printable. A control sequence selects
 graphic rendition (`m`), moves the cursor (`H`), sets the scroll region (`r`), erases the screen
 but not its scrollback (`J` with parameters at most 2), resets a mode (`l`), or sets DEC private
-mode 7 (autowrap), 25 (cursor shown), 1049 (alternate screen) or 2004 (bracketed paste) (`h`).
+mode 7 (autowrap), 25 (cursor shown), 1049 (alternate screen), 2004 (bracketed paste) or 2026
+(synchronized update) (`h`).
 An escape ends a string (`\`) or selects the keypad's numeric mode (`>`), and the cursor's shape
 goes back to the terminal's own. No piece asks the terminal for a reply, resets it or erases its
 scrollback, and bracketed paste is the one mode a piece sets that changes what the terminal
@@ -244,7 +245,7 @@ def Piece.Ok : Piece → Prop
   | .csi priv params final =>
     (priv = false ∧
         (final = 0x6D ∨ final = 0x48 ∨ final = 0x72 ∨ (final = 0x4A ∧ ∀ n ∈ params, n ≤ 2))) ∨
-      final = 0x6C ∨ (final = 0x68 ∧ priv = true ∧ ∀ n ∈ params, n ∈ [7, 25, 1049, 2004])
+      final = 0x6C ∨ (final = 0x68 ∧ priv = true ∧ ∀ n ∈ params, n ∈ [7, 25, 1049, 2004, 2026])
   | .title cs | .notify cs => ∀ c ∈ cs, Printable c
   | .esc final => final = 0x5C ∨ final = 0x3E
   | .lf | .cr | .tab | .ascii _ | .shiftIn | .shapeDefault => True

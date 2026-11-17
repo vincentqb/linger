@@ -37,7 +37,9 @@ abbrev Plan : Type := PlanRec
 
 /-- Capture at the pure event point, before later messages can resize or feed
 the terminal. Literal stages are renderer control/history bytes; screen paints
-remain shared rows and the title remains a shared slice until demanded. -/
+remain shared rows and the title remains a shared slice until demanded. The repaint is one
+synchronized update: its first step sends `Render.syncBegin` alone, and its last bytes are
+`Render.syncEnd`, so a terminal that knows DEC mode 2026 shows it whole. -/
 def start (v : Vt) : Plan :=
   let header := Render.csiNum 0 0x6D ++ (Render.csiB ++ [0x48])
   let before :=
@@ -50,7 +52,8 @@ def start (v : Vt) : Plan :=
   let after :=
     [0x07] ++ Render.modesAnsi v ++ Render.charsetAnsi v ++ Render.penSgr v.getPen ++
       Render.cursorAnsi v ++
-      Render.cursorPendingAnsi v
+      Render.cursorPendingAnsi v ++
+      Render.syncEnd
   let screens :=
     match v.altGrid with
     | none => [Part.rows v.grid.toList {}]
@@ -61,7 +64,8 @@ def start (v : Vt) : Plan :=
             Render.originOffAnsi ms ++
             header),
         .rows v.grid.toList {}]
-  { parts := .bytes before :: screens ++ [.bytes title, .text v.title.toSlice, .bytes after] }
+  { parts := .bytes before :: screens ++ [.bytes title, .text v.title.toSlice, .bytes after]
+    pending := Render.syncBegin }
 
 /-- One bounded step. Empty output advances a stage or renders one row; callers
 continue until there are bytes or `none`. For a positive budget every successful

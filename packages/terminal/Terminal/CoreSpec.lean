@@ -5,9 +5,9 @@ public section
 /-! # What terminal headlines are stated in
 
 The values a terminal shows (colours, pens, cells, rows, modes and the screen settings a
-repaint keeps), the bytes it is fed, the rows a history keeps and the output that may ask to
-erase it, the marks a shell sends around its prompt and its commands, and predicates over the
-emulator's operations, which they take as parameters.
+repaint keeps), the bytes it is fed and the brackets of a synchronized update, the rows a history
+keeps and the output that may ask to erase it, the marks a shell sends around its prompt and its
+commands, and predicates over the emulator's operations, which they take as parameters.
 Bodies are exposed: each definition here is its own specification.
 
 `Live` is the least set of states containing a fresh emulator and closed under what a live
@@ -248,6 +248,15 @@ history's text are plain text are shown to reject it. -/
 @[expose]
 def escape {V : Type} (_ : V) : Bytes := [0x1B]
 
+/-- `CSI ? 2026 h`, which opens a synchronized update: a terminal that knows DEC private mode 2026
+holds what follows until the update closes, and shows it at once. -/
+@[expose]
+def syncBegin : Bytes := [0x1B, 0x5B, 0x3F, 0x32, 0x30, 0x32, 0x36, 0x68]
+
+/-- `CSI ? 2026 l`, which closes a synchronized update: the terminal shows what it held. -/
+@[expose]
+def syncEnd : Bytes := [0x1B, 0x5B, 0x3F, 0x32, 0x30, 0x32, 0x36, 0x6C]
+
 end Terminal.Render
 
 namespace Terminal.Replay
@@ -268,6 +277,15 @@ inductive Emits {P : Type} (next : Nat → P → Option (Render.Bytes × P)) (bu
 step of a repaint fits its budget is shown to reject it. -/
 @[expose]
 def overrun {P : Type} (_ : Nat) (p : P) : Option (Render.Bytes × P) := some ([0], p)
+
+/-- A wrong start: the plan `start` makes, past its first step of `Render.syncBegin`'s width, which
+for a plan that sends the opening bracket first is the repaint without it. The headline that a
+repaint is one synchronized update is shown to reject it. -/
+@[expose]
+def unbracketed {V P : Type} (start : V → P) (next : Nat → P → Option (Render.Bytes × P)) (v : V) :
+    P := match next Render.syncBegin.length (start v) with
+  | some (_, q) => q
+  | none => start v
 
 end Terminal.Replay
 

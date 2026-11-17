@@ -526,6 +526,18 @@ def run : IO UInt32 :=
     let out2 ← drain c2.fd 1500
     expect (hasText out2 "marker-42" && hasText out2 "while-detached-42")
         "reattach: restore replays prior screen"
+    -- The repaint is one synchronized update: the first bytes the attaching client writes open
+    -- it, and the history and the screen arrive before it closes.
+    let synced :=
+      match findBytes out2 Render.syncEnd with
+      | some close =>
+        let inside := out2.extract Render.syncBegin.length close
+        out2.toList.take Render.syncBegin.length == Render.syncBegin &&
+          !hasBytes inside Render.syncBegin &&
+          hasText inside "marker-42" &&
+          hasText inside "while-detached-42"
+      | none => false
+    expect synced "reattach: the repaint opens the client's output and is one synchronized update"
     shapeChecks e cols rows
     -- 5. two clients mirror output
     let c3 ← e.spawn #["attach", "demo"] cols rows

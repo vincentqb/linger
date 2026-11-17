@@ -48,10 +48,10 @@ def checkpointChecks (e : Env) : IO Unit := do
     let _ ←
       viewer.awaitText screen fun output =>
           let title := ((Terminal.Vt.Vt.init 40 4).feed output.toList).windowTitle
-          hasBytes output (Terminal.Render.restore vt) && has title "saved" && has title "editor" &&
+          hasBytes output (Terminal.Render.synced vt) && has title "saved" && has title "editor" &&
             has title "~"
     let output ← screen.get
-    let rendered := hasBytes output (Terminal.Render.restore vt)
+    let rendered := hasBytes output (Terminal.Render.synced vt)
     expect rendered "read-only attach replays the saved terminal and scrollback"
     if !rendered then
       return
@@ -71,11 +71,11 @@ def checkpointChecks (e : Env) : IO Unit := do
         Os.Shell.close fd.toUInt64.toUInt32
     viewer.resize 12 2
     let narrow ← IO.mkRef ByteArray.empty
-    expect (← viewer.awaitText narrow (hasBytes · (Terminal.Render.restore (vt.resize 12 2))))
+    expect (← viewer.awaitText narrow (hasBytes · (Terminal.Render.synced (vt.resize 12 2))))
         "saved viewing redraws at the viewer's terminal size"
     viewer.resize 40 4
     let wide ← IO.mkRef ByteArray.empty
-    expect (← viewer.awaitText wide (hasBytes · (Terminal.Render.restore vt)))
+    expect (← viewer.awaitText wide (hasBytes · (Terminal.Render.synced vt)))
         "expanding a saved view restores the original snapshot after clipping"
     viewer.detach
     -- the viewer exits, so this reads to its end of file
@@ -134,7 +134,7 @@ def checkpointChecks (e : Env) : IO Unit := do
     let unsized ← e.spawn #["attach", "--read-only", "saved"] cols rows
     try
       let output ← IO.mkRef ByteArray.empty
-      expect (← unsized.awaitText output (hasBytes · (Terminal.Render.restore expected)))
+      expect (← unsized.awaitText output (hasBytes · (Terminal.Render.synced expected)))
           s!"saved viewing uses checkpoint dimensions when terminal size is unspecified ({cols}x{rows})"
     finally
       unsized.bye
@@ -149,7 +149,7 @@ def checkpointChecks (e : Env) : IO Unit := do
         let output ← drain blocked.fd hangMs
         expect
             ((← blocked.reap patienceMs) == 1 && hasText output "owned by another process" &&
-              !hasBytes output (Terminal.Render.restore vt))
+              !hasBytes output (Terminal.Render.synced vt))
             "read-only attach refuses a checkpoint still owned by a daemon"
       finally
         blocked.bye
@@ -168,7 +168,7 @@ def checkpointChecks (e : Env) : IO Unit := do
   try
     let output ← IO.mkRef ByteArray.empty
     expect
-        ((← literal.awaitText output (hasBytes · (Terminal.Render.restore vt))) &&
+        ((← literal.awaitText output (hasBytes · (Terminal.Render.synced vt))) &&
           !(← System.FilePath.pathExists s!"{e.dir}/--read-only.sock"))
         "an option-like name remains an exact read-only target after --"
   finally
@@ -192,7 +192,7 @@ def checkpointChecks (e : Env) : IO Unit := do
     chooser.type "\x15saved\r"
     let selected ← drain chooser.fd 800
     expect
-        (hasBytes selected (Terminal.Render.restore (vt.resize 100 24)) &&
+        (hasBytes selected (Terminal.Render.synced (vt.resize 100 24)) &&
           !(← System.FilePath.pathExists s!"{e.dir}/saved.sock"))
         "read-only selection opens the checkpoint without resuming a program"
     chooser.detach
