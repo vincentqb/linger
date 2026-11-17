@@ -76,6 +76,24 @@ theorem that rejects it. A bell now asks, as `⚑`, and a failed exit is `✗`.)
 theorem icon_injective (s t : Status) (h : icon s = icon t) : s = t := by
   cases s <;> cases t <;> simp_all [icon]
 
+/-- **The legend tells each glyph once**: `linger help` gives each status one line, which begins
+with its glyph, and no other line. -/
+theorem legend_lines :
+    (∀ st, (legend.map fun line => line.toList.head?).count (some (icon st)) = 1) ∧
+      ∀ line ∈ legend, ∃ st, line.toList.head? = some (icon st) := by
+  refine ⟨fun st => by cases st <;> simp [legend, legendOrder, icon], fun line h => ?_⟩
+  simp only [legend, legendOrder, List.map_cons, List.map_nil, List.mem_cons, List.not_mem_nil,
+    or_false] at h
+  rcases h with h | h | h | h | h | h | h | h <;> subst h
+  · exact ⟨.asks, by simp [icon]⟩
+  · exact ⟨.working, by simp [icon]⟩
+  · exact ⟨.wantsYou, by simp [icon]⟩
+  · exact ⟨.idle, by simp [icon]⟩
+  · exact ⟨.exitedOk, by simp [icon]⟩
+  · exact ⟨.exitedBad, by simp [icon]⟩
+  · exact ⟨.resumable, by simp [icon]⟩
+  · exact ⟨.unknown, by simp [icon]⟩
+
 /-- Porcelain names carry no separator or newline, so a row stays one
 unambiguous record — the invariant that makes tab-separated output safe
 without an escaping pass. -/

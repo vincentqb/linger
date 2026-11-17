@@ -491,13 +491,6 @@ def stripMagic (l : List UInt8) : Option (Nat × List UInt8) :=
       | some rest => some (2, rest)
       | none => (legacyMagic.isPrefixOf? l).map (1, ·)
 
-/-- The description a tmux import gives a session whose fields are `labels`: the window's name,
-which tmux shows, from the field `tmux.window-title` when it is not empty, and none otherwise. -/
-public def importDescription (labels : List (String × String)) : List (String × String) :=
-  match labels.lookup "tmux.window-title" with
-  | some title => if title.isEmpty then [] else [("description", title)]
-  | none => []
-
 /-- The fields a record of format `version` holds, as they meant when it was written. Version 4
 records them as the session last had them. An earlier record that has no description reads with
 the description the import gives its labels, none for a session no import made: an import before

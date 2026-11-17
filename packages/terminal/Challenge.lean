@@ -22,7 +22,7 @@ screen is current, when DECSTBM could have set that region. A live receiver of a
 the cursor too, and, when the terminal sits between control sequences and characters as well,
 no later output tells the two apart, so the receiver also holds what the emulator reads and no
 accessor shows, such as the deferred wrap, the tab ruler, the cursor DECSC saved and the main
-screen the alternate one stashes; `replay_keeps_showing` says so of the rows alone. When
+screen the alternate one stashes, its rows among them. When
 `Render.sbRows` picks any history rows, the newest that fit the repaint's budget for history, the
 receiver's history is those rows (`replay_history`). Not claimed of a repaint: more than that of
 a receiver of another size, or of a terminal or receiver no session holds; older history; the
@@ -109,37 +109,6 @@ theorem replay_restores_rejects_resaved :
                   (Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable)
                   Vt.Vt.feed Vt.Vt.colCount Vt.Vt.rowCount Vt.Vt.getRow Vt.Vt.cursorPos Vt.Vt.getPen
                   Vt.Vt.getModes Vt.stick Vt.Vt.atBoundary v w (w.feed bytes) := by
-  sorry
-
-theorem replay_keeps_showing (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
-    (hv : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v)
-    (hw : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable w)
-    (hcols : w.colCount = v.colCount) (hrows : w.rowCount = v.rowCount)
-    (boundary : v.atBoundary = true) (later : List UInt8) :
-    ∃ bytes,
-      Replay.Emits Replay.next budget (Replay.start v) bytes ∧
-        (∀ y < v.rowCount, (w.feed bytes).getRow y = v.getRow y) ∧
-        ∀ y < (v.feed later).rowCount,
-          ((w.feed bytes).feed later).getRow y = (v.feed later).getRow y := by
-  sorry
-
-@[kills replay_keeps_showing]
-theorem replay_keeps_showing_rejects_unregioned :
-    ¬∀ (budget : Nat),
-        0 < budget →
-          ∀ (v w : Vt.Vt),
-            Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v →
-              Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable w →
-              w.colCount = v.colCount →
-              w.rowCount = v.rowCount →
-              v.atBoundary = true →
-              ∀ (later : List UInt8),
-                ∃ bytes,
-                  Replay.Emits Replay.next budget
-                      ((fun (v : Vt.Vt) => Replay.start (v.feed [0x1B, 0x5B, 0x72])) v) bytes ∧
-                    (∀ y < v.rowCount, (w.feed bytes).getRow y = v.getRow y) ∧
-                    ∀ y < (v.feed later).rowCount,
-                      ((w.feed bytes).feed later).getRow y = (v.feed later).getRow y := by
   sorry
 
 theorem replay_history (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)

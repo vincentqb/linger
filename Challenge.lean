@@ -60,7 +60,10 @@ The status rule: a session's status is one glyph for one observation, `⚑` a be
 notification since you looked, from a program still running, `⣷` output right now, `⣿` new output,
 then it stopped, `⣀` nothing new since you looked, `✓` ended with status 0, `✗` ended any other
 way, `~` saved with no daemon and `?` no answer; a program waiting for you outranks one printing,
-and titles and `ls --summary` count `⚑`, `⣿`, `✗` and `?`. Its section follows the ten parts, with
+and titles and `ls --summary` count `⚑`, `⣿`, `✗` and `?`. No two statuses share a glyph, and
+`linger help`'s legend gives each glyph one line, which begins with it (`icon_glyphs`); a row of a
+session with no daemon shows the status the legend gives what its end record says, and a remote
+host's saved row only an ending or `~` (`rowStatus_saved`). Its section follows the ten parts, with
 the titles, listings and selector views that show statuses: a view ranks rows by what needs you
 to act, `⚑`, then `✗` and `?`, then `⣿`, first, then by where the session is in its life, the
 running sessions, then the saved ones, `~`, then the ended ones, `✓` (`sort_two_keys`), so no row
@@ -122,8 +125,6 @@ def Linger.App.Commands.table : List App.Commands.Command := sorry
 
 def Linger.App.Commands.lookup : String → Option App.Commands.Command := sorry
 
-def Linger.App.Commands.usageLine : App.Commands.Command → String := sorry
-
 def Linger.App.Commands.helpLine : App.Commands.Command → String := sorry
 
 def Linger.App.Commands.helpLines : List String := sorry
@@ -131,8 +132,6 @@ def Linger.App.Commands.helpLines : List String := sorry
 def Linger.App.Fields.table : List App.Fields.Field := sorry
 
 def Linger.Os.Answer.code : Os.Answer → UInt32 := sorry
-
-def Linger.Os.Answer.listed : List Os.Answer := sorry
 
 def Linger.App.Wait.heldNameMs : Nat := sorry
 
@@ -144,6 +143,8 @@ def Linger.App.Recovery.decide : Bool → Option ByteArray → App.Recovery (Che
 def Linger.App.Recovery.visit : Bool → Option (List UInt8) → List App.Visit.Step := sorry
 
 def Linger.App.Capture.plan : List App.Capture.Step := sorry
+
+def Linger.App.Capture.phases : List App.Capture.Step → List App.Capture.Phase := sorry
 
 /-! ### Session targets -/
 
@@ -182,6 +183,8 @@ def Linger.Display.Status.classify : Status.Obs → Status.Status := sorry
 
 def Linger.Display.Status.icon : Status.Status → Char := sorry
 
+def Linger.Display.Status.legend : List String := sorry
+
 def Linger.Display.Status.summary : List Status.Status → String := sorry
 
 def Linger.Display.Status.name : Status.Status → String := sorry
@@ -211,8 +214,6 @@ def Linger.Display.Listing.program : List (String × String) → String := sorry
 def Linger.Display.View.sort {α : Type} : (α → Status.Status) → List α → List α := sorry
 
 def Linger.Display.View.before : String → String → Bool := sorry
-
-def Linger.Display.View.groups : List String → List (String × Nat) := sorry
 
 def Linger.Display.View.hidden : List String → Nat × List (String × Nat) := sorry
 
@@ -248,6 +249,8 @@ def Linger.Session.freshMs : Nat := sorry
 def Linger.Session.pollTimeout : Nat → List Nat → Int32 := sorry
 
 def Linger.Session.Offloop.ask {R W : Type} : Offloop R W → W → Offloop R W × Option W := sorry
+
+def Linger.Session.Offloop.done {R W : Type} : Offloop R W → Offloop R W × Option W := sorry
 
 def Linger.Session.step : State → Event → State × List (Effect Replay.Plan) := sorry
 
@@ -304,6 +307,8 @@ def Linger.Session.Checkpoint.loadBytes : ByteArray → Option (Checkpoint.Ckpt 
 def Linger.Session.Handoff.encode : State → Handoff.World → List UInt8 := sorry
 
 def Linger.Session.Handoff.decode : List UInt8 → Option (State × Handoff.World) := sorry
+
+def Linger.Session.Handoff.kept : Handoff.World → List Nat := sorry
 
 def Linger.Session.Upgrade.proceeds : Option (List Nat) → Bool := sorry
 
@@ -656,9 +661,11 @@ command, which reaches a session through the ID its name leads to, reaches it by
 the program, terminal, clients, waiters, description and status it keeps by its ID stay as they
 were. A start of a name that leads nowhere, because a renamed session holds the name's own ID,
 gives it a fresh ID that no session holds (`claim_fresh`); an ID shows as its entry's name or as
-itself only when it is a name, never a fresh ID (`nameOf_shown`). `rename` refuses an invalid new
-name, an old name no live or saved session has, a new one a live or saved session has, an ended
-one still listed included, and a daemon an older linger started, in that order (`rename_plan`),
+itself only when it is a name, never a fresh ID (`nameOf_shown`). `rename` moves a name exactly when
+the new name is valid, a live or saved session has the old one, none has the new one, an ended one
+still listed included, and no older linger started the session's daemon, and each refusal names
+a reason that holds (`rename_plan`), as `start` refuses a name a live or saved session holds,
+saying which (`start_plan`),
 and places a name on disk only with calls that never replace one, so of a start and a rename
 onto one name, whichever comes first, the second fails and the name keeps the first one's
 session (`one_name`, assuming `Os.Place.NoReplace`). Not claimed: that a command resolves its
@@ -679,10 +686,11 @@ fits a width in display columns (`rowText_fits`), and each character is printabl
 program, directory, age and watchers cells, each take the display columns its view's layout gives
 them while the name fits its column, so each field starts at one column in every row
 (`columns_aligned`), and each cell reads only its own fields (`cells_sources`); the layout may
-depend on the view, a cell's content may not. Not claimed:
+depend on the view, a cell's content may not. A session's `info` reports the foreground the
+operating system reports of its terminal as that process sees itself, its words, its process and
+its directory (`info_foreground`, over `Pty.Foreground`, which its check tests). Not claimed:
 that the daemon reports the title, foreground and idle time it read, which the overview suite
-checks, what the operating system reports of the foreground, which `Pty.Foreground` assumes
-and its check tests, that a row shows the text of a notification right after its caption
+checks, and that a row shows the text of a notification right after its caption
 while its session asks, and only then, and how the last command that finished unseen ended right
 after that, which the listing tests and the status suite check.
 In the chooser, a key does only what it does in a line editor: Enter attaches only to a listed
@@ -1030,15 +1038,6 @@ theorem step_resizes_sized_rejects_zero :
                       rows.toNat = Vt.clampDim height.toNat := by
   sorry
 
-theorem remotesFile_home (home : Option String) :
-    Os.Env.remotesFile home = none ↔ home = none ∨ home = some "" := by sorry
-
-@[kills remotesFile_home]
-theorem remotesFile_home_rejects_shared :
-    ¬∀ (home : Option String),
-        (fun (_ : Option String) => some "remotes") home = none ↔ home = none ∨ home = some "" := by
-  sorry
-
 theorem rowFields_name (socketName : String) (info : List (String × String)) :
     (Listing.rowFields socketName info).lookup "name" = some socketName := by sorry
 
@@ -1087,6 +1086,38 @@ theorem caption_precedence_rejects_described :
             ¬(Listing.command (Listing.program info)).toList <:+:
                 ((fun (info : List (String × String)) => (info.lookup "description").getD "")
                     info).toList) := by
+  sorry
+
+theorem info_foreground (reported seen : UInt32 → Option Foreground)
+    (foreground : Pty.Foreground reported seen) (s : State) (master : UInt32) (o : Observation)
+    (read : o.foreground = reported master) {fg : Foreground} (found : reported master = some fg) :
+    ∃ process,
+      seen master = some process ∧
+        ("fg", String.intercalate " " process.argv) ∈
+          Session.infoFields (Session.step s (.observed o)).1 ∧
+        ("fgpid", toString process.pid) ∈ Session.infoFields (Session.step s (.observed o)).1 ∧
+        ("fgdir", process.dir) ∈ Session.infoFields (Session.step s (.observed o)).1 := by
+  sorry
+
+@[kills info_foreground]
+theorem info_foreground_rejects_unreported :
+    ¬∀ (reported seen : UInt32 → Option Foreground),
+        Pty.Foreground reported seen →
+          ∀ (s : State) (master : UInt32) (o : Observation),
+            o.foreground = reported master →
+              ∀ {fg : Foreground},
+                reported master = some fg →
+                  ∃ process,
+                    seen master = some process ∧
+                      ("fg", String.intercalate " " process.argv) ∈
+                        (fun (_ : State) => ([] : List (String × String)))
+                          (Session.step s (.observed o)).1 ∧
+                      ("fgpid", toString process.pid) ∈
+                        (fun (_ : State) => ([] : List (String × String)))
+                          (Session.step s (.observed o)).1 ∧
+                      ("fgdir", process.dir) ∈
+                        (fun (_ : State) => ([] : List (String × String)))
+                          (Session.step s (.observed o)).1 := by
   sorry
 
 theorem rowText_fits (width : Option Nat) (layout : Listing.Layout)
@@ -1317,7 +1348,9 @@ theorem picker_eof_empty_rejects_cancel :
 operating system runs what linger asks (`start_runs`, in part 4); `LINGER_SESSION` holds the
 session's ID, which no rename changes. A program that cannot start there
 makes `start` return what `env -C` would, and a resume that runs elsewhere than its saved directory
-says so.
+says so. An unset or empty variable reads as its standard default: SHELL as `sh`, HOME as no
+remotes file and no directory a resume runs in, and `LINGER_NO_DETACH_KEY`, set to anything, turns
+the detach key off for a writable attach only (`env_defaults`).
 
 A command on a `name@host` target runs through the host's transport, a command that runs linger
 elsewhere: the one the remotes file names for the host, or else ssh. Linger runs the transport's
@@ -1336,7 +1369,7 @@ authentication included; that the remote linger decodes, since an older one refu
 line as a usage error; nor that a command line fits the remote host's argument limit.
 
 The command line is complete and minimal. Every operation of the session model, `Op`, has a
-command, a word that names it (`commands_complete`), and exactly one: one word names each
+command, a word that names it, and exactly one: one word names each
 operation, so no command is another's alias or a second reader or writer of what another reads or
 writes, the table has one row for each operation, in `Op.all`'s order, each word names its own
 row, and help lists the rows, each line its command's word (`commands_minimal`). A command exists
@@ -1378,17 +1411,6 @@ theorem route_exact_rejects_selector :
           if args.head? = some Remote.marker then
             (Remote.decode args.tail).elim .malformed App.Entry.Route.of
           else App.Entry.Route.of args := by
-  sorry
-
-theorem commands_complete (op : App.Commands.Op) :
-    ∃ word, (App.Commands.lookup word).map (·.op) = some op := by sorry
-
-@[kills commands_complete]
-theorem commands_complete_rejects_none :
-    ¬∀ (op : App.Commands.Op),
-        ∃ word,
-          ((fun (_ : String) => (none : Option App.Commands.Command)) word).map (·.op) =
-            some op := by
   sorry
 
 theorem commands_minimal :
@@ -1450,20 +1472,6 @@ theorem fields_owned_rejects_named_twice :
               op ∈ App.Commands.Op.all ∧ ∀ g ∈ App.Fields.namedTwice, g.owner = .user op → g = f) ∧
         ∀ f ∈ App.Fields.namedTwice,
           ∀ g ∈ App.Fields.namedTwice, f.owner = g.owner → f.role = g.role → f = g) := by
-  sorry
-
-theorem usageLine_exact (command : App.Commands.Command) :
-    App.Commands.usageLine command =
-      if command.args.isEmpty then s!"usage: linger {command.word}"
-      else s!"usage: linger {command.word} {command.args}" := by
-  sorry
-
-@[kills usageLine_exact]
-theorem usageLine_exact_rejects_bare :
-    ¬∀ (command : App.Commands.Command),
-        (fun (_ : App.Commands.Command) => "usage: linger") command =
-          if command.args.isEmpty then s!"usage: linger {command.word}"
-          else s!"usage: linger {command.word} {command.args}" := by
   sorry
 
 theorem listed_unrecorded (records : Session.Records) (panes : List Import.Resurrect.Pane)
@@ -1609,19 +1617,20 @@ theorem command_exact_rejects_quoted :
 theorem transport_exact (t : Remote.Transport) (verb name : String) (options args : List String)
     (deliver : List String → List String → Option (List String))
     (delivers : Remote.Transport.Delivers deliver t) :
-    ∃ line,
-      Remote.targetArgv t verb options name args =
-          (if verb = "attach" then t.attach else t.query) ++ "linger" :: line ∧
-        (∀ received,
-          deliver (if verb = "attach" then t.attach else t.query) ("linger" :: line) =
-              some received →
-            received = "linger" :: line) ∧
-        App.Entry.route line =
-          App.Entry.Route.of
-            (verb :: options ++
-              (if verb = "attach" ∨ verb = "capture" ∨ verb = "ls" then Remote.targetOperands name
-              else [name]) ++
-              args) := by
+    (∃ line,
+        Remote.targetArgv t verb options name args =
+            (if verb = "attach" then t.attach else t.query) ++ "linger" :: line ∧
+          (∀ received,
+            deliver (if verb = "attach" then t.attach else t.query) ("linger" :: line) =
+                some received →
+              received = "linger" :: line) ∧
+          App.Entry.route line =
+            App.Entry.Route.of
+              (verb :: options ++
+                (if verb = "attach" ∨ verb = "capture" ∨ verb = "ls" then Remote.targetOperands name
+                else [name]) ++
+                args)) ∧
+      Remote.targetArgs (Remote.targetOperands name ++ args) = some (name, args) := by
   sorry
 
 @[kills transport_exact]
@@ -1629,43 +1638,130 @@ theorem transport_exact_rejects_ssh :
     ¬∀ (t : Remote.Transport) (verb name : String) (options args : List String)
         (deliver : List String → List String → Option (List String)),
         Remote.Transport.Delivers deliver t →
-          ∃ line,
-            (fun (_ : Remote.Transport) (_ : String) (_ : List String) (_ : String)
-                      (_ : List String) =>
-                    ["ssh", "-T", "--"])
-                  t verb options name args =
-                (if verb = "attach" then t.attach else t.query) ++ "linger" :: line ∧
-              (∀ received,
-                deliver (if verb = "attach" then t.attach else t.query) ("linger" :: line) =
-                    some received →
-                  received = "linger" :: line) ∧
-              App.Entry.route line =
-                App.Entry.Route.of
-                  (verb :: options ++
-                    (if verb = "attach" ∨ verb = "capture" ∨ verb = "ls" then
-                      Remote.targetOperands name
-                    else [name]) ++
-                    args) := by
+          (∃ line,
+              (fun (_ : Remote.Transport) (_ : String) (_ : List String) (_ : String)
+                        (_ : List String) =>
+                      ["ssh", "-T", "--"])
+                    t verb options name args =
+                  (if verb = "attach" then t.attach else t.query) ++ "linger" :: line ∧
+                (∀ received,
+                  deliver (if verb = "attach" then t.attach else t.query) ("linger" :: line) =
+                      some received →
+                    received = "linger" :: line) ∧
+                App.Entry.route line =
+                  App.Entry.Route.of
+                    (verb :: options ++
+                      (if verb = "attach" ∨ verb = "capture" ∨ verb = "ls" then
+                        Remote.targetOperands name
+                      else [name]) ++
+                      args)) ∧
+            Remote.targetArgs (Remote.targetOperands name ++ args) = some (name, args) := by
   sorry
 
-theorem check_no_alias (a b name : String) (ha : Name.check a = some name)
-    (hb : Name.check b = some name) : a = b := by sorry
-
-@[kills check_no_alias]
-theorem check_no_alias_rejects_fold :
-    ¬∀ (a b name : String),
-        (fun (_ : String) => some "s") a = some name →
-          (fun (_ : String) => some "s") b = some name → a = b := by
+@[kills transport_exact]
+theorem transport_exact_rejects_unread :
+    ¬∀ (t : Remote.Transport) (verb name : String) (options args : List String)
+        (deliver : List String → List String → Option (List String)),
+        Remote.Transport.Delivers deliver t →
+          (∃ line,
+              Remote.targetArgv t verb options name args =
+                  (if verb = "attach" then t.attach else t.query) ++ "linger" :: line ∧
+                (∀ received,
+                  deliver (if verb = "attach" then t.attach else t.query) ("linger" :: line) =
+                      some received →
+                    received = "linger" :: line) ∧
+                App.Entry.route line =
+                  App.Entry.Route.of
+                    (verb :: options ++
+                      (if verb = "attach" ∨ verb = "capture" ∨ verb = "ls" then
+                        (fun (_ : String) => ([] : List String)) name
+                      else [name]) ++
+                      args)) ∧
+            Remote.targetArgs ((fun (_ : String) => ([] : List String)) name ++ args) =
+              some (name, args) := by
   sorry
 
-theorem targetArgs_targetOperands (name : String) (rest : List String) :
-    Remote.targetArgs (Remote.targetOperands name ++ rest) = some (name, rest) := by sorry
+theorem env_defaults (home flag : Option String) (shell dir saved : String) (named : shell ≠ "")
+    (set : dir ≠ "") :
+    (Os.Env.shellOf (some shell) = shell ∧
+        Os.Env.shellOf none = "sh" ∧ Os.Env.shellOf (some "") = "sh") ∧
+      (Os.Env.remotesFile home = none ↔ home = none ∨ home = some "") ∧
+      (Os.Env.detachEnabled true flag = true ∧ Os.Env.detachEnabled false flag = flag.isNone) ∧
+      Os.Env.resumeDir home saved true = some saved ∧
+      Os.Env.resumeDir (some dir) saved false = some dir ∧
+      Os.Env.resumeDir none saved false = none ∧ Os.Env.resumeDir (some "") saved false = none := by
+  sorry
 
-@[kills targetArgs_targetOperands]
-theorem targetArgs_targetOperands_rejects_none :
-    ¬∀ (name : String) (rest : List String),
-        Remote.targetArgs ((fun (_ : String) => ([] : List String)) name ++ rest) =
-          some (name, rest) := by
+@[kills env_defaults]
+theorem env_defaults_rejects_fixed :
+    ¬∀ (home flag : Option String) (shell dir saved : String),
+        shell ≠ "" →
+          dir ≠ "" →
+          ((fun (_ : Option String) => "sh") (some shell) = shell ∧
+              (fun (_ : Option String) => "sh") none = "sh" ∧
+              (fun (_ : Option String) => "sh") (some "") = "sh") ∧
+            (Os.Env.remotesFile home = none ↔ home = none ∨ home = some "") ∧
+            (Os.Env.detachEnabled true flag = true ∧
+              Os.Env.detachEnabled false flag = flag.isNone) ∧
+            Os.Env.resumeDir home saved true = some saved ∧
+            Os.Env.resumeDir (some dir) saved false = some dir ∧
+            Os.Env.resumeDir none saved false = none ∧
+            Os.Env.resumeDir (some "") saved false = none := by
+  sorry
+
+@[kills env_defaults]
+theorem env_defaults_rejects_shared :
+    ¬∀ (home flag : Option String) (shell dir saved : String),
+        shell ≠ "" →
+          dir ≠ "" →
+          (Os.Env.shellOf (some shell) = shell ∧
+              Os.Env.shellOf none = "sh" ∧ Os.Env.shellOf (some "") = "sh") ∧
+            ((fun (_ : Option String) => some "remotes") home = none ↔
+              home = none ∨ home = some "") ∧
+            (Os.Env.detachEnabled true flag = true ∧
+              Os.Env.detachEnabled false flag = flag.isNone) ∧
+            Os.Env.resumeDir home saved true = some saved ∧
+            Os.Env.resumeDir (some dir) saved false = some dir ∧
+            Os.Env.resumeDir none saved false = none ∧
+            Os.Env.resumeDir (some "") saved false = none := by
+  sorry
+
+@[kills env_defaults]
+theorem env_defaults_rejects_never :
+    ¬∀ (home flag : Option String) (shell dir saved : String),
+        shell ≠ "" →
+          dir ≠ "" →
+          (Os.Env.shellOf (some shell) = shell ∧
+              Os.Env.shellOf none = "sh" ∧ Os.Env.shellOf (some "") = "sh") ∧
+            (Os.Env.remotesFile home = none ↔ home = none ∨ home = some "") ∧
+            ((fun (_ : Bool) (_ : Option String) => false) true flag = true ∧
+              (fun (_ : Bool) (_ : Option String) => false) false flag = flag.isNone) ∧
+            Os.Env.resumeDir home saved true = some saved ∧
+            Os.Env.resumeDir (some dir) saved false = some dir ∧
+            Os.Env.resumeDir none saved false = none ∧
+            Os.Env.resumeDir (some "") saved false = none := by
+  sorry
+
+@[kills env_defaults]
+theorem env_defaults_rejects_gone :
+    ¬∀ (home flag : Option String) (shell dir saved : String),
+        shell ≠ "" →
+          dir ≠ "" →
+          (Os.Env.shellOf (some shell) = shell ∧
+              Os.Env.shellOf none = "sh" ∧ Os.Env.shellOf (some "") = "sh") ∧
+            (Os.Env.remotesFile home = none ↔ home = none ∨ home = some "") ∧
+            (Os.Env.detachEnabled true flag = true ∧
+              Os.Env.detachEnabled false flag = flag.isNone) ∧
+            (fun (_ : Option String) (saved : String) (_ : Bool) => some saved) home saved true =
+              some saved ∧
+            (fun (_ : Option String) (saved : String) (_ : Bool) => some saved) (some dir) saved
+                false =
+              some dir ∧
+            (fun (_ : Option String) (saved : String) (_ : Bool) => some saved) none saved false =
+              none ∧
+            (fun (_ : Option String) (saved : String) (_ : Bool) => some saved) (some "") saved
+                false =
+              none := by
   sorry
 
 theorem checkHosts_ok_iff (hosts result : List String) :
@@ -1679,39 +1775,6 @@ theorem checkHosts_ok_iff_rejects_any :
         (fun (hosts : List String) => (.ok hosts : Except String (List String))) hosts =
             .ok result ↔
           result = hosts ∧ hosts.Nodup ∧ ∀ x ∈ hosts, Remote.hostClean x = true := by
-  sorry
-
-theorem detach_key (flag : Option String) :
-    Os.Env.detachEnabled true flag = true ∧ Os.Env.detachEnabled false flag = flag.isNone := by
-  sorry
-
-@[kills detach_key]
-theorem detach_key_rejects_never :
-    ¬∀ (flag : Option String),
-        (fun (_ : Bool) (_ : Option String) => false) true flag = true ∧
-          (fun (_ : Bool) (_ : Option String) => false) false flag = flag.isNone := by
-  sorry
-
-theorem resumeDir_where (home : Option String) (saved dir : String) (set : dir ≠ "") :
-    Os.Env.resumeDir home saved true = some saved ∧
-      Os.Env.resumeDir (some dir) saved false = some dir ∧
-      Os.Env.resumeDir none saved false = none ∧ Os.Env.resumeDir (some "") saved false = none := by
-  sorry
-
-@[kills resumeDir_where]
-theorem resumeDir_where_rejects_gone :
-    ¬∀ (home : Option String) (saved dir : String),
-        dir ≠ "" →
-          (fun (_ : Option String) (saved : String) (_ : Bool) => some saved) home saved true =
-              some saved ∧
-            (fun (_ : Option String) (saved : String) (_ : Bool) => some saved) (some dir) saved
-                false =
-              some dir ∧
-            (fun (_ : Option String) (saved : String) (_ : Bool) => some saved) none saved false =
-              none ∧
-            (fun (_ : Option String) (saved : String) (_ : Bool) => some saved) (some "") saved
-                false =
-              none := by
   sorry
 
 theorem failureStatus_exact (why : String) :
@@ -1763,31 +1826,6 @@ ignores SIGINT and SIGQUIT and `exec 3>&1` leaves a pipe open (`start_clean`, ov
 `Spawn.Clean`, which its check and the agent suite test). Not claimed: the rest of what a program
 inherits as any child does, such as resource limits, the file mode mask, scheduling priority and the
 user and groups it runs as. -/
-
-theorem programOf_exact (shell : String) (argv : List String) :
-    Start.programOf shell argv = (argv.headD shell, (argv.drop 1).toArray) := by sorry
-
-@[kills programOf_exact]
-theorem programOf_exact_rejects_shell :
-    ¬∀ (shell : String) (argv : List String),
-        (fun (shell : String) (argv : List String) => (shell, #["-c", String.intercalate " " argv]))
-            shell argv =
-          (argv.headD shell, (argv.drop 1).toArray) := by
-  sorry
-
-theorem shellOf_choice (shell : String) (set : shell ≠ "") :
-    Os.Env.shellOf (some shell) = shell ∧
-      Os.Env.shellOf none = "sh" ∧ Os.Env.shellOf (some "") = "sh" := by
-  sorry
-
-@[kills shellOf_choice]
-theorem shellOf_choice_rejects_fixed :
-    ¬∀ (shell : String),
-        shell ≠ "" →
-          (fun (_ : Option String) => "sh") (some shell) = shell ∧
-            (fun (_ : Option String) => "sh") none = "sh" ∧
-            (fun (_ : Option String) => "sh") (some "") = "sh" := by
-  sorry
 
 theorem start_runs (inherited : String → Option String)
     (start :
@@ -1873,11 +1911,11 @@ a kill, once the daemon has stopped the program; or SIGHUP, SIGINT, SIGQUIT or S
 daemon, the system stopping linger at logout or shutdown, after which the daemon stops the program
 the same way (`step_signal_saves`). Every client attached or waiting hears how the session ended
 before the daemon exits, and the daemon leaves its name an end record that says so. A kill discards
-the session (`step_stopped_discards`), and a program's own ending stays exactly until someone has
+the session, and a program's own ending stays exactly until someone has
 seen it: one that ends while a client is attached, typist or watcher, is seen as it ends, and the
 session then ends as a kill ends it, its checkpoint deleted once every client is told
-(`step_childExited_seen`); one that ends with nobody attached saves its last screen, as the ending
-found it, and keeps it (`step_childExited_keeps`), and the first attach to it, in either mode,
+(`step_ended_reports`, with `seenBy`); one that ends with nobody attached saves its last screen,
+as the ending found it, and keeps it, and the first attach to it, in either mode,
 shows that screen, then how its program ended, and discards it once it leaves (`visit_result`). A
 watcher counts as seeing, since it is shown the same screen and told the same ending as a typist
 (`seenBy`); `wait` and `ls` tell the status, not the screen, and `capture` exports it, so
@@ -1887,18 +1925,19 @@ system keeps what linger saves (`Record.Kept`, which its check and the agent sui
 end record keeps how its last session ended, for whoever asks later: how its program ended, or which
 signal stopped its daemon, which never reads as an outcome or an unknown ending; a record its
 session left while the program still ran answers that the ending is unknown, and only a name with no
-record answers nothing (`record_answer`). `ls` reports each ending in fields no other ending has
+record answers nothing (`record_answer`). `ls` reports each ending in fields no other ending has, a
+program's ending in the same fields whether a daemon or an end record tells it
 (`endingFields_injective`). `wait` answers with how the session ended when its daemon or the end
 record says, for a saved session `saved` with the signal that stopped its daemon, never a status of
 its program, and that it could not find out only when that is so: the program's ending is unknown,
 or the name stays held, with no daemon answering, from the look that first found it so for longer
-than a daemon's ending lasts. Every command answers with one of the answers `Os.Answer` names, the
-operating system's vocabulary, the selector as the session commands do,
-and exits with its code (`code_documented`); help lists each of linger's own once, and no status a
-signal or a program gives (`listed_once`). A signal's status says which signal, whatever it
-stopped: a program it killed, a command it stopped and a session whose daemon it stopped each
-answer 128 plus its number, as a shell reports a program that signal ended (`signal_status`), and a
-chooser cancelled by a key answers 130, as fzf's does. An attach goes only to a daemon whose `info`
+than a daemon's ending lasts, and never while a daemon may still be ending, its drain and the
+waits of its signals (`wait_held`). Every command answers with one of the answers `Os.Answer`
+names, the operating system's vocabulary, the selector as the session commands do, and exits with
+its code: a signal's status says which signal, whatever it stopped: a program it killed, a
+command it stopped and a session whose daemon it stopped each answer 128 plus its number, as a
+shell reports a program that signal ended (`code_documented`), and a chooser cancelled by a key
+answers 130, as fzf's does. An attach goes only to a daemon whose `info`
 answer reports this version's protocol level, as every daemon of this version does
 (`infoFields_protocol`), so a daemon an older linger started, of any earlier level, is refused with
 a reason, never sent an attach it would refuse as unknown or drop unanswered. Not claimed: that the
@@ -1924,7 +1963,7 @@ trace of `Session.step` over those events, executes exactly that trace's effects
 with the state its event left, and exits exactly when one of them asks it to (`run_refines`).
 Whatever its effects reply, an executor that answers every effect lets it return and keeps the
 session within its bounds (`run_total_safe`), disconnects and failed saves never stop it
-(`run_feedback_alive`), once it exits it handles no event (`run_exited`), and an event whose
+(`run_feedback_alive`), and an event whose
 effects stop the program ends the session (`run_stop_exits`). Not claimed: which events the
 driver hands the session and which effects it executes when an effect fails. -/
 
@@ -2063,88 +2102,6 @@ theorem step_signal_saves_rejects_silent :
               s.terminal := by
   sorry
 
-theorem step_stopped_discards (s : State) (o : Outcome) :
-    (∃ front,
-        (Session.step s (.stopped o)).2 = front ++ [.dropCheckpoint, .exit] ∧
-          Effect.checkpoint ∉ front) ∧
-      (Session.step s (.stopped o)).1.terminal = s.terminal := by
-  sorry
-
-@[kills step_stopped_discards]
-theorem step_stopped_discards_rejects_save :
-    ¬∀ (s : State) (o : Outcome),
-        (∃ front,
-            ((fun (s : State) (_ : Event) =>
-                      (s, ([.checkpoint, .dropCheckpoint, .exit] : List (Effect Replay.Plan))))
-                    s (.stopped o)).2 =
-                front ++ [.dropCheckpoint, .exit] ∧
-              Effect.checkpoint ∉ front) ∧
-          ((fun (s : State) (_ : Event) =>
-                  (s, ([.checkpoint, .dropCheckpoint, .exit] : List (Effect Replay.Plan))))
-                s (.stopped o)).1.terminal =
-            s.terminal := by
-  sorry
-
-theorem step_childExited_keeps (s : State) (o : Outcome)
-    (unseen : ∀ c ∈ s.roster, c.attached = false) :
-    (∃ front,
-        (Session.step s (.childExited o)).2 = front ++ [.checkpoint, .exit] ∧
-          Effect.dropCheckpoint ∉ front) ∧
-      (Session.step s (.childExited o)).1.terminal = s.terminal := by
-  sorry
-
-@[kills step_childExited_keeps]
-theorem step_childExited_keeps_rejects_drop :
-    ¬∀ (s : State) (o : Outcome),
-        (∀ c ∈ s.roster, c.attached = false) →
-          (∃ front,
-              ((fun (s : State) (_ : Event) =>
-                        (s, ([.dropCheckpoint, .checkpoint, .exit] : List (Effect Replay.Plan))))
-                      s (.childExited o)).2 =
-                  front ++ [.checkpoint, .exit] ∧
-                Effect.dropCheckpoint ∉ front) ∧
-            ((fun (s : State) (_ : Event) =>
-                    (s, ([.dropCheckpoint, .checkpoint, .exit] : List (Effect Replay.Plan))))
-                  s (.childExited o)).1.terminal =
-              s.terminal := by
-  sorry
-
-theorem step_childExited_seen (s : State) (o : Outcome) {c : Client} (hc : c ∈ s.roster)
-    (attached : c.attached = true) :
-    (∃ front,
-        (Session.step s (.childExited o)).2 =
-            front ++ [.record (.ended o), .dropCheckpoint, .exit] ∧
-          Effect.checkpoint ∉ front ∧
-          ∀ c ∈ s.roster,
-            c.attached = true ∨ c.waiting = true →
-              (Ending.program o).told.map (Effect.send c.id) <:+: front) ∧
-      (Session.step s (.childExited o)).1.terminal = s.terminal := by
-  sorry
-
-@[kills step_childExited_seen]
-theorem step_childExited_seen_rejects_keep :
-    ¬∀ (s : State) (o : Outcome) {c : Client},
-        c ∈ (fun (_ : State) => [({ id := 0, attached := true } : Client)]) s →
-          c.attached = true →
-          (∃ front,
-              ((fun (s : State) (_ : Event) =>
-                        (s,
-                          ([.record (.ended .unknown), .checkpoint, .exit] :
-                            List (Effect Replay.Plan))))
-                      s (.childExited o)).2 =
-                  front ++ [.record (.ended o), .dropCheckpoint, .exit] ∧
-                Effect.checkpoint ∉ front ∧
-                ∀ c ∈ (fun (_ : State) => [({ id := 0, attached := true } : Client)]) s,
-                  c.attached = true ∨ c.waiting = true →
-                    (Ending.program o).told.map (Effect.send c.id) <:+: front) ∧
-            ((fun (s : State) (_ : Event) =>
-                    (s,
-                      ([.record (.ended .unknown), .checkpoint, .exit] :
-                        List (Effect Replay.Plan))))
-                  s (.childExited o)).1.terminal =
-              s.terminal := by
-  sorry
-
 theorem visit_result (afterSave : List UInt8 → Option (List UInt8)) (kept : Record.Kept afterSave)
     (readOnly : Bool) (o : Outcome) (n : UInt8) (seen : Option Seen) :
     App.Recovery.visit readOnly (afterSave (Record.encode (.ended o))) =
@@ -2247,7 +2204,12 @@ theorem wait_held (deadline heldSince : Option Nat) (now : Nat) (heard : Wait.He
       (heard = .held →
         (∀ due, deadline = some due → now < due) →
         (∀ since, heldSince = some since → now < since + Wait.heldNameMs) →
-        Wait.decide deadline heldSince now heard = .again (some (heldSince.getD now))) := by
+        Wait.decide deadline heldSince now heard = .again (some (heldSince.getD now))) ∧
+      (heard = .held →
+        ∀ since,
+          heldSince = some since →
+            now < since + (Session.drainTimeoutMs + (Session.ending.map (·.2)).sum) →
+            Wait.decide deadline heldSince now heard ≠ .answer .failed) := by
   sorry
 
 @[kills wait_held]
@@ -2264,15 +2226,34 @@ theorem wait_held_rejects_eager :
             (∀ since, heldSince = some since → now < since + Wait.heldNameMs) →
             (fun (_ _ : Option Nat) (_ : Nat) (_ : Wait.Heard) => Wait.Next.answer .failed) deadline
                 heldSince now heard =
-              .again (some (heldSince.getD now))) := by
+              .again (some (heldSince.getD now))) ∧
+          (heard = .held →
+            ∀ since,
+              heldSince = some since →
+                now < since + (Session.drainTimeoutMs + (Session.ending.map (·.2)).sum) →
+                (fun (_ _ : Option Nat) (_ : Nat) (_ : Wait.Heard) => Wait.Next.answer .failed)
+                    deadline heldSince now heard ≠
+                  .answer .failed) := by
   sorry
 
-theorem held_covers_ending :
-    Session.drainTimeoutMs + (Session.ending.map (·.2)).sum ≤ Wait.heldNameMs := by sorry
-
-@[kills held_covers_ending]
-theorem held_covers_ending_rejects_drain :
-    ¬Session.drainTimeoutMs + (Session.ending.map (·.2)).sum ≤ Session.drainTimeoutMs := by sorry
+@[kills wait_held]
+theorem wait_held_rejects_drain :
+    ¬∀ (deadline heldSince : Option Nat) (now : Nat) (heard : Wait.Heard),
+        (Wait.decide deadline heldSince now heard = .answer .failed ↔
+            heard = .ended (.program .unknown) ∨
+              heard = .recorded (some (.program .unknown)) ∨
+              heard = .held ∧
+                ∃ since, heldSince = some since ∧ since + Session.drainTimeoutMs ≤ now) ∧
+          (heard = .held →
+            (∀ due, deadline = some due → now < due) →
+            (∀ since, heldSince = some since → now < since + Session.drainTimeoutMs) →
+            Wait.decide deadline heldSince now heard = .again (some (heldSince.getD now))) ∧
+          (heard = .held →
+            ∀ since,
+              heldSince = some since →
+                now < since + (Session.drainTimeoutMs + (Session.ending.map (·.2)).sum) →
+                Wait.decide deadline heldSince now heard ≠ .answer .failed) := by
+  sorry
 
 theorem code_documented (status : UInt32) (signal : UInt8) :
     Os.Answer.code .done = 0 ∧
@@ -2320,58 +2301,34 @@ theorem code_documented_rejects_lumped :
           Os.Answer.lumped (.program status) = status := by
   sorry
 
-theorem listed_once : Os.Answer.listed.Nodup ∧ ∀ a, a ∈ Os.Answer.listed ↔ a.Own := by sorry
-
-@[kills listed_once]
-theorem listed_once_rejects_empty :
-    ¬(([] : List Os.Answer).Nodup ∧ ∀ a, a ∈ ([] : List Os.Answer) ↔ a.Own) := by sorry
-
-@[kills listed_once]
-theorem listed_once_rejects_signal :
-    ¬(([.done, .notDone, .usage, .timedOut, .failed, .cannotRun, .notFound, .stopped 2] :
-            List Os.Answer).Nodup ∧
-        ∀ a,
-          a ∈
-              ([.done, .notDone, .usage, .timedOut, .failed, .cannotRun, .notFound, .stopped 2] :
-                List Os.Answer) ↔
-            a.Own) := by
+theorem endingFields_injective :
+    (∀ o, Session.endingFields (.program o) = Session.outcomeFields o) ∧
+      ∀ e₁ e₂, Session.endingFields e₁ = Session.endingFields e₂ → e₁ = e₂ := by
   sorry
-
-theorem signal_status (signal : UInt8) :
-    Os.Answer.code (.stopped signal) = (Outcome.signaled signal).status ∧
-      Os.Answer.code (Ending.saved signal).answer = (Outcome.signaled signal).status := by
-  sorry
-
-@[kills signal_status]
-theorem signal_status_rejects_lumped :
-    ¬∀ (signal : UInt8),
-        Os.Answer.lumped (.stopped signal) = (Outcome.signaled signal).status ∧
-          Os.Answer.lumped (Ending.saved signal).answer = (Outcome.signaled signal).status := by
-  sorry
-
-theorem outcomeFields_injective (o₁ o₂ : Outcome)
-    (h : Session.outcomeFields o₁ = Session.outcomeFields o₂) : o₁ = o₂ := by sorry
-
-@[kills outcomeFields_injective]
-theorem outcomeFields_injective_rejects_silence :
-    ¬∀ (o₁ o₂ : Outcome),
-        (fun (_ : Outcome) => ([] : List (String × String))) o₁ =
-            (fun (_ : Outcome) => ([] : List (String × String))) o₂ →
-          o₁ = o₂ := by
-  sorry
-
-theorem endingFields_injective (e₁ e₂ : Ending)
-    (h : Session.endingFields e₁ = Session.endingFields e₂) : e₁ = e₂ := by sorry
 
 @[kills endingFields_injective]
 theorem endingFields_injective_rejects_unknown :
-    ¬∀ (e₁ e₂ : Ending),
-        (fun (e : Ending) => Session.endingFields (if e = .saved 15 then .program .unknown else e))
-              e₁ =
-            (fun (e : Ending) =>
+    ¬((∀ o,
+          (fun (e : Ending) =>
                 Session.endingFields (if e = .saved 15 then .program .unknown else e))
-              e₂ →
-          e₁ = e₂ := by
+              (.program o) =
+            Session.outcomeFields o) ∧
+        ∀ e₁ e₂,
+          (fun (e : Ending) =>
+                  Session.endingFields (if e = .saved 15 then .program .unknown else e))
+                e₁ =
+              (fun (e : Ending) =>
+                  Session.endingFields (if e = .saved 15 then .program .unknown else e))
+                e₂ →
+            e₁ = e₂) := by
+  sorry
+
+@[kills endingFields_injective]
+theorem endingFields_injective_rejects_silence :
+    ¬((∀ o,
+          Session.endingFields (.program o) =
+            (fun (_ : Outcome) => ([] : List (String × String))) o) ∧
+        ∀ e₁ e₂, Session.endingFields e₁ = Session.endingFields e₂ → e₁ = e₂) := by
   sorry
 
 theorem infoFields_protocol (s : State) :
@@ -2507,20 +2464,6 @@ theorem run_feedback_alive_rejects_halt :
           (Driver.halt execute r events).exiting = false := by
   sorry
 
-theorem run_exited {m : Type → Type} [Monad m] {World : Type}
-    (execute : State → World → (eff : Effect Replay.Plan) → m (World × Driver.Reply eff))
-    (r : Driver.Result State World) (events : List Event) (exited : r.exiting = true) :
-    Driver.run execute r events = pure r := by sorry
-
-@[kills run_exited]
-theorem run_exited_rejects_jump :
-    ¬∀ {m : Type → Type} [Monad m] {World : Type}
-        (execute : State → World → (eff : Effect Replay.Plan) → m (World × Driver.Reply eff))
-        (r : Driver.Result State World) (events : List Event),
-        r.exiting = true →
-          Driver.jump (State.boot (Vt.Vt.init 1 1) [] []) execute r events = pure r := by
-  sorry
-
 theorem run_stop_exits {World : Type}
     (execute : State → World → (eff : Effect Replay.Plan) → Id (World × Driver.Reply eff))
     (r : Driver.Result State World) (ev : Event) (running : r.exiting = false)
@@ -2565,7 +2508,8 @@ every other lock file, so after any command every lock file names a session or a
 only the command's ID named nothing before (`locks_named`); the names lock, `names/.lock`, names
 no session, and its holder deletes it as it lets it go. A deleted lock file excludes as one kept: only a holder deletes one, and a
 process that locks a file checks that the path still names it, locking the path's file again when
-not (`Os.Shell.flock`), which `fstat` and `stat` tell apart (`Os.Lock.Tells`), so `Claim.Exclusive`
+not (`Os.Shell.flock`), which `fstat` and `stat` tell apart, so it keeps a lock only of the file
+the path names (the os package's `lock_named`, over `Os.Lock.Tells`), and `Claim.Exclusive`
 holds of the lock of the file a path names and a name keeps one owner (`one_owner`). End records
 are not bounded: one is kept for each name a session ended under or a kill hid a saved tmux pane
 under, so `wait` answers and the pane stays hidden, and the lock files are bounded by them. Not
@@ -2704,10 +2648,10 @@ and replaces the checkpoint whole and durably, so that after a crash
 the file at the path is the last save whose flushes returned, or the one then running, whole
 (`Disk.Durable`, which the resume suite tests by killing a daemon while it saves, and its check once
 both flushes returned); and resuming then gives back that save, never a fresh session
-(`crash_resumes`). A record an older linger wrote reads as it meant then: a tmux import from before
-a row had a description recorded the pane's provenance and no description, and its record in format 3, the
-layout of today's under the tag 3, reads as the checkpoint today's import writes of the pane, the
-description it gives, the window's name, included (`older_import_described`); a record of today's
+(`crash_resumes`). A record an older linger wrote reads as it meant then: a record of format 3,
+its tag then today's layout, that holds no description reads with the description a tmux import
+gives its labels, the window's name, as an import from before a row had a description recorded
+the pane's provenance and none (`older_record_described`); a record of today's
 format reads as written (`loadBytes_saveBytes_live`), so a description its user cleared stays
 cleared. Not claimed: that records of formats 1 and 2 read the same way, which the checkpoint
 proofs state (`load_saveV2_live`, `load_saveV1_live`); that a description a user cleared in a
@@ -2719,7 +2663,8 @@ returned for, which rests on `Disk.Durable` and which no check or suite causes.
 
 An upgrade replaces a daemon's image with a newer binary's, by an exec, which keeps the daemon's
 process, its program, which stays its child on the same terminal, and the descriptors it keeps
-(`Os.Exec.Keeps`): the listening socket, the pty, every connection and the locks. The new image
+(`Os.Exec.Keeps`): every descriptor the handoff names, the listening socket, the pty, the signal
+pipe, the locks and every connection (`upgrade_keeps`). The new image
 resumes from the handoff, which carries the session's whole state and what the daemon still owed
 its program and its connections, so the session is carried, not rebuilt: the handoff of a session
 whose terminal's parser is quiet decodes as exactly that session (`handoff_carries`, whose kill
@@ -2749,6 +2694,27 @@ theorem handoff_carries_rejects_rebuilt :
                   Handoff.encode (State.boot s.terminal s.fieldList []) w)
                 s w) =
             some (s, w) := by
+  sorry
+
+theorem upgrade_keeps (exec : Nat → List Nat → List Nat → Nat × List Nat × List Nat)
+    (keeps : Os.Exec.Keeps exec) (pid : Nat) (w : Handoff.World) :
+    (exec pid [w.childPid] (Handoff.kept w)).1 = pid ∧
+      (exec pid [w.childPid] (Handoff.kept w)).2.1 = [w.childPid] ∧
+      ∀ fd ∈ w.fds, fd ∈ (exec pid [w.childPid] (Handoff.kept w)).2.2 := by
+  sorry
+
+@[kills upgrade_keeps]
+theorem upgrade_keeps_rejects_unconnected :
+    ¬∀ (exec : Nat → List Nat → List Nat → Nat × List Nat × List Nat),
+        Os.Exec.Keeps exec →
+          ∀ (pid : Nat) (w : Handoff.World),
+            (exec pid [w.childPid] ((fun (w : Handoff.World) => [w.listenFd, w.ptyFd]) w)).1 = pid ∧
+              (exec pid [w.childPid] ((fun (w : Handoff.World) => [w.listenFd, w.ptyFd]) w)).2.1 =
+                [w.childPid] ∧
+              ∀ fd ∈ w.fds,
+                fd ∈
+                  (exec pid [w.childPid]
+                      ((fun (w : Handoff.World) => [w.listenFd, w.ptyFd]) w)).2.2 := by
   sorry
 
 theorem handoff_versioned (s : State) (w : Handoff.World) (v : Nat) (rest : List UInt8) :
@@ -2998,30 +2964,42 @@ theorem checkpoint_metadata_rejects_blank :
             some (if contents.isSome then "saved" else "none") := by
   sorry
 
-theorem older_import_described (pane : Import.Resurrect.Pane) (contents : Option String) :
-    Checkpoint.loadBytes
-        ((Checkpoint.saveBytes
-              ⟨(Import.Resurrect.checkpoint pane contents).vt,
-                (Import.Resurrect.checkpoint pane contents).cwd,
-                (Import.Resurrect.checkpoint pane contents).fields.filter
-                  (·.1 != "description")⟩).set!
-          4 3) =
-      some (Import.Resurrect.checkpoint pane contents) := by
+theorem older_record_described (c : Checkpoint.Ckpt Vt.Vt)
+    (h :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) c.vt)
+    (undescribed : c.fields.lookup "description" = none) (old : ByteArray)
+    (format3 :
+      old.data.toList =
+        [0x4C, 0x4E, 0x47, 0x52, 3] ++ (Checkpoint.saveBytes c).data.toList.drop 5) :
+    Checkpoint.loadBytes old =
+      some
+        { c with
+          vt := c.vt.quiesce, fields := c.fields ++ Checkpoint.importDescription c.fields } := by
   sorry
 
-@[kills older_import_described]
-theorem older_import_described_rejects_stored :
-    ¬∀ (pane : Import.Resurrect.Pane) (contents : Option String),
-        (fun (b : ByteArray) =>
-              (Checkpoint.loadBytes b).map fun (c : Checkpoint.Ckpt Vt.Vt) =>
-                (⟨c.vt, c.cwd, c.fields.filter (·.1 != "description")⟩ : Checkpoint.Ckpt Vt.Vt))
-            ((Checkpoint.saveBytes
-                  ⟨(Import.Resurrect.checkpoint pane contents).vt,
-                    (Import.Resurrect.checkpoint pane contents).cwd,
-                    (Import.Resurrect.checkpoint pane contents).fields.filter
-                      (·.1 != "description")⟩).set!
-              4 3) =
-          some (Import.Resurrect.checkpoint pane contents) := by
+@[kills older_record_described]
+theorem older_record_described_rejects_stored :
+    ¬∀ (c : Checkpoint.Ckpt Vt.Vt),
+        Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+            (Checkpoint.Decoded
+              (fun (b : ByteArray) =>
+                (Checkpoint.loadBytes b).map fun (c : Checkpoint.Ckpt Vt.Vt) =>
+                  (⟨c.vt, c.cwd, c.fields.filter (·.1 != "description")⟩ : Checkpoint.Ckpt Vt.Vt)))
+            c.vt →
+          c.fields.lookup "description" = none →
+          ∀ (old : ByteArray),
+            old.data.toList =
+                [0x4C, 0x4E, 0x47, 0x52, 3] ++ (Checkpoint.saveBytes c).data.toList.drop 5 →
+              (fun (b : ByteArray) =>
+                    (Checkpoint.loadBytes b).map fun (c : Checkpoint.Ckpt Vt.Vt) =>
+                      (⟨c.vt, c.cwd, c.fields.filter (·.1 != "description")⟩ :
+                        Checkpoint.Ckpt Vt.Vt))
+                  old =
+                some
+                  { c with
+                    vt := c.vt.quiesce,
+                    fields := c.fields ++ Checkpoint.importDescription c.fields } := by
   sorry
 
 /-! ## 8. Clean terminal
@@ -3360,7 +3338,9 @@ theorem fetch_follows_events_rejects_polling :
 A command waits for its daemon's answer a bounded time, and what it answers when that time runs
 out is still true. A daemon saves its checkpoint and writes its end record, their flushes
 included, off its loop, on a thread of its own (`scripts/gates.sh`), so a slow disk holds up no
-answer and no output, and the writes it asks for while one runs coalesce into the last. Every wait sleeps as `Os.Wait.next`
+answer and no output: a write starts only when none of its kind runs, one asked for meanwhile
+waits in place of any that waited, and the last one asked for is the last to start, at once or as
+soon as the running one ends (`offloop_coalesces`). Every wait sleeps as `Os.Wait.next`
 decides (`scripts/gates.sh`), so it gives up once its deadline has passed, which the os package
 claims (`packages/os`), and then reports what
 it missed: `start` that its daemon did not answer, `ls` a remote host as `?`, `wait --timeout`
@@ -3368,7 +3348,9 @@ it missed: `start` that its daemon did not answer, `ls` a remote host as `?`, `w
 go before it writes, so no step it takes holding them waits on a party outside linger, and an
 attach or a resume that starts the session while a pager or a pipe nobody reads holds up the
 capture's write waits for the locks only as long as the load and the render take
-(`capture_waits_unlocked`); the shell runs exactly these steps (`scripts/gates.sh`). A write that
+(`capture_waits_unlocked`): the shell runs these steps in the phases `Capture.phases` cuts them
+into, which hold the locks exactly where `Capture.work` says, whatever the plan, and runs them
+for every capture of a saved session (`scripts/gates.sh`). A write that
 finds its descriptor full, as one another program left nonblocking is, waits for the reader and
 goes on, never taken for a reader that is gone, which the os package claims. Not claimed: the
 waits with no deadline, each on something that ends without waiting itself, or on purpose:
@@ -3398,22 +3380,38 @@ theorem start_answer_true_rejects_proceed :
             (r.answer = some .notStarted → r.runs = false) := by
   sorry
 
-theorem offloop_coalesces {R W : Type} (start : W → R) (ws : List W) :
-    (ws.foldl (Offloop.run Offloop.ask start) {}).running = ws.head?.map start ∧
-      (ws.foldl (Offloop.run Offloop.ask start) {}).waiting =
-        if ws.length ≤ 1 then none else ws.getLast? := by
+theorem offloop_coalesces {W : Type} (earlier : List (Offloop.Op W)) (w : W) (ends : Nat) :
+    (((earlier ++ (.ask w : Offloop.Op W) :: List.replicate ends .done).foldl
+              (Offloop.cycle Offloop.ask Offloop.done) ({}, [])).2.getLast? =
+          some w ∨
+        ends = 0 ∧
+          ((earlier ++ (.ask w : Offloop.Op W) :: List.replicate ends .done).foldl
+                (Offloop.cycle Offloop.ask Offloop.done) ({}, [])).1.waiting =
+            some w) ∧
+      ∀ ops : List (Offloop.Op W),
+        (ops.foldl (Offloop.cycle Offloop.ask Offloop.done) ({}, [])).2.length ≤
+          (ops.filter Offloop.Op.isDone).length + 1 := by
   sorry
 
 @[kills offloop_coalesces]
 theorem offloop_coalesces_rejects_eager :
-    ¬∀ {R W : Type} (start : W → R) (ws : List W),
-        (ws.foldl (Offloop.run Offloop.eager start) {}).running = ws.head?.map start ∧
-          (ws.foldl (Offloop.run Offloop.eager start) {}).waiting =
-            if ws.length ≤ 1 then none else ws.getLast? := by
+    ¬∀ {W : Type} (earlier : List (Offloop.Op W)) (w : W) (ends : Nat),
+        (((earlier ++ (.ask w : Offloop.Op W) :: List.replicate ends .done).foldl
+                  (Offloop.cycle Offloop.eager Offloop.done) ({}, [])).2.getLast? =
+              some w ∨
+            ends = 0 ∧
+              ((earlier ++ (.ask w : Offloop.Op W) :: List.replicate ends .done).foldl
+                    (Offloop.cycle Offloop.eager Offloop.done) ({}, [])).1.waiting =
+                some w) ∧
+          ∀ ops : List (Offloop.Op W),
+            (ops.foldl (Offloop.cycle Offloop.eager Offloop.done) ({}, [])).2.length ≤
+              (ops.filter Offloop.Op.isDone).length + 1 := by
   sorry
 
 theorem capture_waits_unlocked :
-    (App.Capture.work App.Capture.plan false).map Prod.fst = [.load, .render, .write] ∧
+    (∀ steps,
+        (App.Capture.phases steps).flatMap App.Capture.Phase.work = App.Capture.work steps false) ∧
+      (App.Capture.work App.Capture.plan false).map Prod.fst = [.load, .render, .write] ∧
       (.load, true) ∈ App.Capture.work App.Capture.plan false ∧
       ∀ step,
         (step, true) ∈ App.Capture.work App.Capture.plan false → step.waitsOutside = false := by
@@ -3421,12 +3419,27 @@ theorem capture_waits_unlocked :
 
 @[kills capture_waits_unlocked]
 theorem capture_waits_unlocked_rejects_inside :
-    ¬((App.Capture.work [.acquire, .load, .render, .write, .release] false).map Prod.fst =
+    ¬((∀ steps,
+          (App.Capture.phases steps).flatMap App.Capture.Phase.work =
+            App.Capture.work steps false) ∧
+        (App.Capture.work [.acquire, .load, .render, .write, .release] false).map Prod.fst =
           [.load, .render, .write] ∧
         (.load, true) ∈ App.Capture.work [.acquire, .load, .render, .write, .release] false ∧
         ∀ step,
           (step, true) ∈ App.Capture.work [.acquire, .load, .render, .write, .release] false →
             step.waitsOutside = false) := by
+  sorry
+
+@[kills capture_waits_unlocked]
+theorem capture_waits_unlocked_rejects_held :
+    ¬((∀ steps,
+          ((fun (steps : List App.Capture.Step) => [App.Capture.Phase.locked steps]) steps).flatMap
+              App.Capture.Phase.work =
+            App.Capture.work steps false) ∧
+        (App.Capture.work App.Capture.plan false).map Prod.fst = [.load, .render, .write] ∧
+        (.load, true) ∈ App.Capture.work App.Capture.plan false ∧
+        ∀ step,
+          (step, true) ∈ App.Capture.work App.Capture.plan false → step.waitsOutside = false) := by
   sorry
 
 /-! ## The status rule
@@ -3566,24 +3579,20 @@ theorem step_commands_rejects_deaf :
   sorry
 
 theorem icon_glyphs :
-    Status.icon .asks = '⚑' ∧
-      Status.icon .working = '⣷' ∧
-      Status.icon .wantsYou = '⣿' ∧
-      Status.icon .idle = '⣀' ∧
-      Status.icon .exitedOk = '✓' ∧
-      Status.icon .exitedBad = '✗' ∧ Status.icon .resumable = '~' ∧ Status.icon .unknown = '?' := by
+    (∀ a b, Status.icon a = Status.icon b → a = b) ∧
+      (∀ st, (Status.legend.map fun line => line.toList.head?).count (some (Status.icon st)) = 1) ∧
+      ∀ line ∈ Status.legend, ∃ st, line.toList.head? = some (Status.icon st) := by
   sorry
 
 @[kills icon_glyphs]
 theorem icon_glyphs_rejects_unknown :
-    ¬((fun (_ : Status.Status) => '?') .asks = '⚑' ∧
-        (fun (_ : Status.Status) => '?') .working = '⣷' ∧
-        (fun (_ : Status.Status) => '?') .wantsYou = '⣿' ∧
-        (fun (_ : Status.Status) => '?') .idle = '⣀' ∧
-        (fun (_ : Status.Status) => '?') .exitedOk = '✓' ∧
-        (fun (_ : Status.Status) => '?') .exitedBad = '✗' ∧
-        (fun (_ : Status.Status) => '?') .resumable = '~' ∧
-        (fun (_ : Status.Status) => '?') .unknown = '?') := by
+    ¬((∀ a b, (fun (_ : Status.Status) => '?') a = (fun (_ : Status.Status) => '?') b → a = b) ∧
+        (∀ st,
+          (Status.legend.map fun line => line.toList.head?).count
+              (some ((fun (_ : Status.Status) => '?') st)) =
+            1) ∧
+        ∀ line ∈ Status.legend,
+          ∃ st, line.toList.head? = some ((fun (_ : Status.Status) => '?') st)) := by
   sorry
 
 theorem summary_exact (statuses : List Status.Status) :
@@ -3615,18 +3624,28 @@ theorem summary_exact_rejects_count :
   sorry
 
 theorem rowStatus_saved (status : Nat) (st : Status.Status) :
-    Listing.rowStatus (.ended status) = (if status = 0 then .exitedOk else .exitedBad) ∧
-      Listing.rowStatus (.remote false (Status.name st)) =
-        if st = .exitedOk ∨ st = .exitedBad then st else .resumable := by
+    Status.Is (Listing.rowStatus (.ended status)) { daemonUp := false, exit := some status } ∧
+      (∃ o : Status.Obs,
+        o.known = true ∧
+          o.daemonUp = false ∧ Status.Is (Listing.rowStatus (.remote false (Status.name st))) o) ∧
+      (st = .exitedOk ∨ st = .exitedBad →
+        Listing.rowStatus (.remote false (Status.name st)) = st) := by
   sorry
 
 @[kills rowStatus_saved]
 theorem rowStatus_saved_rejects_unknown :
     ¬∀ (status : Nat) (st : Status.Status),
-        (fun (_ : Listing.Row) => Status.Status.unknown) (.ended status) =
-            (if status = 0 then .exitedOk else .exitedBad) ∧
-          (fun (_ : Listing.Row) => Status.Status.unknown) (.remote false (Status.name st)) =
-            if st = .exitedOk ∨ st = .exitedBad then st else .resumable := by
+        Status.Is ((fun (_ : Listing.Row) => Status.Status.unknown) (.ended status))
+            { daemonUp := false, exit := some status } ∧
+          (∃ o : Status.Obs,
+            o.known = true ∧
+              o.daemonUp = false ∧
+              Status.Is
+                ((fun (_ : Listing.Row) => Status.Status.unknown) (.remote false (Status.name st)))
+                o) ∧
+          (st = .exitedOk ∨ st = .exitedBad →
+            (fun (_ : Listing.Row) => Status.Status.unknown) (.remote false (Status.name st)) =
+              st) := by
   sorry
 
 theorem compose_attention_last (session application summary : String) (capacity : Nat) :
@@ -3787,19 +3806,6 @@ theorem before_number_rejects_lexicographic :
           (∀ c, q.toList.head? = some c → c.isDigit = false) →
           (fun (a b : String) => decide (a < b)) (p ++ toString n ++ q) (p ++ toString m ++ q) =
             true := by
-  sorry
-
-theorem groups_exact (keys : List String) :
-    ((View.groups keys).map (·.2)).sum = keys.length ∧
-      ∀ (k : String) (n : Nat), (k, n) ∈ View.groups keys → n = keys.count k := by
-  sorry
-
-@[kills groups_exact]
-theorem groups_exact_rejects_fixed :
-    ¬∀ (keys : List String),
-        (((fun (_ : List String) => [("", 1)]) keys).map (·.2)).sum = keys.length ∧
-          ∀ (k : String) (n : Nat),
-            (k, n) ∈ (fun (_ : List String) => [("", 1)]) keys → n = keys.count k := by
   sorry
 
 theorem hidden_adds_up (targets : List String) :

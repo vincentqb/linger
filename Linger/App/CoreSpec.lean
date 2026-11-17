@@ -262,4 +262,20 @@ def work : (plan : List Step) → (held : Bool) → List (Step × Bool)
   | .release :: rest, _ => work rest false
   | step :: rest, held => (step, held) :: work rest held
 
+/-- What the shell does with a run of a plan's steps: run them holding the name's locks, taken
+once before the first and let go after the last however they end, or run one step without them.
+-/
+inductive Phase where
+  /-- Take both of the name's locks, run these steps in order, and let the locks go. -/
+  | locked (steps : List Step)
+  /-- Run this step holding no lock. -/
+  | unlocked (step : Step)
+  deriving Repr, DecidableEq
+
+/-- The steps a phase runs, each with whether it runs holding the name's locks. -/
+@[expose]
+def Phase.work : Phase → List (Step × Bool)
+  | .locked steps => steps.map (·, true)
+  | .unlocked step => [(step, false)]
+
 end Linger.App.Capture

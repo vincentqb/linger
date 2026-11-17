@@ -17,13 +17,20 @@ or skipped. The headlines are stated over the decisions, declared below as holes
 which the package's code supplies, and `Os.Solution` proves the same statements of them. Not
 claimed: that `Os.Shell.write` reports each outcome as the operating system gave it, nor that a
 wait for a full descriptor ends, since that is its reader's to end, which the shim suite and the
-robust suite test. -/
+robust suite test. And what a lock attempt does once it holds a lock file's lock, as `Os.Lock.next`
+decides: it keeps the lock exactly when the path still names the file it holds, which `fstat` and
+`stat` tell (the world claim `Os.Lock.Tells`), so a lock its holder deleted is never taken for the
+lock of the file now there, and it locks again only within `Os.Lock.attempts`. -/
 
 public section
 
 def Os.Wait.next : (deadline step now : Nat) → Option Nat := sorry
 
 def Os.Write.next : (size off : Nat) → Os.Write.Result → Os.Write.Next := sorry
+
+def Os.Lock.attempts : Nat := sorry
+
+def Os.Lock.next : (attempt : Nat) → (named : Bool) → Os.Lock.Next := sorry
 
 namespace Os
 
@@ -73,6 +80,23 @@ theorem write_full_waits_rejects_gone :
           ∀ to,
             Os.Write.fullGone size off r = .write to ↔
               ∃ n, r = .wrote n ∧ 0 < n ∧ to = off + n ∧ to < size := by
+  sorry
+
+theorem lock_named (reads : Bool → Bool) (tells : Os.Lock.Tells reads) (attempt : Nat)
+    (named : Bool) :
+    (Os.Lock.next attempt (reads named) = .hold ↔ named = true) ∧
+      (Os.Lock.next attempt (reads named) = .again → attempt + 1 < Os.Lock.attempts) := by
+  sorry
+
+@[kills lock_named]
+theorem lock_named_rejects_unchecked :
+    ¬∀ (reads : Bool → Bool),
+        Os.Lock.Tells reads →
+          ∀ (attempt : Nat) (named : Bool),
+            ((fun (_ : Nat) (_ : Bool) => Os.Lock.Next.hold) attempt (reads named) = .hold ↔
+                named = true) ∧
+              ((fun (_ : Nat) (_ : Bool) => Os.Lock.Next.hold) attempt (reads named) = .again →
+                attempt + 1 < Os.Lock.attempts) := by
   sorry
 
 end Os

@@ -4,8 +4,10 @@ public import Os.CoreSpec
 public import Os.WorldSpec
 public import Os.CoreCode.Wait
 public import Os.CoreCode.Write
+public import Os.CoreCode.Lock
 import all Os.Proofs.Wait
 import all Os.Proofs.Write
+import all Os.Proofs.Lock
 
 /-! The OS boundary's headline theorems, proved of the package: `lake comparator` checks that
 these are exactly the statements of `Challenge.lean`. -/
@@ -71,5 +73,24 @@ theorem write_full_waits_rejects_gone :
   -- a full descriptor, which a decision that takes it for a gone reader stops the write for
   have stops := (h 1 0 .full).1
   simp [Os.Write.fullGone] at stops
+
+theorem lock_named (reads : Bool → Bool) (tells : Os.Lock.Tells reads) (attempt : Nat)
+    (named : Bool) :
+    (Os.Lock.next attempt (reads named) = .hold ↔ named = true) ∧
+      (Os.Lock.next attempt (reads named) = .again → attempt + 1 < Os.Lock.attempts) := by
+  rw [tells named]
+  exact Os.Lock.next_named attempt named
+
+theorem lock_named_rejects_unchecked :
+    ¬∀ (reads : Bool → Bool),
+        Os.Lock.Tells reads →
+          ∀ (attempt : Nat) (named : Bool),
+            ((fun (_ : Nat) (_ : Bool) => Os.Lock.Next.hold) attempt (reads named) = .hold ↔
+                named = true) ∧
+              ((fun (_ : Nat) (_ : Bool) => Os.Lock.Next.hold) attempt (reads named) = .again →
+                attempt + 1 < Os.Lock.attempts) := by
+  intro h
+  -- a lock kept of a file the path no longer names
+  cases ((h id (fun _ => rfl) 0 false).1.mp rfl)
 
 end Os

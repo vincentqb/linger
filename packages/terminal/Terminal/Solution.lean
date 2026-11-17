@@ -66,57 +66,6 @@ theorem replay_restores_rejects_resaved :
       0 (by decide +kernel)
   exact absurd (congrArg (fun r : Vt.Row => (r.getD 0 {}).base) row) (by decide +kernel)
 
-theorem replay_keeps_showing (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
-    (hv : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v)
-    (hw : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable w)
-    (hcols : w.colCount = v.colCount) (hrows : w.rowCount = v.rowCount)
-    (boundary : v.atBoundary = true) (later : List UInt8) :
-    ∃ bytes,
-      Replay.Emits Replay.next budget (Replay.start v) bytes ∧
-        (∀ y < v.rowCount, (w.feed bytes).getRow y = v.getRow y) ∧
-        ∀ y < (v.feed later).rowCount,
-          ((w.feed bytes).feed later).getRow y = (v.feed later).getRow y := by
-  obtain ⟨bytes, emits, -, -, -, -, -, live⟩ := replay_restores budget positive v w
-  obtain ⟨⟨-, -, rows, -⟩, keeps⟩ := live hv hw hcols hrows
-  exact ⟨bytes, emits, rows, (keeps boundary later).1.2.2.1⟩
-
-theorem replay_keeps_showing_rejects_unregioned :
-    ¬∀ (budget : Nat),
-        0 < budget →
-          ∀ (v w : Vt.Vt),
-            Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v →
-              Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable w →
-              w.colCount = v.colCount →
-              w.rowCount = v.rowCount →
-              v.atBoundary = true →
-              ∀ (later : List UInt8),
-                ∃ bytes,
-                  Replay.Emits Replay.next budget
-                      ((fun (v : Vt.Vt) => Replay.start (v.feed [0x1B, 0x5B, 0x72])) v) bytes ∧
-                    (∀ y < v.rowCount, (w.feed bytes).getRow y = v.getRow y) ∧
-                    ∀ y < (v.feed later).rowCount,
-                      ((w.feed bytes).feed later).getRow y = (v.feed later).getRow y := by
-  intro h
-  -- rows 1 and 2 of a 1 by 3 screen as the scroll region, the cursor at its top: the repaint of
-  -- the screen without its region shows the same rows, and two line feeds then part them
-  obtain ⟨bytes, emits, -, kept⟩ :=
-    h 1 Nat.one_pos ((Vt.Vt.init 1 3).feed [0x1B, 0x5B, 0x31, 0x3B, 0x32, 0x72]) (Vt.Vt.init 1 3)
-      (.feed (.init 1 3) _) (.init 1 3) (by decide +kernel) (by decide +kernel) (by decide +kernel)
-      [0x0A, 0x0A, 0x41]
-  have streamed :
-    Replay.Emits Replay.next 1
-      (Replay.start
-        (((Vt.Vt.init 1 3).feed [0x1B, 0x5B, 0x31, 0x3B, 0x32, 0x72]).feed [0x1B, 0x5B, 0x72]))
-      (Render.restore
-        (((Vt.Vt.init 1 3).feed [0x1B, 0x5B, 0x31, 0x3B, 0x32, 0x72]).feed
-          [0x1B, 0x5B, 0x72])) := by
-    rw [← Replay.start_faithful]
-    exact Replay.emits_remaining 1 Nat.one_pos _
-  have same := Replay.Emits.unique emits streamed
-  subst same
-  have row := kept 1 (by decide +kernel)
-  exact absurd (congrArg (fun r : Vt.Row => (r.getD 0 {}).base) row) (by decide +kernel)
-
 theorem replay_history (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
     (hv : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v)
     (hw : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable w)

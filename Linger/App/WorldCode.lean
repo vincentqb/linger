@@ -1084,28 +1084,18 @@ private inductive Shown where
   /-- None: no session holds the name, or its checkpoint does not decode, as `why` says. -/
   | refusal (answer : Answer) (why : String)
 
-/-- Run the steps of `plan` through `run`, in order, as `Capture.work` reads them: the steps from
-an `acquire` to the next `release`, or to the end, inside one `Paths.withSessionLock` of `name`,
-which takes both of the name's locks once and lets them go however those steps end, and the
-other steps outside it. -/
+/-- Run the steps of `plan` through `run`, in order, in the phases `Capture.phases` cuts them into,
+which hold the locks where `Capture.work` reads them held (`capture_waits_unlocked`): each locked
+phase inside one `Paths.withSessionLock` of `name`, which takes both of the name's locks once and
+lets them go however its steps end, and the other steps outside it. -/
 private def runHolding (s : Names.Ref) (plan : List Linger.App.Capture.Step)
     (run : Linger.App.Capture.Step → IO Unit) : IO Unit := do
-  let mut held : Option (Array Linger.App.Capture.Step) := none
-  for step in plan do
-    match step, held with
-    | .acquire, none =>
-      held := some #[]
-    | .release, some inside =>
+  for phase in Linger.App.Capture.phases plan do
+    match phase with
+    | .locked inside =>
       Paths.withSessionLock s.id (inside.forM run)
-      held := none
-    | .acquire, some _ | .release, none =>
-      pure ()
-    | step, some inside =>
-      held := some (inside.push step)
-    | step, none =>
+    | .unlocked step =>
       run step
-  if let some inside := held then
-    Paths.withSessionLock s.id (inside.forM run)
 
 /-- A connected daemon is authoritative, including its errors. Only an absent connection
 followed by successful ownership acquisition permits an offline read, which takes the steps of

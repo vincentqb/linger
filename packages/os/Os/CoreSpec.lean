@@ -62,3 +62,18 @@ def fullGone (size off : Nat) : Result → Next
   | .full | .gone => .gone
 
 end Os.Write
+
+namespace Os.Lock
+
+/-- What a lock attempt does once it holds a lock file's lock and has asked whether the path still
+names the file it holds (`Os.Shell.namesHeld`). -/
+inductive Next where
+  /-- Keep the lock: the path names the file it holds. -/
+  | hold
+  /-- Let it go and lock the path's file again. -/
+  | again
+  /-- Let it go and answer that another process holds the lock. -/
+  | busy
+  deriving Repr, DecidableEq
+
+end Os.Lock

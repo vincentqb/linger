@@ -4,6 +4,7 @@ import all Os.WorldSpec
 public import Os.CoreSpec
 import Os.CoreCode.Wait
 import Os.CoreCode.Write
+import Os.CoreCode.Lock
 public import Std.Async.Signal
 import Std.Async.System
 
@@ -239,23 +240,20 @@ def namesHeld (fd : UInt32) (path : String) : IO Bool := do
   checkCString "namesHeld path" path
   Boundary.namesHeld fd path
 
-/-- How many times `flock` locks a file it then finds the path no longer names, as when its
-holder deleted it meanwhile, before it answers that another process holds the lock. -/
-def lockAttempts : Nat := 8
-
 /-- The exclusive non-blocking lock of the lock file at `path`, created 0600 if missing: `≥ 0` is
 the held fd (close-on-exec) of the file the path names, `-1` means another process holds it, and
 other open or lock failures throw. Chosen over an `O_EXCL`/`mkdir` lock because the kernel
 releases it when the holder dies — no staleness timeout to invent, nothing left behind by a
 SIGKILL or a power cut. The kernel locks a file, not a path, and a holder may delete the lock
 file (`unlinkHeld`), so once it holds a file's lock this checks that the path still names that
-file (`namesHeld`), and locks the path's file again when not, as many as `lockAttempts` times:
+file (`namesHeld`), and locks the path's file again when not, as `Os.Lock.next` decides, at most
+`Os.Lock.attempts` times in all:
 while a process holds the lock of the file the path names, no other process deletes or replaces
 it, since only a holder deletes it, so no two processes hold the lock of the file a path names.
 Keep the fd open for the lifetime of the lock. -/
 def flock (path : String) : IO Int64 := do
   checkCString "flock path" path
-  for _ in [0:lockAttempts] do
+  for attempt in [0:Os.Lock.attempts] do
     let fd ← Boundary.flock path
     if fd < 0 then
       return fd
@@ -266,9 +264,14 @@ def flock (path : String) : IO Int64 := do
       catch error =>
         Boundary.close held
         throw error
-    if named then
+    match Os.Lock.next attempt named with
+    | .hold =>
       return fd
-    Boundary.close held
+    | .again =>
+      Boundary.close held
+    | .busy =>
+      Boundary.close held
+      return -1
   return -1
 
 /-- Delete the lock file at `path` while holding its lock as `fd`, which `flock` gave for that

@@ -124,11 +124,11 @@ def Offloop.collect (w : Offloop) (block : Bool := false) :
   unless block || (← IO.hasFinished task) do
     return (w, none)
   let ended ← IO.wait task
-  match w.waiting with
-  | some write =>
-    return ({ running := some (← IO.asTask write Task.Priority.dedicated) }, some ended)
-  | none =>
-    return ({}, some ended)
+  match Linger.Session.Offloop.done w with
+  | (w, some write) =>
+    return ({ w with running := some (← IO.asTask write Task.Priority.dedicated) }, some ended)
+  | (w, none) =>
+    return (w, some ended)
 
 /-- One accepted client transport: its socket and the output still owed to it. -/
 structure Conn where
@@ -1038,8 +1038,8 @@ private def upgradeTo (id : String) (login : Bool) (rt : Rt) (asker : Nat) (exe 
     IO.FS.writeBinFile path (ByteArray.mk (Linger.Session.Handoff.encode rt.st world).toArray)
   catch err =>
     return (rt, s!"writing the handoff failed: {err}, so the session keeps running")
-  let keep :=
-    #[rt.listenFd, rt.ptyFd, sigRead, sigWrite] ++ rt.locks.toArray ++ (rt.conns.map (·.fd)).toArray
+  -- the exec keeps every descriptor the handoff names (`upgrade_keeps`)
+  let keep := ((Linger.Session.Handoff.kept world).map UInt32.ofNat).toArray
   try
     execImage exe #["__upgraded", id, path, toString rt.childPid] keep
     return (rt, s!"{exe} returned from its exec, so the session keeps running")

@@ -1301,6 +1301,32 @@ theorem loadBytes_saveV3_live (c : Ckpt Vt.Vt) (h : LiveReachableVt c.vt) :
   rw [loadBytes_eq]
   exact load_saveV3_live c h
 
+/-- **What a format 3 record is**: format 3's tag, then the layout of today's record of the same
+state, which version 4 kept. -/
+theorem saveV3_bytes (c : Ckpt Vt.Vt) :
+    saveV3 c = [0x4C, 0x4E, 0x47, 0x52, 3] ++ (saveBytes c).data.toList.drop 5 := by
+  rw [saveBytes_eq]
+  rfl
+
+/-- **A record an older linger wrote reads as it meant then**: a format 3 record, format 3's tag
+then today's layout, loads to its state with its parser quiesced and its labels as they meant
+then (`readFields`). -/
+theorem loadBytes_format3 (c : Ckpt Vt.Vt) (h : LiveReachableVt c.vt) (old : ByteArray)
+    (format3 : old.data.toList = [0x4C, 0x4E, 0x47, 0x52, 3] ++ (saveBytes c).data.toList.drop 5) :
+    loadBytes old =
+      some
+        { c with
+          vt := c.vt.quiesce, fields := readFields 3 c.fields } := by
+  have same : old = ⟨(saveV3 c).toArray⟩ := by
+    cases old with
+    | mk data =>
+      congr
+      apply Array.toList_inj.mp
+      rw [List.toList_toArray, saveV3_bytes]
+      exact format3
+  rw [same]
+  exact loadBytes_saveV3_live c h
+
 /-- A file `loadBytes` accepts saves and loads again exactly. -/
 theorem loadBytes_resave {b : ByteArray} {c : Ckpt Vt.Vt} (h : loadBytes b = some c) :
     loadBytes (saveBytes c) = some c := by

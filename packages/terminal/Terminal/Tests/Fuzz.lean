@@ -110,7 +110,7 @@ def keepsShowing (v : Vt.Vt) (later : String) : Bool :=
       (w.feed bytes).getRow y == (v.feed bytes).getRow y
 
 /-- The indices whose case stops showing the session once more output arrives, which
-`replay_keeps_showing` says is none: the compiled emulator against the theorem. **The list is
+`replay_restores` says is none: the compiled emulator against the theorem. **The list is
 empty**, and pinned as empty. -/
 def failingLater (count : Nat) : List Nat :=
   (List.range count).filter

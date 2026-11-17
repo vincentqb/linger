@@ -659,6 +659,34 @@ none is coalesced. The headline about off-loop writes is shown to reject it. -/
 @[expose]
 def Offloop.eager {R W : Type} (o : Offloop R W) (w : W) : Offloop R W × Option W := (o, some w)
 
+/-- What a daemon's off-loop writes of one kind hear: a write asked for, or the end of the one
+running. -/
+inductive Offloop.Op (W : Type) where
+  /-- The daemon asks for this write. -/
+  | ask (w : W)
+  /-- The running write ended. -/
+  | done
+
+/-- Whether an event is the end of the running write. -/
+@[expose]
+def Offloop.Op.isDone {W : Type} : Offloop.Op W → Bool
+  | .ask _ => false
+  | .done => true
+
+/-- A daemon's off-loop writes of one kind, each its own result, and the writes started so far,
+once it hears `op`: its decisions `ask`, for a write asked for, and `done`, when the running one
+ends, say which write starts now, if any, and that write then runs. -/
+@[expose]
+def Offloop.cycle {W : Type} (ask : Offloop W W → W → Offloop W W × Option W)
+    (done : Offloop W W → Offloop W W × Option W) (o : Offloop W W × List W) (op : Offloop.Op W) :
+    Offloop W W × List W :=
+  match
+    (match op with
+    | .ask w => ask o.1 w
+    | .done => done o.1) with
+  | (s, none) => (s, o.2)
+  | (s, some w) => ({ s with running := some w }, o.2 ++ [w])
+
 /-- How a program has set its terminal to hand it input. -/
 inductive Pty.Mode where
   /-- Raw, as `cfmakeraw` and `stty raw -echo` leave it: no line editing, echo, signal, flow
@@ -826,6 +854,15 @@ session can start from. -/
 def Decoded {V : Type} (load : ByteArray → Option (Ckpt V)) (v : V) : Prop :=
   ∃ bytes c, load bytes = some c ∧ c.vt = v
 
+/-- The description a tmux import gives a session whose fields are `labels`: the window's name,
+which tmux shows, from the field `tmux.window-title` when it is not empty, and none otherwise. A
+record an older linger wrote without a description reads with this one. -/
+@[expose]
+def importDescription (labels : List (String × String)) : List (String × String) :=
+  match labels.lookup "tmux.window-title" with
+  | some title => if title.isEmpty then [] else [("description", title)]
+  | none => []
+
 end Linger.Session.Checkpoint
 
 namespace Linger.Session.Handoff
@@ -866,6 +903,12 @@ structure World where
   /-- The connection that asked for the upgrade, which the new image answers. -/
   asker : Nat
   deriving DecidableEq, Repr
+
+/-- Every descriptor a handoff names, which its new image reads from: the listening socket, the
+pty, both ends of the signal pipe, the locks and every connection. -/
+@[expose]
+def World.fds (w : World) : List Nat :=
+  [w.listenFd, w.ptyFd, w.signals.1, w.signals.2] ++ w.locks ++ w.conns.map (·.fd)
 
 /-- What begins every handoff: `"LNGH"`, then its format's number, one byte. -/
 @[expose]

@@ -116,6 +116,14 @@ theorem endingFields_injective {e₁ e₂ : Ending} (h : endingFields e₁ = end
     | saved n₂ => simp [endingFields] at h
     | dismissed => rfl
 
+/-- A program's ending reads in `info` as its outcome does in a listing of end records: one
+report of how a program ended, whichever reads it. -/
+theorem endingFields_program (o : Outcome) : endingFields (.program o) = outcomeFields o := rfl
+
+/-- Every outcome reports its `exit`, so no ending of a program reads as nothing. -/
+theorem outcomeFields_ne_nil (o : Outcome) : outcomeFields o ≠ [] := by
+  cases o <;> simp [outcomeFields]
+
 /-- What an ending tells a client is how its program ended, the status a shell would report, or
 the signal that stopped the daemon: no rendered frame, and nothing a daemon serves. -/
 theorem told_mem {e : Ending} {m : Msg} (h : m ∈ e.told) :

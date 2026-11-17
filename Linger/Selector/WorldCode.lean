@@ -228,7 +228,7 @@ def choose (executable : String) (readOnly : Bool := false) (heard : IO (Option 
       Os.Shell.Command.stop pending 1000
 
 /-- The exact attach argv for a chosen target. Its operands are the ones the attach
-parser reads back as `target` (`targetArgs_targetOperands`). -/
+parser reads back as `target` (`transport_exact`). -/
 def attachArgs (target : String) (readOnly : Bool := false) : Array String :=
   ("attach" :: (if readOnly then ["--read-only"] else []) ++
       Linger.Target.Remote.targetOperands target).toArray

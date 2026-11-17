@@ -141,6 +141,10 @@ theorem decode_unknown (v : Nat) (rest : List UInt8) (unknown : v ∉ formats) (
     simp [unknown]
   simp [decode, strip]
 
+/-- **An upgrade keeps every descriptor its handoff names.** -/
+theorem fds_kept (w : World) : ∀ fd ∈ w.fds, fd ∈ kept w := fun _ h => by
+  simpa [kept, World.fds] using h
+
 end Linger.Session.Handoff
 
 namespace Linger.Session.Upgrade

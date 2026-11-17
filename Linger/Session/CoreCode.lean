@@ -74,6 +74,10 @@ that reaches the disk; otherwise it starts now, as the write this returns. -/
 def Offloop.ask {R W : Type} (o : Offloop R W) (w : W) : Offloop R W × Option W :=
   if o.running.isSome then ({ o with waiting := some w }, none) else (o, some w)
 
+/-- What a daemon does once its running off-loop write ends: the write that waited, if any, starts
+now, as the write this returns, and none waits. -/
+def Offloop.done {R W : Type} (o : Offloop R W) : Offloop R W × Option W := ({}, o.waiting)
+
 /-- Maximum encoded info answer, shared by the producer and the CLI accumulator. -/
 def infoReplyCap : Nat := 1048576
 
@@ -290,7 +294,7 @@ def State.seen (s : State) : Seen := ⟨s.freshFlag, unseen s, s.asking⟩
 
 /-- How `info` reports an ending: `exit` holds the status a shell would report, and a field
 only a signal or an unseen ending has says which those are, so two endings never read the
-same (`outcomeFields_injective`). -/
+same (`endingFields_injective`). -/
 def outcomeFields : Outcome → List (String × String)
   | .exited code => [("exit", toString code.toNat)]
   | .signaled signal =>

@@ -311,6 +311,12 @@ def decode (l : List UInt8) : Option (State × World) := do
   else
     none
 
+/-- The descriptors an upgrade's exec keeps open for the new image: the listening socket, the pty,
+both ends of the signal pipe, the locks and every connection, each one the handoff names
+(`upgrade_keeps`). -/
+def kept (w : World) : List Nat :=
+  [w.listenFd, w.ptyFd, w.signals.1, w.signals.2] ++ w.locks ++ w.conns.map (·.fd)
+
 end Linger.Session.Handoff
 
 namespace Linger.Session.Upgrade

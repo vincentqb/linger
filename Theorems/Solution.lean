@@ -58,6 +58,8 @@ import all Os.Proofs.Wait
 import Linger.Target.Proofs.Name
 import Linger.Target.Proofs.Remote
 import all Linger.Session.Proofs.Buf
+import all Linger.Session.Proofs.Offloop
+import all Linger.Session.Proofs.Present
 import all Linger.Session.Proofs.Checkpoint
 import all Linger.Session.Proofs.Handoff
 import all Linger.Session.Proofs.Claim
@@ -807,16 +809,6 @@ theorem step_resizes_sized_rejects_zero :
   have zero := h (State.boot (Vt.Vt.init 1 1) [] []) (.tick 0) 0 0 (by simp)
   exact absurd zero.1 (by decide)
 
-theorem remotesFile_home (home : Option String) :
-    Os.Env.remotesFile home = none ↔ home = none ∨ home = some "" :=
-  Os.Env.remotesFile_eq_none_iff home
-
-theorem remotesFile_home_rejects_shared :
-    ¬∀ (home : Option String),
-        (fun (_ : Option String) => some "remotes") home = none ↔ home = none ∨ home = some "" := by
-  intro h
-  exact absurd ((h none).mpr (.inl rfl)) (by simp)
-
 theorem rowFields_name (socketName : String) (info : List (String × String)) :
     (Listing.rowFields socketName info).lookup "name" = some socketName :=
   Listing.rowFields_name socketName info
@@ -870,6 +862,45 @@ theorem caption_precedence_rejects_described :
   intro h
   have := (h [("description", "d"), ("title", "t")]).1 (by simp [List.lookup])
   simp [List.lookup] at this
+
+theorem info_foreground (reported seen : UInt32 → Option Foreground)
+    (foreground : Pty.Foreground reported seen) (s : State) (master : UInt32) (o : Observation)
+    (read : o.foreground = reported master) {fg : Foreground} (found : reported master = some fg) :
+    ∃ process,
+      seen master = some process ∧
+        ("fg", String.intercalate " " process.argv) ∈
+          Session.infoFields (Session.step s (.observed o)).1 ∧
+        ("fgpid", toString process.pid) ∈ Session.infoFields (Session.step s (.observed o)).1 ∧
+        ("fgdir", process.dir) ∈ Session.infoFields (Session.step s (.observed o)).1 := by
+  rw [found] at read
+  exact ⟨fg, foreground master fg found, Session.infoFields_foreground s o read⟩
+
+theorem info_foreground_rejects_unreported :
+    ¬∀ (reported seen : UInt32 → Option Foreground),
+        Pty.Foreground reported seen →
+          ∀ (s : State) (master : UInt32) (o : Observation),
+            o.foreground = reported master →
+              ∀ {fg : Foreground},
+                reported master = some fg →
+                  ∃ process,
+                    seen master = some process ∧
+                      ("fg", String.intercalate " " process.argv) ∈
+                        (fun (_ : State) => ([] : List (String × String)))
+                          (Session.step s (.observed o)).1 ∧
+                      ("fgpid", toString process.pid) ∈
+                        (fun (_ : State) => ([] : List (String × String)))
+                          (Session.step s (.observed o)).1 ∧
+                      ("fgdir", process.dir) ∈
+                        (fun (_ : State) => ([] : List (String × String)))
+                          (Session.step s (.observed o)).1 := by
+  intro h
+  -- a report that leaves the foreground out
+  have shell : Foreground := ⟨1, ["sh"], "/"⟩
+  obtain ⟨_, -, missing, -⟩ :=
+    h (fun _ => some shell) (fun _ => some shell) (fun _ _ found => found)
+      (State.boot (Vt.Vt.init 1 1) [] []) 0
+      { nowMs := 0, wallS := 0, login := false, foreground := some shell } rfl rfl
+  simp at missing
 
 theorem rowText_fits (width : Option Nat) (layout : Listing.Layout)
     (info : List (String × String)) :
@@ -1123,18 +1154,6 @@ theorem route_exact_rejects_selector :
   intro h
   exact absurd (h ["attach"]) (by simp [App.Entry.Route.of, Remote.marker])
 
-theorem commands_complete (op : App.Commands.Op) :
-    ∃ word, (App.Commands.lookup word).map (·.op) = some op := App.Commands.complete op
-
-theorem commands_complete_rejects_none :
-    ¬∀ (op : App.Commands.Op),
-        ∃ word,
-          ((fun (_ : String) => (none : Option App.Commands.Command)) word).map (·.op) =
-            some op := by
-  intro h
-  obtain ⟨_, named⟩ := h .attach
-  simp at named
-
 theorem commands_minimal :
     (∀ op : App.Commands.Op,
         ∃ word,
@@ -1202,19 +1221,6 @@ theorem fields_owned_rejects_named_twice :
   have := h.2.1 "status" (by decide)
   revert this
   decide
-
-theorem usageLine_exact (command : App.Commands.Command) :
-    App.Commands.usageLine command =
-      if command.args.isEmpty then s!"usage: linger {command.word}"
-      else s!"usage: linger {command.word} {command.args}" := App.Commands.usageLine_eq command
-
-theorem usageLine_exact_rejects_bare :
-    ¬∀ (command : App.Commands.Command),
-        (fun (_ : App.Commands.Command) => "usage: linger") command =
-          if command.args.isEmpty then s!"usage: linger {command.word}"
-          else s!"usage: linger {command.word} {command.args}" := by
-  intro h
-  exact absurd (h { word := "ls", op := .list, args := "", summary := "" }) (by decide)
 
 theorem listed_unrecorded (records : Session.Records) (panes : List Import.Resurrect.Pane)
     (pane : Import.Resurrect.Pane) :
@@ -1388,19 +1394,21 @@ theorem command_exact_rejects_quoted :
 theorem transport_exact (t : Remote.Transport) (verb name : String) (options args : List String)
     (deliver : List String → List String → Option (List String))
     (delivers : Remote.Transport.Delivers deliver t) :
-    ∃ line,
-      Remote.targetArgv t verb options name args =
-          (if verb = "attach" then t.attach else t.query) ++ "linger" :: line ∧
-        (∀ received,
-          deliver (if verb = "attach" then t.attach else t.query) ("linger" :: line) =
-              some received →
-            received = "linger" :: line) ∧
-        App.Entry.route line =
-          App.Entry.Route.of
-            (verb :: options ++
-              (if verb = "attach" ∨ verb = "capture" ∨ verb = "ls" then Remote.targetOperands name
-              else [name]) ++
-              args) := by
+    (∃ line,
+        Remote.targetArgv t verb options name args =
+            (if verb = "attach" then t.attach else t.query) ++ "linger" :: line ∧
+          (∀ received,
+            deliver (if verb = "attach" then t.attach else t.query) ("linger" :: line) =
+                some received →
+              received = "linger" :: line) ∧
+          App.Entry.route line =
+            App.Entry.Route.of
+              (verb :: options ++
+                (if verb = "attach" ∨ verb = "capture" ∨ verb = "ls" then Remote.targetOperands name
+                else [name]) ++
+                args)) ∧
+      Remote.targetArgs (Remote.targetOperands name ++ args) = some (name, args) := by
+  refine ⟨?_, Remote.targetArgs_targetOperands name args⟩
   refine
     ⟨Remote.marker ::
         (verb :: options ++
@@ -1439,51 +1447,144 @@ theorem transport_exact_rejects_ssh :
     ¬∀ (t : Remote.Transport) (verb name : String) (options args : List String)
         (deliver : List String → List String → Option (List String)),
         Remote.Transport.Delivers deliver t →
-          ∃ line,
-            (fun (_ : Remote.Transport) (_ : String) (_ : List String) (_ : String)
-                      (_ : List String) =>
-                    ["ssh", "-T", "--"])
-                  t verb options name args =
-                (if verb = "attach" then t.attach else t.query) ++ "linger" :: line ∧
-              (∀ received,
-                deliver (if verb = "attach" then t.attach else t.query) ("linger" :: line) =
-                    some received →
-                  received = "linger" :: line) ∧
-              App.Entry.route line =
-                App.Entry.Route.of
-                  (verb :: options ++
-                    (if verb = "attach" ∨ verb = "capture" ∨ verb = "ls" then
-                      Remote.targetOperands name
-                    else [name]) ++
-                    args) := by
+          (∃ line,
+              (fun (_ : Remote.Transport) (_ : String) (_ : List String) (_ : String)
+                        (_ : List String) =>
+                      ["ssh", "-T", "--"])
+                    t verb options name args =
+                  (if verb = "attach" then t.attach else t.query) ++ "linger" :: line ∧
+                (∀ received,
+                  deliver (if verb = "attach" then t.attach else t.query) ("linger" :: line) =
+                      some received →
+                    received = "linger" :: line) ∧
+                App.Entry.route line =
+                  App.Entry.Route.of
+                    (verb :: options ++
+                      (if verb = "attach" ∨ verb = "capture" ∨ verb = "ls" then
+                        Remote.targetOperands name
+                      else [name]) ++
+                      args)) ∧
+            Remote.targetArgs (Remote.targetOperands name ++ args) = some (name, args) := by
   intro h
   -- a transport the remotes file names, `docker`, which ssh hard-coded in its place ignores
-  obtain ⟨line, ran, -, -⟩ :=
+  obtain ⟨⟨line, ran, -, -⟩, -⟩ :=
     h { query := ["docker"], attach := ["docker"] } "send" "w" [] [] (fun _ words => some words)
       (fun _ _ _ _ => Or.inr rfl)
   simp at ran
 
-theorem check_no_alias (a b name : String) (ha : Name.check a = some name)
-    (hb : Name.check b = some name) : a = b := Name.check_no_alias ha hb
-
-theorem check_no_alias_rejects_fold :
-    ¬∀ (a b name : String),
-        (fun (_ : String) => some "s") a = some name →
-          (fun (_ : String) => some "s") b = some name → a = b := by
+theorem transport_exact_rejects_unread :
+    ¬∀ (t : Remote.Transport) (verb name : String) (options args : List String)
+        (deliver : List String → List String → Option (List String)),
+        Remote.Transport.Delivers deliver t →
+          (∃ line,
+              Remote.targetArgv t verb options name args =
+                  (if verb = "attach" then t.attach else t.query) ++ "linger" :: line ∧
+                (∀ received,
+                  deliver (if verb = "attach" then t.attach else t.query) ("linger" :: line) =
+                      some received →
+                    received = "linger" :: line) ∧
+                App.Entry.route line =
+                  App.Entry.Route.of
+                    (verb :: options ++
+                      (if verb = "attach" ∨ verb = "capture" ∨ verb = "ls" then
+                        (fun (_ : String) => ([] : List String)) name
+                      else [name]) ++
+                      args)) ∧
+            Remote.targetArgs ((fun (_ : String) => ([] : List String)) name ++ args) =
+              some (name, args) := by
   intro h
-  exact absurd (h "a" "b" "s" rfl rfl) (by decide)
-
-theorem targetArgs_targetOperands (name : String) (rest : List String) :
-    Remote.targetArgs (Remote.targetOperands name ++ rest) = some (name, rest) :=
-  Remote.targetArgs_targetOperands name rest
-
-theorem targetArgs_targetOperands_rejects_none :
-    ¬∀ (name : String) (rest : List String),
-        Remote.targetArgs ((fun (_ : String) => ([] : List String)) name ++ rest) =
-          some (name, rest) := by
-  intro h
-  have read := h "s" []
+  -- a target placed as nothing, which the far end cannot read back as the name
+  have read :=
+    (h { query := ["ssh"], attach := ["ssh"] } "attach" "s" [] [] (fun _ words => some words)
+        (fun _ _ _ _ => Or.inr rfl)).2
   simp [Remote.targetArgs_nil] at read
+
+theorem env_defaults (home flag : Option String) (shell dir saved : String) (named : shell ≠ "")
+    (set : dir ≠ "") :
+    (Os.Env.shellOf (some shell) = shell ∧
+        Os.Env.shellOf none = "sh" ∧ Os.Env.shellOf (some "") = "sh") ∧
+      (Os.Env.remotesFile home = none ↔ home = none ∨ home = some "") ∧
+      (Os.Env.detachEnabled true flag = true ∧ Os.Env.detachEnabled false flag = flag.isNone) ∧
+      Os.Env.resumeDir home saved true = some saved ∧
+      Os.Env.resumeDir (some dir) saved false = some dir ∧
+      Os.Env.resumeDir none saved false = none ∧ Os.Env.resumeDir (some "") saved false = none :=
+  ⟨⟨Os.Env.shellOf_set named, Os.Env.shellOf_absent.1, Os.Env.shellOf_absent.2⟩,
+    Os.Env.remotesFile_eq_none_iff home,
+    ⟨Os.Env.detachEnabled_readOnly flag, Os.Env.detachEnabled_writable flag⟩,
+    Os.Env.resumeDir_saved home saved, Os.Env.resumeDir_home set saved,
+    (Os.Env.resumeDir_absent saved).1, (Os.Env.resumeDir_absent saved).2⟩
+
+theorem env_defaults_rejects_fixed :
+    ¬∀ (home flag : Option String) (shell dir saved : String),
+        shell ≠ "" →
+          dir ≠ "" →
+          ((fun (_ : Option String) => "sh") (some shell) = shell ∧
+              (fun (_ : Option String) => "sh") none = "sh" ∧
+              (fun (_ : Option String) => "sh") (some "") = "sh") ∧
+            (Os.Env.remotesFile home = none ↔ home = none ∨ home = some "") ∧
+            (Os.Env.detachEnabled true flag = true ∧
+              Os.Env.detachEnabled false flag = flag.isNone) ∧
+            Os.Env.resumeDir home saved true = some saved ∧
+            Os.Env.resumeDir (some dir) saved false = some dir ∧
+            Os.Env.resumeDir none saved false = none ∧
+            Os.Env.resumeDir (some "") saved false = none := by
+  intro h
+  exact absurd (h none none "fish" "b" "a" (by decide) (by decide)).1.1 (by decide)
+
+theorem env_defaults_rejects_shared :
+    ¬∀ (home flag : Option String) (shell dir saved : String),
+        shell ≠ "" →
+          dir ≠ "" →
+          (Os.Env.shellOf (some shell) = shell ∧
+              Os.Env.shellOf none = "sh" ∧ Os.Env.shellOf (some "") = "sh") ∧
+            ((fun (_ : Option String) => some "remotes") home = none ↔
+              home = none ∨ home = some "") ∧
+            (Os.Env.detachEnabled true flag = true ∧
+              Os.Env.detachEnabled false flag = flag.isNone) ∧
+            Os.Env.resumeDir home saved true = some saved ∧
+            Os.Env.resumeDir (some dir) saved false = some dir ∧
+            Os.Env.resumeDir none saved false = none ∧
+            Os.Env.resumeDir (some "") saved false = none := by
+  intro h
+  exact absurd ((h none none "fish" "b" "a" (by decide) (by decide)).2.1.mpr (.inl rfl)) (by simp)
+
+theorem env_defaults_rejects_never :
+    ¬∀ (home flag : Option String) (shell dir saved : String),
+        shell ≠ "" →
+          dir ≠ "" →
+          (Os.Env.shellOf (some shell) = shell ∧
+              Os.Env.shellOf none = "sh" ∧ Os.Env.shellOf (some "") = "sh") ∧
+            (Os.Env.remotesFile home = none ↔ home = none ∨ home = some "") ∧
+            ((fun (_ : Bool) (_ : Option String) => false) true flag = true ∧
+              (fun (_ : Bool) (_ : Option String) => false) false flag = flag.isNone) ∧
+            Os.Env.resumeDir home saved true = some saved ∧
+            Os.Env.resumeDir (some dir) saved false = some dir ∧
+            Os.Env.resumeDir none saved false = none ∧
+            Os.Env.resumeDir (some "") saved false = none := by
+  intro h
+  exact absurd (h none none "fish" "b" "a" (by decide) (by decide)).2.2.1.1 (by decide)
+
+theorem env_defaults_rejects_gone :
+    ¬∀ (home flag : Option String) (shell dir saved : String),
+        shell ≠ "" →
+          dir ≠ "" →
+          (Os.Env.shellOf (some shell) = shell ∧
+              Os.Env.shellOf none = "sh" ∧ Os.Env.shellOf (some "") = "sh") ∧
+            (Os.Env.remotesFile home = none ↔ home = none ∨ home = some "") ∧
+            (Os.Env.detachEnabled true flag = true ∧
+              Os.Env.detachEnabled false flag = flag.isNone) ∧
+            (fun (_ : Option String) (saved : String) (_ : Bool) => some saved) home saved true =
+              some saved ∧
+            (fun (_ : Option String) (saved : String) (_ : Bool) => some saved) (some dir) saved
+                false =
+              some dir ∧
+            (fun (_ : Option String) (saved : String) (_ : Bool) => some saved) none saved false =
+              none ∧
+            (fun (_ : Option String) (saved : String) (_ : Bool) => some saved) (some "") saved
+                false =
+              none := by
+  intro h
+  exact absurd (h none none "fish" "b" "a" (by decide) (by decide)).2.2.2.2.2.1 (by decide)
 
 theorem checkHosts_ok_iff (hosts result : List String) :
     Remote.checkHosts hosts = .ok result ↔
@@ -1498,40 +1599,6 @@ theorem checkHosts_ok_iff_rejects_any :
   intro h
   have twice := ((h ["a", "a"] ["a", "a"]).mp rfl).2.1
   simp at twice
-
-theorem detach_key (flag : Option String) :
-    Os.Env.detachEnabled true flag = true ∧ Os.Env.detachEnabled false flag = flag.isNone :=
-  ⟨Os.Env.detachEnabled_readOnly flag, Os.Env.detachEnabled_writable flag⟩
-
-theorem detach_key_rejects_never :
-    ¬∀ (flag : Option String),
-        (fun (_ : Bool) (_ : Option String) => false) true flag = true ∧
-          (fun (_ : Bool) (_ : Option String) => false) false flag = flag.isNone := by
-  intro h
-  exact absurd (h none).1 (by decide)
-
-theorem resumeDir_where (home : Option String) (saved dir : String) (set : dir ≠ "") :
-    Os.Env.resumeDir home saved true = some saved ∧
-      Os.Env.resumeDir (some dir) saved false = some dir ∧
-      Os.Env.resumeDir none saved false = none ∧ Os.Env.resumeDir (some "") saved false = none :=
-  ⟨Os.Env.resumeDir_saved home saved, Os.Env.resumeDir_home set saved,
-    (Os.Env.resumeDir_absent saved).1, (Os.Env.resumeDir_absent saved).2⟩
-
-theorem resumeDir_where_rejects_gone :
-    ¬∀ (home : Option String) (saved dir : String),
-        dir ≠ "" →
-          (fun (_ : Option String) (saved : String) (_ : Bool) => some saved) home saved true =
-              some saved ∧
-            (fun (_ : Option String) (saved : String) (_ : Bool) => some saved) (some dir) saved
-                false =
-              some dir ∧
-            (fun (_ : Option String) (saved : String) (_ : Bool) => some saved) none saved false =
-              none ∧
-            (fun (_ : Option String) (saved : String) (_ : Bool) => some saved) (some "") saved
-                false =
-              none := by
-  intro h
-  exact absurd (h none "a" "b" (by decide)).2.1 (by decide)
 
 theorem failureStatus_exact (why : String) :
     Start.failureStatus (.directory why) = 125 ∧
@@ -1565,32 +1632,6 @@ theorem metadata_dirs_rejects_silent :
   intro h
   have moved := ((h "" "" "" "" "b" (some "a")).2 "a").2 ⟨rfl, by decide⟩
   simp at moved
-
-theorem programOf_exact (shell : String) (argv : List String) :
-    Start.programOf shell argv = (argv.headD shell, (argv.drop 1).toArray) :=
-  Start.programOf_exact shell argv
-
-theorem programOf_exact_rejects_shell :
-    ¬∀ (shell : String) (argv : List String),
-        (fun (shell : String) (argv : List String) => (shell, #["-c", String.intercalate " " argv]))
-            shell argv =
-          (argv.headD shell, (argv.drop 1).toArray) := by
-  intro h
-  exact absurd (congrArg Prod.fst (h "sh" ["ls"])) (by decide)
-
-theorem shellOf_choice (shell : String) (set : shell ≠ "") :
-    Os.Env.shellOf (some shell) = shell ∧
-      Os.Env.shellOf none = "sh" ∧ Os.Env.shellOf (some "") = "sh" :=
-  ⟨Os.Env.shellOf_set set, Os.Env.shellOf_absent.1, Os.Env.shellOf_absent.2⟩
-
-theorem shellOf_choice_rejects_fixed :
-    ¬∀ (shell : String),
-        shell ≠ "" →
-          (fun (_ : Option String) => "sh") (some shell) = shell ∧
-            (fun (_ : Option String) => "sh") none = "sh" ∧
-            (fun (_ : Option String) => "sh") (some "") = "sh" := by
-  intro h
-  exact absurd (h "fish" (by decide)).1 (by decide)
 
 theorem start_runs (inherited : String → Option String)
     (start :
@@ -1863,103 +1904,6 @@ theorem step_signal_saves_rejects_silent :
   subst empty
   simpa using heard { id := 0, attached := true } (by simp) (.inl rfl)
 
-theorem step_stopped_discards (s : State) (o : Outcome) :
-    (∃ front,
-        (Session.step s (.stopped o)).2 = front ++ [.dropCheckpoint, .exit] ∧
-          Effect.checkpoint ∉ front) ∧
-      (Session.step s (.stopped o)).1.terminal = s.terminal := Session.step_stopped_discards s o
-
-theorem step_stopped_discards_rejects_save :
-    ¬∀ (s : State) (o : Outcome),
-        (∃ front,
-            ((fun (s : State) (_ : Event) =>
-                      (s, ([.checkpoint, .dropCheckpoint, .exit] : List (Effect Replay.Plan))))
-                    s (.stopped o)).2 =
-                front ++ [.dropCheckpoint, .exit] ∧
-              Effect.checkpoint ∉ front) ∧
-          ((fun (s : State) (_ : Event) =>
-                  (s, ([.checkpoint, .dropCheckpoint, .exit] : List (Effect Replay.Plan))))
-                s (.stopped o)).1.terminal =
-            s.terminal := by
-  intro h
-  obtain ⟨⟨front, effects, unsaved⟩, -⟩ := h (State.boot (Vt.Vt.init 1 1) [] []) .unknown
-  have saved :
-    [Effect.checkpoint] ++ [.dropCheckpoint, .exit] = front ++ [.dropCheckpoint, .exit] := effects
-  rw [← List.append_cancel_right saved] at unsaved
-  exact unsaved (List.mem_singleton_self _)
-
-theorem step_childExited_keeps (s : State) (o : Outcome)
-    (unseen : ∀ c ∈ s.roster, c.attached = false) :
-    (∃ front,
-        (Session.step s (.childExited o)).2 = front ++ [.checkpoint, .exit] ∧
-          Effect.dropCheckpoint ∉ front) ∧
-      (Session.step s (.childExited o)).1.terminal = s.terminal :=
-  Session.step_childExited_keeps s o unseen
-
-theorem step_childExited_keeps_rejects_drop :
-    ¬∀ (s : State) (o : Outcome),
-        (∀ c ∈ s.roster, c.attached = false) →
-          (∃ front,
-              ((fun (s : State) (_ : Event) =>
-                        (s, ([.dropCheckpoint, .checkpoint, .exit] : List (Effect Replay.Plan))))
-                      s (.childExited o)).2 =
-                  front ++ [.checkpoint, .exit] ∧
-                Effect.dropCheckpoint ∉ front) ∧
-            ((fun (s : State) (_ : Event) =>
-                    (s, ([.dropCheckpoint, .checkpoint, .exit] : List (Effect Replay.Plan))))
-                  s (.childExited o)).1.terminal =
-              s.terminal := by
-  intro h
-  obtain ⟨⟨front, effects, kept⟩, -⟩ :=
-    h (State.boot (Vt.Vt.init 1 1) [] []) .unknown (by simp [State.roster, State.boot])
-  have dropped : [Effect.dropCheckpoint] ++ [.checkpoint, .exit] = front ++ [.checkpoint, .exit] :=
-    effects
-  rw [← List.append_cancel_right dropped] at kept
-  exact kept (List.mem_singleton_self _)
-
-theorem step_childExited_seen (s : State) (o : Outcome) {c : Client} (hc : c ∈ s.roster)
-    (attached : c.attached = true) :
-    (∃ front,
-        (Session.step s (.childExited o)).2 =
-            front ++ [.record (.ended o), .dropCheckpoint, .exit] ∧
-          Effect.checkpoint ∉ front ∧
-          ∀ c ∈ s.roster,
-            c.attached = true ∨ c.waiting = true →
-              (Ending.program o).told.map (Effect.send c.id) <:+: front) ∧
-      (Session.step s (.childExited o)).1.terminal = s.terminal :=
-  Session.step_childExited_seen s o hc attached
-
-theorem step_childExited_seen_rejects_keep :
-    ¬∀ (s : State) (o : Outcome) {c : Client},
-        c ∈ (fun (_ : State) => [({ id := 0, attached := true } : Client)]) s →
-          c.attached = true →
-          (∃ front,
-              ((fun (s : State) (_ : Event) =>
-                        (s,
-                          ([.record (.ended .unknown), .checkpoint, .exit] :
-                            List (Effect Replay.Plan))))
-                      s (.childExited o)).2 =
-                  front ++ [.record (.ended o), .dropCheckpoint, .exit] ∧
-                Effect.checkpoint ∉ front ∧
-                ∀ c ∈ (fun (_ : State) => [({ id := 0, attached := true } : Client)]) s,
-                  c.attached = true ∨ c.waiting = true →
-                    (Ending.program o).told.map (Effect.send c.id) <:+: front) ∧
-            ((fun (s : State) (_ : Event) =>
-                    (s,
-                      ([.record (.ended .unknown), .checkpoint, .exit] :
-                        List (Effect Replay.Plan))))
-                  s (.childExited o)).1.terminal =
-              s.terminal := by
-  intro h
-  obtain ⟨⟨front, effects, -⟩, -⟩ :=
-    h (State.boot (Vt.Vt.init 1 1) [] []) .unknown (c := { id := 0, attached := true }) (by simp)
-      rfl
-  have split :
-    ([] : List (Effect Replay.Plan)) ++ [.record (.ended .unknown), .checkpoint, .exit] =
-      front ++ [.record (.ended .unknown), .dropCheckpoint, .exit] :=
-    effects
-  simpa using (List.append_inj' split rfl).2
-
 theorem visit_result (afterSave : List UInt8 → Option (List UInt8)) (kept : Record.Kept afterSave)
     (readOnly : Bool) (o : Outcome) (n : UInt8) (seen : Option Seen) :
     App.Recovery.visit readOnly (afterSave (Record.encode (.ended o))) =
@@ -2073,8 +2017,25 @@ theorem wait_held (deadline heldSince : Option Nat) (now : Nat) (heard : App.Wai
       (heard = .held →
         (∀ due, deadline = some due → now < due) →
         (∀ since, heldSince = some since → now < since + App.Wait.heldNameMs) →
-        App.Wait.decide deadline heldSince now heard = .again (some (heldSince.getD now))) :=
-  App.Wait.wait_held deadline heldSince now heard
+        App.Wait.decide deadline heldSince now heard = .again (some (heldSince.getD now))) ∧
+      (heard = .held →
+        ∀ since,
+          heldSince = some since →
+            now < since + (Session.drainTimeoutMs + (Session.ending.map (·.2)).sum) →
+            App.Wait.decide deadline heldSince now heard ≠ .answer .failed) := by
+  refine
+    ⟨(App.Wait.wait_held deadline heldSince now heard).1,
+      (App.Wait.wait_held deadline heldSince now heard).2, ?_⟩
+  intro held since named ending failed
+  have := (App.Wait.wait_held deadline heldSince now heard).1.mp failed
+  subst held
+  rcases this with h | h | ⟨-, since', named', late⟩
+  · cases h
+  · cases h
+  · rw [named] at named'
+    cases named'
+    have := App.Wait.held_covers_ending
+    omega
 
 theorem wait_held_rejects_eager :
     ¬∀ (deadline heldSince : Option Nat) (now : Nat) (heard : App.Wait.Heard),
@@ -2089,17 +2050,39 @@ theorem wait_held_rejects_eager :
             (∀ since, heldSince = some since → now < since + App.Wait.heldNameMs) →
             (fun (_ _ : Option Nat) (_ : Nat) (_ : App.Wait.Heard) => App.Wait.Next.answer .failed)
                 deadline heldSince now heard =
-              .again (some (heldSince.getD now))) := by
+              .again (some (heldSince.getD now))) ∧
+          (heard = .held →
+            ∀ since,
+              heldSince = some since →
+                now < since + (Session.drainTimeoutMs + (Session.ending.map (·.2)).sum) →
+                (fun (_ _ : Option Nat) (_ : Nat) (_ : App.Wait.Heard) =>
+                      App.Wait.Next.answer .failed)
+                    deadline heldSince now heard ≠
+                  .answer .failed) := by
   intro h
   have failed := ((h none none 0 .held).1).mp rfl
   simp at failed
 
-theorem held_covers_ending :
-    Session.drainTimeoutMs + (Session.ending.map (·.2)).sum ≤ App.Wait.heldNameMs :=
-  App.Wait.held_covers_ending
-
-theorem held_covers_ending_rejects_drain :
-    ¬Session.drainTimeoutMs + (Session.ending.map (·.2)).sum ≤ Session.drainTimeoutMs := by decide
+theorem wait_held_rejects_drain :
+    ¬∀ (deadline heldSince : Option Nat) (now : Nat) (heard : App.Wait.Heard),
+        (App.Wait.decide deadline heldSince now heard = .answer .failed ↔
+            heard = .ended (.program .unknown) ∨
+              heard = .recorded (some (.program .unknown)) ∨
+              heard = .held ∧
+                ∃ since, heldSince = some since ∧ since + Session.drainTimeoutMs ≤ now) ∧
+          (heard = .held →
+            (∀ due, deadline = some due → now < due) →
+            (∀ since, heldSince = some since → now < since + Session.drainTimeoutMs) →
+            App.Wait.decide deadline heldSince now heard = .again (some (heldSince.getD now))) ∧
+          (heard = .held →
+            ∀ since,
+              heldSince = some since →
+                now < since + (Session.drainTimeoutMs + (Session.ending.map (·.2)).sum) →
+                App.Wait.decide deadline heldSince now heard ≠ .answer .failed) := by
+  intro h
+  -- a wait that fails once a drain has passed, while the ending's signals still wait
+  have k := h none (some 0) Session.drainTimeoutMs .held
+  exact k.2.2 rfl 0 rfl (by decide) (k.1.mpr (.inr (.inr ⟨rfl, 0, rfl, by simp⟩)))
 
 theorem code_documented (status : UInt32) (signal : UInt8) :
     Os.Answer.code .done = 0 ∧
@@ -2147,67 +2130,39 @@ theorem code_documented_rejects_lumped :
   -- SIGTERM's status is 143, which the rule that answered 130 for every signal does not give
   exact absurd (h 0 15).2.2.2.2.2.2.2.2.1 (by decide)
 
-theorem listed_once : Os.Answer.listed.Nodup ∧ ∀ a, a ∈ Os.Answer.listed ↔ a.Own :=
-  Os.Answer.listed_once
-
-theorem listed_once_rejects_empty :
-    ¬(([] : List Os.Answer).Nodup ∧ ∀ a, a ∈ ([] : List Os.Answer) ↔ a.Own) := by
-  intro h
-  exact absurd ((h.2 .done).mpr trivial) List.not_mem_nil
-
-theorem listed_once_rejects_signal :
-    ¬(([.done, .notDone, .usage, .timedOut, .failed, .cannotRun, .notFound, .stopped 2] :
-            List Os.Answer).Nodup ∧
-        ∀ a,
-          a ∈
-              ([.done, .notDone, .usage, .timedOut, .failed, .cannotRun, .notFound, .stopped 2] :
-                List Os.Answer) ↔
-            a.Own) := by
-  intro h
-  -- the list gives SIGINT's status as one of linger's own answers, which no signal's is
-  exact (h.2 (.stopped 2)).mp (by decide)
-
-theorem signal_status (signal : UInt8) :
-    Os.Answer.code (.stopped signal) = (Outcome.signaled signal).status ∧
-      Os.Answer.code (Ending.saved signal).answer = (Outcome.signaled signal).status :=
-  ⟨(Os.Answer.code_documented 0 signal).2.2.2.2.2.2.2.2.1,
-    (Os.Answer.code_documented 0 signal).2.2.2.2.2.2.2.2.2.1⟩
-
-theorem signal_status_rejects_lumped :
-    ¬∀ (signal : UInt8),
-        Os.Answer.lumped (.stopped signal) = (Outcome.signaled signal).status ∧
-          Os.Answer.lumped (Ending.saved signal).answer = (Outcome.signaled signal).status := by
-  intro h
-  exact absurd (h 15).1 (by decide)
-
-theorem outcomeFields_injective (o₁ o₂ : Outcome)
-    (h : Session.outcomeFields o₁ = Session.outcomeFields o₂) : o₁ = o₂ :=
-  Session.outcomeFields_injective h
-
-theorem outcomeFields_injective_rejects_silence :
-    ¬∀ (o₁ o₂ : Outcome),
-        (fun (_ : Outcome) => ([] : List (String × String))) o₁ =
-            (fun (_ : Outcome) => ([] : List (String × String))) o₂ →
-          o₁ = o₂ := by
-  intro h
-  exact absurd (h (.exited 0) .unknown rfl) (by simp)
-
-theorem endingFields_injective (e₁ e₂ : Ending)
-    (h : Session.endingFields e₁ = Session.endingFields e₂) : e₁ = e₂ :=
-  Session.endingFields_injective h
+theorem endingFields_injective :
+    (∀ o, Session.endingFields (.program o) = Session.outcomeFields o) ∧
+      ∀ e₁ e₂, Session.endingFields e₁ = Session.endingFields e₂ → e₁ = e₂ :=
+  ⟨Session.endingFields_program, fun _ _ h => Session.endingFields_injective h⟩
 
 theorem endingFields_injective_rejects_unknown :
-    ¬∀ (e₁ e₂ : Ending),
-        (fun (e : Ending) => Session.endingFields (if e = .saved 15 then .program .unknown else e))
-              e₁ =
-            (fun (e : Ending) =>
+    ¬((∀ o,
+          (fun (e : Ending) =>
                 Session.endingFields (if e = .saved 15 then .program .unknown else e))
-              e₂ →
-          e₁ = e₂ := by
+              (.program o) =
+            Session.outcomeFields o) ∧
+        ∀ e₁ e₂,
+          (fun (e : Ending) =>
+                  Session.endingFields (if e = .saved 15 then .program .unknown else e))
+                e₁ =
+              (fun (e : Ending) =>
+                  Session.endingFields (if e = .saved 15 then .program .unknown else e))
+                e₂ →
+            e₁ = e₂) := by
   intro h
   -- a reader that hears a saved session as one whose program's ending is unknown
-  have same := h (.saved 15) (.program .unknown) (by simp)
+  have same := h.2 (.saved 15) (.program .unknown) (by simp)
   cases same
+
+theorem endingFields_injective_rejects_silence :
+    ¬((∀ o,
+          Session.endingFields (.program o) =
+            (fun (_ : Outcome) => ([] : List (String × String))) o) ∧
+        ∀ e₁ e₂, Session.endingFields e₁ = Session.endingFields e₂ → e₁ = e₂) := by
+  intro h
+  -- a listing of end records that reports no ending at all
+  exact
+    Session.outcomeFields_ne_nil (.exited 0) ((Session.endingFields_program _).symm.trans (h.1 _))
 
 theorem infoFields_protocol (s : State) :
     ("protocol", toString Wire.protocol) ∈ Session.infoFields s := (Session.infoFields_protocol s).1
@@ -2384,32 +2339,6 @@ theorem run_feedback_alive_rejects_halt :
     @h Unit (fun _ world eff => (world, Driver.success .unknown eff))
       { st := State.boot (Vt.Vt.init 1 1) [] [], world := () } [] rfl (by simp)
   exact absurd stopped (by decide)
-
-theorem run_exited {m : Type → Type} [Monad m] {World : Type}
-    (execute : State → World → (eff : Effect Replay.Plan) → m (World × Driver.Reply eff))
-    (r : Driver.Result State World) (events : List Event) (exited : r.exiting = true) :
-    Driver.run execute r events = pure r := Driver.run_exited execute r events exited
-
-theorem run_exited_rejects_jump :
-    ¬∀ {m : Type → Type} [Monad m] {World : Type}
-        (execute : State → World → (eff : Effect Replay.Plan) → m (World × Driver.Reply eff))
-        (r : Driver.Result State World) (events : List Event),
-        r.exiting = true →
-          Driver.jump (State.boot (Vt.Vt.init 1 1) [] []) execute r events = pure r := by
-  intro h
-  have moved :=
-    @h Id _ Unit (fun _ world eff => (world, Driver.success .unknown eff))
-      { st := State.boot (Vt.Vt.init 1 1) [("description", "b")] [], world := (), exiting := true }
-      [] rfl
-  have fields := congrArg (fun (out : Driver.Result State Unit) => out.st.fieldList) moved
-  change
-    (State.boot (Vt.Vt.init 1 1) [] []).fieldList =
-      (State.boot (Vt.Vt.init 1 1) [("description", "b")] []).fieldList at fields
-  obtain ⟨-, -, -, -, empty, -⟩ := Session.boot_observed (Vt.Vt.init 1 1) [] []
-  obtain ⟨-, -, -, -, labelled, -⟩ :=
-    Session.boot_observed (Vt.Vt.init 1 1) [("description", "b")] []
-  rw [empty, labelled] at fields
-  simp [maxFields, recordField] at fields
 
 theorem run_stop_exits {World : Type}
     (execute : State → World → (eff : Effect Replay.Plan) → Id (World × Driver.Reply eff))
@@ -2604,6 +2533,34 @@ theorem handoff_carries_rejects_rebuilt :
   have carried := h (State.boot (Vt.Vt.init 1 1) [] [("k", "v")]) someWorld (.init 1 1) init_quiet
   rw [Handoff.decode_encode _ _ (.init 1 1) init_quiet] at carried
   simp [State.boot, State.terminal, State.fieldList] at carried
+
+theorem upgrade_keeps (exec : Nat → List Nat → List Nat → Nat × List Nat × List Nat)
+    (keeps : Os.Exec.Keeps exec) (pid : Nat) (w : Handoff.World) :
+    (exec pid [w.childPid] (Handoff.kept w)).1 = pid ∧
+      (exec pid [w.childPid] (Handoff.kept w)).2.1 = [w.childPid] ∧
+      ∀ fd ∈ w.fds, fd ∈ (exec pid [w.childPid] (Handoff.kept w)).2.2 := by
+  rw [keeps pid [w.childPid] (Handoff.kept w)]
+  exact ⟨rfl, rfl, Handoff.fds_kept w⟩
+
+theorem upgrade_keeps_rejects_unconnected :
+    ¬∀ (exec : Nat → List Nat → List Nat → Nat × List Nat × List Nat),
+        Os.Exec.Keeps exec →
+          ∀ (pid : Nat) (w : Handoff.World),
+            (exec pid [w.childPid] ((fun (w : Handoff.World) => [w.listenFd, w.ptyFd]) w)).1 = pid ∧
+              (exec pid [w.childPid] ((fun (w : Handoff.World) => [w.listenFd, w.ptyFd]) w)).2.1 =
+                [w.childPid] ∧
+              ∀ fd ∈ w.fds,
+                fd ∈
+                  (exec pid [w.childPid]
+                      ((fun (w : Handoff.World) => [w.listenFd, w.ptyFd]) w)).2.2 := by
+  intro h
+  -- an exec that keeps the socket and the pty, and closes a lock
+  have kept :=
+    (h (fun pid children kept => (pid, children, kept)) (fun _ _ _ => rfl) 0
+          { listenFd := 3, ptyFd := 4, childPid := 1, signals := (5, 6), locks := [7], conns := [],
+            ptyIn := [], login := false, asker := 0 }).2.2
+      7 (by simp [Handoff.World.fds])
+  simp at kept
 
 theorem handoff_versioned (s : State) (w : Handoff.World) (v : Nat) (rest : List UInt8) :
     Handoff.version ∈ Handoff.formats ∧
@@ -2922,40 +2879,55 @@ theorem checkpoint_metadata_rejects_blank :
   intro h
   exact absurd (h { name := "a", dir := "x", line := 0 } none).1 (by decide)
 
-theorem older_import_described (pane : Import.Resurrect.Pane) (contents : Option String) :
-    Checkpoint.loadBytes
-        ((Checkpoint.saveBytes
-              ⟨(Import.Resurrect.checkpoint pane contents).vt,
-                (Import.Resurrect.checkpoint pane contents).cwd,
-                (Import.Resurrect.checkpoint pane contents).fields.filter
-                  (·.1 != "description")⟩).set!
-          4 3) =
-      some (Import.Resurrect.checkpoint pane contents) :=
-  Import.Resurrect.older_checkpoint pane contents
+theorem older_record_described (c : Checkpoint.Ckpt Vt.Vt)
+    (h :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Checkpoint.Decoded Checkpoint.loadBytes) c.vt)
+    (undescribed : c.fields.lookup "description" = none) (old : ByteArray)
+    (format3 :
+      old.data.toList =
+        [0x4C, 0x4E, 0x47, 0x52, 3] ++ (Checkpoint.saveBytes c).data.toList.drop 5) :
+    Checkpoint.loadBytes old =
+      some
+        { c with
+          vt := c.vt.quiesce, fields := c.fields ++ Checkpoint.importDescription c.fields } := by
+  rw [Checkpoint.loadBytes_format3 c (Checkpoint.live_of_decoded h) old format3]
+  simp [Checkpoint.readFields, undescribed]
 
-theorem older_import_described_rejects_stored :
-    ¬∀ (pane : Import.Resurrect.Pane) (contents : Option String),
-        (fun (b : ByteArray) =>
-              (Checkpoint.loadBytes b).map fun (c : Checkpoint.Ckpt Vt.Vt) =>
-                (⟨c.vt, c.cwd, c.fields.filter (·.1 != "description")⟩ : Checkpoint.Ckpt Vt.Vt))
-            ((Checkpoint.saveBytes
-                  ⟨(Import.Resurrect.checkpoint pane contents).vt,
-                    (Import.Resurrect.checkpoint pane contents).cwd,
-                    (Import.Resurrect.checkpoint pane contents).fields.filter
-                      (·.1 != "description")⟩).set!
-              4 3) =
-          some (Import.Resurrect.checkpoint pane contents) := by
+theorem older_record_described_rejects_stored :
+    ¬∀ (c : Checkpoint.Ckpt Vt.Vt),
+        Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+            (Checkpoint.Decoded
+              (fun (b : ByteArray) =>
+                (Checkpoint.loadBytes b).map fun (c : Checkpoint.Ckpt Vt.Vt) =>
+                  (⟨c.vt, c.cwd, c.fields.filter (·.1 != "description")⟩ : Checkpoint.Ckpt Vt.Vt)))
+            c.vt →
+          c.fields.lookup "description" = none →
+          ∀ (old : ByteArray),
+            old.data.toList =
+                [0x4C, 0x4E, 0x47, 0x52, 3] ++ (Checkpoint.saveBytes c).data.toList.drop 5 →
+              (fun (b : ByteArray) =>
+                    (Checkpoint.loadBytes b).map fun (c : Checkpoint.Ckpt Vt.Vt) =>
+                      (⟨c.vt, c.cwd, c.fields.filter (·.1 != "description")⟩ :
+                        Checkpoint.Ckpt Vt.Vt))
+                  old =
+                some
+                  { c with
+                    vt := c.vt.quiesce,
+                    fields := c.fields ++ Checkpoint.importDescription c.fields } := by
   intro h
-  have named := h { name := "a", dir := "x", line := 0, details := { windowTitle := "w" } } none
-  dsimp only at named
-  rw [Import.Resurrect.older_checkpoint] at named
-  have described :=
-    congrArg (Option.map fun (c : Checkpoint.Ckpt Vt.Vt) => c.fields.lookup "description") named
-  simp only [Option.map_some, Import.Resurrect.lookup_filter_key,
-    Import.Resurrect.checkpoint_described
-        { name := "a", dir := "x", line := 0, details := { windowTitle := "w" } } none (by decide),
-    Option.some.injEq] at described
-  cases described
+  -- a reader that drops the description an older record reads with
+  have k :=
+    h ⟨Vt.Vt.init 1 1, "", [("tmux.window-title", "w")]⟩ (.init 1 1) (by simp)
+      ⟨([0x4C, 0x4E, 0x47, 0x52, 3] ++
+            (Checkpoint.saveBytes
+                  ⟨Vt.Vt.init 1 1, "", [("tmux.window-title", "w")]⟩).data.toList.drop
+              5).toArray⟩
+      (by simp)
+  simp only [] at k
+  rw [older_record_described ⟨Vt.Vt.init 1 1, "", [("tmux.window-title", "w")]⟩ (.init 1 1)
+      (by simp) _ (by simp)] at k
+  simp [Checkpoint.importDescription] at k
 
 theorem infoText_text (s : State) :
     ∃ cs : List Char,
@@ -3340,36 +3312,70 @@ theorem start_answer_true_rejects_proceed :
   have ran := Start.Reachable.step taken (.daemonDecides _ rfl rfl true)
   exact absurd ((h _ ran).2 (by simp [Start.answer_command])) (by decide)
 
-theorem offloop_coalesces {R W : Type} (start : W → R) (ws : List W) :
-    (ws.foldl (Offloop.run Offloop.ask start) {}).running = ws.head?.map start ∧
-      (ws.foldl (Offloop.run Offloop.ask start) {}).waiting =
-        if ws.length ≤ 1 then none else ws.getLast? := Session.offloop_coalesces start ws
+theorem offloop_coalesces {W : Type} (earlier : List (Offloop.Op W)) (w : W) (ends : Nat) :
+    (((earlier ++ (.ask w : Offloop.Op W) :: List.replicate ends .done).foldl
+              (Offloop.cycle Offloop.ask Offloop.done) ({}, [])).2.getLast? =
+          some w ∨
+        ends = 0 ∧
+          ((earlier ++ (.ask w : Offloop.Op W) :: List.replicate ends .done).foldl
+                (Offloop.cycle Offloop.ask Offloop.done) ({}, [])).1.waiting =
+            some w) ∧
+      ∀ ops : List (Offloop.Op W),
+        (ops.foldl (Offloop.cycle Offloop.ask Offloop.done) ({}, [])).2.length ≤
+          (ops.filter Offloop.Op.isDone).length + 1 :=
+  ⟨Session.Offloop.latest_started earlier w ends, Session.Offloop.started_bound⟩
 
 theorem offloop_coalesces_rejects_eager :
-    ¬∀ {R W : Type} (start : W → R) (ws : List W),
-        (ws.foldl (Offloop.run Offloop.eager start) {}).running = ws.head?.map start ∧
-          (ws.foldl (Offloop.run Offloop.eager start) {}).waiting =
-            if ws.length ≤ 1 then none else ws.getLast? := by
+    ¬∀ {W : Type} (earlier : List (Offloop.Op W)) (w : W) (ends : Nat),
+        (((earlier ++ (.ask w : Offloop.Op W) :: List.replicate ends .done).foldl
+                  (Offloop.cycle Offloop.eager Offloop.done) ({}, [])).2.getLast? =
+              some w ∨
+            ends = 0 ∧
+              ((earlier ++ (.ask w : Offloop.Op W) :: List.replicate ends .done).foldl
+                    (Offloop.cycle Offloop.eager Offloop.done) ({}, [])).1.waiting =
+                some w) ∧
+          ∀ ops : List (Offloop.Op W),
+            (ops.foldl (Offloop.cycle Offloop.eager Offloop.done) ({}, [])).2.length ≤
+              (ops.filter Offloop.Op.isDone).length + 1 := by
   intro h
-  have first := (@h Nat Nat id [0, 1]).1
-  simp [Offloop.run, Offloop.eager] at first
+  -- two writes asked for at once both start, neither waiting for the other
+  have twice := (h (W := Unit) [] () 0).2 [.ask (), .ask ()]
+  simp [Offloop.cycle, Offloop.eager, Offloop.Op.isDone] at twice
 
 theorem capture_waits_unlocked :
-    (App.Capture.work App.Capture.plan false).map Prod.fst = [.load, .render, .write] ∧
+    (∀ steps,
+        (App.Capture.phases steps).flatMap App.Capture.Phase.work = App.Capture.work steps false) ∧
+      (App.Capture.work App.Capture.plan false).map Prod.fst = [.load, .render, .write] ∧
       (.load, true) ∈ App.Capture.work App.Capture.plan false ∧
       ∀ step, (step, true) ∈ App.Capture.work App.Capture.plan false → step.waitsOutside = false :=
-  App.Capture.waits_unlocked
+  ⟨App.Capture.phases_work, App.Capture.waits_unlocked⟩
 
 theorem capture_waits_unlocked_rejects_inside :
-    ¬((App.Capture.work [.acquire, .load, .render, .write, .release] false).map Prod.fst =
+    ¬((∀ steps,
+          (App.Capture.phases steps).flatMap App.Capture.Phase.work =
+            App.Capture.work steps false) ∧
+        (App.Capture.work [.acquire, .load, .render, .write, .release] false).map Prod.fst =
           [.load, .render, .write] ∧
         (.load, true) ∈ App.Capture.work [.acquire, .load, .render, .write, .release] false ∧
         ∀ step,
           (step, true) ∈ App.Capture.work [.acquire, .load, .render, .write, .release] false →
             step.waitsOutside = false) := by
   -- the write runs holding the locks, and it waits on whoever reads it
-  rintro ⟨-, -, unheld⟩
+  rintro ⟨-, -, -, unheld⟩
   exact absurd (unheld .write (by decide)) (by decide)
+
+theorem capture_waits_unlocked_rejects_held :
+    ¬((∀ steps,
+          ((fun (steps : List App.Capture.Step) => [App.Capture.Phase.locked steps]) steps).flatMap
+              App.Capture.Phase.work =
+            App.Capture.work steps false) ∧
+        (App.Capture.work App.Capture.plan false).map Prod.fst = [.load, .render, .write] ∧
+        (.load, true) ∈ App.Capture.work App.Capture.plan false ∧
+        ∀ step,
+          (step, true) ∈ App.Capture.work App.Capture.plan false → step.waitsOutside = false) := by
+  -- a shell that holds the locks through every step, the write included
+  rintro ⟨phased, -⟩
+  exact absurd (phased [.write]) (by decide)
 
 theorem classify_iff (o : Status.Obs) (s : Status.Status) : Status.classify o = s ↔ Status.Is s o :=
   Status.classify_iff o s
@@ -3529,26 +3535,21 @@ theorem step_commands_rejects_deaf :
   simp [Commands.hear] at heard
 
 theorem icon_glyphs :
-    Status.icon .asks = '⚑' ∧
-      Status.icon .working = '⣷' ∧
-      Status.icon .wantsYou = '⣿' ∧
-      Status.icon .idle = '⣀' ∧
-      Status.icon .exitedOk = '✓' ∧
-      Status.icon .exitedBad = '✗' ∧
-      Status.icon .resumable = '~' ∧
-      Status.icon .unknown = '?' := ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    (∀ a b, Status.icon a = Status.icon b → a = b) ∧
+      (∀ st, (Status.legend.map fun line => line.toList.head?).count (some (Status.icon st)) = 1) ∧
+      ∀ line ∈ Status.legend, ∃ st, line.toList.head? = some (Status.icon st) :=
+  ⟨fun a b h => Status.icon_injective a b h, Status.legend_lines⟩
 
 theorem icon_glyphs_rejects_unknown :
-    ¬((fun (_ : Status.Status) => '?') .asks = '⚑' ∧
-        (fun (_ : Status.Status) => '?') .working = '⣷' ∧
-        (fun (_ : Status.Status) => '?') .wantsYou = '⣿' ∧
-        (fun (_ : Status.Status) => '?') .idle = '⣀' ∧
-        (fun (_ : Status.Status) => '?') .exitedOk = '✓' ∧
-        (fun (_ : Status.Status) => '?') .exitedBad = '✗' ∧
-        (fun (_ : Status.Status) => '?') .resumable = '~' ∧
-        (fun (_ : Status.Status) => '?') .unknown = '?') := by
+    ¬((∀ a b, (fun (_ : Status.Status) => '?') a = (fun (_ : Status.Status) => '?') b → a = b) ∧
+        (∀ st,
+          (Status.legend.map fun line => line.toList.head?).count
+              (some ((fun (_ : Status.Status) => '?') st)) =
+            1) ∧
+        ∀ line ∈ Status.legend,
+          ∃ st, line.toList.head? = some ((fun (_ : Status.Status) => '?') st)) := by
   intro h
-  exact absurd h.1 (by decide)
+  cases h.1 .asks .unknown rfl
 
 theorem summary_exact (statuses : List Status.Status) :
     Status.summary statuses =
@@ -3579,19 +3580,39 @@ theorem summary_exact_rejects_count :
   exact absurd (h []) (by simp)
 
 theorem rowStatus_saved (status : Nat) (st : Status.Status) :
-    Listing.rowStatus (.ended status) = (if status = 0 then .exitedOk else .exitedBad) ∧
-      Listing.rowStatus (.remote false (Status.name st)) =
-        if st = .exitedOk ∨ st = .exitedBad then st else .resumable :=
-  ⟨Listing.rowStatus_ended status, Listing.rowStatus_remote_saved st⟩
+    Status.Is (Listing.rowStatus (.ended status)) { daemonUp := false, exit := some status } ∧
+      (∃ o : Status.Obs,
+        o.known = true ∧
+          o.daemonUp = false ∧ Status.Is (Listing.rowStatus (.remote false (Status.name st))) o) ∧
+      (st = .exitedOk ∨ st = .exitedBad →
+        Listing.rowStatus (.remote false (Status.name st)) = st) := by
+  refine
+    ⟨?_, ?_, fun h => by
+      rw [Listing.rowStatus_remote_saved]; simp [h]⟩
+  · rw [Listing.rowStatus_ended]
+    split <;> simp_all [Status.Is]
+  · rw [Listing.rowStatus_remote_saved]
+    refine
+      ⟨{ daemonUp := false,
+         exit := if st = .exitedOk then some 0 else if st = .exitedBad then some 1 else none },
+        rfl, rfl, ?_⟩
+    cases st <;> simp [Status.Is]
 
 theorem rowStatus_saved_rejects_unknown :
     ¬∀ (status : Nat) (st : Status.Status),
-        (fun (_ : Listing.Row) => Status.Status.unknown) (.ended status) =
-            (if status = 0 then .exitedOk else .exitedBad) ∧
-          (fun (_ : Listing.Row) => Status.Status.unknown) (.remote false (Status.name st)) =
-            if st = .exitedOk ∨ st = .exitedBad then st else .resumable := by
+        Status.Is ((fun (_ : Listing.Row) => Status.Status.unknown) (.ended status))
+            { daemonUp := false, exit := some status } ∧
+          (∃ o : Status.Obs,
+            o.known = true ∧
+              o.daemonUp = false ∧
+              Status.Is
+                ((fun (_ : Listing.Row) => Status.Status.unknown) (.remote false (Status.name st)))
+                o) ∧
+          (st = .exitedOk ∨ st = .exitedBad →
+            (fun (_ : Listing.Row) => Status.Status.unknown) (.remote false (Status.name st)) =
+              st) := by
   intro h
-  exact absurd (h 0 .unknown).1 (by decide)
+  exact absurd (h 0 .unknown).1 (by simp [Status.Is])
 
 theorem compose_attention_last (session application summary : String) (capacity : Nat) :
     Title.compose session application summary capacity =
@@ -3778,19 +3799,6 @@ theorem before_number_rejects_lexicographic :
   intro h
   have wrong := h "p" "" 2 10 (by decide) (by decide) (by decide)
   exact absurd wrong (by decide)
-
-theorem groups_exact (keys : List String) :
-    ((View.groups keys).map (·.2)).sum = keys.length ∧
-      ∀ (k : String) (n : Nat), (k, n) ∈ View.groups keys → n = keys.count k :=
-  ⟨View.groups_sum keys, View.groups_count keys⟩
-
-theorem groups_exact_rejects_fixed :
-    ¬∀ (keys : List String),
-        (((fun (_ : List String) => [("", 1)]) keys).map (·.2)).sum = keys.length ∧
-          ∀ (k : String) (n : Nat),
-            (k, n) ∈ (fun (_ : List String) => [("", 1)]) keys → n = keys.count k := by
-  intro h
-  exact absurd (h []).1 (by simp)
 
 theorem hidden_adds_up (targets : List String) :
     (View.hidden targets).2 = [] ∨

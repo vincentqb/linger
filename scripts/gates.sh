@@ -754,7 +754,7 @@ printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$COD
 [ "$(code_count 'Client[.]attach([^[:alnum:]_]|$)' Linger/App/WorldCode.lean)" -eq 1 ] \
   || fail "Client.attach is called outside attachSpoken, which first asks the daemon's protocol level"
 # `linger --help` lists the exit statuses from the vocabulary every command answers in
-# (`code_documented`, `listed_once`), one line per answer of linger's own.
+# (`code_documented`), one line per answer of linger's own.
 printf '%s\n' "$cli_code" | CG_RE='(^|[[:space:]])Answer[.]legend[.]map [(]" +" [+][+] ·[)][)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "linger --help no longer lists the exit statuses from Answer.legend"
 # The session inventory the listing, the prompt summary and the importer share.
@@ -1084,7 +1084,7 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let received ← try read c
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def Rt[.]closeConn [(]rt : Rt[)] [(]fd : UInt32[)] : IO Rt := do close fd return [{] rt with conns := rt[.]conns[.]filter [(]·[.]fd != fd[)] [}]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "Rt.closeConn must close the fd before it forgets only that connection"
 # A session runs exactly the program and words it was given (`Start.programOf`, the
-# `programOf_exact` headline), and without a command Env.shellOf's program, which an unset or
+# `start_runs` headline), and without a command Env.shellOf's program, which an unset or
 # empty SHELL makes sh (shellOf_absent). Linger.Session.Suites.Agent creates sessions with both.
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let [(]prog, args[)] := Start[.]programOf [(]Linger[.]Os[.]Env[.]shellOf [(]← IO[.]getEnv "SHELL"[)][)] argv([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "a session's program bypasses Start.programOf or Env.shellOf"
@@ -1198,7 +1198,7 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])private def executeEffect [
   || fail "the driver's effect executor must answer every effect with its reply and raise nothing"
 for tie in \
   '[|] [.]checkpoint => do return [(][{] rt with saves := ← rt[.]saves[.]ask [(]rt[.]saveCkpt st[)] [}], false[)]' \
-  '[|] some write => return [(][{] running := some [(]← IO[.]asTask write Task[.]Priority[.]dedicated[)] [}], some ended[)]' \
+  'match Linger[.]Session[.]Offloop[.]done w with [|] [(]w, some write[)] => return [(][{] w with running := some [(]← IO[.]asTask write Task[.]Priority[.]dedicated[)] [}], some ended[)]' \
   'let seen := rt[.]st[.]seen if rt[.]published == some seen then return rt let records ← rt[.]records[.]ask [(]rt[.]saveRecord [(][.]running [(]some seen[)][)][)]' \
   'rt ← flushPty rt if !rt[.]exiting then rt ← publish rt latest[.]set rt'; do
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
@@ -1219,7 +1219,7 @@ code_grep '^[[:space:]]+Linger[.]Session[.]Buf[.]bufOffer infoReplyCap acc [(]By
 # transport delivers as they are (`Transport.Delivers`, `transport_exact`) and every shell passes
 # on (`Shell.Literal`); stdin is inherited for binary input.
 # Every attach or capture argv linger builds for itself places its target with
-# Remote.targetOperands, which Remote.targetArgs reads back exactly (targetArgs_targetOperands).
+# Remote.targetOperands, which Remote.targetArgs reads back exactly (transport_exact).
 # A literal attach argv passes a name starting with - as an option. "attach" may begin
 # a list, array or cons only in the command parser's pattern and in Picker.attachArgs,
 # tied above.
@@ -1421,12 +1421,13 @@ printf '%s\n' "$os_shell_code" | CG_RE='(^|[[:space:]])def replaceFile [(]path :
   || fail "Os.Shell.replaceFile no longer makes its temporary file private and flushes it before its rename and the directory after it"
 [ "$(code_count 'IO[.]FS[.]rename' 'Linger/Session/WorldCode/*')" -eq 0 ] \
   || fail "a session file is renamed into place outside Os.Shell.replaceFile, which flushes it"
-# `capture` of a saved session takes the steps of `Capture.plan` (`capture_waits_unlocked`), each
-# from an `acquire` to the next `release` inside one `withSessionLock`, as `Capture.work` reads
-# them: it loads and renders holding both locks and writes once it has let them go. The robust
-# suite resumes a session while a capture of it waits on a pipe nobody reads.
+# `capture` of a saved session takes the steps of `Capture.plan` (`capture_waits_unlocked`) in
+# the phases `Capture.phases` cuts them into, each locked one inside one `withSessionLock`, which
+# hold the locks where `Capture.work` reads them held: it loads and renders holding both locks
+# and writes once it has let them go. The robust suite resumes a session while a capture of it
+# waits on a pipe nobody reads.
 for tie in \
-  'private def runHolding [(]s : Names[.]Ref[)] [(]plan : List Linger[.]App[.]Capture[.]Step[)] [(]run : Linger[.]App[.]Capture[.]Step → IO Unit[)] : IO Unit := do let mut held : Option [(]Array Linger[.]App[.]Capture[.]Step[)] := none for step in plan do match step, held with [|] [.]acquire, none => held := some #[[][]] [|] [.]release, some inside => Paths[.]withSessionLock s[.]id [(]inside[.]forM run[)] held := none [|] [.]acquire, some _ [|] [.]release, none => pure [(][)] [|] step, some inside => held := some [(]inside[.]push step[)] [|] step, none => run step if let some inside := held then Paths[.]withSessionLock s[.]id [(]inside[.]forM run[)]' \
+  'private def runHolding [(]s : Names[.]Ref[)] [(]plan : List Linger[.]App[.]Capture[.]Step[)] [(]run : Linger[.]App[.]Capture[.]Step → IO Unit[)] : IO Unit := do for phase in Linger[.]App[.]Capture[.]phases plan do match phase with [|] [.]locked inside => Paths[.]withSessionLock s[.]id [(]inside[.]forM run[)] [|] [.]unlocked step => run step' \
   'requestStatus s[.]name result [|] none => let file ← IO[.]mkRef [(]none : Option ByteArray[)] let shown ← IO[.]mkRef [(]Shown[.]refusal [.]notFound [(]← refusalText s [.]notFound[)][)] let answer ← IO[.]mkRef Answer[.]failed runHolding s Linger[.]App[.]Capture[.]plan fun [|] [.]load => do file[.]set [(]← Resume[.]readCkpt s[.]id[)] [|] [.]render => do match Linger[.]App[.]Recovery[.]decide false [(]← file[.]get[)] with [|] [.]resume ck => shown[.]set [(][.]session [(]render ck[.]vt[)][)]' \
   '[|] [.]write => do match ← shown[.]get with [|] [.]session bytes => writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] answer[.]set [.]done [|] [.]refusal said why => IO[.]eprintln s!"linger: [{]why[}]" answer[.]set said [|] [.]acquire [|] [.]release => pure [(][)] answer[.]get' \
   'if readOnly then match ← Client[.]connect s[.]id with [|] some fd => attachSpoken s[.]name fd true [|] none => match ← visitOffline s true with' \
