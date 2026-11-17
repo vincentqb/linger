@@ -405,7 +405,7 @@ import_closure packages/fuzzy/Fuzzy/CoreCode.lean 'public import Fuzzy.CoreSpec;
 import_closure packages/fuzzy/Fuzzy/CoreSpec.lean ''
 import_closure Linger/Selector/CoreCode/Picker.lean 'import Input.CoreCode;public import Linger.Selector.CoreSpec;import Fuzzy.CoreCode;import Linger.Target.CoreCode.Name;import Linger.Display.CoreCode.Listing;public import Linger.Display.CoreSpec;import Linger.Display.CoreCode.Status;import Linger.Target.CoreCode.Remote;import Terminal.CoreCode.Vt;import Terminal.CoreCode.Render;import Linger.Display.CoreCode.View;'
 import_closure Linger/Display/CoreCode/View.lean 'public import Linger.Display.CoreSpec;import Linger.Display.CoreCode.Status;'
-import_closure Linger/Display/CoreSpec.lean ''
+import_closure Linger/Display/CoreSpec.lean 'public import Terminal.CoreSpec;'
 import_closure Linger/Display/CoreCode/Status.lean 'public import Linger.Display.CoreSpec;'
 import_closure packages/input/Input/CoreCode.lean 'public import Input.CoreSpec;'
 import_closure packages/input/Input/CoreSpec.lean ''

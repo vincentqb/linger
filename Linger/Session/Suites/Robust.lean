@@ -203,8 +203,8 @@ def admissionPressure (e : Env) : IO Unit := do
     -- replaces, then flushes their directory; a file whose path cannot be read may be either
     let writing (path : String) : Bool := path.isEmpty || path == stateDir || path.endsWith ".tmp"
     let before ← IO.mkRef ([] : List (String × String))
-    -- The daemon's own first writes, its first checkpoint and the records of its shell's first
-    -- output, fresh and then stale and unseen, have reached their files, and it holds no
+    -- The daemon's own first writes, its first checkpoint and the record of what its shell's first
+    -- output shows, a prompt that declares nothing and adds no line, have reached their files, and it holds no
     -- descriptor on its state directory or on a file being written.
     let settled ←
       waitFor patienceMs do
@@ -212,7 +212,7 @@ def admissionPressure (e : Env) : IO Unit := do
           let stale :=
             record.toOption.any fun bytes =>
               Linger.Session.Record.decode bytes.toList matches
-                some (.running (some ⟨false, true, false⟩))
+                some (.running (some ⟨none, false, false, false⟩))
           let written :=
             stale && (← System.FilePath.pathExists s!"{pressure.dir}/pressure.ckpt") &&
               !(← System.FilePath.pathExists s!"{pressure.dir}/pressure.ckpt.tmp")

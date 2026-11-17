@@ -853,9 +853,8 @@ example :
       true := by
   native_decide
 
-/-- A program works exactly while it declared progress under way, normal or indeterminate, as
-`info` reports it, whatever ticks happen meanwhile, until a report removes it; an error and a
-pause say the progress stopped, and output alone declares nothing. -/
+/-- A program's declared progress is the state its last report set, as `info` reports it,
+whatever ticks happen meanwhile, until a report removes it, and output alone declares nothing. -/
 example :
     (let (wrote, _) := run [.ptyOut "x".toUTF8.toList, .tick 70000]
      let (busy, _) := run [.ptyOut (osc9 "4;3;"), .tick 70000, .tick 900000]
@@ -863,16 +862,15 @@ example :
       let (normal, _) := run [.ptyOut (osc9 "4;1;50")]
       let (failed, _) := run [.ptyOut (osc9 "4;2")]
       let (paused, _) := run [.ptyOut (osc9 "4;4;10")]
-      !wrote.seen.working && (infoFields wrote).contains ("progress", "none") &&
-        busy.seen.working &&
-        (infoFields busy).contains ("working", "true") &&
+      wrote.seen.progress == none && (infoFields wrote).contains ("progress", "none") &&
+        busy.seen.progress == some .indeterminate &&
         (infoFields busy).contains ("progress", "indeterminate") &&
-        !done.seen.working &&
+        done.seen.progress == none &&
         (infoFields done).contains ("progress", "none") &&
-        normal.seen.working &&
-        !failed.seen.working &&
+        normal.seen.progress == some .normal &&
+        failed.seen.progress == some .error &&
         (infoFields failed).contains ("progress", "error") &&
-        !paused.seen.working &&
+        paused.seen.progress == some .paused &&
         (infoFields paused).contains ("progress", "paused")) =
       true := by
   native_decide
@@ -902,7 +900,8 @@ example :
 /-- What a daemon publishes to its name's end record carries the ask, and reads back. -/
 example :
     (let (rang, _) := run [.ptyOut [0x07]]
-     Record.published (Record.encode (.running (some rang.seen))) == some ⟨false, false, true⟩) =
+     Record.published (Record.encode (.running (some rang.seen))) ==
+        some ⟨none, false, false, true⟩) =
       true := by
   native_decide
 
@@ -928,7 +927,7 @@ example :
       let (seen, _) := run [.ptyOut (mark "C;cmdline_url=ls" ++ mark "D;1")] looked
       (infoFields ended).contains ("lastcmd", "make test") &&
         (infoFields ended).contains ("lastexit", "2") &&
-        ended.seen == ⟨false, false, false⟩ &&
+        ended.seen == ⟨none, false, false, false⟩ &&
         Record.published (Record.encode (.running (some ended.seen))) == some ended.seen &&
         untold looked &&
         untold seen) =

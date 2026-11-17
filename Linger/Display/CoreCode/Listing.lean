@@ -31,7 +31,7 @@ def rowFields (socketName : String) (info : List (String × String)) : List (Str
 /-! ## The row's status
 
 `Status.classify` needs observations from two sources: the daemon reports
-`unseen`/`working`/`exit` in its `info` reply, and the caller supplies what only
+`progress`/`running`/`unseen`/`asks`/`exit` in its `info` reply, and the caller supplies what only
 it can know, as the `Row` it passes — whether a socket accepted the connection and, for a
 session without one, what its name's end record says. Splitting it this way is what makes
 row identity extend to the status column: an absent or partial reply cannot make a
@@ -63,8 +63,9 @@ def rowStatus : Row → Status
         -- a reply's exit status is read only here, for a live row: a socket-less row's
         -- comes from its end record (`ended`), so a reply can never make one look like a
         -- completed run
-        exit := (info.lookup "exit").bind String.toNat?, working := flag info "working",
-        unseen := flag info "unseen", asks := flag info "asks" }
+        exit := (info.lookup "exit").bind String.toNat?,
+        progress := Status.progressOfName ((info.lookup "progress").getD ""),
+        running := flag info "running", unseen := flag info "unseen", asks := flag info "asks" }
   | .stale => .resumable
   | .ended status => classify { daemonUp := false, exit := some status }
   | .broken => .unknown
@@ -73,7 +74,7 @@ def rowStatus : Row → Status
     -- running session can show
     let status := ofName peerStatus
     if live || status == .exitedOk || status == .exitedBad then status else .resumable
-  | .published working unseen asks => classify { working, unseen, asks }
+  | .published progress running unseen asks => classify { progress, running, unseen, asks }
 
 /-! ## Rendering the human-readable listing
 

@@ -23,8 +23,11 @@ theorem place_mem_order (st : Status) : place st ∈ order := by cases st <;> de
 /-- …once. -/
 theorem order_nodup : order.Nodup := by decide
 
-/-- A quiet session's place is a printing one's. -/
+/-- A quiet session's place is a working one's… -/
 theorem place_idle : place .idle = place .working := rfl
+
+/-- …as is a paused one's. -/
+theorem place_paused : place .paused = place .working := rfl
 
 /-- A status asks for someone exactly when its place does. -/
 theorem place_attention (st : Status) : place st ∈ Status.attention ↔ st ∈ Status.attention := by
@@ -88,7 +91,7 @@ theorem sort_attention_first {α : Type} (status : α → Status) (rows : List �
       sort status rows = first ++ rest ∧
         (∀ x ∈ first, status x ∈ Status.attention) ∧ ∀ x ∈ rest, status x ∉ Status.attention := by
   refine
-    ⟨[Status.asks, .exitedBad, .unknown, .wantsYou].flatMap fun st =>
+    ⟨[Status.asks, .exitedBad, .errored, .unknown, .wantsYou].flatMap fun st =>
         rows.filter fun x => place (status x) == st,
       [Status.working, .resumable, .exitedOk].flatMap fun st =>
         rows.filter fun x => place (status x) == st,
@@ -101,7 +104,7 @@ theorem sort_attention_first {α : Type} (status : α → Status) (rows : List �
     apply (place_attention (status x)).mp
     rw [heq]
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hst
-    rcases hst with rfl | rfl | rfl | rfl <;> simp [Status.attention]
+    rcases hst with rfl | rfl | rfl | rfl | rfl <;> simp [Status.attention]
   · intro x hx
     simp only [List.mem_flatMap, List.mem_filter, beq_iff_eq] at hx
     obtain ⟨st, hst, _, heq⟩ := hx
@@ -119,7 +122,7 @@ theorem sort_done_last {α : Type} (status : α → Status) (rows : List α) :
       sort status rows = first ++ rest ∧
         (∀ x ∈ first, done (status x) = false) ∧ ∀ x ∈ rest, done (status x) = true := by
   refine
-    ⟨[Status.asks, .exitedBad, .unknown, .wantsYou, .working].flatMap fun st =>
+    ⟨[Status.asks, .exitedBad, .errored, .unknown, .wantsYou, .working].flatMap fun st =>
         rows.filter fun x => place (status x) == st,
       [Status.resumable, .exitedOk].flatMap fun st => rows.filter fun x => place (status x) == st,
       ?_, ?_, ?_⟩
@@ -130,7 +133,7 @@ theorem sort_done_last {α : Type} (status : α → Status) (rows : List α) :
     obtain ⟨st, hst, _, heq⟩ := hx
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hst
     revert heq
-    cases status x <;> rcases hst with rfl | rfl | rfl | rfl | rfl <;> simp [place, done]
+    cases status x <;> rcases hst with rfl | rfl | rfl | rfl | rfl | rfl <;> simp [place, done]
   · intro x hx
     simp only [List.mem_flatMap, List.mem_filter, beq_iff_eq] at hx
     obtain ⟨st, hst, _, heq⟩ := hx
@@ -144,7 +147,9 @@ row, `⚑`, `⣿`, `⣷` or `⣀`, below it. -/
 theorem sort_live_above_done {α : Type} (status : α → Status) (rows first rest : List α)
     (split : sort status rows = first ++ rest) (x : α) (above : x ∈ first)
     (ended : status x = .exitedOk ∨ status x = .resumable) (y : α) (below : y ∈ rest) :
-    ¬(status y = .asks ∨ status y = .wantsYou ∨ status y = .working ∨ status y = .idle) := by
+    ¬(status y = .asks ∨
+        status y = .errored ∨
+        status y = .wantsYou ∨ status y = .working ∨ status y = .paused ∨ status y = .idle) := by
   obtain ⟨front, back, whole, live, settled⟩ := sort_done_last status rows
   rw [whole] at split
   have hx : done (status x) = true := by rcases ended with h | h <;> simp [h, done]
@@ -214,13 +219,15 @@ theorem sort_keeps_place {α : Type} (status status' : α → Status) (rows : Li
     (h :
       ∀ x ∈ rows,
         status x = status' x ∨
-          ((status x = .working ∨ status x = .idle) ∧ (status' x = .working ∨ status' x = .idle))) :
+          ((status x = .working ∨ status x = .paused ∨ status x = .idle) ∧
+            (status' x = .working ∨ status' x = .paused ∨ status' x = .idle))) :
     sort status rows = sort status' rows := by
   have hp : ∀ x ∈ rows, place (status x) = place (status' x) := by
     intro x hx
     rcases h x hx with heq | ⟨h1, h2⟩
     · rw [heq]
-    · rcases h1 with h1 | h1 <;> rcases h2 with h2 | h2 <;> simp only [h1, h2, place_idle]
+    · rcases h1 with h1 | h1 | h1 <;> rcases h2 with h2 | h2 | h2 <;>
+        simp only [h1, h2, place_idle, place_paused]
   unfold sort
   congr 1
   funext st
@@ -503,9 +510,10 @@ theorem hidden_adds_up (targets : List String) :
   | some depth =>
     right; simp [groups_sum]
 
-/-- The statuses that ask for someone, by name: `⚑`, `⣿`, `✗` and `?`. -/
+/-- The statuses that ask for someone, by name: `⚑`, `⣿`, `✗`, `!` and `?`. -/
 theorem mem_attention (st : Status) :
-    st ∈ Status.attention ↔ st = .asks ∨ st = .wantsYou ∨ st = .exitedBad ∨ st = .unknown := by
+    st ∈ Status.attention ↔
+      st = .asks ∨ st = .wantsYou ∨ st = .exitedBad ∨ st = .errored ∨ st = .unknown := by
   simp [Status.attention]
 
 /-! ## Names as people read them -/

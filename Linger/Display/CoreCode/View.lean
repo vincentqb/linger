@@ -13,7 +13,7 @@ what needs you to act, then where the session is in its life, running, saved, th
 row that ended well or can only be resumed above a live one (`sort_live_above_done`), a finished
 session last, keeps the listing's order within a place
 (`sort_stable`) and loses no row (`sort_perm`). A running session has one place whether it is
-printing or quiet, so its row stays where it is when it starts or stops (`sort_keeps_place`),
+working, paused or quiet, so its row stays where it is when it starts or stops (`sort_keeps_place`),
 and a row moves only when its session starts or stops needing you, ends or can only be resumed.
 Its header counts every row and, among them,
 those that ask for someone, whatever a query shows (`headerParts`). The rows a window cannot
@@ -26,17 +26,18 @@ namespace Linger.Display.View
 
 open Linger.Display.Status (Status)
 
-/-- The place a view shows a status in, named by a status: a running session's, printing (`⣷`)
-or quiet (`⣀`), is `working`'s, and every other status has its own. -/
+/-- The place a view shows a status in, named by a status: a running session's, working (`⣷`),
+paused (`⣤`) or quiet (`⣀`), is `working`'s, and every other status has its own. -/
 def place : Status → Status
-  | .idle => .working
+  | .idle | .paused => .working
   | st => st
 
 /-- The order a view shows places in, by two keys (`View.needs`, `View.lifecycle`): first what
-needs you to act, `⚑`, then `✗` and `?`, then `⣿`; then where the session is in its life, the
-running sessions, `⣷` and `⣀` together, then the saved ones, `~`, then the ended ones, `✓`. A
-program waiting for you comes before everything, and a finished session comes last. -/
-def order : List Status := [.asks, .exitedBad, .unknown, .wantsYou, .working, .resumable, .exitedOk]
+needs you to act, `⚑`, then `✗`, `!` and `?`, then `⣿`; then where the session is in its life,
+the running sessions, `⣷`, `⣤` and `⣀` together, then the saved ones, `~`, then the ended ones,
+`✓`. A program waiting for you comes before everything, and a finished session comes last. -/
+def order : List Status :=
+  [.asks, .exitedBad, .errored, .unknown, .wantsYou, .working, .resumable, .exitedOk]
 
 /-- Rows in `order` of their status's `place`, each place's rows in listing order. -/
 def sort {α : Type} (status : α → Status) (rows : List α) : List α :=

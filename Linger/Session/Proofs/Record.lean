@@ -18,17 +18,20 @@ theorem decode_encode (r : Record) : decode (encode r) = some r := by
     cases seen with
     | none => rfl
     | some seen =>
-      obtain ⟨working, unseen, asks⟩ := seen
-      cases working <;> cases unseen <;> cases asks <;> rfl
+      obtain ⟨progress, running, unseen, asks⟩ := seen
+      rcases progress with _ | ⟨_ | _ | _ | _⟩ <;> cases running <;> cases unseen <;> cases asks <;>
+        rfl
   | ended outcome => cases outcome <;> rfl
   | saved signal => rfl
   | dismissed => rfl
 
-/-- Each of the eight answers to a daemon's three questions has its own byte. -/
+/-- Each of the forty answers to what a daemon saw has its own byte. -/
 theorem seenByte_injective (a b : Seen) (h : seenByte a = seenByte b) : a = b := by
-  obtain ⟨f₁, u₁, a₁⟩ := a
-  obtain ⟨f₂, u₂, a₂⟩ := b
-  cases f₁ <;> cases u₁ <;> cases a₁ <;> cases f₂ <;> cases u₂ <;> cases a₂ <;> simp_all [seenByte]
+  have same : encode (.running (some a)) = encode (.running (some b)) := by simp [encode, h]
+  have := congrArg decode same
+  rw [decode_encode, decode_encode] at this
+  cases this
+  rfl
 
 /-- A reader reads back what a daemon published that it saw: a summary that reads records shows
 what the daemon would have answered. -/

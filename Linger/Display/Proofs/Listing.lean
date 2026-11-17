@@ -62,16 +62,18 @@ theorem rowStatus_ended (status : Nat) :
 theorem rowStatus_gone : rowStatus .broken = Status.unknown := rfl
 
 /-- **A summary that reads records shows what asking would**: a row read from the name's end
-record has the status of any answer from its daemon that reports the same `working`, `unseen`
-and `asks` and no ending. -/
-theorem rowStatus_published (working unseen asks : Bool) (info : List (String × String))
+record has the status of any answer from its daemon that reports the same `progress`, `running`,
+`unseen` and `asks` and no ending. -/
+theorem rowStatus_published (progress : Option Terminal.Mediation.Progress)
+    (running unseen asks : Bool) (info : List (String × String))
     (hans : info.any (fun kv => (kv.1 == "pid" || kv.1 == "cmd") && kv.2 != "") = true)
     (hexit : info.lookup "exit" = none)
-    (hworking : (info.lookup "working" == some "true") = working)
+    (hprogress : Status.progressOfName ((info.lookup "progress").getD "") = progress)
+    (hrunning : (info.lookup "running" == some "true") = running)
     (hunseen : (info.lookup "unseen" == some "true") = unseen)
     (hasks : (info.lookup "asks" == some "true") = asks) :
-    rowStatus (.published working unseen asks) = rowStatus (.live info) := by
-  simp [rowStatus, answered, flag, hans, hexit, hworking, hunseen, hasks]
+    rowStatus (.published progress running unseen asks) = rowStatus (.live info) := by
+  simp [rowStatus, answered, flag, hans, hexit, hprogress, hrunning, hunseen, hasks]
 
 /-- An empty reply is not an answer, so a busy daemon lists as `unknown`
 rather than as a healthy idle session. This is row identity applied to

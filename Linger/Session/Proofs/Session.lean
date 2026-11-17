@@ -68,9 +68,10 @@ theorem infoFields_protocol (s : State) :
   simp [infoFields]
 
 /-- What the name's end record publishes is what `info` reports: a summary that reads the record
-sees the daemon's own `working`, `unseen` and `asks`. -/
+sees the daemon's own `progress`, `running`, `unseen` and `asks`. -/
 theorem infoFields_seen (s : State) :
-    ("working", toString s.seen.working) ∈ infoFields s ∧
+    ("progress", progressText s.seen.progress) ∈ infoFields s ∧
+      ("running", toString s.seen.running) ∈ infoFields s ∧
       ("unseen", toString s.seen.unseen) ∈ infoFields s ∧
       ("asks", toString s.seen.asks) ∈ infoFields s := by
   simp [infoFields, State.seen]
@@ -4893,8 +4894,46 @@ A session's `⣷` is what its program declared, its progress under way or a comm
 marks say runs; its `⣿` is lines that entered its history while nobody looked; and no tick, the
 one event that tells a session the time, changes either, nor its ask. -/
 
-/-- A session works exactly while what its program owns says so. -/
-theorem seen_working (s : State) : s.seen.working = s.owned.working := rfl
+/-- The progress a session sees is what its program declared. -/
+theorem seen_progress (s : State) : s.seen.progress = s.owned.progress := rfl
+
+/-- A session sees a command run exactly while its shell's marks say one runs. -/
+theorem seen_running (s : State) : s.seen.running = s.owned.commands.running.isSome := rfl
+
+/-- Output's progress is the last report the mediator heard, else the one before. -/
+theorem step_ptyOut_progress (s : State) (chunk : List UInt8) :
+    (step s (.ptyOut chunk)).1.seen.progress =
+      ((Terminal.Mediation.feed s.terminal s.scanner chunk).progress).getD s.seen.progress := rfl
+
+/-- No event but output changes the progress a session sees. -/
+theorem step_progress_kept (s : State) (ev : Event) (out : ∀ chunk, ev ≠ .ptyOut chunk) :
+    (step s ev).1.seen.progress = s.seen.progress := by
+  simp only [State.seen]
+  cases ev with
+  | ptyOut chunk => exact absurd rfl (out chunk)
+  | bytes id chunk =>
+    unfold step
+    dsimp only
+    split
+    · rfl
+    · rename_i c hc
+      split
+      · unfold closeClient; dsimp only; split <;> rfl
+      · exact
+          feedMsgs_preserves id (c.decoder.feed chunk).2 _ (P := fun t => t.progress = s.progress)
+            (fun t c' m _ ht => (onMsg_progress t c' m).trans ht) rfl
+  | connected id =>
+    unfold step; dsimp only; split <;> rfl
+  | closed id =>
+    unfold step closeClient; dsimp only; split <;> rfl
+  | childExited o => simp only [step, conclude]
+  | stopped o => simp only [step, conclude]
+  | signal n => simp only [step, conclude]
+  | tick now =>
+    unfold step; dsimp only; split <;> rfl
+  | observed o => rfl
+  | checkpointFailed => rfl
+  | notified d => rfl
 
 /-- A tick changes nothing a session's status reads. -/
 theorem step_tick_seen (s : State) (now : Nat) : (step s (.tick now)).1.seen = s.seen := by
@@ -5014,19 +5053,19 @@ theorem lookup_behind (s : State) (hm : s.metaKv = []) :
 
 /-- Before the tick, the window rule finds no output time, so it reads the session quiet… -/
 theorem windowed_unticked :
-    (Seen.windowed infoFields State.seen wroteUnticked).working = false := by decide +kernel
+    (Seen.windowed infoFields State.seen wroteUnticked).running = false := by decide +kernel
 
 /-- …and once the tick records the output's time, within three seconds, it reads it working… -/
 theorem windowed_ticked :
-    (Seen.windowed infoFields State.seen (step wroteUnticked (.tick 0)).1).working = true := by
+    (Seen.windowed infoFields State.seen (step wroteUnticked (.tick 0)).1).running = true := by
   simp only [Seen.windowed]
   rw [lookup_idle _ atZero rfl rfl rfl rfl rfl rfl rfl,
     show (step wroteUnticked (.tick 0)).1.lastOutMs = some 0 by decide +kernel]
   simp [atZero, Nat.toNat?_repr]
 
 /-- …though the program declared nothing. -/
-theorem ticked_declares_nothing : (step wroteUnticked (.tick 0)).1.owned.working = false := by
-  decide +kernel
+theorem ticked_declares_nothing :
+    (step wroteUnticked (.tick 0)).1.owned.commands.running.isSome = false := by decide +kernel
 
 /-- Any output since the last look counts as unseen for the rule that reads `behind`… -/
 theorem anyOutput_output :
@@ -5044,6 +5083,101 @@ theorem anyOutput_boot :
   simp only [Seen.anyOutput]
   rw [lookup_behind _ rfl, show behind (State.boot (Vt.Vt.init 2 1) [] []) = 0 from rfl]
   simp [Nat.toNat?_repr]
+
+/-- ConEmu's progress report of state `state`, a digit, ended by BEL. -/
+def report (state : UInt8) : List UInt8 := [0x1B, 0x5D, 0x39, 0x3B, 0x34, 0x3B, state, 0x07]
+
+/-- A report reads as the state its digit names, from ground, on any terminal. -/
+theorem feed_report (v : Vt.Vt) (state : UInt8) (plain : state ≠ 0x07 ∧ state ≠ 0x1B) :
+    (Terminal.Mediation.feed v .ground (report state)).progress =
+      Terminal.Mediation.progressOf [0x39, 0x3B, 0x34, 0x3B, state] := by
+  have h :=
+    Terminal.Mediation.feed_osc_progress v [0x39, 0x3B, 0x34, 0x3B, state]
+      (by
+        intro b hb
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at hb
+        rcases hb with rfl | rfl | rfl | rfl | rfl <;>
+          first
+          | exact plain
+          | decide)
+      (by simp [Terminal.Mediation.oscCap]) [0x07] (Or.inl rfl)
+  exact h
+
+/-- A session that declared an error, on a two-column terminal. -/
+def declaredError : State := (step (State.boot (Vt.Vt.init 2 1) [] []) (.ptyOut (report 0x32))).1
+
+/-- It sees the error it declared… -/
+theorem declaredError_progress : declaredError.seen.progress = some .error := by
+  rw [declaredError, step_ptyOut_progress,
+    show State.terminal (State.boot (Vt.Vt.init 2 1) [] []) = Vt.Vt.init 2 1 from rfl,
+    show State.scanner (State.boot (Vt.Vt.init 2 1) [] []) = .ground from rfl,
+    feed_report _ _ (by decide)]
+  rfl
+
+/-- …and its scanner is back between sequences. -/
+theorem declaredError_scanner : declaredError.scanner = .ground := by decide +kernel
+
+/-- A fresh session's report of state `state` is what it sees. -/
+theorem boot_report_progress (state : UInt8) (plain : state ≠ 0x07 ∧ state ≠ 0x1B) :
+    (step (State.boot (Vt.Vt.init 2 1) [] []) (.ptyOut (report state))).1.seen.progress =
+      (Terminal.Mediation.progressOf [0x39, 0x3B, 0x34, 0x3B, state]).getD none := by
+  rw [step_ptyOut_progress,
+    show State.terminal (State.boot (Vt.Vt.init 2 1) [] []) = Vt.Vt.init 2 1 from rfl,
+    show State.scanner (State.boot (Vt.Vt.init 2 1) [] []) = .ground from rfl,
+    feed_report _ _ plain]
+  rfl
+
+/-- Losing the declaration at the next output, as `forgetsProgress` does, leaves none. -/
+theorem forgets_declaredError :
+    (forgetsProgress step declaredError (.ptyOut [])).1.seen.progress = none := by
+  show (step declaredError (.ptyOut (clearProgress ++ []))).1.seen.progress = none
+  rw [step_ptyOut_progress, declaredError_scanner, List.append_nil,
+    show clearProgress = report 0x30 from rfl, feed_report _ _ (by decide)]
+  rfl
+
+/-- The report of a fresh two-column session is heard from ground on its own terminal. -/
+theorem boot_report_feed (state : UInt8) (plain : state ≠ 0x07 ∧ state ≠ 0x1B) :
+    (Terminal.Mediation.feed (State.boot (Vt.Vt.init 2 1) [] []).terminal
+          (State.boot (Vt.Vt.init 2 1) [] []).scanner (report state)).progress =
+      Terminal.Mediation.progressOf [0x39, 0x3B, 0x34, 0x3B, state] := feed_report _ _ plain
+
+/-- Read as progress under way, a declared error is no longer the error the report declared. -/
+theorem errorWorks_report :
+    (Seen.errorWorks State.seen
+            (step (State.boot (Vt.Vt.init 2 1) [] []) (.ptyOut (report 0x32))).1).progress =
+        some .normal ∧
+      ((Terminal.Mediation.feed (State.boot (Vt.Vt.init 2 1) [] []).terminal
+                (State.boot (Vt.Vt.init 2 1) [] []).scanner (report 0x32)).progress).getD
+          (Seen.errorWorks State.seen (State.boot (Vt.Vt.init 2 1) [] [])).progress =
+        some .error := by
+  refine ⟨?_, ?_⟩
+  · simp only [Seen.errorWorks]
+    rw [boot_report_progress _ (by decide)]
+    rfl
+  · rw [boot_report_feed _ (by decide)]
+    rfl
+
+/-- Read as progress under way, a declared pause is no longer the pause the report declared. -/
+theorem pauseWorks_report :
+    (Seen.pauseWorks State.seen
+            (step (State.boot (Vt.Vt.init 2 1) [] []) (.ptyOut (report 0x34))).1).progress =
+        some .normal ∧
+      ((Terminal.Mediation.feed (State.boot (Vt.Vt.init 2 1) [] []).terminal
+                (State.boot (Vt.Vt.init 2 1) [] []).scanner (report 0x34)).progress).getD
+          (Seen.pauseWorks State.seen (State.boot (Vt.Vt.init 2 1) [] [])).progress =
+        some .paused := by
+  refine ⟨?_, ?_⟩
+  · simp only [Seen.pauseWorks]
+    rw [boot_report_progress _ (by decide)]
+    rfl
+  · rw [boot_report_feed _ (by decide)]
+    rfl
+
+/-- Output with no report keeps the error a session declared. -/
+theorem declaredError_kept :
+    ((Terminal.Mediation.feed declaredError.terminal declaredError.scanner []).progress).getD
+        declaredError.seen.progress =
+      some .error := declaredError_progress
 
 /-- Empty output adds no line to the history. -/
 theorem feed_nil_lines (v : Vt.Vt) (scan : Terminal.Mediation.Scan) :

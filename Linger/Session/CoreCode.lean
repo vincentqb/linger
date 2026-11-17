@@ -295,10 +295,10 @@ def State.nextTick (s : State) : Option Nat :=
   if s.dirty then some (s.lastCkptMs + ckptIntervalMs) else none
 
 /-- What the daemon sees of its program, which its name's end record publishes for a summary
-that reads the record instead of asking: the `working`, `unseen` and `asks` that `info` reports
-(`infoFields_seen`), each from its signal: the program's declared progress and its shell's
-marks, the lines that entered the history, and its bells and notifications. -/
-def State.seen (s : State) : Seen := ⟨s.owned.working, unseen s, s.asking⟩
+that reads the record instead of asking: the `progress`, `running`, `unseen` and `asks` that
+`info` reports (`infoFields_seen`), each from its signal: the program's declared progress, its
+shell's marks, the lines that entered the history, and its bells and notifications. -/
+def State.seen (s : State) : Seen := ⟨s.progress, s.running.isSome, unseen s, s.asking⟩
 
 /-- How `info` reports the progress the program last declared: the state's name, or `none`. -/
 def progressText : Option Mediation.Progress → String
@@ -413,9 +413,9 @@ def infoFields (s : State) : List (String × String) :=
     -- the observations `Status.classify` needs from the daemon; the rest
     -- (reachability, checkpoint loadability) only the caller can know
     ++
-    [("unseen", toString (unseen s)), ("working", toString s.owned.working),
+    [("unseen", toString (unseen s)), ("running", toString s.running.isSome),
       ("asks", toString s.asking), ("behind", toString (behind s)),
-      ("progress", progressText s.owned.progress)]
+      ("progress", progressText s.progress)]
     -- what an agent needs to see the session:
     -- geometry + cursor for `capture`, `alt` for "a full-screen app is live",
     -- `outseq` as the change cursor ("re-capture only when it moved"). Values

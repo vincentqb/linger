@@ -58,30 +58,34 @@ each with a kill, and says what it does not claim yet:
 
 The status rule: a session's status is one glyph for one observation, each a signal's and none
 a guess from timing, `⚑` a bell or a desktop notification since you looked, from a program still
-running, `⣷` its program says it is working, `⣿` new lines entered its history since you looked,
-`⣀` none of these, `✓` ended with status 0, `✗` ended any other way, `~` saved with no daemon and
-`?` no answer; a program waiting for you outranks one that says it is working, and titles and `ls --summary` count `⚑`, `⣿`, `✗` and `?`. No two statuses share a glyph, and
+running, `!` its program declared that an error stopped its progress, `⣷` it says it is working,
+`⣤` it says it is paused, `⣿` new lines entered its history since you looked, `⣀` none of these,
+`✓` ended with status 0, `✗` ended any other way, `~` saved with no daemon and `?` no answer; a
+program waiting for you outranks what it declared, which outranks new lines, and titles and
+`ls --summary` count `⚑`, `⣿`, `✗`, `!` and `?`. No two statuses share a glyph, and
 `linger help`'s legend gives each glyph one line, which begins with it (`icon_glyphs`); a row of a
 session with no daemon shows the status the legend gives what its end record says, and a remote
 host's saved row only an ending or `~` (`rowStatus_saved`). Its section follows the ten parts, with
 the titles, listings and selector views that show statuses: a view ranks rows by what needs you
-to act, `⚑`, then `✗` and `?`, then `⣿`, first, then by where the session is in its life, the
-running sessions, then the saved ones, `~`, then the ended ones, `✓` (`sort_two_keys`), so no row
-that ended well or can only be resumed sits above a live one, a finished session comes last, and a
-running session's row keeps its place whether it says it is working or not. A session is `⣷`
-exactly while its program has declared progress under way, with ConEmu's OSC `9;4` in state 1,
-normal, or 3, indeterminate, which the terminal package's mediator hears byte by byte
-(`progress_source`), or while its shell's OSC 133 marks say a command runs, a `C` that no `D` or
-`A` has followed (`working_declared`, killed by the window rule before it, output within three
-seconds): state 2, an error, and state 4, a pause, say the progress stopped, as the Windows
-taskbar progress ConEmu's report sets shows them halted in red and in yellow, so neither is
-working, and state 0 removes the progress. A session is `⣿` exactly while new lines entered its
-terminal's history with nobody attached since it was last looked at (`unseen_lines`, killed by
-any output since the last look, which a title or a line rewritten in place is): a redraw in place,
-a title, a status line's tick and a cursor move add no line, and a program on the alternate
-screen, which keeps no history, never sets it. No tick, the one event that tells a session the
-time, changes what its status reads (`status_clockless`, killed by the window rule), so a status
-changes only when a signal does, and a daemon sets a tick only for a save. A client attached to one session tells its terminal, with
+to act, `⚑`, then `✗`, `!` and `?`, then `⣿`, first, then by where the session is in its life, the
+running sessions, `⣷`, `⣤` and `⣀` in one place, then the saved ones, `~`, then the ended ones,
+`✓` (`sort_two_keys`), so no row that ended well or can only be resumed sits above a live one, a
+finished session comes last, and a running session's row keeps its place whether it says it is
+working, paused or neither. Each state of ConEmu's OSC `9;4` progress report, which the terminal
+package's mediator hears byte by byte (`progress_source`), has its own status and keeps it until
+the program reports another or removes it with state 0: state 1, normal, and 3, indeterminate,
+are `⣷`, state 2, an error, is `!`, and state 4, a pause, is `⣤` (`progress_status`, killed by an
+error read as working, by a pause read as working, and by a declaration lost at the program's
+next output with no 0). Declaring no progress, a session is `⣷` exactly while its shell's OSC
+133 marks say a command runs, a `C` that no `D` or `A` has followed (`working_declared`, killed
+by the window rule before it, output within three seconds). A session is `⣿` exactly while new
+lines entered its terminal's history with nobody attached since it was last looked at
+(`unseen_lines`, killed by any output since the last look, which a title or a line rewritten in
+place is): a redraw in place, a title, a status line's tick and a cursor move add no line, and a
+program on the alternate screen, which keeps no history, never sets it. No tick, the one event
+that tells a session the time, changes what its status reads (`status_clockless`, killed by the
+window rule), so a status changes only when a signal does, and a daemon sets a tick only for a
+save. A client attached to one session tells its terminal, with
 one OSC 9 desktop notification, of each other local session that changed into asking between two
 of the samples its title takes, and of none on the first, whose asks the title counts
 (`announce_changes`). Within a place a view keeps the listing's order,
@@ -972,7 +976,9 @@ theorem step_owned (s : State) (ev : Event) :
         (∀ o, ev ≠ .observed o) →
         (∀ id chunk, ev ≠ .bytes id chunk) →
         (∀ d, ev ≠ .notified d) → (Session.step s ev).1.owned = s.owned) ∧
-      (Status.classify { working := s.seen.working, unseen := s.seen.unseen, asks := s.seen.asks } =
+      (Status.classify
+            { progress := s.seen.progress, running := s.seen.running, unseen := s.seen.unseen,
+              asks := s.seen.asks } =
           .asks ↔
         s.owned.asks = true) := by
   sorry
@@ -1019,7 +1025,8 @@ theorem step_owned_rejects_rung :
             ((fun (s : State) (_ : Event) => Session.step s (.ptyOut [0x07])) s ev).1.owned =
               s.owned) ∧
           (Status.classify
-                { working := s.seen.working, unseen := s.seen.unseen, asks := s.seen.asks } =
+                { progress := s.seen.progress, running := s.seen.running, unseen := s.seen.unseen,
+                  asks := s.seen.asks } =
               .asks ↔
             s.owned.asks = true) := by
   sorry
@@ -1053,7 +1060,8 @@ theorem step_owned_rejects_lumped :
             (∀ id chunk, ev ≠ .bytes id chunk) →
             (∀ d, ev ≠ .notified d) → (Session.step s ev).1.owned = s.owned) ∧
           (Status.lumped Status.classify
-                { working := s.seen.working, unseen := s.seen.unseen, asks := s.seen.asks } =
+                { progress := s.seen.progress, running := s.seen.running, unseen := s.seen.unseen,
+                  asks := s.seen.asks } =
               .asks ↔
             s.owned.asks = true) := by
   sorry
@@ -3810,22 +3818,157 @@ theorem classify_iff_rejects_idle :
   sorry
 
 theorem working_declared (s : State) :
-    s.seen.working = s.owned.working ∧
-      (Status.classify { working := s.seen.working, unseen := s.seen.unseen, asks := s.seen.asks } =
+    s.seen.progress = s.owned.progress ∧
+      s.seen.running = s.owned.commands.running.isSome ∧
+      (Status.classify
+            { progress := s.seen.progress, running := s.seen.running, unseen := s.seen.unseen,
+              asks := s.seen.asks } =
           .working ↔
-        s.owned.asks = false ∧ s.owned.working = true) := by
+        s.owned.asks = false ∧
+          (s.owned.progress = some .normal ∨
+            s.owned.progress = some .indeterminate ∨
+            s.owned.progress = none ∧ s.owned.commands.running.isSome = true)) := by
   sorry
 
 @[kills working_declared]
 theorem working_declared_rejects_window :
     ¬∀ (s : State),
-        (Seen.windowed Session.infoFields State.seen s).working = s.owned.working ∧
+        (Seen.windowed Session.infoFields State.seen s).progress = s.owned.progress ∧
+          (Seen.windowed Session.infoFields State.seen s).running =
+            s.owned.commands.running.isSome ∧
           (Status.classify
-                { working := (Seen.windowed Session.infoFields State.seen s).working,
+                { progress := (Seen.windowed Session.infoFields State.seen s).progress,
+                  running := (Seen.windowed Session.infoFields State.seen s).running,
                   unseen := (Seen.windowed Session.infoFields State.seen s).unseen,
                   asks := (Seen.windowed Session.infoFields State.seen s).asks } =
               .working ↔
-            s.owned.asks = false ∧ s.owned.working = true) := by
+            s.owned.asks = false ∧
+              (s.owned.progress = some .normal ∨
+                s.owned.progress = some .indeterminate ∨
+                s.owned.progress = none ∧ s.owned.commands.running.isSome = true)) := by
+  sorry
+
+theorem progress_status (s : State) (ev : Event) :
+    (∀ chunk,
+        ev = .ptyOut chunk →
+          (Session.step s ev).1.seen.progress =
+            ((Mediation.feed s.terminal s.scanner chunk).progress).getD s.seen.progress) ∧
+      ((∀ chunk, ev ≠ .ptyOut chunk) → (Session.step s ev).1.seen.progress = s.seen.progress) ∧
+      (s.seen.asks = false →
+        (s.seen.progress = some .error →
+            Status.classify
+                { progress := s.seen.progress, running := s.seen.running, unseen := s.seen.unseen,
+                  asks := s.seen.asks } =
+              .errored) ∧
+          (s.seen.progress = some .paused →
+            Status.classify
+                { progress := s.seen.progress, running := s.seen.running, unseen := s.seen.unseen,
+                  asks := s.seen.asks } =
+              .paused) ∧
+          (s.seen.progress = some .normal ∨ s.seen.progress = some .indeterminate →
+            Status.classify
+                { progress := s.seen.progress, running := s.seen.running, unseen := s.seen.unseen,
+                  asks := s.seen.asks } =
+              .working)) := by
+  sorry
+
+@[kills progress_status]
+theorem progress_status_rejects_error_working :
+    ¬∀ (s : State) (ev : Event),
+        (∀ chunk,
+            ev = .ptyOut chunk →
+              (Seen.errorWorks State.seen (Session.step s ev).1).progress =
+                ((Mediation.feed s.terminal s.scanner chunk).progress).getD
+                  (Seen.errorWorks State.seen s).progress) ∧
+          ((∀ chunk, ev ≠ .ptyOut chunk) →
+            (Seen.errorWorks State.seen (Session.step s ev).1).progress =
+              (Seen.errorWorks State.seen s).progress) ∧
+          ((Seen.errorWorks State.seen s).asks = false →
+            ((Seen.errorWorks State.seen s).progress = some .error →
+                Status.classify
+                    { progress := (Seen.errorWorks State.seen s).progress,
+                      running := (Seen.errorWorks State.seen s).running,
+                      unseen := (Seen.errorWorks State.seen s).unseen,
+                      asks := (Seen.errorWorks State.seen s).asks } =
+                  .errored) ∧
+              ((Seen.errorWorks State.seen s).progress = some .paused →
+                Status.classify
+                    { progress := (Seen.errorWorks State.seen s).progress,
+                      running := (Seen.errorWorks State.seen s).running,
+                      unseen := (Seen.errorWorks State.seen s).unseen,
+                      asks := (Seen.errorWorks State.seen s).asks } =
+                  .paused) ∧
+              ((Seen.errorWorks State.seen s).progress = some .normal ∨
+                  (Seen.errorWorks State.seen s).progress = some .indeterminate →
+                Status.classify
+                    { progress := (Seen.errorWorks State.seen s).progress,
+                      running := (Seen.errorWorks State.seen s).running,
+                      unseen := (Seen.errorWorks State.seen s).unseen,
+                      asks := (Seen.errorWorks State.seen s).asks } =
+                  .working)) := by
+  sorry
+
+@[kills progress_status]
+theorem progress_status_rejects_pause_working :
+    ¬∀ (s : State) (ev : Event),
+        (∀ chunk,
+            ev = .ptyOut chunk →
+              (Seen.pauseWorks State.seen (Session.step s ev).1).progress =
+                ((Mediation.feed s.terminal s.scanner chunk).progress).getD
+                  (Seen.pauseWorks State.seen s).progress) ∧
+          ((∀ chunk, ev ≠ .ptyOut chunk) →
+            (Seen.pauseWorks State.seen (Session.step s ev).1).progress =
+              (Seen.pauseWorks State.seen s).progress) ∧
+          ((Seen.pauseWorks State.seen s).asks = false →
+            ((Seen.pauseWorks State.seen s).progress = some .error →
+                Status.classify
+                    { progress := (Seen.pauseWorks State.seen s).progress,
+                      running := (Seen.pauseWorks State.seen s).running,
+                      unseen := (Seen.pauseWorks State.seen s).unseen,
+                      asks := (Seen.pauseWorks State.seen s).asks } =
+                  .errored) ∧
+              ((Seen.pauseWorks State.seen s).progress = some .paused →
+                Status.classify
+                    { progress := (Seen.pauseWorks State.seen s).progress,
+                      running := (Seen.pauseWorks State.seen s).running,
+                      unseen := (Seen.pauseWorks State.seen s).unseen,
+                      asks := (Seen.pauseWorks State.seen s).asks } =
+                  .paused) ∧
+              ((Seen.pauseWorks State.seen s).progress = some .normal ∨
+                  (Seen.pauseWorks State.seen s).progress = some .indeterminate →
+                Status.classify
+                    { progress := (Seen.pauseWorks State.seen s).progress,
+                      running := (Seen.pauseWorks State.seen s).running,
+                      unseen := (Seen.pauseWorks State.seen s).unseen,
+                      asks := (Seen.pauseWorks State.seen s).asks } =
+                  .working)) := by
+  sorry
+
+@[kills progress_status]
+theorem progress_status_rejects_forgotten :
+    ¬∀ (s : State) (ev : Event),
+        (∀ chunk,
+            ev = .ptyOut chunk →
+              (Session.forgetsProgress Session.step s ev).1.seen.progress =
+                ((Mediation.feed s.terminal s.scanner chunk).progress).getD s.seen.progress) ∧
+          ((∀ chunk, ev ≠ .ptyOut chunk) →
+            (Session.forgetsProgress Session.step s ev).1.seen.progress = s.seen.progress) ∧
+          (s.seen.asks = false →
+            (s.seen.progress = some .error →
+                Status.classify
+                    { progress := s.seen.progress, running := s.seen.running,
+                      unseen := s.seen.unseen, asks := s.seen.asks } =
+                  .errored) ∧
+              (s.seen.progress = some .paused →
+                Status.classify
+                    { progress := s.seen.progress, running := s.seen.running,
+                      unseen := s.seen.unseen, asks := s.seen.asks } =
+                  .paused) ∧
+              (s.seen.progress = some .normal ∨ s.seen.progress = some .indeterminate →
+                Status.classify
+                    { progress := s.seen.progress, running := s.seen.running,
+                      unseen := s.seen.unseen, asks := s.seen.asks } =
+                  .working)) := by
   sorry
 
 theorem unseen_lines (s : State) (ev : Event) :
@@ -3903,6 +4046,8 @@ theorem summary_exact (statuses : List Status.Status) :
           else [(toString (statuses.count .wantsYou)).push (Status.icon .wantsYou)]) ++
           (if statuses.count .exitedBad = 0 then []
           else [(toString (statuses.count .exitedBad)).push (Status.icon .exitedBad)]) ++
+          (if statuses.count .errored = 0 then []
+          else [(toString (statuses.count .errored)).push (Status.icon .errored)]) ++
           (if statuses.count .unknown = 0 then []
           else [(toString (statuses.count .unknown)).push (Status.icon .unknown)])) := by
   sorry
@@ -3918,6 +4063,8 @@ theorem summary_exact_rejects_count :
               else [(toString (statuses.count .wantsYou)).push (Status.icon .wantsYou)]) ++
               (if statuses.count .exitedBad = 0 then []
               else [(toString (statuses.count .exitedBad)).push (Status.icon .exitedBad)]) ++
+              (if statuses.count .errored = 0 then []
+              else [(toString (statuses.count .errored)).push (Status.icon .errored)]) ++
               (if statuses.count .unknown = 0 then []
               else [(toString (statuses.count .unknown)).push (Status.icon .unknown)])) := by
   sorry
@@ -3998,10 +4145,13 @@ theorem sort_attention_first {α : Type} (status : α → Status.Status) (rows :
       ∃ first rest,
         View.sort status rows = first ++ rest ∧
           (∀ x ∈ first,
-            status x = .asks ∨ status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) ∧
+            status x = .asks ∨
+              status x = .wantsYou ∨
+              status x = .exitedBad ∨ status x = .errored ∨ status x = .unknown) ∧
           ∀ x ∈ rest,
             ¬(status x = .asks ∨
-                status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) := by
+                status x = .wantsYou ∨
+                status x = .exitedBad ∨ status x = .errored ∨ status x = .unknown) := by
   sorry
 
 @[kills sort_attention_first]
@@ -4012,17 +4162,20 @@ theorem sort_attention_first_rejects_arrival :
             View.arrival status rows = first ++ rest ∧
               (∀ x ∈ first,
                 status x = .asks ∨
-                  status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) ∧
+                  status x = .wantsYou ∨
+                  status x = .exitedBad ∨ status x = .errored ∨ status x = .unknown) ∧
               ∀ x ∈ rest,
                 ¬(status x = .asks ∨
-                    status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) := by
+                    status x = .wantsYou ∨
+                    status x = .exitedBad ∨ status x = .errored ∨ status x = .unknown) := by
   sorry
 
 theorem sort_keeps_place {α : Type} (status status' : α → Status.Status) (rows : List α)
     (h :
       ∀ x ∈ rows,
         status x = status' x ∨
-          ((status x = .working ∨ status x = .idle) ∧ (status' x = .working ∨ status' x = .idle))) :
+          ((status x = .working ∨ status x = .paused ∨ status x = .idle) ∧
+            (status' x = .working ∨ status' x = .paused ∨ status' x = .idle))) :
     View.sort status rows = View.sort status' rows := by sorry
 
 @[kills sort_keeps_place]
@@ -4030,15 +4183,18 @@ theorem sort_keeps_place_rejects_activity :
     ¬∀ {α : Type} (status status' : α → Status.Status) (rows : List α),
         (∀ x ∈ rows,
             status x = status' x ∨
-              ((status x = .working ∨ status x = .idle) ∧
-                (status' x = .working ∨ status' x = .idle))) →
+              ((status x = .working ∨ status x = .paused ∨ status x = .idle) ∧
+                (status' x = .working ∨ status' x = .paused ∨ status' x = .idle))) →
           View.byActivity status rows = View.byActivity status' rows := by
   sorry
 
 theorem sort_live_above_done {α : Type} (status : α → Status.Status) (rows first rest : List α)
     (split : View.sort status rows = first ++ rest) (x : α) (above : x ∈ first)
     (ended : status x = .exitedOk ∨ status x = .resumable) (y : α) (below : y ∈ rest) :
-    ¬(status y = .asks ∨ status y = .wantsYou ∨ status y = .working ∨ status y = .idle) := by sorry
+    ¬(status y = .asks ∨
+        status y = .errored ∨
+        status y = .wantsYou ∨ status y = .working ∨ status y = .paused ∨ status y = .idle) := by
+  sorry
 
 @[kills sort_live_above_done]
 theorem sort_live_above_done_rejects_done_above :
@@ -4050,7 +4206,9 @@ theorem sort_live_above_done_rejects_done_above :
               ∀ (y : α),
                 y ∈ rest →
                   ¬(status y = .asks ∨
-                      status y = .wantsYou ∨ status y = .working ∨ status y = .idle) := by
+                      status y = .errored ∨
+                      status y = .wantsYou ∨
+                      status y = .working ∨ status y = .paused ∨ status y = .idle) := by
   sorry
 
 theorem sort_two_keys {α : Type} (status : α → Status.Status) (earlier : α → α → Prop)

@@ -1289,7 +1289,8 @@ private def statusChecks (e : Env) : IO Unit := do
         s!"picker shares listing rows and keeps match underline independent of selection and status ({slug})"
         fun f => do
         let statuses : List Linger.Display.Status.Status :=
-          [.asks, .working, .wantsYou, .exitedOk, .exitedBad, .idle, .resumable, .unknown]
+          [.asks, .working, .wantsYou, .exitedOk, .exitedBad, .idle, .resumable, .unknown, .errored,
+            .paused]
         let fields :=
           statuses.zipIdx |>.map fun (status, index) =>
             [("name", s!"case{index}"), ("status", Linger.Display.Status.name status),
@@ -1302,7 +1303,7 @@ private def statusChecks (e : Env) : IO Unit := do
         -- the picker lists them as `ls` does, what asks for someone first (`View.sort`), each
         -- with its badge's color and dimness
         let expectedColors : List Terminal.Vt.Color :=
-          [.idx 3, .idx 6, .idx 3, .idx 2, .idx 1, .default, .default, .idx 3]
+          [.idx 3, .idx 6, .idx 3, .idx 2, .idx 1, .default, .default, .idx 3, .idx 1, .default]
         let shown :=
           Linger.Display.View.sort (fun (_, status, _) => status)
             ((fields.zip statuses).zip expectedColors |>.map fun ((info, status), color) =>
@@ -1322,7 +1323,8 @@ private def statusChecks (e : Env) : IO Unit := do
                   rowText frame (4 + index) ==
                       (if index == 0 then "  ▸ " else "    ") ++ expected &&
                     badge.pen.fg == (if colored then color else .default) &&
-                    badge.pen.dim == (colored && (status == .idle || status == .resumable)) &&
+                    badge.pen.dim ==
+                      (colored && (status == .idle || status == .paused || status == .resumable)) &&
                     (List.range (4 + expected.length)).all
                       (fun col => (frame.getCell col (4 + index)).pen.reverse == (index == 0)) &&
                     name.pen.fg == .default &&

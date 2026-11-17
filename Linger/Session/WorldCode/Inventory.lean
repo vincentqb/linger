@@ -269,7 +269,8 @@ def localRows (stopAt : Option Nat := none) (statusOnly : Bool := false)
       match ← publishedSeen listed with
       | some seen =>
         confirmedLive := confirmedLive ++ [listed.name]
-        let row := Linger.Display.Listing.Row.published seen.working seen.unseen seen.asks
+        let row :=
+          Linger.Display.Listing.Row.published seen.progress seen.running seen.unseen seen.asks
         rows :=
           rows ++
             [Linger.Display.Listing.rowFields name

@@ -49,14 +49,16 @@ def Outcome.answer : Outcome → Os.Answer
   | .unknown => .failed
   | outcome => .program outcome.status
 
-/-- What a daemon last saw of its program: whether the program says it is working (`⣷`), whether
-new lines entered the session's history since it was last looked at (`⣿`), and whether, since
-then, the program rang the bell or posted a desktop notification (`⚑`), as `info` reports
-`working`, `unseen` and `asks`. -/
+/-- What a daemon last saw of its program: the progress it declared (`!`, `⣷`, `⣤`), whether its
+shell's marks say a command runs (`⣷`), whether new lines entered the session's history since it
+was last looked at (`⣿`), and whether, since then, the program rang the bell or posted a desktop
+notification (`⚑`), as `info` reports `progress`, `running`, `unseen` and `asks`. -/
 structure Seen where
-  /-- The program says it is working: it declared progress under way, or its shell's marks
-  say a command runs. -/
-  working : Bool
+  /-- The progress the program last declared, ConEmu's OSC `9;4`; `none` when it declared none
+  or removed it. -/
+  progress : Option Terminal.Mediation.Progress
+  /-- The shell's marks say a command runs: a `C` that no `D` or `A` has followed. -/
+  running : Bool
   /-- New lines entered the session's history since the session was last looked at. -/
   unseen : Bool
   /-- A bell or a notification since the session was last looked at. -/
@@ -681,21 +683,30 @@ structure Owned where
   progress : Option Terminal.Mediation.Progress
   deriving Repr, DecidableEq
 
-/-- Whether what the program owns says it is working: it declared progress that is under way
-(`Progress.underway`), or its shell's marks say a command runs, a `C` that no `D` or `A` has
-followed. -/
-@[expose]
-def Owned.working (o : Owned) : Bool :=
-  o.progress.any Terminal.Mediation.Progress.underway || o.commands.running.isSome
-
-/-- A wrong reading of a session: its program is working while it wrote within the last three
-seconds, as the `idle` field its `fields` report says, the window rule before programs declared
-their work. The headlines that a session works exactly while its program says so, and that its
+/-- A wrong reading of a session: its program works, as a command running does, while it wrote
+within the last three seconds, as the `idle` field its `fields` report says, the window rule
+before programs declared their work. The headlines that a session works exactly while its program says so, and that its
 status never changes as time passes, are shown to reject it. -/
 @[expose]
 def Seen.windowed {S : Type} (fields : S → List (String × String)) (seen : S → Seen) (s : S) :
     Seen :=
-  { seen s with working := ((fields s).lookup "idle").any fun age => age.toNat?.any (· < 3) }
+  { seen s with
+    running :=
+      (seen s).running || ((fields s).lookup "idle").any fun age => age.toNat?.any (· < 3) }
+
+/-- A wrong reading of a session: an error its program declared is read as progress under way,
+`⣷`. The headline that each declared state has its own status is shown to reject it. -/
+@[expose]
+def Seen.errorWorks {S : Type} (seen : S → Seen) (s : S) : Seen :=
+  { seen s with
+    progress := if (seen s).progress = some .error then some .normal else (seen s).progress }
+
+/-- A wrong reading of a session: a pause its program declared is read as progress under way,
+`⣷`. The headline that each declared state has its own status is shown to reject it. -/
+@[expose]
+def Seen.pauseWorks {S : Type} (seen : S → Seen) (s : S) : Seen :=
+  { seen s with
+    progress := if (seen s).progress = some .paused then some .normal else (seen s).progress }
 
 /-- A wrong reading of a session: any output since the last look is unseen, as the `behind` count
 its `fields` report says, a title or a line rewritten in place among it. The headline that a
@@ -860,6 +871,19 @@ def trace {S E F : Type} (step : S → E → S × List F) (s : S) : List E → S
     let r := step s ev
     let rest := trace step r.1 evs
     (rest.1, r.2 ++ rest.2)
+
+/-- ConEmu's report that removes the progress: `ESC ] 9 ; 4 ; 0 BEL`. -/
+@[expose]
+def clearProgress : List UInt8 := [0x1B, 0x5D, 0x39, 0x3B, 0x34, 0x3B, 0x30, 0x07]
+
+/-- A wrong transition: `step`, which loses a declared state at the next output, as if the
+program had removed it, though it sent no `0`. The headline that each declared state holds until
+the program sends another is shown to reject it. -/
+@[expose]
+def forgetsProgress {S P : Type} (step : S → Event → S × List (Effect P)) (s : S) :
+    Event → S × List (Effect P)
+  | .ptyOut chunk => step s (.ptyOut (clearProgress ++ chunk))
+  | ev => step s ev
 
 /-- A wrong transition: `step` with each effect `drop` picks removed, its states unchanged. The
 headlines about program output and about an attach's repaint are shown to reject it, without

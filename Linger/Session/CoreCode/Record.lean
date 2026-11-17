@@ -19,9 +19,10 @@ running record needs the name held to read: whether its daemon still lives decid
 Format: the magic `LNGE`, version 1, then 0 for a running program, 1 and the ending as
 `Wire.outcomeBytes` writes it, 2 and the number of the signal that stopped the daemon, for a
 session it saved, or 3, for a saved tmux pane a kill dismissed, which no program ran; or version 3,
-0 and one byte of what the daemon saw (1 for a program that says it is working, 2 for new lines in
-the history, 4 for a bell or a notification since the last look), for a running program whose
-daemon says so. A reader from before saved sessions reads one as no record, so it answers that
+0 and one byte of what the daemon saw (1 for a command its shell's marks say runs, 2 for new lines
+in the history, 4 for a bell or a notification since the last look, and 8 times the progress its
+program declared, 0 for none and 1 to 4 for ConEmu's states), for a running program whose daemon
+says so. A reader from before saved sessions reads one as no record, so it answers that
 the ending is unknown, and lists it resumable, and a reader from before dismissals reads one as no
 record too. Version 2, whose byte said whether output was recent and whether any arrived unseen,
 is read as no record, as a reader from before version 3 reads a version 3 record, so each asks the
@@ -33,10 +34,28 @@ namespace Linger.Session
 
 namespace Record
 
-/-- The byte of what a daemon saw: 1 for a program that says it is working, plus 2 for new lines
-in the history, plus 4 for an ask. -/
+/-- A declared progress state's number in ConEmu's report, 0 for none. -/
+def progressCode : Option Terminal.Mediation.Progress → UInt8
+  | none => 0
+  | some .normal => 1
+  | some .error => 2
+  | some .indeterminate => 3
+  | some .paused => 4
+
+/-- Back from `progressCode`; any other number is no progress. -/
+def progressOfCode : UInt8 → Option Terminal.Mediation.Progress
+  | 1 => some .normal
+  | 2 => some .error
+  | 3 => some .indeterminate
+  | 4 => some .paused
+  | _ => none
+
+/-- The byte of what a daemon saw: 1 for a command running, plus 2 for new lines in the history,
+plus 4 for an ask, plus 8 times the declared progress's number. -/
 def seenByte (seen : Seen) : UInt8 :=
-  (if seen.working then 1 else 0) + (if seen.unseen then 2 else 0) + (if seen.asks then 4 else 0)
+  8 * progressCode seen.progress + (if seen.running then 1 else 0) +
+    (if seen.unseen then 2 else 0) +
+    (if seen.asks then 4 else 0)
 
 /-- The record's bytes; `decode` reads them back (`decode_encode`). -/
 def encode : Record → List UInt8
@@ -50,7 +69,10 @@ def encode : Record → List UInt8
 def decode : List UInt8 → Option Record
   | [0x4C, 0x4E, 0x47, 0x45, 1, 0] => some (.running none)
   | [0x4C, 0x4E, 0x47, 0x45, 3, 0, flags] =>
-    if flags < 8 then some (.running (some ⟨flags &&& 1 != 0, flags &&& 2 != 0, flags &&& 4 != 0⟩))
+    if flags < 40 then
+      some
+        (.running
+          (some ⟨progressOfCode (flags / 8), flags &&& 1 != 0, flags &&& 2 != 0, flags &&& 4 != 0⟩))
     else none
   | [0x4C, 0x4E, 0x47, 0x45, 1, 1, kind, code] => some (.ended (Wire.readOutcome [kind, code]))
   | [0x4C, 0x4E, 0x47, 0x45, 1, 2, signal] => some (.saved signal)

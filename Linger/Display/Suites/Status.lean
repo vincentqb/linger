@@ -439,6 +439,34 @@ def checkDeclared (e : Env) : IO Unit := do
       s!"a program that cleared its report reads idle, with no flips: {progress} {names after}"
   e.killAll #["decl"]
 
+/-- Each state a program declares has its own status, held until it reports another: an error,
+`OSC 9;4;2`, reads `!`, running with an error, which the summary counts, a pause, `OSC 9;4;4`, reads
+`⣤`, and removing the report reads quiet. -/
+def checkStates (e : Env) : IO Unit := do
+  let report (state : Nat) : Array String := #["printf", s!"'\\033]9;4;{state};\\007'", "&&"]
+  let _ ←
+    e.typeIn "states"
+        (report 2 ++ #["echo", "failed-$((1+1))", "&&", "sleep", "8", "&&"] ++ report 4 ++
+          #["echo", "paused-$((2+2))", "&&", "sleep", "8", "&&"] ++
+          report 0 ++
+          #["echo", "cleared-$((3+3))", "&&", "sleep", "60"])
+  let failed ← printed e "states" "failed-2"
+  let errored ← sampleStatus e "states" 2500
+  let counted ← summaryBecomes e (Linger.Display.Status.summary [.errored] ++ "\n")
+  expect (failed && errored.all (· == .errored) && counted)
+      s!"a program that declared an error reads running-error, counted by the summary: \
+        {names errored}"
+  let paused ← printed e "states" "paused-4"
+  let held ← sampleStatus e "states" 2500
+  let progress ← e.info "states" "progress"
+  expect (paused && progress == some "paused" && held.all (· == .paused))
+      s!"a program that declared a pause reads paused until it reports another state: {progress} \
+        {names held}"
+  let cleared ← printed e "states" "cleared-6"
+  let quiet ← sampleStatus e "states" 1000
+  expect (cleared && quiet.all (· == .idle)) s!"removing the report reads idle: {names quiet}"
+  e.killAll #["states"]
+
 /-- A program that only rewrites one line in place, with a carriage return, and animates its
 window title, as an idle agent's status line and a working agent's spinner do, never reads `⣷`,
 `⣿` or `⚑`: no line enters its history and it declares nothing. -/
@@ -557,6 +585,7 @@ def run : IO UInt32 :=
     checkDeclared e
     checkRedraw e
     checkLines e
+    checkStates e
     checkEndings e
     checkDeadline e
     checkBacklog e

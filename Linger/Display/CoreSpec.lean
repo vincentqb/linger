@@ -1,5 +1,7 @@
 module
 
+public import Terminal.CoreSpec
+
 public section
 
 /-! # What the status headline theorems mean
@@ -10,9 +12,10 @@ predicates on that observation independently of the classifier that computes the
 
 namespace Linger.Display.Status
 
-/-- Eight mutually exclusive states. A row shows the first that applies, in the order `?`, the
-endings `✓` and `✗`, `~`, `⚑`, `⣷`, `⣿`, `⣀`: a program waiting for you outranks one that says
-it is working. -/
+/-- Ten mutually exclusive states. A row shows the first that applies, in the order `?`, the
+endings `✓` and `✗`, `~`, `⚑`, then the progress its program declared, `!`, `⣷` or `⣤`, a command
+its shell's marks say runs, `⣷`, then `⣿`, `⣀`: a program waiting for you outranks one that says
+how it is doing. -/
 inductive Status where
   /-- `?` — no answer: the daemon did not answer, or the saved session could not be read. -/
   | unknown
@@ -27,12 +30,17 @@ inductive Status where
   /-- `⚑` — since the session was last looked at, its program rang the bell or posted a desktop
   notification, and it is still running: it asks for you. -/
   | asks
+  /-- `!` — its program declared that an error stopped its progress, ConEmu's OSC `9;4` state 2,
+  and it still runs: it needs you. -/
+  | errored
   /-- `⣿` — new lines entered the session's history since it was last looked at, and its program
   neither asks nor says it is working. -/
   | wantsYou
-  /-- `⣷` — its program says it is working: it declared progress under way, or its shell's marks
-  say a command runs. -/
+  /-- `⣷` — its program says it is working: it declared progress under way, OSC `9;4` state 1 or
+  3, or, declaring none, its shell's marks say a command runs. -/
   | working
+  /-- `⣤` — its program declared its progress paused, ConEmu's OSC `9;4` state 4. -/
+  | paused
   /-- `⣀` — nothing new since you last looked. -/
   | idle
   deriving DecidableEq, Repr, Inhabited
@@ -48,8 +56,11 @@ structure Obs where
   /-- The status a shell reports for how the program ended, once it has: from the daemon while
   it ends, then from the name's end record, which a socket-less row reads. -/
   exit : Option Nat := none
-  /-- The program says it is working: its declared progress or its shell's marks. -/
-  working : Bool := false
+  /-- The progress the program last declared, ConEmu's OSC `9;4`, `none` when it declared none
+  or removed it. -/
+  progress : Option Terminal.Mediation.Progress := none
+  /-- The program's shell's marks say a command runs. -/
+  running : Bool := false
   /-- New lines entered the session's history since it was last looked at (attach, output while
   attached, or capture). -/
   unseen : Bool := false
@@ -66,14 +77,25 @@ def Is : Status → Obs → Prop
   | .exitedBad, o => o.known = true ∧ ∃ n, o.exit = some n ∧ n ≠ 0
   | .resumable, o => o.known = true ∧ o.exit = none ∧ o.daemonUp = false
   | .asks, o => o.known = true ∧ o.exit = none ∧ o.daemonUp = true ∧ o.asks = true
+  | .errored, o =>
+    o.known = true ∧ o.exit = none ∧ o.daemonUp = true ∧ o.asks = false ∧ o.progress = some .error
   | .working, o =>
-    o.known = true ∧ o.exit = none ∧ o.daemonUp = true ∧ o.asks = false ∧ o.working = true
+    o.known = true ∧
+      o.exit = none ∧
+      o.daemonUp = true ∧
+      o.asks = false ∧
+      (o.progress = some .normal ∨
+        o.progress = some .indeterminate ∨ o.progress = none ∧ o.running = true)
+  | .paused, o =>
+    o.known = true ∧ o.exit = none ∧ o.daemonUp = true ∧ o.asks = false ∧ o.progress = some .paused
   | .wantsYou, o =>
     o.known = true ∧
-      o.exit = none ∧ o.daemonUp = true ∧ o.asks = false ∧ o.working = false ∧ o.unseen = true
+      o.exit = none ∧
+      o.daemonUp = true ∧ o.asks = false ∧ o.progress = none ∧ o.running = false ∧ o.unseen = true
   | .idle, o =>
     o.known = true ∧
-      o.exit = none ∧ o.daemonUp = true ∧ o.asks = false ∧ o.working = false ∧ o.unseen = false
+      o.exit = none ∧
+      o.daemonUp = true ∧ o.asks = false ∧ o.progress = none ∧ o.running = false ∧ o.unseen = false
 
 /-- A wrong classifier: the rule before asks, which lumps a bell and a notification in with the
 rest of what a session shows, so a running session that asks shows another status. The headline that a bell
@@ -112,10 +134,10 @@ inductive Row where
   and the peer's own `status` name, read by `Status.ofName`. -/
   | remote (live : Bool) (peerStatus : String)
   /-- A socket whose daemon holds the name, read from the name's end record instead of asking:
-  whether the daemon last saw its program say it is working, new lines in its history since the
-  session was last looked at, and a bell or a notification since then
-  (`Session.Record.published`). -/
-  | published (working unseen asks : Bool)
+  the progress the daemon last saw its program declare, whether its shell's marks said a command
+  runs, new lines in its history since the session was last looked at, and a bell or a
+  notification since then (`Session.Record.published`). -/
+  | published (progress : Option Terminal.Mediation.Progress) (running unseen asks : Bool)
   deriving Repr
 
 /-- The fields of a listing record a human row reads, each from its one source: the socket's
@@ -270,48 +292,49 @@ a row moves whenever its program starts or stops saying it works. The headline t
 row keeps its place is shown to reject it. -/
 @[expose]
 def View.byActivity {α : Type} (status : α → Status.Status) (rows : List α) : List α :=
-  [Status.Status.asks, .unknown, .exitedBad, .wantsYou, .exitedOk, .working, .idle,
-        .resumable].flatMap
+  [Status.Status.asks, .unknown, .exitedBad, .errored, .wantsYou, .exitedOk, .working, .paused,
+        .idle, .resumable].flatMap
     fun st => rows.filter fun x => status x == st
 
-/-- The first key a view orders rows by, what needs you to act: `⚑` 0, then `✗` 1, `?` 2 and
-`⣿` 3, and 4 for every status that needs nothing of you. -/
+/-- The first key a view orders rows by, what needs you to act: `⚑` 0, then `✗` 1, `!` 2, `?` 3
+and `⣿` 4, and 5 for every status that needs nothing of you. -/
 @[expose]
 def View.needs : Status.Status → Nat
   | .asks => 0
   | .exitedBad => 1
-  | .unknown => 2
-  | .wantsYou => 3
-  | _ => 4
+  | .errored => 2
+  | .unknown => 3
+  | .wantsYou => 4
+  | _ => 5
 
-/-- The second key a view orders rows by, where a session is in its life: running 0, `⣷` and `⣀`
-in one place, saved 1, `~`, which a resume runs again, and ended 2, `✓`. A status that needs you
-ranks by the first key alone, and takes its session's place: `⚑` and `⣿` running, `✗` ended and
-`?`, of a session linger could not read, with the running ones. -/
+/-- The second key a view orders rows by, where a session is in its life: running 0, `⣷`, `⣤`
+and `⣀` in one place, saved 1, `~`, which a resume runs again, and ended 2, `✓`. A status that
+needs you ranks by the first key alone, and takes its session's place: `⚑`, `!` and `⣿` running,
+`✗` ended and `?`, of a session linger could not read, with the running ones. -/
 @[expose]
 def View.lifecycle : Status.Status → Nat
   | .resumable => 1
   | .exitedOk | .exitedBad => 2
   | _ => 0
 
-/-- A wrong order: the one before views ordered by lifecycle, `⚑ ✗ ? ⣿`, then the running
+/-- A wrong order: the one before views ordered by lifecycle, `⚑ ✗ ! ? ⣿`, then the running
 sessions, then `✓`, then `~`, so a session that ended sits above one a resume runs again. The
 headline that a view is ordered by what needs you, then by lifecycle, is shown to reject it. -/
 @[expose]
 def View.endedAboveSaved {α : Type} (status : α → Status.Status) (rows : List α) : List α :=
-  ([[Status.Status.asks], [.exitedBad], [.unknown], [.wantsYou], [.working, .idle], [.exitedOk],
-          [.resumable]] :
+  ([[Status.Status.asks], [.exitedBad], [.errored], [.unknown], [.wantsYou],
+          [.working, .paused, .idle], [.exitedOk], [.resumable]] :
         List (List Status.Status)).flatMap
     fun place => rows.filter fun x => place.contains (status x)
 
-/-- A wrong order: the one before views ranked by what needs you to act, `⚑ ? ✗ ⣿`, then `✓`,
-the running sessions, `⣷` and `⣀` together, then `~`, so a session that ended well sits above
+/-- A wrong order: the one before views ranked by what needs you to act, `⚑ ? ✗ ! ⣿`, then `✓`,
+the running sessions, `⣷`, `⣤` and `⣀` together, then `~`, so a session that ended well sits above
 the live ones. The headline that no row that ended well or can only be resumed sits above a live
 one is shown to reject it. -/
 @[expose]
 def View.doneAboveLive {α : Type} (status : α → Status.Status) (rows : List α) : List α :=
-  ([[Status.Status.asks], [.unknown], [.exitedBad], [.wantsYou], [.exitedOk], [.working, .idle],
-          [.resumable]] :
+  ([[Status.Status.asks], [.unknown], [.exitedBad], [.errored], [.wantsYou], [.exitedOk],
+          [.working, .paused, .idle], [.resumable]] :
         List (List Status.Status)).flatMap
     fun place => rows.filter fun x => place.contains (status x)
 

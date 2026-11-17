@@ -658,7 +658,9 @@ theorem step_owned (s : State) (ev : Event) :
         (∀ o, ev ≠ .observed o) →
         (∀ id chunk, ev ≠ .bytes id chunk) →
         (∀ d, ev ≠ .notified d) → (Session.step s ev).1.owned = s.owned) ∧
-      (Status.classify { working := s.seen.working, unseen := s.seen.unseen, asks := s.seen.asks } =
+      (Status.classify
+            { progress := s.seen.progress, running := s.seen.running, unseen := s.seen.unseen,
+              asks := s.seen.asks } =
           .asks ↔
         s.owned.asks = true) :=
   ⟨fun chunk hev => by
@@ -673,7 +675,7 @@ theorem step_owned (s : State) (ev : Event) :
     fun id chunk c dec m hev hc fresh read healthy looks => by
     subst hev
     exact Session.step_look_owned s id chunk hc fresh read healthy looks, fun out seen read heard =>
-    Session.step_owned_kept s ev out seen read heard, Status.classify_running_asks _ _ _⟩
+    Session.step_owned_kept s ev out seen read heard, Status.classify_running_asks _ _ _ _⟩
 
 theorem step_owned_rejects_rung :
     ¬∀ (s : State) (ev : Event),
@@ -716,7 +718,8 @@ theorem step_owned_rejects_rung :
             ((fun (s : State) (_ : Event) => Session.step s (.ptyOut [0x07])) s ev).1.owned =
               s.owned) ∧
           (Status.classify
-                { working := s.seen.working, unseen := s.seen.unseen, asks := s.seen.asks } =
+                { progress := s.seen.progress, running := s.seen.running, unseen := s.seen.unseen,
+                  asks := s.seen.asks } =
               .asks ↔
             s.owned.asks = true) := by
   -- a session that rings the bell on a client's read asks, with no output and no look
@@ -757,7 +760,8 @@ theorem step_owned_rejects_lumped :
             (∀ id chunk, ev ≠ .bytes id chunk) →
             (∀ d, ev ≠ .notified d) → (Session.step s ev).1.owned = s.owned) ∧
           (Status.lumped Status.classify
-                { working := s.seen.working, unseen := s.seen.unseen, asks := s.seen.asks } =
+                { progress := s.seen.progress, running := s.seen.running, unseen := s.seen.unseen,
+                  asks := s.seen.asks } =
               .asks ↔
             s.owned.asks = true) := by
   -- today's rule lists a session whose program rang the bell by its output, never as asking
@@ -3767,27 +3771,181 @@ theorem classify_iff_rejects_idle :
   exact absurd ((h { known := false } .unknown).mpr rfl) (by decide)
 
 theorem working_declared (s : State) :
-    s.seen.working = s.owned.working ∧
-      (Status.classify { working := s.seen.working, unseen := s.seen.unseen, asks := s.seen.asks } =
+    s.seen.progress = s.owned.progress ∧
+      s.seen.running = s.owned.commands.running.isSome ∧
+      (Status.classify
+            { progress := s.seen.progress, running := s.seen.running, unseen := s.seen.unseen,
+              asks := s.seen.asks } =
           .working ↔
-        s.owned.asks = false ∧ s.owned.working = true) := by
-  refine ⟨Session.seen_working s, ?_⟩
-  rw [Status.classify_iff, Session.seen_working, Session.seen_asks]
+        s.owned.asks = false ∧
+          (s.owned.progress = some .normal ∨
+            s.owned.progress = some .indeterminate ∨
+            s.owned.progress = none ∧ s.owned.commands.running.isSome = true)) := by
+  refine ⟨Session.seen_progress s, Session.seen_running s, ?_⟩
+  rw [Status.classify_iff, Session.seen_progress, Session.seen_running, Session.seen_asks]
   simp [Status.Is]
 
 theorem working_declared_rejects_window :
     ¬∀ (s : State),
-        (Seen.windowed Session.infoFields State.seen s).working = s.owned.working ∧
+        (Seen.windowed Session.infoFields State.seen s).progress = s.owned.progress ∧
+          (Seen.windowed Session.infoFields State.seen s).running =
+            s.owned.commands.running.isSome ∧
           (Status.classify
-                { working := (Seen.windowed Session.infoFields State.seen s).working,
+                { progress := (Seen.windowed Session.infoFields State.seen s).progress,
+                  running := (Seen.windowed Session.infoFields State.seen s).running,
                   unseen := (Seen.windowed Session.infoFields State.seen s).unseen,
                   asks := (Seen.windowed Session.infoFields State.seen s).asks } =
               .working ↔
-            s.owned.asks = false ∧ s.owned.working = true) := by
+            s.owned.asks = false ∧
+              (s.owned.progress = some .normal ∨
+                s.owned.progress = some .indeterminate ∨
+                s.owned.progress = none ∧ s.owned.commands.running.isSome = true)) := by
   -- a program that wrote a moment ago, and declared nothing, reads working by the window
   intro h
-  have := (h (Session.step Session.wroteUnticked (.tick 0)).1).1
+  have := (h (Session.step Session.wroteUnticked (.tick 0)).1).2.1
   rw [Session.windowed_ticked, Session.ticked_declares_nothing] at this
+  cases this
+
+theorem progress_status (s : State) (ev : Event) :
+    (∀ chunk,
+        ev = .ptyOut chunk →
+          (Session.step s ev).1.seen.progress =
+            ((Mediation.feed s.terminal s.scanner chunk).progress).getD s.seen.progress) ∧
+      ((∀ chunk, ev ≠ .ptyOut chunk) → (Session.step s ev).1.seen.progress = s.seen.progress) ∧
+      (s.seen.asks = false →
+        (s.seen.progress = some .error →
+            Status.classify
+                { progress := s.seen.progress, running := s.seen.running, unseen := s.seen.unseen,
+                  asks := s.seen.asks } =
+              .errored) ∧
+          (s.seen.progress = some .paused →
+            Status.classify
+                { progress := s.seen.progress, running := s.seen.running, unseen := s.seen.unseen,
+                  asks := s.seen.asks } =
+              .paused) ∧
+          (s.seen.progress = some .normal ∨ s.seen.progress = some .indeterminate →
+            Status.classify
+                { progress := s.seen.progress, running := s.seen.running, unseen := s.seen.unseen,
+                  asks := s.seen.asks } =
+              .working)) := by
+  refine
+    ⟨fun chunk hev => by
+      subst hev
+      exact Session.step_ptyOut_progress s chunk, fun out => Session.step_progress_kept s ev out,
+      fun hasks => ⟨fun h => ?_, fun h => ?_, fun h => ?_⟩⟩
+  · rw [Status.classify_iff]
+    simp [Status.Is, h, hasks]
+  · rw [Status.classify_iff]
+    simp [Status.Is, h, hasks]
+  · rw [Status.classify_iff]
+    rcases h with h | h <;> simp [Status.Is, h, hasks]
+
+theorem progress_status_rejects_error_working :
+    ¬∀ (s : State) (ev : Event),
+        (∀ chunk,
+            ev = .ptyOut chunk →
+              (Seen.errorWorks State.seen (Session.step s ev).1).progress =
+                ((Mediation.feed s.terminal s.scanner chunk).progress).getD
+                  (Seen.errorWorks State.seen s).progress) ∧
+          ((∀ chunk, ev ≠ .ptyOut chunk) →
+            (Seen.errorWorks State.seen (Session.step s ev).1).progress =
+              (Seen.errorWorks State.seen s).progress) ∧
+          ((Seen.errorWorks State.seen s).asks = false →
+            ((Seen.errorWorks State.seen s).progress = some .error →
+                Status.classify
+                    { progress := (Seen.errorWorks State.seen s).progress,
+                      running := (Seen.errorWorks State.seen s).running,
+                      unseen := (Seen.errorWorks State.seen s).unseen,
+                      asks := (Seen.errorWorks State.seen s).asks } =
+                  .errored) ∧
+              ((Seen.errorWorks State.seen s).progress = some .paused →
+                Status.classify
+                    { progress := (Seen.errorWorks State.seen s).progress,
+                      running := (Seen.errorWorks State.seen s).running,
+                      unseen := (Seen.errorWorks State.seen s).unseen,
+                      asks := (Seen.errorWorks State.seen s).asks } =
+                  .paused) ∧
+              ((Seen.errorWorks State.seen s).progress = some .normal ∨
+                  (Seen.errorWorks State.seen s).progress = some .indeterminate →
+                Status.classify
+                    { progress := (Seen.errorWorks State.seen s).progress,
+                      running := (Seen.errorWorks State.seen s).running,
+                      unseen := (Seen.errorWorks State.seen s).unseen,
+                      asks := (Seen.errorWorks State.seen s).asks } =
+                  .working)) := by
+  -- an error read as progress under way is not the error the program declared
+  intro h
+  have := (h (State.boot (Vt.Vt.init 2 1) [] []) (.ptyOut (Session.report 0x32))).1 _ rfl
+  rw [Session.errorWorks_report.1, Session.errorWorks_report.2] at this
+  cases this
+
+theorem progress_status_rejects_pause_working :
+    ¬∀ (s : State) (ev : Event),
+        (∀ chunk,
+            ev = .ptyOut chunk →
+              (Seen.pauseWorks State.seen (Session.step s ev).1).progress =
+                ((Mediation.feed s.terminal s.scanner chunk).progress).getD
+                  (Seen.pauseWorks State.seen s).progress) ∧
+          ((∀ chunk, ev ≠ .ptyOut chunk) →
+            (Seen.pauseWorks State.seen (Session.step s ev).1).progress =
+              (Seen.pauseWorks State.seen s).progress) ∧
+          ((Seen.pauseWorks State.seen s).asks = false →
+            ((Seen.pauseWorks State.seen s).progress = some .error →
+                Status.classify
+                    { progress := (Seen.pauseWorks State.seen s).progress,
+                      running := (Seen.pauseWorks State.seen s).running,
+                      unseen := (Seen.pauseWorks State.seen s).unseen,
+                      asks := (Seen.pauseWorks State.seen s).asks } =
+                  .errored) ∧
+              ((Seen.pauseWorks State.seen s).progress = some .paused →
+                Status.classify
+                    { progress := (Seen.pauseWorks State.seen s).progress,
+                      running := (Seen.pauseWorks State.seen s).running,
+                      unseen := (Seen.pauseWorks State.seen s).unseen,
+                      asks := (Seen.pauseWorks State.seen s).asks } =
+                  .paused) ∧
+              ((Seen.pauseWorks State.seen s).progress = some .normal ∨
+                  (Seen.pauseWorks State.seen s).progress = some .indeterminate →
+                Status.classify
+                    { progress := (Seen.pauseWorks State.seen s).progress,
+                      running := (Seen.pauseWorks State.seen s).running,
+                      unseen := (Seen.pauseWorks State.seen s).unseen,
+                      asks := (Seen.pauseWorks State.seen s).asks } =
+                  .working)) := by
+  -- a pause read as progress under way is not the pause the program declared
+  intro h
+  have := (h (State.boot (Vt.Vt.init 2 1) [] []) (.ptyOut (Session.report 0x34))).1 _ rfl
+  rw [Session.pauseWorks_report.1, Session.pauseWorks_report.2] at this
+  cases this
+
+theorem progress_status_rejects_forgotten :
+    ¬∀ (s : State) (ev : Event),
+        (∀ chunk,
+            ev = .ptyOut chunk →
+              (Session.forgetsProgress Session.step s ev).1.seen.progress =
+                ((Mediation.feed s.terminal s.scanner chunk).progress).getD s.seen.progress) ∧
+          ((∀ chunk, ev ≠ .ptyOut chunk) →
+            (Session.forgetsProgress Session.step s ev).1.seen.progress = s.seen.progress) ∧
+          (s.seen.asks = false →
+            (s.seen.progress = some .error →
+                Status.classify
+                    { progress := s.seen.progress, running := s.seen.running,
+                      unseen := s.seen.unseen, asks := s.seen.asks } =
+                  .errored) ∧
+              (s.seen.progress = some .paused →
+                Status.classify
+                    { progress := s.seen.progress, running := s.seen.running,
+                      unseen := s.seen.unseen, asks := s.seen.asks } =
+                  .paused) ∧
+              (s.seen.progress = some .normal ∨ s.seen.progress = some .indeterminate →
+                Status.classify
+                    { progress := s.seen.progress, running := s.seen.running,
+                      unseen := s.seen.unseen, asks := s.seen.asks } =
+                  .working)) := by
+  -- an error the program never removed is lost at its next output
+  intro h
+  have := (h Session.declaredError (.ptyOut [])).1 [] rfl
+  rw [Session.forgets_declaredError, Session.declaredError_kept] at this
   cases this
 
 theorem unseen_lines (s : State) (ev : Event) :
@@ -3848,7 +4006,7 @@ theorem status_clockless_rejects_window :
           Seen.windowed Session.infoFields State.seen s := by
   -- by the window, a program that wrote reads working once a tick records when
   intro h
-  have := congrArg Seen.working (h Session.wroteUnticked [0])
+  have := congrArg Seen.running (h Session.wroteUnticked [0])
   simp only [List.map_cons, List.map_nil, Session.trace] at this
   rw [Session.windowed_ticked, Session.windowed_unticked] at this
   cases this
@@ -3879,6 +4037,8 @@ theorem summary_exact (statuses : List Status.Status) :
           else [(toString (statuses.count .wantsYou)).push (Status.icon .wantsYou)]) ++
           (if statuses.count .exitedBad = 0 then []
           else [(toString (statuses.count .exitedBad)).push (Status.icon .exitedBad)]) ++
+          (if statuses.count .errored = 0 then []
+          else [(toString (statuses.count .errored)).push (Status.icon .errored)]) ++
           (if statuses.count .unknown = 0 then []
           else [(toString (statuses.count .unknown)).push (Status.icon .unknown)])) :=
   Status.summary_exact statuses
@@ -3893,6 +4053,8 @@ theorem summary_exact_rejects_count :
               else [(toString (statuses.count .wantsYou)).push (Status.icon .wantsYou)]) ++
               (if statuses.count .exitedBad = 0 then []
               else [(toString (statuses.count .exitedBad)).push (Status.icon .exitedBad)]) ++
+              (if statuses.count .errored = 0 then []
+              else [(toString (statuses.count .errored)).push (Status.icon .errored)]) ++
               (if statuses.count .unknown = 0 then []
               else [(toString (statuses.count .unknown)).push (Status.icon .unknown)])) := by
   intro h
@@ -3987,10 +4149,13 @@ theorem sort_attention_first {α : Type} (status : α → Status.Status) (rows :
       ∃ first rest,
         View.sort status rows = first ++ rest ∧
           (∀ x ∈ first,
-            status x = .asks ∨ status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) ∧
+            status x = .asks ∨
+              status x = .wantsYou ∨
+              status x = .exitedBad ∨ status x = .errored ∨ status x = .unknown) ∧
           ∀ x ∈ rest,
             ¬(status x = .asks ∨
-                status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) := by
+                status x = .wantsYou ∨
+                status x = .exitedBad ∨ status x = .errored ∨ status x = .unknown) := by
   obtain ⟨first, rest, split, front, back⟩ := View.sort_attention_first status rows
   exact
     ⟨View.sort_perm status rows, first, rest, split, fun x hx =>
@@ -4004,10 +4169,12 @@ theorem sort_attention_first_rejects_arrival :
             View.arrival status rows = first ++ rest ∧
               (∀ x ∈ first,
                 status x = .asks ∨
-                  status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) ∧
+                  status x = .wantsYou ∨
+                  status x = .exitedBad ∨ status x = .errored ∨ status x = .unknown) ∧
               ∀ x ∈ rest,
                 ¬(status x = .asks ∨
-                    status x = .wantsYou ∨ status x = .exitedBad ∨ status x = .unknown) := by
+                    status x = .wantsYou ∨
+                    status x = .exitedBad ∨ status x = .errored ∨ status x = .unknown) := by
   intro h
   obtain ⟨-, first, rest, split, front, back⟩ := h id [Status.Status.idle, .wantsYou]
   match first, split with
@@ -4023,15 +4190,16 @@ theorem sort_keeps_place {α : Type} (status status' : α → Status.Status) (ro
     (h :
       ∀ x ∈ rows,
         status x = status' x ∨
-          ((status x = .working ∨ status x = .idle) ∧ (status' x = .working ∨ status' x = .idle))) :
+          ((status x = .working ∨ status x = .paused ∨ status x = .idle) ∧
+            (status' x = .working ∨ status' x = .paused ∨ status' x = .idle))) :
     View.sort status rows = View.sort status' rows := View.sort_keeps_place status status' rows h
 
 theorem sort_keeps_place_rejects_activity :
     ¬∀ {α : Type} (status status' : α → Status.Status) (rows : List α),
         (∀ x ∈ rows,
             status x = status' x ∨
-              ((status x = .working ∨ status x = .idle) ∧
-                (status' x = .working ∨ status' x = .idle))) →
+              ((status x = .working ∨ status x = .paused ∨ status x = .idle) ∧
+                (status' x = .working ∨ status' x = .paused ∨ status' x = .idle))) →
           View.byActivity status rows = View.byActivity status' rows := by
   intro h
   have kept :=
@@ -4044,7 +4212,9 @@ theorem sort_keeps_place_rejects_activity :
 theorem sort_live_above_done {α : Type} (status : α → Status.Status) (rows first rest : List α)
     (split : View.sort status rows = first ++ rest) (x : α) (above : x ∈ first)
     (ended : status x = .exitedOk ∨ status x = .resumable) (y : α) (below : y ∈ rest) :
-    ¬(status y = .asks ∨ status y = .wantsYou ∨ status y = .working ∨ status y = .idle) :=
+    ¬(status y = .asks ∨
+        status y = .errored ∨
+        status y = .wantsYou ∨ status y = .working ∨ status y = .paused ∨ status y = .idle) :=
   View.sort_live_above_done status rows first rest split x above ended y below
 
 theorem sort_live_above_done_rejects_done_above :
@@ -4056,7 +4226,9 @@ theorem sort_live_above_done_rejects_done_above :
               ∀ (y : α),
                 y ∈ rest →
                   ¬(status y = .asks ∨
-                      status y = .wantsYou ∨ status y = .working ∨ status y = .idle) := by
+                      status y = .errored ∨
+                      status y = .wantsYou ∨
+                      status y = .working ∨ status y = .paused ∨ status y = .idle) := by
   intro h
   exact
     h (fun b : Bool => if b then .exitedOk else .working) [true, false] [true] [false] (by decide)
