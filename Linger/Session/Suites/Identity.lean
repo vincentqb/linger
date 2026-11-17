@@ -2,6 +2,7 @@ module
 
 public import Verify.Harness
 import Linger.Session.CoreCode.Checkpoint
+import Linger.Session.WorldCode.Daemon
 import Linger.Target.CoreCode.Name
 import Linger.Os.CoreCode.Answer
 
@@ -27,6 +28,80 @@ def isolatedEnv (e : Env) : Array (String × Option String) :=
 private def locksGone (e : Env) (name : String) : IO Bool := do
   return !(← System.FilePath.pathExists s!"{e.dir}/{name}.lock") &&
       !(← System.FilePath.pathExists s!"{e.dir}/.locks/{name}.lock")
+
+/-- One round of the start race on `name`, which no record names: this check holds the name's two
+locks, as an offline reader does, while four `start`s of it race reads and listings, which try its
+locks, and then deletes the lock files holding them, as a holder that no record names does, and
+lets them go while more reads race the starts' daemons. It gives how many starts took the name
+while it held the locks, how many daemons logged that they found the locks held, and how many
+starts took the name in all. -/
+private def startRace (e : Env) (name : String) : IO (Nat × Nat × Nat) := do
+  let spawn := fun (args : Array String) =>
+    IO.Process.spawn
+      { cmd := e.bin, args, env := e.procEnv, stdin := .null, stdout := .null, stderr := .null }
+  -- each starting daemon logs once that it found the name's locks held
+  let logged := Linger.Session.Shell.Daemon.claimWaitLine name
+  let before := ((← e.log name).splitOn logged).length - 1
+  let waiting : IO Nat := do
+    return ((← e.log name).splitOn logged).length - 1 - before
+  -- the socket's lock and then the checkpoint's, as every owner takes them, let go in reverse
+  let paths := [s!"{e.dir}/{name}.lock", s!"{e.dir}/.locks/{name}.lock"]
+  let held ← paths.mapM flock
+  let released ← IO.mkRef false
+  let release : IO Unit := do
+    unless ← released.get do
+      released.set true
+      for (fd, path) in (held.zip paths).reverse do
+        if fd ≥ 0 then
+          try
+            unlinkHeld fd.toUInt64.toUInt32 path
+          finally
+            close fd.toUInt64.toUInt32
+  try
+    unless held.all (· ≥ 0) do
+      throw (IO.userError s!"fixture locks unavailable: {name}")
+    let starters ← (List.range 4).mapM fun _ => spawn #["start", name, "/bin/sh"]
+    let exits ← starters.mapM fun _ => IO.mkRef (none : Option UInt32)
+    let taken : IO Nat := do
+      let mut n := 0
+      for (k, exit) in starters.zip exits do
+        if (← exit.get).isNone then
+          exit.set (← k.tryWait)
+        if (← exit.get) == some 0 then
+          n := n + 1
+      return n
+    let early ← (List.range 6).mapM fun _ => spawn #["capture", name]
+    let listers ← (List.range 4).mapM fun _ => spawn #["ls", "--porcelain"]
+    -- let go once every daemon waits, or 400 ms after the first did, well within the second a
+    -- starting daemon waits for the locks, so that one still waits when they go
+    let first ← IO.mkRef (none : Option Nat)
+    let _ ←
+      waitFor patienceMs do
+          let now ← monotonicMs
+          let count ← waiting
+          if count > 0 && (← first.get).isNone then
+            first.set (some now)
+          let since := ((← first.get).map (now - ·)).getD 0
+          return count ≥ starters.length || since ≥ 400 || (← taken) > 0
+    let takenHeld ← taken
+    let waited ← waiting
+    release
+    let late ← (List.range 6).mapM fun _ => spawn #["capture", name]
+    for k in early ++ listers ++ late do
+      let _ ← k.wait
+    let mut started := 0
+    for (k, exit) in starters.zip exits do
+      let code ←
+        match ← exit.get with
+        | some code =>
+          pure code
+        | none =>
+          k.wait
+      if code == 0 then
+        started := started + 1
+    return (takenHeld, waited, started)
+  finally
+    release
 
 /-- State is bounded by what it means: after any command, every lock file names a session or
 an ending. A command on a name no record names leaves no lock file of it, a kill that leaves its
@@ -102,27 +177,23 @@ private def lockChecks (e : Env) : IO Unit := do
   expect
       (renamedRc == 0 && renamedEnded && !(← System.FilePath.pathExists s!"{e.dir}/renamed.sock"))
       "a renamed session ends by its new name, and its daemon ends with it"
-  -- Deleting lock files keeps a name to one owner: while commands on a name no record names
-  -- delete its lock files, as many `start`s of it race, exactly one takes the name.
-  let mut owners : List Nat := []
+  -- A name has one owner at a time, whatever deletes its lock files (`startRace`): no start
+  -- takes the name while another process holds its locks, and once their holder deletes their
+  -- files and lets them go, exactly one does. No racer ends a session, so a start that took the
+  -- name while the locks were held, or a second one, would be a second owner at once. A `kill`
+  -- among the racers could end the first owner within the round, and a later start would then
+  -- take the name after it: two starts that took it, one owner after another, which counting
+  -- them cannot tell from two at once.
+  IO.FS.createDirAll s!"{e.dir}/.locks"
+  let mut rounds : List (Nat × Nat × Nat) := []
   for round in [0:4] do
-    let name := s!"race{round}"
-    let spawn := fun (args : Array String) =>
-      IO.Process.spawn
-        { cmd := e.bin, args, env := e.procEnv, stdin := .null, stdout := .null, stderr := .null }
-    let killers ← (List.range 6).mapM fun _ => spawn #["kill", name]
-    let starters ← (List.range 4).mapM fun _ => spawn #["start", name, "/bin/sh"]
-    let listers ← (List.range 4).mapM fun _ => spawn #["ls", "--porcelain"]
-    for k in killers ++ listers do
-      let _ ← k.wait
-    let mut started := 0
-    for k in starters do
-      if (← k.wait) == 0 then
-        started := started + 1
-    owners := owners ++ [started]
-    let _ ← e.cli #["kill", name]
-  expect (owners.all (· == 1))
-      s!"commands that delete a name's lock files leave racing starts one owner: {owners}"
+    rounds := rounds ++ [← startRace e s!"race{round}"]
+    let _ ← e.cli #["kill", s!"race{round}"]
+  expect
+      (rounds.all fun (takenHeld, waited, started) => takenHeld == 0 && waited > 0 && started == 1)
+      s!"no start takes a name while another process holds its locks, and once their holder \
+        deletes their files and lets them go exactly one does, whatever reads race (taken while \
+        held, daemons that waited, taken): {rounds}"
 
 /-- The identity suite: exact command targets and exclusive ownership of sockets and saved
 state. -/
