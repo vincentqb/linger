@@ -467,25 +467,36 @@ theorem nameOf_shown_rejects_bare :
     exact absurd this.2.2.2 (by decide)
 
 theorem rename_plan (valid oldHeld older newHeld : Bool) :
-    Names.Rename.plan valid oldHeld older newHeld =
-      if !valid then .refuse .invalid
-      else
-        if !oldHeld then .refuse .missing
-        else
-          if newHeld then .refuse .taken
-          else
-            if older then .refuse .older
-            else .move := Names.rename_plan_eq valid oldHeld older newHeld
+    (Names.Rename.plan valid oldHeld older newHeld = .move ↔
+        valid = true ∧ oldHeld = true ∧ newHeld = false ∧ older = false) ∧
+      (Names.Rename.plan valid oldHeld older newHeld = .refuse .invalid ↔ valid = false) ∧
+      (Names.Rename.plan valid oldHeld older newHeld = .refuse .missing ↔
+        valid = true ∧ oldHeld = false) ∧
+      (Names.Rename.plan valid oldHeld older newHeld = .refuse .taken ↔
+        valid = true ∧ oldHeld = true ∧ newHeld = true) ∧
+      (Names.Rename.plan valid oldHeld older newHeld = .refuse .older ↔
+        valid = true ∧ oldHeld = true ∧ newHeld = false ∧ older = true) := by
+  rw [Names.rename_plan_eq]
+  cases valid <;> cases oldHeld <;> cases older <;> cases newHeld <;> simp
 
 theorem rename_plan_rejects_move :
     ¬∀ (valid oldHeld older newHeld : Bool),
-        (fun (_ _ _ _ : Bool) => Names.Rename.Plan.move) valid oldHeld older newHeld =
-          if !valid then .refuse .invalid
-          else
-            if !oldHeld then .refuse .missing
-            else if newHeld then .refuse .taken else if older then .refuse .older else .move := by
+        ((fun (_ _ _ _ : Bool) => Names.Rename.Plan.move) valid oldHeld older newHeld = .move ↔
+            valid = true ∧ oldHeld = true ∧ newHeld = false ∧ older = false) ∧
+          ((fun (_ _ _ _ : Bool) => Names.Rename.Plan.move) valid oldHeld older newHeld =
+              .refuse .invalid ↔
+            valid = false) ∧
+          ((fun (_ _ _ _ : Bool) => Names.Rename.Plan.move) valid oldHeld older newHeld =
+              .refuse .missing ↔
+            valid = true ∧ oldHeld = false) ∧
+          ((fun (_ _ _ _ : Bool) => Names.Rename.Plan.move) valid oldHeld older newHeld =
+              .refuse .taken ↔
+            valid = true ∧ oldHeld = true ∧ newHeld = true) ∧
+          ((fun (_ _ _ _ : Bool) => Names.Rename.Plan.move) valid oldHeld older newHeld =
+              .refuse .older ↔
+            valid = true ∧ oldHeld = true ∧ newHeld = false ∧ older = true) := by
   intro h
-  cases h false true false false
+  cases ((h false true false false).1.mp rfl).1
 
 theorem one_name
     (placed : Bool → (String → Option Nat) → String → String → Option (String → Option Nat))
@@ -619,15 +630,20 @@ theorem step_terminal_sources_rejects_print :
     simp at moved
 
 theorem start_plan (live saved : Bool) :
-    Start.plan live saved = if live then .running else if saved then .saved else .take :=
-  Start.plan_eq live saved
+    (Start.plan live saved = .take ↔ live = false ∧ saved = false) ∧
+      (Start.plan live saved = .running ↔ live = true) ∧
+      (Start.plan live saved = .saved ↔ live = false ∧ saved = true) := by
+  rw [Start.plan_eq]
+  cases live <;> cases saved <;> decide
 
 theorem start_plan_rejects_take :
     ¬∀ (live saved : Bool),
-        (fun (_ _ : Bool) => Start.Plan.take) live saved =
-          if live then .running else if saved then .saved else .take := by
+        ((fun (_ _ : Bool) => Start.Plan.take) live saved = .take ↔ live = false ∧ saved = false) ∧
+          ((fun (_ _ : Bool) => Start.Plan.take) live saved = .running ↔ live = true) ∧
+          ((fun (_ _ : Bool) => Start.Plan.take) live saved = .saved ↔
+            live = false ∧ saved = true) := by
   intro h
-  cases h true false
+  cases ((h true false).1.mp rfl).1
 
 theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8)) {other : Nat}
     (h : other ≠ id) :
