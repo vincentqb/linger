@@ -1997,7 +1997,52 @@ whatever the command that asked for the session ignored, blocked or left open, a
 ignores SIGINT and SIGQUIT and `exec 3>&1` leaves a pipe open (`start_clean`, over the world claim
 `Spawn.Clean`, which its check and the agent suite test). Not claimed: the rest of what a program
 inherits as any child does, such as resource limits, the file mode mask, scheduling priority and the
-user and groups it runs as. -/
+user and groups it runs as.
+
+Linger only delivers what a person types: input reaches the program and nothing else of the
+session. Two runs from one boot whose events differ only in the bytes of the input messages
+clients send, each read whole frames, end in the same session, with the same effects but for the
+bytes they write to the program (`input_unrecorded`), so every record a session asks for, a
+checkpoint of its terminal, its fields and its metadata, its name's end record and the handoff of
+its state, is the same whatever was typed, and none holds what was typed. Not claimed: a read that
+cuts a frame, whose start the session holds until the rest arrives; that the daemon hands a session
+over only once it holds no such start and has written its program every byte it owed it, which the
+upgrade code decides; and that a person's input reaches no file, which the attach suite checks of a
+line typed with echo off. -/
+
+theorem input_unrecorded (vt : Vt.Vt) (fields metadata : List (String × String))
+    (evs evs' : List Event) (framed : ∀ ev ∈ evs, Framed Wire.encode ev)
+    (typed : Typed Wire.encode evs evs') :
+    (Session.trace Session.step (State.boot vt fields metadata) evs).1 =
+        (Session.trace Session.step (State.boot vt fields metadata) evs').1 ∧
+      (Session.trace Session.step (State.boot vt fields metadata) evs).2.map Effect.blind =
+        (Session.trace Session.step (State.boot vt fields metadata) evs').2.map Effect.blind := by
+  sorry
+
+@[kills input_unrecorded]
+theorem input_unrecorded_rejects_kept :
+    ¬∀ (vt : Vt.Vt) (fields metadata : List (String × String)) (evs evs' : List Event),
+        (∀ ev ∈ evs, Framed Wire.encode ev) →
+          Typed Wire.encode evs evs' →
+          (Session.trace
+                  (Session.keepsInput Session.step fun (s : State) (chunk : List UInt8) =>
+                    (Session.step s (.ptyOut chunk)).1)
+                  (State.boot vt fields metadata) evs).1 =
+              (Session.trace
+                  (Session.keepsInput Session.step fun (s : State) (chunk : List UInt8) =>
+                    (Session.step s (.ptyOut chunk)).1)
+                  (State.boot vt fields metadata) evs').1 ∧
+            (Session.trace
+                    (Session.keepsInput Session.step fun (s : State) (chunk : List UInt8) =>
+                      (Session.step s (.ptyOut chunk)).1)
+                    (State.boot vt fields metadata) evs).2.map
+                Effect.blind =
+              (Session.trace
+                    (Session.keepsInput Session.step fun (s : State) (chunk : List UInt8) =>
+                      (Session.step s (.ptyOut chunk)).1)
+                    (State.boot vt fields metadata) evs').2.map
+                Effect.blind := by
+  sorry
 
 theorem start_runs (inherited : String → Option String)
     (start :

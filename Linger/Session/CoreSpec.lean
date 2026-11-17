@@ -431,6 +431,13 @@ def Msg.Looks : Msg → Prop
   | .attach _ _ _ | .screen => True
   | _ => False
 
+/-- A message with the bytes an `input` carries left out, so that two messages the same but for
+the input a person typed read the same. -/
+@[expose]
+def Msg.blind : Msg → Msg
+  | .input _ => .input []
+  | m => m
+
 /-- What a decoder reads from chunks fed one after another, starting in state `d`, as the
 runtime's read loop feeds one chunk each poll round: the state after the last chunk, and every
 message read, in order. -/
@@ -679,6 +686,38 @@ for the ending, as `wait` opens, hears the outcome but is shown no screen, and d
 @[expose]
 def seenBy (roster : List Client) : Bool := roster.any (·.attached)
 
+/-- An effect with the bytes it writes to the program left out, so that a write of what a person
+typed reads the same whatever they typed. -/
+@[expose]
+def Effect.blind {Plan : Type} : Effect Plan → Effect Plan
+  | .writePty _ => .writePty []
+  | e => e
+
+/-- A read that holds whole frames, `encode` of messages that fit one, one after another, as a
+client sends them; any other event. -/
+@[expose]
+def Framed (encode : Wire.Msg → List UInt8) : Event → Prop
+  | .bytes _ chunk => ∃ ms : List Wire.Msg, chunk = ms.flatMap encode ∧ ∀ m ∈ ms, m.Fits
+  | _ => True
+
+/-- Two traces of events that differ at most in the input clients type: event by event, the same
+event, or two reads by one connection, each of whole frames of messages that fit one, the same
+messages but for the bytes their `input` messages carry. -/
+inductive Typed (encode : Wire.Msg → List UInt8) : List Event → List Event → Prop where
+  /-- No events. -/
+  | nil : Typed encode [] []
+  /-- The same event, then traces that differ at most in input. -/
+  |
+  same (ev : Event) {evs evs' : List Event} (rest : Typed encode evs evs') :
+    Typed encode (ev :: evs) (ev :: evs')
+  /-- Two reads by one connection that differ in the input they carry alone, then traces that
+  differ at most in input. -/
+  |
+  input (id : Nat) (ms ms' : List Wire.Msg) (fits : ∀ m ∈ ms, m.Fits) (fits' : ∀ m ∈ ms', m.Fits)
+    (blind : ms.map Wire.Msg.blind = ms'.map Wire.Msg.blind) {evs evs' : List Event}
+    (rest : Typed encode evs evs') :
+    Typed encode (.bytes id (ms.flatMap encode) :: evs) (.bytes id (ms'.flatMap encode) :: evs')
+
 /-- How an event ends the session, if it does, when `seen` says whether its ending is seen as it
 happens (`seenBy`): how the session ended, and whether its last screen stays saved. A program's
 own end leaves the session as its result exactly while nobody has seen it: seen as it happens, it
@@ -727,6 +766,15 @@ output frames and without repaints. -/
 @[expose]
 def without {S E Plan : Type} (drop : Effect Plan → Bool) (step : S → E → S × List (Effect Plan))
     (s : S) (ev : E) : S × List (Effect Plan) := ((step s ev).1, (step s ev).2.filter (!drop ·))
+
+/-- A wrong transition: `step`, after which a read's bytes are kept by `keep` too, as a checkpoint
+that appended the last input would keep them. The headline that input is never recorded is shown
+to reject it. -/
+@[expose]
+def keepsInput {S F : Type} (step : S → Event → S × List F) (keep : S → List UInt8 → S) (s : S) :
+    Event → S × List F
+  | .bytes id chunk => (keep (step s (.bytes id chunk)).1 chunk, (step s (.bytes id chunk)).2)
+  | ev => step s ev
 
 /-- The session bounds, read through a state's client roster, record fields and pty scanner: the
 roster and the fields within their caps, every client's frame decoder healthy and

@@ -5107,4 +5107,238 @@ theorem rung_asks :
     show State.scanner (State.boot (Vt.Vt.init 80 24) [] []) = .ground from rfl, feed_bel_asks]
   rfl
 
+/-! ## Input is never recorded
+
+A person's input reaches the program and nothing else of the session: an `input` message leaves
+the state as it was and asks only for a write to the program. A read of whole frames leaves its
+connection's decoder holding nothing, so two runs whose reads differ only in the bytes of their
+`input` messages end in the same state, with the same effects but for those writes. -/
+
+/-- No client's decoder holds part of a frame. -/
+def Whole (s : State) : Prop := ∀ c ∈ s.clients, c.decoder = {}
+
+/-- Rewriting one client whose decoder holds nothing keeps every decoder holding nothing. -/
+theorem whole_setClient (s : State) (c0 : Client) (hc0 : c0.decoder = {}) (h : Whole s) :
+    Whole (s.setClient c0) := by
+  intro c hc
+  simp only [State.setClient, List.mem_map] at hc
+  obtain ⟨w, hw, rfl⟩ := hc
+  split
+  · exact hc0
+  · exact h w hw
+
+/-- A message keeps every decoder holding nothing. -/
+theorem onMsg_whole (s : State) (c : Client) (m : Msg) (hc : c.decoder = {}) (h : Whole s) :
+    Whole (onMsg s c m).1 := by
+  unfold onMsg controlResize resizeOwned resize
+  dsimp only
+  repeat' split
+  all_goals
+    first
+    | exact h
+    | exact whole_setClient _ _ hc h
+    | exact whole_setClient _ _ hc (whole_setClient _ _ hc h)
+
+/-- A batch of messages keeps every decoder holding nothing. -/
+theorem feedMsgs_whole (id : Nat) (msgs : List Msg) (acc : State × List (Effect Plan))
+    (h : Whole acc.1) : Whole (feedMsgs id msgs acc).1 :=
+  feedMsgs_preserves id msgs acc (P := Whole)
+    (fun s c m hc hs => onMsg_whole s c m (hs c (client?_mem hc)) hs) h
+
+/-- Closing a connection keeps every decoder holding nothing. -/
+theorem closeClient_whole (s : State) (id : Nat) (h : Whole s) : Whole (closeClient s id).1 := by
+  have hd : Whole (s.dropClient id) := fun c hc => h c (List.mem_filter.mp hc).1
+  unfold closeClient
+  dsimp only
+  split
+  · exact hd
+  · exact hd
+
+/-- Whole frames, from a decoder that holds nothing, decode to their messages and leave it
+holding nothing. -/
+theorem feed_whole (ms : List Msg) (fits : ∀ m ∈ ms, m.Fits) :
+    ({} : Wire.Decoder).feed (ms.flatMap Wire.encode) = ({}, ms) := by
+  have := Wire.decode_encode_stream ms fun m hm => Wire.fits_wf m (fits m hm)
+  simpa [Wire.decode] using this
+
+/-- A booted session holds no client. -/
+theorem boot_whole (vt : Vt.Vt) (fields metaKv : List (String × String)) :
+    Whole (State.boot vt fields metaKv) := fun _ h => by simp [State.boot] at h
+
+/-- An event of whole frames keeps every decoder holding nothing. -/
+theorem step_whole (s : State) (ev : Event) (framed : Framed Wire.encode ev) (h : Whole s) :
+    Whole (step s ev).1 := by
+  cases ev with
+  | connected id =>
+    unfold step
+    dsimp only
+    split
+    · exact h
+    · intro c hc
+      simp only [List.mem_append, List.mem_singleton] at hc
+      rcases hc with hc | rfl
+      · exact h c hc
+      · rfl
+  | bytes id chunk =>
+    obtain ⟨ms, rfl, fits⟩ := framed
+    unfold step
+    dsimp only
+    split
+    · exact h
+    · rename_i c hc
+      rw [h c (client?_mem hc), feed_whole ms fits]
+      exact feedMsgs_whole _ _ _ (whole_setClient _ _ rfl h)
+  | closed id => exact closeClient_whole s id h
+  | ptyOut chunk => exact h
+  | childExited o => exact h
+  | stopped o => exact h
+  | signal n => exact h
+  | tick now =>
+    unfold step
+    dsimp only
+    split <;> exact h
+  | observed o => exact h
+  | checkpointFailed => exact h
+
+/-- Two messages that read the same but for their input are the same, or both inputs. -/
+theorem Msg.blind_cases {m m' : Msg} (h : m.blind = m'.blind) :
+    m = m' ∨ ∃ a b, m = .input a ∧ m' = .input b := by
+  cases m with
+  | input a =>
+    cases m' with
+    | input b => exact .inr ⟨a, b, rfl, rfl⟩
+    | _ => simp [Msg.blind] at h
+  | _ =>
+    left
+    cases m' with
+    | input b => simp [Msg.blind] at h
+    | _ => simp_all [Msg.blind]
+
+/-- Effects that read the same but for what they write the program ask for the same effect that
+writes nothing to it. -/
+theorem contains_blind (l l' : List (Effect Plan)) (h : l.map Effect.blind = l'.map Effect.blind)
+    (e : Effect Plan) (he : ∀ b, e ≠ .writePty b) : l.contains e = l'.contains e := by
+  have key : ∀ l : List (Effect Plan), l.contains e = (l.map Effect.blind).contains e := by
+    intro l
+    induction l with
+    | nil => rfl
+    | cons x xs ih =>
+      simp only [List.contains_cons, List.map_cons, ← ih]
+      congr 1
+      cases x with
+      | writePty b =>
+        simp only [Effect.blind, beq_eq_false_iff_ne.mpr (he b), beq_eq_false_iff_ne.mpr (he [])]
+      | _ => rfl
+  rw [key l, key l', h]
+
+/-- Two messages that read the same but for their input leave the same state, and ask for the
+same effects but for what they write the program. -/
+theorem onMsg_blind (s : State) (c : Client) {m m' : Msg} (h : m.blind = m'.blind) :
+    (onMsg s c m).1 = (onMsg s c m').1 ∧
+      (onMsg s c m).2.map Effect.blind = (onMsg s c m').2.map Effect.blind := by
+  rcases Msg.blind_cases h with rfl | ⟨a, b, rfl, rfl⟩
+  · exact ⟨rfl, rfl⟩
+  · simp only [onMsg]
+    split <;> simp [Effect.blind]
+
+/-- Two batches that read the same but for their input, from accumulators with the same state whose
+effects read the same, end in the same state, with effects that read the same. -/
+theorem feedMsgs_blind (id : Nat) (ms ms' : List Msg) (h : ms.map Msg.blind = ms'.map Msg.blind)
+    (acc acc' : State × List (Effect Plan)) (hs : acc.1 = acc'.1)
+    (he : acc.2.map Effect.blind = acc'.2.map Effect.blind) :
+    (feedMsgs id ms acc).1 = (feedMsgs id ms' acc').1 ∧
+      (feedMsgs id ms acc).2.map Effect.blind = (feedMsgs id ms' acc').2.map Effect.blind := by
+  induction ms generalizing ms' acc acc' with
+  | nil =>
+    cases ms' with
+    | nil => exact ⟨hs, he⟩
+    | cons _ _ => cases h
+  | cons m ms ih =>
+    cases ms' with
+    | nil => cases h
+    | cons m' ms' =>
+      simp only [List.map_cons, List.cons.injEq] at h
+      obtain ⟨hm, hrest⟩ := h
+      obtain ⟨st, e1⟩ := acc
+      obtain ⟨st', e2⟩ := acc'
+      simp only at hs he
+      subst hs
+      have hclose := contains_blind e1 e2 he (.close id) (fun _ => by simp)
+      have hexit := contains_blind e1 e2 he .exit (fun _ => by simp)
+      rw [show m :: ms = [m] ++ ms from rfl, show m' :: ms' = [m'] ++ ms' from rfl, feedMsgs_append,
+        feedMsgs_append]
+      apply ih ms' hrest
+      · simp only [feedMsgs, List.foldl_cons, List.foldl_nil, hclose, hexit]
+        split
+        · rfl
+        · split
+          · rfl
+          · exact (onMsg_blind _ _ hm).1
+      · simp only [feedMsgs, List.foldl_cons, List.foldl_nil, hclose, hexit]
+        split
+        · exact he
+        · split
+          · exact he
+          · simp only [List.map_append, he, (onMsg_blind _ _ hm).2]
+
+/-- Two reads of whole frames by one connection, which read the same but for their input, leave
+the same state, and ask for the same effects but for what they write the program. -/
+theorem step_typed (s : State) (h : Whole s) (id : Nat) (ms ms' : List Msg)
+    (fits : ∀ m ∈ ms, m.Fits) (fits' : ∀ m ∈ ms', m.Fits)
+    (blind : ms.map Msg.blind = ms'.map Msg.blind) :
+    (step s (.bytes id (ms.flatMap Wire.encode))).1 =
+        (step s (.bytes id (ms'.flatMap Wire.encode))).1 ∧
+      (step s (.bytes id (ms.flatMap Wire.encode))).2.map Effect.blind =
+        (step s (.bytes id (ms'.flatMap Wire.encode))).2.map Effect.blind := by
+  unfold step
+  dsimp only
+  split
+  · exact ⟨rfl, rfl⟩
+  · rename_i c hc
+    rw [h c (client?_mem hc), feed_whole ms fits, feed_whole ms' fits']
+    exact feedMsgs_blind id ms ms' blind _ _ rfl rfl
+
+/-- **Input is never recorded**: two traces from one state whose decoders hold nothing, whose
+events differ only in the input their reads carry, each read whole frames, end in the same state,
+with the same effects but for what they write the program. -/
+theorem trace_typed (s : State) (h : Whole s) (evs evs' : List Event)
+    (framed : ∀ ev ∈ evs, Framed Wire.encode ev) (typed : Typed Wire.encode evs evs') :
+    (trace step s evs).1 = (trace step s evs').1 ∧
+      (trace step s evs).2.map Effect.blind = (trace step s evs').2.map Effect.blind := by
+  induction typed generalizing s with
+  | nil => exact ⟨rfl, rfl⟩
+  | @same ev evs evs' _
+    ih =>
+    have framedTail : ∀ e ∈ evs, Framed Wire.encode e := fun e he =>
+      framed e (List.mem_cons_of_mem _ he)
+    obtain ⟨h1, h2⟩ :=
+      ih (step s ev).1 (step_whole s ev (framed ev List.mem_cons_self) h) framedTail
+    simp only [trace, List.map_append]
+    exact ⟨h1, by rw [h2]⟩
+  | @input id ms ms' fits fits' blind evs evs' _
+    ih =>
+    have framedTail : ∀ e ∈ evs, Framed Wire.encode e := fun e he =>
+      framed e (List.mem_cons_of_mem _ he)
+    obtain ⟨hs, he⟩ := step_typed s h id ms ms' fits fits' blind
+    obtain ⟨h1, h2⟩ := ih (step s _).1 (step_whole s _ (framed _ List.mem_cons_self) h) framedTail
+    simp only [trace, List.map_append]
+    rw [← hs]
+    exact ⟨h1, by rw [h2, he]⟩
+
+/-- A session that keeps each read's bytes in its terminal, as a checkpoint that appended the last
+input would keep them, shows a connection's typed input there: the kill's witness. -/
+theorem keepsInput_terminal (bytes : List UInt8) (fits : bytes.length ≤ Wire.maxPayload) :
+    (trace (keepsInput step fun (s : State) (chunk : List UInt8) => (step s (.ptyOut chunk)).1)
+          (State.boot (Vt.Vt.init 10 1) [] [])
+          [.connected 0, .bytes 0 ([Msg.input bytes].flatMap Wire.encode)]).1.terminal =
+      (Vt.Vt.init 10 1).feed (Wire.encode (.input bytes)) := by
+  have hc :
+    (step (State.boot (Vt.Vt.init 10 1) [] []) (.connected 0)).1.client? 0 = some { id := 0 } := by
+    simp [step, State.boot, State.client?, maxClients]
+  have read := feed_whole [Msg.input bytes] (by simpa [Msg.Fits] using fits)
+  simp only [trace, keepsInput, List.append_nil, State.terminal]
+  rw [step_ptyOut_vt, step_bytes_single hc read rfl]
+  simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil]
+  simp [onMsg, State.setClient, step, State.boot, maxClients]
+
 end Linger.Session

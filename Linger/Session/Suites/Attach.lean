@@ -556,11 +556,60 @@ def alertChecks (e : Env) : IO Unit := do
     c.bye
   e.killAll #["alert-early", "alert-other", "alert-own"]
 
+/-- Every regular file under `dir`, at any depth, whose bytes hold `needle`. A file that goes
+between the walk and the read, as a temporary file a save renames does, holds nothing. -/
+private def filesHolding (dir : System.FilePath) (needle : String) : IO (List String) := do
+  let mut found := []
+  for path in ← dir.walkDir do
+    let bytes ←
+      try
+        if (← path.symlinkMetadata).type == .file then
+          IO.FS.readBinFile path
+        else
+          pure ByteArray.empty
+      catch _ =>
+        pure ByteArray.empty
+    if hasText bytes needle then
+      found := found ++ [path.toString]
+  return found
+
+/-- Input is never recorded: a line a person types to a program that turned echo off reaches the
+program, which shows it changed, and no file under the state directory, no capture and no
+`capture --history` holds it, neither once the last client detached, which saves the session's
+checkpoint, nor once a kill left its end record. -/
+def secretChecks (e : Env) : IO Unit := do
+  let secret := "sesame-7c1f"
+  let _ ←
+    e.cli
+        #["start", "secret", "sh", "-c",
+          "stty -echo; echo ready-$((1+1)); read -r x; printf '\\n%s\\n' \"$x\" | tr a-z A-Z; \
+            sleep 600"]
+  let c ← e.spawn #["attach", "secret"] 80 24
+  let ready ← c.awaitNeedle "ready-2"
+  c.type (secret ++ "\r")
+  let received ← c.awaitNeedle "SESAME-7C1F"
+  c.detach
+  let _ ← waitFor patienceMs (return (← e.info "secret" "clients") == some "0")
+  c.bye (sendDetach := false)
+  let saved ← waitFor patienceMs (System.FilePath.pathExists s!"{e.dir}/secret.ckpt")
+  let held ← filesHolding e.dir secret
+  let screen ← e.out #["capture", "secret"]
+  let history ← e.out #["capture", "--history", "secret"]
+  expect (ready && received && has history "SESAME-7C1F")
+      "a line typed with echo off reaches the program"
+  expect (saved && held.isEmpty && !has screen secret && !has history secret)
+      s!"no checkpoint, file or capture holds the typed line: {held}"
+  let _ ← e.cli #["kill", "secret"]
+  let ended ← waitFor patienceMs (System.FilePath.pathExists s!"{e.dir}/secret.end")
+  let held ← filesHolding e.dir secret
+  expect (ended && held.isEmpty) s!"nor does the end record a kill leaves: {held}"
+
 /-- The attach suite: attach, detach, reattach, mirroring, waiting, hand-back and
-scrollback, the alerts of another session's ask, the refusal of a daemon an older linger started, and that nothing of an ended
+scrollback, that input reaches no record, the alerts of another session's ask, the refusal of a daemon an older linger started, and that nothing of an ended
 session's terminal session outlives it. -/
 def run : IO UInt32 :=
   Env.suite "attach" fun e => do
+    secretChecks e
     alertChecks e
     sigkillChecks
     closeFeedback e

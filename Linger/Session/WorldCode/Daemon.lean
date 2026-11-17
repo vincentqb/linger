@@ -993,8 +993,10 @@ private def owedOf (c : Conn) : IO (List UInt8) := do
   return chunks.toList.flatten
 
 /-- Why the daemon cannot hand its session over now, if it cannot: the session is ending, its
-program's terminal has closed, or the program is partway through a control sequence or a
-character, which the handoff's terminal codec would forget (`Vt.quiet`). -/
+program's terminal has closed, the program is partway through a control sequence or a
+character, which the handoff's terminal codec would forget (`Vt.quiet`), or the daemon holds
+input a person typed, part of a frame a connection sent or bytes it still owes the program, which
+the handoff would record (`input_unrecorded`). -/
 private def upgradeBlocked (rt : Rt) : Option String :=
   if rt.exiting || rt.ending.isSome then some "the session is ending"
   else
@@ -1002,7 +1004,10 @@ private def upgradeBlocked (rt : Rt) : Option String :=
     else
       if !rt.st.terminal.quiet then
         some "the program is partway through a control sequence; try again"
-      else none
+      else
+        if owedLen rt.ptyIn != 0 || rt.st.roster.any (!·.decoder.buf.isEmpty) then
+          some "the program has input on its way; try again"
+        else none
 
 /-- Replace this daemon's image with the binary at `exe`, which carries the session over, for
 connection `asker`, as `Effect.upgrade` asks. The binary must name the handoff format this one

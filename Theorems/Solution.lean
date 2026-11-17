@@ -1832,6 +1832,63 @@ theorem metadata_dirs_rejects_silent :
   have moved := ((h "" "" "" "" "b" (some "a")).2 "a").2 ⟨rfl, by decide⟩
   simp at moved
 
+theorem input_unrecorded (vt : Vt.Vt) (fields metadata : List (String × String))
+    (evs evs' : List Event) (framed : ∀ ev ∈ evs, Framed Wire.encode ev)
+    (typed : Typed Wire.encode evs evs') :
+    (Session.trace Session.step (State.boot vt fields metadata) evs).1 =
+        (Session.trace Session.step (State.boot vt fields metadata) evs').1 ∧
+      (Session.trace Session.step (State.boot vt fields metadata) evs).2.map Effect.blind =
+        (Session.trace Session.step (State.boot vt fields metadata) evs').2.map Effect.blind :=
+  Session.trace_typed _ (Session.boot_whole vt fields metadata) evs evs' framed typed
+
+theorem input_unrecorded_rejects_kept :
+    ¬∀ (vt : Vt.Vt) (fields metadata : List (String × String)) (evs evs' : List Event),
+        (∀ ev ∈ evs, Framed Wire.encode ev) →
+          Typed Wire.encode evs evs' →
+          (Session.trace
+                  (Session.keepsInput Session.step fun (s : State) (chunk : List UInt8) =>
+                    (Session.step s (.ptyOut chunk)).1)
+                  (State.boot vt fields metadata) evs).1 =
+              (Session.trace
+                  (Session.keepsInput Session.step fun (s : State) (chunk : List UInt8) =>
+                    (Session.step s (.ptyOut chunk)).1)
+                  (State.boot vt fields metadata) evs').1 ∧
+            (Session.trace
+                    (Session.keepsInput Session.step fun (s : State) (chunk : List UInt8) =>
+                      (Session.step s (.ptyOut chunk)).1)
+                    (State.boot vt fields metadata) evs).2.map
+                Effect.blind =
+              (Session.trace
+                    (Session.keepsInput Session.step fun (s : State) (chunk : List UInt8) =>
+                      (Session.step s (.ptyOut chunk)).1)
+                    (State.boot vt fields metadata) evs').2.map
+                Effect.blind := by
+  -- a session that keeps what a client typed in its terminal tells two typings apart
+  intro h
+  have fits : ∀ bytes : List UInt8, bytes.length ≤ 2 → ∀ m ∈ [Wire.Msg.input bytes], m.Fits := by
+    intro bytes hb m hm
+    simp only [List.mem_singleton] at hm
+    subst hm
+    simp only [Wire.Msg.Fits]
+    exact Nat.le_trans hb (by decide)
+  have typed :
+    Typed Wire.encode [.connected 0, .bytes 0 ([Wire.Msg.input [0x41]].flatMap Wire.encode)]
+      [.connected 0, .bytes 0 ([Wire.Msg.input [0x41, 0x41]].flatMap Wire.encode)] :=
+    .same _ (.input 0 _ _ (fits [0x41] (by decide)) (fits [0x41, 0x41] (by decide)) rfl .nil)
+  have framed :
+    ∀ ev ∈ [Event.connected 0, .bytes 0 ([Wire.Msg.input [0x41]].flatMap Wire.encode)],
+      Framed Wire.encode ev := by
+    intro ev hev
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hev
+    rcases hev with rfl | rfl
+    · trivial
+    · exact ⟨_, rfl, fits [0x41] (by decide)⟩
+  have same :=
+    congrArg (fun s => s.terminal.cursorPos) (h (Vt.Vt.init 10 1) [] [] _ _ framed typed).1
+  rw [Session.keepsInput_terminal _ (by decide), Session.keepsInput_terminal _ (by decide)] at same
+  revert same
+  decide +kernel
+
 theorem start_runs (inherited : String → Option String)
     (start :
       String →
