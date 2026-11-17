@@ -93,7 +93,7 @@ private def counter (path : String) : IO Nat := do
 waits for `release-failure` and fails, later ones wait for `release-valid` and report
 one unread session. File gates keep each state observable without racing the
 one-second interval; every finished sample, failed or not, is counted. -/
-def fixtureSample (dir : String) (_ : Option (List (String × Linger.Display.Status.Status))) :
+def fixtureSample (dir : String) (_ : Option (List (String × Linger.Display.Status.Attention))) :
     IO Linger.Session.Shell.Client.Sample := do
   let serial := (← counter s!"{dir}/sample-count") + 1
   IO.FS.writeFile s!"{dir}/sample-count" (toString serial)
@@ -103,7 +103,7 @@ def fixtureSample (dir : String) (_ : Option (List (String × Linger.Display.Sta
       throw (IO.userError "the fixture never released this title sample")
     if serial == 1 then
       throw (IO.userError "fixture title sample failure")
-    return { summary := Linger.Display.Status.summary [.wantsYou], statuses := [], alerts := [] }
+    return { summary := Linger.Display.Status.summary [.unread], statuses := [], alerts := [] }
   finally
     IO.FS.writeFile s!"{dir}/sample-finished" (toString serial)
 
@@ -185,13 +185,13 @@ private def attention (e : Env) (unread : Bool) : IO Bool := do
   let (code, _, _) ← e.cli args
   let settled ←
     waitFor patienceMs do
-        return (← e.status "title-other") == (if unread then Status.wantsYou else Status.idle)
+        return (← e.attention "title-other") == (if unread then .unread else .none)
   return code == 0 && settled
 
 /-- This fixture has exactly one possible unread session; its glyph is shared
 with the listing. Summary classification itself is covered by Linger.Display.Suites.Status. -/
 private def expectedTitle (unread : Bool) : String :=
-  let summary := Linger.Display.Status.summary (if unread then [.wantsYou] else [])
+  let summary := Linger.Display.Status.summary (if unread then [.unread] else [])
   Linger.Display.Title.compose "title-main" "editor" summary maxChars
 
 /-- At most the last 160 of `bytes`, as decimal codes, for a failure message. -/
@@ -274,7 +274,7 @@ private def sampleCase (base : Env) : IO Unit := do
       expect (unknown && responsive && (← e.info name "clients") == some "1")
           "a failed title sample shows unknown attention and the attachment stays responsive"
       IO.FS.writeFile s!"{e.dir}/release-valid" ""
-      let recovered ← awaitOutput c seen (titled (Linger.Display.Status.summary [.wantsYou]))
+      let recovered ← awaitOutput c seen (titled (Linger.Display.Status.summary [.unread]))
       let answered ← ping c seen
       expect (recovered && answered && (← e.info name "clients") == some "1")
           "a later title sample recovers the attention summary"
@@ -338,7 +338,7 @@ def run (binary : Option String := none) : IO UInt32 :=
         let after := ((← e.info "title-other" "behind").getD "").toNat?
         expect
             (infoCode == 0 && before.isSome && before.getD 0 > 0 && after == before &&
-              (← e.status "title-other") == Status.wantsYou)
+              (← e.attention "title-other") == .unread)
             "info and asynchronous title sampling leave the unread count intact"
         splitCase e c seen "OSC" "o" "O" openOsc (ByteArray.mk #[0x07]) false
         splitCase e c seen "DCS" "d" "D" "\x1bPtitle-probe".toUTF8 "\x1b\\".toUTF8 true
@@ -353,7 +353,7 @@ def run (binary : Option String := none) : IO UInt32 :=
                 hasBytes (since s repeatStart) (Terminal.Title.ansi (expectedTitle true))
         expect (unread && prefixed && repeatCode == 0 && repeated)
             "an identical application OSC title reasserts the shared context and attention suffix"
-        let summary := Linger.Display.Status.summary [.wantsYou]
+        let summary := Linger.Display.Status.summary [.unread]
         let (longCode, _, _) ← e.cli #["send", "title-main", "l"]
         let clipped ←
           awaitOutput c seen

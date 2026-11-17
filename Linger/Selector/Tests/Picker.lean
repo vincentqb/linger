@@ -130,11 +130,11 @@ namespace Linger.Selector.Picker.Tests
 -- A local-only listing replaces the local rows and keeps the last full listing's remote ones.
 #guard
   match parseSnapshot "name\twork\nstatus\tidle\n\nname\tdev@host\nstatus\tworking\n\n",
-    parseSnapshot "name\tfresh\nstatus\twants-you\n\n" with
+    parseSnapshot "name\tfresh\nstatus\tidle\n\n" with
   | .ok full, .ok latest =>
     let merged := latest.withRemote full
     merged.candidates == ["fresh", "dev@host"] &&
-      merged.row "fresh" == [("name", "fresh"), ("status", "wants-you")] &&
+      merged.row "fresh" == [("name", "fresh"), ("status", "idle")] &&
       merged.row "dev@host" == [("name", "dev@host"), ("status", "working")] &&
       merged.row "work" == [("name", "work")]
   | _, _ => false
@@ -152,14 +152,14 @@ namespace Linger.Selector.Picker.Tests
   | .ok snapshot =>
     let pieces := presentation snapshot snapshot.laidOut (.existing "work")
     pieces == Linger.Display.Listing.rowPieces snapshot.laidOut (snapshot.row "work") &&
-      String.ofList (pieces.flatMap (·.text)) == "? work vi�[31m�31m"
+      String.ofList (pieces.flatMap (·.text)) == "  ? work vi�[31m�31m"
   | .error _ => false
 
 #guard
   match parseSnapshot "name\twork\nname\tother\n" with
   | .ok snapshot =>
     String.ofList ((presentation snapshot snapshot.laidOut (.existing "work")).flatMap (·.text)) ==
-        "? work  (busy)" &&
+        "  ? work  (busy)" &&
       String.ofList
           ((presentation snapshot snapshot.laidOut (.create "work@host")).flatMap (·.text)) ==
         "+ Create work@host"
@@ -175,10 +175,10 @@ namespace Linger.Selector.Picker.Tests
       highlightedPresentation snapshot { snapshot.laidOut with nameCol := 8 } "ab"
         (.existing "axab")
     (chars.zipIdx.filterMap fun (char, index) => if char.matched then some index else none) ==
-        [4, 5] &&
-      String.ofList (chars.map (·.char)) == "⣷ axab     ab  +2" &&
-      chars.head?.map (·.status) == some (some .working) &&
-      (chars.filter (·.matched)).all (fun char => char.status.isNone)
+        [6, 7] &&
+      String.ofList (chars.map (·.char)) == "  ⣷ axab     ab  +2" &&
+      (chars[2]?.map (·.style)) == some (some [36]) &&
+      (chars.filter (·.matched)).all (fun char => char.style.isNone)
   | .error _ => false
 
 -- The query finds a row by its description as by its name, and the snapshot carries each row's.
@@ -201,20 +201,20 @@ namespace Linger.Selector.Picker.Tests
 -- Scalar positions survive wide and combining characters without byte indexing.
 #guard
   let chars := highlightedPresentation {} {} "é界" (.existing "café@世界")
-  (chars.zipIdx.filterMap fun (char, index) => if char.matched then some index else none) == [5, 8]
+  (chars.zipIdx.filterMap fun (char, index) => if char.matched then some index else none) == [7, 10]
 
 -- An accent-only match underlines the base cell, even through another mark.
 -- A following wide character starts its own cell and cannot carry emphasis back.
 #guard
   let chars := highlightedPresentation {} {} "\u0301" (.existing "s@e\u0300\u0301界")
-  (chars.zipIdx.filterMap fun (char, index) => if char.matched then some index else none) == [6] &&
+  (chars.zipIdx.filterMap fun (char, index) => if char.matched then some index else none) == [8] &&
     ((emphasizeCells chars).zipIdx.filterMap fun (char, index) =>
         if char.matched then some index else none) ==
-      [4, 5, 6] &&
+      [6, 7, 8] &&
     ((emphasizeCells
             (highlightedPresentation {} {} "界" (.existing "s@e\u0300\u0301界"))).zipIdx.filterMap
         fun (char, index) => if char.matched then some index else none) ==
-      [7]
+      [9]
 
 #guard maxQueryLength == 256
 
@@ -323,7 +323,8 @@ def lineText (line : List (String × List (List Nat))) : String := String.join (
   match parseSnapshot "name\twork\nstatus\tidle\nname\tdev@host\nstatus\tworking\n",
     parseSnapshot "name\twork\nstatus\tidle\n" with
   | .ok remote, .ok localOnly =>
-    let statusOf := fun (_ : String) => Linger.Display.Status.Status.idle
+    let statusOf := fun (_ : String) =>
+      ({ attention := .none, state := .idle } : Linger.Display.Status.Status)
     let lines (snapshot : Snapshot) (age : Option Nat) :=
       (frameLines (init snapshot.candidates) snapshot statusOf true false false age 12).map lineText
     ageParts remote (some 12) == ["remote 12s"] && ageParts remote (some 75) == ["remote 1m"] &&
@@ -341,7 +342,8 @@ def lineText (line : List (String × List (List Nat))) : String := String.join (
 #guard
   match parseSnapshot "name\twork\nstatus\tidle\nname\tdev@host\nstatus\tworking\n" with
   | .ok snapshot =>
-    let statusOf := fun (_ : String) => Linger.Display.Status.Status.idle
+    let statusOf := fun (_ : String) =>
+      ({ attention := .none, state := .idle } : Linger.Display.Status.Status)
     let rows (age : Nat) :=
       frameRows (init snapshot.candidates) snapshot statusOf true false false (some age) 80 12
     ((rows 3).zip (rows 4)).zipIdx.filterMap (fun ((a, b), y) => if a == b then none else some y) ==
@@ -460,7 +462,7 @@ def lineText (line : List (String × List (List Nat))) : String := String.join (
       (snapshot.row "work").lookup "line" == some "4" &&
       String.ofList
           ((presentation snapshot snapshot.laidOut (.existing "work")).flatMap (·.text)) ==
-        String.singleton (Linger.Display.Status.icon .resumable) ++ " work pane command"
+        "  " ++ String.singleton (Linger.Display.Status.icon .resumable) ++ " work pane command"
   | .error _ => false
 
 -- A changed directory changes the snapshot even if its pane identity stays put.

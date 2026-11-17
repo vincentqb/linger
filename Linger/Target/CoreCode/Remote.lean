@@ -46,6 +46,10 @@ structure RemoteRow where
   an absent field from an older peer — to `unknown`. So a remote row can never
   claim a state we could not actually read. -/
   status : String := ""
+  /-- The peer's own `attention` name, verbatim from its porcelain. Interpreted by
+  `Status.ofAttentionName`, which maps anything unrecognised, an absent field included, to
+  none. -/
+  attention : String := ""
   deriving Repr, DecidableEq, Inhabited
 
 /-- Drop C0 and C1 controls and DEL from untrusted text: `ls -r --porcelain`
@@ -70,7 +74,8 @@ def parseRecord (lines : List String) : Option RemoteRow :=
           name
           live := (kvs.lookup "state").getD "live" == "live"
           cmd := scrub ((kvs.lookup "cmd").getD "")
-          status := (kvs.lookup "status").getD "" }
+          status := (kvs.lookup "status").getD ""
+          attention := (kvs.lookup "attention").getD "" }
 
 /-- The parser: total, garbage-tolerant, names validated without rewriting. Records are
 separated by blank lines; an empty group has no `name` and yields no row. -/

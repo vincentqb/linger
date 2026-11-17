@@ -162,6 +162,10 @@ def infoServer (socketPath readyPath mode : String) : IO UInt32 := do
             | "failed-info" =>
               Linger.Session.Shell.Client.sendMsg fd (.infoReply "exit\t7\n".toUTF8.toList)
               Linger.Session.Shell.Client.sendMsg fd .done
+            | "unread-info" =>
+              Linger.Session.Shell.Client.sendMsg fd
+                  (.infoReply "exit\t7\nunseen\ttrue\n".toUTF8.toList)
+              Linger.Session.Shell.Client.sendMsg fd .done
             | "empty" =>
               Linger.Session.Shell.Client.sendMsg fd .done
             | _ =>
@@ -198,7 +202,7 @@ private def checkInfo (e : Env) (mode : String) (failed : Bool) : IO Unit := do
       expect
           (rc == 0 && err.isEmpty &&
             named ==
-              [("name", name), ("state", "live"), ("status", Linger.Display.Status.name .unknown)])
+              ([("name", name), ("state", "live")] ++ Linger.Display.Listing.statusFields default))
           s!"ls {name} lists a {mode} info peer as live/unknown without partial fields"
       expect
           (serverRc == some 0 && lrc == 0 && pathKept && recs.contains ("name", name) &&
@@ -437,8 +441,8 @@ private def endedChecks (e : Env) : IO Unit := do
   let (sigRc, _) ← startIn e work #[] #["end-sig", "/bin/sh", "-c", "kill -TERM $$"]
   let ended ←
     waitFor 5000 do
-        return (← e.status "end-ok") == .exitedOk && (← e.status "end-bad") == .exitedBad &&
-            (← e.status "end-sig") == .exitedBad
+        return (← e.state "end-ok") == .exitedOk && (← e.state "end-bad") == .exitedBad &&
+            (← e.state "end-sig") == .exitedBad
   expect
       (okRc == 0 && badRc == 0 && sigRc == 0 && ended && (← e.field "end-ok" "exit") == some "0" &&
         (← e.field "end-bad" "exit") == some "3" &&
@@ -462,13 +466,21 @@ private def endedChecks (e : Env) : IO Unit := do
       (says "end-ok" "ended (status 0)" && says "end-bad" "ended (status 3)" &&
         says "end-sig" "ended (killed by signal 15)")
       s!"the listing says how each ended session's program ended ({human})"
-  -- what asks for someone comes first: the failed endings before the clean one
+  -- every ending nobody saw is news, and the endings share one place, in name order
   let order := human.filterMap fun row => ["end-bad", "end-ok", "end-sig"].find? (has row s!" {·} ")
-  expect (order == ["end-bad", "end-sig", "end-ok"])
-      s!"the listing puts the failed endings before the clean one ({order})"
+  expect
+      (order == ["end-bad", "end-ok", "end-sig"] &&
+        (human.filter fun row => ["end-bad", "end-ok", "end-sig"].any (has row s!" {·} ")).all
+          fun row => row.startsWith (String.singleton (Linger.Display.Status.mark .unread)))
+      s!"the listing shows each ending nobody saw as news, the endings in name order ({order})"
   let (sumRc, summary, _) ← e.cli #["ls", "--summary"]
-  expect (sumRc == 0 && summary == Linger.Display.Status.summary [.exitedBad, .exitedBad] ++ "\n")
-      s!"the attention summary counts failed endings and not a clean one ({summary})"
+  let attentions :=
+    (Verify.Harness.records (← e.out #["ls", "--porcelain"])).filterMap fun kv =>
+      if kv.1 == "attention" then some (Linger.Display.Status.ofAttentionName kv.2) else none
+  expect
+      (sumRc == 0 && attentions.count .unread ≥ 3 &&
+        summary == Linger.Display.Status.summary attentions ++ "\n")
+      s!"the attention summary counts every ending nobody saw ({summary})"
   let (capRc, capOut, _) ← e.cli #["capture", "end-bad"]
   expect (capRc == 0 && has capOut "FAILED-42") "capture shows what an ended program left"
   let savedPath := s!"{e.dir}/end-bad.ckpt"
@@ -480,14 +492,14 @@ private def endedChecks (e : Env) : IO Unit := do
         saved.isOk &&
         (← (IO.FS.readBinFile savedPath).toBaseIO).toOption.map (·.toList) ==
           saved.toOption.map (·.toList) &&
-        (← e.status "end-bad") == .exitedBad)
+        (← e.state "end-bad") == .exitedBad)
       s!"start refuses an ended session's name, saying how it ended ({startErr})"
   let (killRc, _, _) ← e.cli #["kill", "end-bad"]
   let (goneRc, _, _) ← e.cli #["capture", "end-bad"]
   let (waitRc, _, _) ← e.cli #["wait", "end-bad"]
   expect
       (killRc == 0 && !(← listed e).contains "end-bad" && goneRc == 127 && waitRc == 3 &&
-        (← e.status "end-ok") == .exitedOk)
+        (← e.state "end-ok") == .exitedOk)
       s!"kill discards an ended session, and wait still answers from its record \
         ({killRc}, {goneRc}, {waitRc})"
   e.killAll #["end-ok", "end-sig"]
@@ -756,7 +768,7 @@ def run : IO UInt32 :=
     for (kind, shell) in [("empty", some ""), ("unset", none)] do
       let name := s!"shell-{kind}"
       let (startRc, _, _) ← e.cli #["start", name, "/bin/sh", "-c", "exit 0"]
-      let ended ← waitFor 5000 (return (← e.status name) == .exitedOk)
+      let ended ← waitFor 5000 (return (← e.state name) == .exitedOk)
       let resumed ←
         IO.Process.output
             { cmd := e.bin, args := #["resume", name],

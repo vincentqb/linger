@@ -104,7 +104,7 @@ def checkpointChecks (e : Env) : IO Unit := do
     expect
         (titled && has title "done" &&
           !has title (String.singleton (Linger.Display.Status.icon .resumable)) &&
-          (← e.status "done") == .exitedBad)
+          (← e.state "done") == .exitedBad)
         s!"a saved view of an ended session shows its ending in the title ({title})"
     done.detach
     -- a watcher is shown the same ending, so it has seen it: once it leaves, the session is
@@ -344,16 +344,16 @@ def run : IO UInt32 :=
     pinned.bye (sendDetach := false)
     -- 10. watching marks the session SEEN — a read-only verb with a write effect.
     -- `onMsg .attach` sets `lookSeq := s.outSeq` for ANY attach, 0x0 included, so
-    -- Read-only attach clears `wants-you`. The status suite only ever exercised that
+    -- Read-only attach clears `unread`. The status suite only ever exercised that
     -- through `attach`. Compared as a `Status`, not a string literal.
     let _ ← e.cli #["send", "w", "seq 100; echo unread-marker\n"]
-    expect (← waitFor patienceMs (return (← e.status "w") == Status.wantsYou))
-        "output with nobody watching reads wants-you"
+    expect (← waitFor patienceMs (return (← e.attention "w") == .unread))
+        "output with nobody watching reads unread"
     let obs2 ← e.spawn #["attach", "--read-only", "w"] 80 24
     let _ ← waitFor patienceMs (return (← e.info "w" "clients") == some "1")
     let _ ← drain obs2.fd 500
     obs2.bye
-    expect (← waitFor patienceMs (return (← e.status "w") != Status.wantsYou))
+    expect (← waitFor patienceMs (return (← e.attention "w") != .unread))
         "watching marks the session seen (a read-only verb that writes)"
     let _ ← e.typeIn "watch-lost" #["sleep", "600"]
     let lost ← e.spawn #["attach", "--read-only", "watch-lost"] 80 24

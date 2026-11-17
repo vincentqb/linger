@@ -420,7 +420,7 @@ private def sourceLast (f : Fixture) : IO Bool := do
   f.seed "zzz" (f.root / "home").toString
   f.writeSave (paneLine "aaa" "0" "0" (f.root / "home").toString "")
   let (rc, human, _) ← f.cli #["ls"]
-  let names := (lines human).filterMap fun line => (line.splitOn " ")[1]?
+  let names := (lines human).map rowName
   return rc == 0 && names == ["zzz", "aaa-w0-p0"]
 
 /-- An attach of a saved pane through a terminal writes its checkpoint and attaches to the fresh
@@ -751,7 +751,7 @@ private def resumableCwd (f : Fixture) : IO Bool := do
 /-- The row of session `name` in `ls`, empty when none lists it. -/
 private def Fixture.row (f : Fixture) (name : String) : IO String := do
   let (_, out, _) ← f.cli #["ls"]
-  return ((out.splitOn "\n").find? fun line => (line.splitOn " ")[1]? == some name).getD ""
+  return ((out.splitOn "\n").find? fun line => rowName line == name).getD ""
 
 /-- A session an import made before a row had a description: its checkpoint, in the format a
 linger of then wrote, holds the import's provenance and no description. Resumed, its row shows the

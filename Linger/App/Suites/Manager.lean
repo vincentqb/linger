@@ -453,7 +453,7 @@ private def Session.selected (s : Session) (label : String) (start : Nat := 0) :
     (fun vt =>
       (List.range vt.rowCount).any fun row =>
         let text := rowText vt row
-        let col := if label.startsWith "+ Create " then 4 else 6
+        let col := if label.startsWith "+ Create " then 4 else 8
         let rest := String.ofList (text.toList.drop col)
         text.startsWith "  ▸ " && (rest == label || rest.startsWith (label ++ " ")) &&
           (vt.getCell 2 row).pen.reverse &&
@@ -670,14 +670,17 @@ private def usageChecks (e : Env) : IO Unit := do
             (fun line =>
               has line Linger.App.Commands.helpOption &&
                 has line Linger.App.Commands.versionOption) &&
-          Linger.Display.Status.legend.all (fun line => footer.contains ("  " ++ line)) &&
+          Linger.Display.Status.legend.all
+            (fun line =>
+              footer.contains
+                (if line == "Attention" || line == "State" then line else "  " ++ line)) &&
           footer.any
             (fun line =>
               has line
                 ("count " ++
                   String.intercalate " "
-                    (Linger.Display.Status.attention.map
-                      (String.singleton ∘ Linger.Display.Status.icon)))) &&
+                    (Linger.Display.Status.counted.map
+                      (String.singleton ∘ Linger.Display.Status.mark)))) &&
           Linger.Os.Answer.legend.all (fun line => footer.contains ("  " ++ line)) &&
           has out "--summary" &&
           has out "--read-only" &&
@@ -1068,8 +1071,8 @@ private def selectionChecks (e : Env) : IO Unit := do
             s.observe 100
             let vt := (Vt.init 80 12).feedBytes (← s.output.get)
             let orderedRows :=
-              rowText vt 4 == "  ▸ ? workshop  (busy)" &&
-                rowText vt 5 == "    ? workbench (busy)" &&
+              rowText vt 4 == "  ▸   ? workshop  (busy)" &&
+                rowText vt 5 == "      ? workbench (busy)" &&
                 rowText vt 6 == "    + Create work"
             if create then
               let next ← s.mark
@@ -1106,7 +1109,8 @@ private def selectionChecks (e : Env) : IO Unit := do
             return false
           s.observe 100
           let vt := (Vt.init 80 12).feedBytes (← s.output.get)
-          let shown := rowText vt 4 == "  ▸ ? Alpha (busy)" && rowText vt 5 == "    + Create alpha"
+          let shown :=
+            rowText vt 4 == "  ▸   ? Alpha (busy)" && rowText vt 5 == "    + Create alpha"
           let clean ← acceptThenCancel s "\x1b[F\r"
           return shown && clean && (← f.visits) == attachVisit ["alpha"]
   check e "edit-create"
@@ -1182,7 +1186,7 @@ private def inputChecks (e : Env) : IO Unit := do
           let screen := String.fromUTF8! (ByteArray.mk (screenText vt).toArray)
           IO.FS.writeFile (f.root / "ctrl-d-observation") s!"quiet={quiet}\nwaiting={waiting}\n"
           s.text "\x03"
-          return quiet && waiting && has screen "  › B 2" && has screen "  ▸ ? Bravo" &&
+          return quiet && waiting && has screen "  › B 2" && has screen "  ▸   ? Bravo" &&
               (← restored s 130) &&
               (← f.visits) == listed
   -- a signal that ends the picker leaves it as a cancellation does, and its answer says which
@@ -1289,21 +1293,22 @@ private def statusChecks (e : Env) : IO Unit := do
         s!"picker shares listing rows and keeps match underline independent of selection and status ({slug})"
         fun f => do
         let statuses : List Linger.Display.Status.Status :=
-          [.asks, .working, .wantsYou, .exitedOk, .exitedBad, .idle, .resumable, .unknown, .errored,
-            .paused]
+          [⟨.asked, .working⟩, ⟨.none, .working⟩, ⟨.unread, .idle⟩, ⟨.unread, .exitedOk⟩,
+            ⟨.unread, .exitedBad⟩, ⟨.none, .idle⟩, ⟨.none, .resumable⟩, ⟨.none, .unknown⟩,
+            ⟨.none, .errored⟩, ⟨.none, .paused⟩]
         let fields :=
           statuses.zipIdx |>.map fun (status, index) =>
-            [("name", s!"case{index}"), ("status", Linger.Display.Status.name status),
-              ("cmd", "editor"), ("pid", "123"), ("label.project", "demo"), ("clients", "2")]
+            [("name", s!"case{index}")] ++ Linger.Display.Listing.statusFields status ++
+              [("cmd", "editor"), ("pid", "123"), ("label.project", "demo"), ("clients", "2")]
         f.listing
             (String.intercalate "\n"
               (fields.map fun row =>
                 String.join (row.map fun (key, value) => s!"{key}\t{value}\n")))
         f.colorEnv noColor term
-        -- the picker lists them as `ls` does, what asks for someone first (`View.sort`), each
-        -- with its badge's color and dimness
+        -- the picker lists them as `ls` does, what has something for you first (`View.sort`),
+        -- each with its state badge's color and dimness, and its mark's
         let expectedColors : List Terminal.Vt.Color :=
-          [.idx 3, .idx 6, .idx 3, .idx 2, .idx 1, .default, .default, .idx 3, .idx 1, .default]
+          [.idx 6, .idx 6, .default, .idx 2, .idx 1, .default, .default, .idx 3, .idx 1, .default]
         let shown :=
           Linger.Display.View.sort (fun (_, status, _) => status)
             ((fields.zip statuses).zip expectedColors |>.map fun ((info, status), color) =>
@@ -1313,8 +1318,9 @@ private def statusChecks (e : Env) : IO Unit := do
               let vt ← s.capture slug 100 20
               let rowsMatch := fun (frame : Vt) =>
                 shown.zipIdx |>.all fun ((info, status, color), index) =>
-                  let badge := frame.getCell 4 (4 + index)
-                  let name := frame.getCell 6 (4 + index)
+                  let marked := frame.getCell 4 (4 + index)
+                  let badge := frame.getCell 6 (4 + index)
+                  let name := frame.getCell 8 (4 + index)
                   let expected :=
                     String.fromUTF8!
                       (ByteArray.mk
@@ -1324,7 +1330,11 @@ private def statusChecks (e : Env) : IO Unit := do
                       (if index == 0 then "  ▸ " else "    ") ++ expected &&
                     badge.pen.fg == (if colored then color else .default) &&
                     badge.pen.dim ==
-                      (colored && (status == .idle || status == .paused || status == .resumable)) &&
+                      (colored &&
+                        (status.state == .idle || status.state == .paused ||
+                          status.state == .resumable)) &&
+                    marked.pen.fg ==
+                      (if colored && status.attention != .none then .idx 3 else .default) &&
                     (List.range (4 + expected.length)).all
                       (fun col => (frame.getCell col (4 + index)).pen.reverse == (index == 0)) &&
                     name.pen.fg == .default &&
@@ -1336,9 +1346,9 @@ private def statusChecks (e : Env) : IO Unit := do
               let emphasis :=
                 (List.range matched.rowCount).all fun row =>
                   underlined matched row ==
-                    if 4 ≤ row && row < 4 + fields.length then [6, 7] else []
+                    if 4 ≤ row && row < 4 + fields.length then [8, 9] else []
               IO.FS.writeFile (f.root / "match-observation")
-                  s!"plain-rows={rowsMatch vt}\nempty-query-unmarked={plain}\nmatched-rows={rowsMatch matched}\nunderlined-columns={repr ((List.range matched.rowCount).map (underlined matched))}\nexpected-session-columns=[6, 7]\n"
+                  s!"plain-rows={rowsMatch vt}\nempty-query-unmarked={plain}\nmatched-rows={rowsMatch matched}\nunderlined-columns={repr ((List.range matched.rowCount).map (underlined matched))}\nexpected-session-columns=[8, 9]\n"
               let output ← s.output.get
               let onlyAnsi := !hasText output "[38;" && !hasText output "[48;"
               s.text "\x03"
@@ -1366,13 +1376,13 @@ private def statusChecks (e : Env) : IO Unit := do
           -- someone but keeps its row while the chooser is open, and the cursor stays on beta;
           -- each field keeps its column, beta's empty caption included
           let changed :=
-            rowText before 4 == "  ▸ ⣷ beta          other" &&
-              rowText before 5 == "    ⣀ alpha before  old    +1" &&
-              rowText after 4 == "  ▸ ⣷ beta          other" &&
-              rowText after 5 == "    ✗ alpha after   new    +3" &&
+            rowText before 4 == "  ▸   ⣷ beta          other" &&
+              rowText before 5 == "      ⣀ alpha before  old    +1" &&
+              rowText after 4 == "  ▸   ⣷ beta          other" &&
+              rowText after 5 == "      ✗ alpha after   new    +3" &&
               rowText after 2 == "  › a 2" &&
-              (after.getCell 4 5).pen.fg == .idx 1 &&
-              (after.getCell 6 4).pen.reverse
+              (after.getCell 6 5).pen.fg == .idx 1 &&
+              (after.getCell 8 4).pen.reverse
           return changed && (← acceptThenCancel s) && (← f.visits) == attachVisit ["beta"]
   check e "status-control-text"
       "picker keeps hostile metadata out of terminal controls while retaining ordinary details"
@@ -1381,14 +1391,14 @@ private def statusChecks (e : Env) : IO Unit := do
           "name\talpha\nstatus\tworking\ncmd\tvi\x1b[31m\u009b31m\ndescription\tok\x07\nclients\t2\nname\tbeta\n"
       withPrompt f.picker #[] fun s => do
           let vt ← s.capture "metadata-controls"
-          -- beta reports no status, so it asks for someone and comes first
-          let row := rowText vt 5
+          -- beta reports no status, so linger could not read it, and it comes after the running alpha
+          let row := rowText vt 4
           let output ← s.output.get
           let safe :=
             has row "vi�[31m�31m" && has row "ok�" && !hasText output "\u009b" &&
               !hasText output "vi\x1b" &&
-              (vt.getCell 6 5).pen.fg == .default &&
-              rowText vt 4 == "  ▸ ? beta  (busy)"
+              (vt.getCell 8 4).pen.fg == .default &&
+              rowText vt 5 == "      ? beta  (busy)"
           s.text "\x03"
           return safe && (← restored s 130)
 
@@ -1397,7 +1407,7 @@ private def fuzzyChecks (e : Env) : IO Unit := do
       "picker highlights the best competing alignment only in the exact target and clears it with the query"
       fun f => do
       let fields :=
-        [("name", "axab"), ("status", Linger.Display.Status.name .wantsYou), ("cmd", "ab"),
+        [("name", "axab"), ("status", "idle"), ("attention", "unread"), ("cmd", "ab"),
           ("pid", "123"), ("label.project", "ab"), ("clients", "2")]
       f.listing (String.join (fields.map fun (key, value) => s!"{key}\t{value}\n"))
       withPrompt f.picker #[] fun s => do
@@ -1414,7 +1424,7 @@ private def fuzzyChecks (e : Env) : IO Unit := do
           -- Matching metadata and the explicit create label stay plain.
           let positions :=
             (List.range matched.rowCount).all fun row =>
-              underlined matched row == if row == 4 then [8, 9] else []
+              underlined matched row == if row == 4 then [10, 11] else []
           let spelling := rowText matched 4 == expected && rowText matched 5 == "    + Create AB"
           unless ← s.typeQuery "\x15" "" do
             return false
@@ -1461,23 +1471,23 @@ private def fuzzyChecks (e : Env) : IO Unit := do
             return false
           let wide ← s.capture "wide-match"
           let scalarPositions :=
-            underlined wide 4 == [12, 13, 14] && (wide.getCell 11 4).base == 'e' &&
-              (wide.getCell 11 4).marks == ['\u0301'] &&
-              (wide.getCell 12 4).base == '界' &&
-              (wide.getCell 12 4).width == 2 &&
-              (wide.getCell 13 4).width == 0 &&
-              (wide.getCell 14 4).base == 'é' &&
-              (wide.getCell 15 4).base == 'Z'
+            underlined wide 4 == [14, 15, 16] && (wide.getCell 13 4).base == 'e' &&
+              (wide.getCell 13 4).marks == ['\u0301'] &&
+              (wide.getCell 14 4).base == '界' &&
+              (wide.getCell 14 4).width == 2 &&
+              (wide.getCell 15 4).width == 0 &&
+              (wide.getCell 16 4).base == 'é' &&
+              (wide.getCell 17 4).base == 'Z'
           unless ← s.typeQuery "\x15\u0301" "\u0301" do
             return false
           let accent ← s.capture "accent-only-match"
           -- A matched mark must emphasize its containing cell even when
           -- the base scalar itself does not match the query.
           let accentVisible :=
-            rowText accent 4 == rowText wide 4 && (accent.getCell 11 4).base == 'e' &&
-              (accent.getCell 11 4).marks == ['\u0301'] &&
+            rowText accent 4 == rowText wide 4 && (accent.getCell 13 4).base == 'e' &&
+              (accent.getCell 13 4).marks == ['\u0301'] &&
               (List.range accent.rowCount).all fun row =>
-                underlined accent row == if row == 4 then [11] else []
+                underlined accent row == if row == 4 then [13] else []
           let accentStyles :=
             (List.range accent.colCount).all fun col =>
               { (accent.getCell col 4).pen with underline := false } ==
@@ -1492,38 +1502,38 @@ private def fuzzyChecks (e : Env) : IO Unit := do
             return false
           let combining ← s.capture "combining-match"
           let cluster :=
-            underlined combining 4 == [11, 12, 13] && (combining.getCell 11 4).marks == ['\u0301']
+            underlined combining 4 == [13, 14, 15] && (combining.getCell 13 4).marks == ['\u0301']
           let start ← s.mark
-          s.client.resize 14 4
-          unless ← s.untilRow "  ▸ ? work@e\u0301" start do
+          s.client.resize 16 4
+          unless ← s.untilRow "  ▸   ? work@e\u0301" start do
             return false
-          let clipped ← s.capture "clipped-wide-match" 14 4
+          let clipped ← s.capture "clipped-wide-match" 16 4
           let narrow :=
-            rowText clipped 1 == "  ▸ ? work@e\u0301" && underlined clipped 1 == [11] &&
-              (clipped.getCell 11 1).marks == ['\u0301'] &&
-              (clipped.getCell 12 1).base == ' ' &&
-              (clipped.getCell 12 1).width == 1 &&
+            rowText clipped 1 == "  ▸   ? work@e\u0301" && underlined clipped 1 == [13] &&
+              (clipped.getCell 13 1).marks == ['\u0301'] &&
+              (clipped.getCell 14 1).base == ' ' &&
+              (clipped.getCell 14 1).width == 1 &&
               lastColumnBlank clipped
           unless ← s.typeQuery "\x15\u0301" "\u0301" do
             return false
-          let accentClipped ← s.capture "accent-only-clipped" 14 4
+          let accentClipped ← s.capture "accent-only-clipped" 16 4
           let accentNarrow :=
             rowText accentClipped 1 == rowText clipped 1 &&
-              accentClipped.getCell 11 1 == clipped.getCell 11 1 &&
+              accentClipped.getCell 13 1 == clipped.getCell 13 1 &&
               (List.range accentClipped.rowCount).all
-                (fun row => underlined accentClipped row == if row == 1 then [11] else []) &&
+                (fun row => underlined accentClipped row == if row == 1 then [13] else []) &&
               lastColumnBlank accentClipped
           unless ← s.typeQuery "\x15e\u0301界" "e\u0301界" do
             return false
           let start ← s.mark
-          s.client.resize 16 4
-          unless ← s.untilRow "  ▸ ? work@e\u0301界é" start do
+          s.client.resize 18 4
+          unless ← s.untilRow "  ▸   ? work@e\u0301界é" start do
             return false
-          let fitted ← s.capture "fitted-wide-match" 16 4
+          let fitted ← s.capture "fitted-wide-match" 18 4
           let fits :=
-            rowText fitted 1 == "  ▸ ? work@e\u0301界é" && underlined fitted 1 == [11, 12, 13] &&
-              (fitted.getCell 12 1).width == 2 &&
-              (fitted.getCell 13 1).width == 0 &&
+            rowText fitted 1 == "  ▸   ? work@e\u0301界é" && underlined fitted 1 == [13, 14, 15] &&
+              (fitted.getCell 14 1).width == 2 &&
+              (fitted.getCell 15 1).width == 0 &&
               lastColumnBlank fitted
           IO.FS.writeFile (f.root / "match-observation")
               s!"wide-columns={repr (underlined wide 4)} expected=[12, 13, 14]\nscalar-positions={scalarPositions}\naccent-only-columns={repr (underlined accent 4)} expected=[11]\naccent-only-visible={accentVisible}\naccent-selection-status-styles={accentStyles}\naccent-cleared={clears}\ncombining-columns={repr (underlined combining 4)} expected=[11, 12, 13]\ncluster={cluster}\nclipped-columns={repr (underlined clipped 1)} expected=[11]\nwhole-cell-clipping={narrow}\naccent-clipped-columns={repr (underlined accentClipped 1)} expected=[11]\naccent-clipped-visible={accentNarrow}\nfitted-columns={repr (underlined fitted 1)} expected=[11, 12, 13]\nwhole-wide-cell={fits}\n"
@@ -1548,13 +1558,13 @@ private def displayChecks (e : Env) : IO Unit := do
         let layout :=
           (rowText vt 0).trimAscii.toString ==
               String.intercalate " · "
-                (Linger.Display.View.headerParts [] [.unknown, .unknown, .unknown]) &&
+                (Linger.Display.View.headerParts [] [default, default, default]) &&
             rowText vt 1 == "" &&
             rowText vt 2 == "  › Find or create a session" &&
             rowText vt 3 == "" &&
-            rowText vt 4 == "  ▸ ? Alpha (busy)" &&
-            rowText vt 5 == "    ? Beta  (busy)" &&
-            rowText vt 6 == "    ? Gamma (busy)" &&
+            rowText vt 4 == "  ▸   ? Alpha (busy)" &&
+            rowText vt 5 == "      ? Beta  (busy)" &&
+            rowText vt 6 == "      ? Gamma (busy)" &&
             rowText vt 7 == "    + Create main" &&
             (vt.getCell 4 2).pen.dim &&
             (vt.getCell 2 4).pen.reverse &&
@@ -1604,10 +1614,10 @@ private def displayChecks (e : Env) : IO Unit := do
           let header :=
             (rowText vt 0).trimAscii.toString ==
               String.intercalate " · "
-                (Linger.Display.View.headerParts [] (names.map fun _ => .unknown))
+                (Linger.Display.View.headerParts [] (names.map fun _ => default))
           let window :=
-            rowText vt 4 == "  ▸ ? ag-build-0 (busy)" &&
-              rowText vt 8 == "    ? ag-test-0  (busy)" &&
+            rowText vt 4 == "  ▸   ? ag-build-0 (busy)" &&
+              rowText vt 8 == "      ? ag-test-0  (busy)" &&
               rowText vt 9 == "    … 5 more: ag-test 5" &&
               (vt.getCell 4 9).pen.dim
           unless ← s.typeQuery "ag-test" "ag-test" do
@@ -1682,7 +1692,7 @@ private def refreshChecks (e : Env) : IO Unit := do
           return false
         let vt ← s.capture "reordered-frame"
         let screen := String.fromUTF8! (ByteArray.mk (screenText vt).toArray)
-        let retained := has screen "  › a" && has screen "  ▸ ? Beta  (busy)"
+        let retained := has screen "  › a" && has screen "  ▸   ? Beta  (busy)"
         return retained && (← acceptThenCancel s) && (← f.visits) == attachVisit ["Beta"]
   check e "refresh-activity"
       "automatic refresh keeps each running session's row where it was when it starts or stops saying it works"
@@ -1723,8 +1733,8 @@ private def refreshChecks (e : Env) : IO Unit := do
           -- gamma starts asking, beta ends and delta, which asks, is new: a fresh view would
           -- list gamma and delta first
           f.listing
-              "name\talpha\nstatus\tidle\nname\tgamma\nstatus\tasks-you\nname\tdelta\nstatus\tasks-you\n"
-          unless ← s.untilRow "⚑ delta" start do
+              "name\talpha\nstatus\tidle\nname\tgamma\nstatus\tidle\nattention\tasked\nname\tdelta\nstatus\tidle\nattention\tasked\n"
+          unless ← s.untilRow "⚑ ⣀ delta" start do
             return false
           let kept ← s.capture "kept-order"
           let pressed ← s.mark
@@ -1803,7 +1813,7 @@ private def refreshChecks (e : Env) : IO Unit := do
             return false
           let vt ← s.capture "created-frame"
           let screen := String.fromUTF8! (ByteArray.mk (screenText vt).toArray)
-          return has screen "  › work" && has screen "  ▸ ? work      (busy)\n" &&
+          return has screen "  › work" && has screen "  ▸   ? work      (busy)\n" &&
               !has screen "Create work" &&
               has screen "↵ attach" &&
               (← acceptThenCancel s) &&
@@ -1944,7 +1954,7 @@ private def refreshChecks (e : Env) : IO Unit := do
       fun f => do
       f.listing "name\tAlpha\nstatus\tidle\nname\twork@host\nstatus\tworking\n"
       withPrompt f.picker #[] fun s => do
-          let parts := Linger.Display.View.headerParts [] [.idle, .working]
+          let parts := Linger.Display.View.headerParts [] [⟨.none, .idle⟩, ⟨.none, .working⟩]
           -- the header's age, in the format a row gives the time since its session last printed
           let ageOf := fun (vt : Vt) =>
             (List.range 60).find? fun n =>
@@ -1969,7 +1979,8 @@ private def refreshChecks (e : Env) : IO Unit := do
           f.listing "name\tAlpha\nstatus\tidle\n"
           let cleared ← s.mark
           s.text "\x0c"
-          let plain := String.intercalate " · " (Linger.Display.View.headerParts [] [.idle])
+          let plain :=
+            String.intercalate " · " (Linger.Display.View.headerParts [] [⟨.none, .idle⟩])
           let gone ← s.untilScreen (fun vt => (rowText vt 0).trimAscii.toString == plain) cleared
           s.observe 1200
           let after ← s.capture "remote-age-gone"
@@ -2047,7 +2058,7 @@ private def refreshChecks (e : Env) : IO Unit := do
             return false
           let vt ← s.capture "ready-frame"
           -- the rows shown keep their places and the new delta.x comes last
-          let displayed := rowText vt 5 == "  ▸ ? beta.x  (busy)" && has (rowText vt 7) "delta.x"
+          let displayed := rowText vt 5 == "  ▸   ? beta.x  (busy)" && has (rowText vt 7) "delta.x"
           IO.FS.removeFile (f.root / "hold-listing-from")
           let start ← s.mark
           s.text "\x0e"
@@ -2102,17 +2113,17 @@ private def refreshChecks (e : Env) : IO Unit := do
             unless ← s.until target do
               return false
             let start ← s.mark
-            s.client.resize 14 4
+            s.client.resize 16 4
             unless ← s.until "wide@" start do
               return false
             s.observe 150
             let out ← s.output.get
             let frame := out.extract start out.size
-            let vt := (Vt.init 14 4).feedBytes frame
+            let vt := (Vt.init 16 4).feedBytes frame
             let screen := ByteArray.mk (screenText vt).toArray
             IO.FS.writeBinFile (f.root / "resized-frame.bin") frame
             IO.FS.writeBinFile (f.root / "screen.txt") screen
-            let fits := hasText screen "  ▸ ? wide@界" && !hasText screen "Z" && lastColumnBlank vt
+            let fits := hasText screen "  ▸   ? wide@界" && !hasText screen "Z" && lastColumnBlank vt
             s.client.resize 80 12
             unless ← s.prompt "" (← s.mark) do
               return false
@@ -2129,7 +2140,8 @@ private def refreshChecks (e : Env) : IO Unit := do
             let screen := ByteArray.mk (screenText vt).toArray
             IO.FS.writeBinFile (f.root / "screen.txt") screen
             let visible :=
-              shown && rowText vt (rows - 1) == "  ▸ ? Alpha (busy)" && !hasText screen "linger" &&
+              shown && rowText vt (rows - 1) == "  ▸   ? Alpha (busy)" &&
+                !hasText screen "linger" &&
                 !hasText screen "↵" &&
                 lastColumnBlank vt
             s.text "\x03"

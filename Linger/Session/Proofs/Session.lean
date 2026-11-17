@@ -1054,7 +1054,7 @@ theorem outSeq_ptyOut (s : State) (chunk : List UInt8) :
 
 /-- Output while somebody is attached is seen as it happens; output with nobody attached that
 adds lines to the history is not, and other output leaves what was unseen. This is the whole
-mechanism behind `wantsYou`. -/
+mechanism behind the unread attention, `∙`. -/
 theorem unseen_ptyOut (s : State) (chunk : List UInt8) :
     unseen (step s (.ptyOut chunk)).1 =
       (!(s.clients.any (·.attached)) &&
@@ -4891,7 +4891,7 @@ theorem rung_asks :
 /-! ## A status says only what a signal proves
 
 A session's `⣷` is what its program declared, its progress under way or a command its shell's
-marks say runs; its `⣿` is lines that entered its history while nobody looked; and no tick, the
+marks say runs; its `∙` is lines that entered its history while nobody looked; and no tick, the
 one event that tells a session the time, changes either, nor its ask. -/
 
 /-- The progress a session sees is what its program declared. -/

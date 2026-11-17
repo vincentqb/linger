@@ -103,17 +103,17 @@ private def renameChecks (e : Env) : IO Unit := do
   let (sRc, _, _) ← e.cli #["rename", "s", "t"]
   let (oldCapture, _, _) ← e.cli #["capture", "s"]
   expect
-      (shown && saved && sRc == 0 && (← e.status "t") == .resumable &&
+      (shown && saved && sRc == 0 && (← e.state "t") == .resumable &&
         has (← e.out #["capture", "t"]) "saved-42" &&
         oldCapture == 127)
       "a saved session renamed keeps its screen and lists as resumable under its new name alone"
   -- an ended session still listed keeps how it ended
   let _ ← e.cli #["start", "x", "/bin/sh", "-c", "exit 3"]
-  let ended ← waitFor patienceMs (return (← e.status "x") == .exitedBad)
+  let ended ← waitFor patienceMs (return (← e.state "x") == .exitedBad)
   let (xRc, _, _) ← e.cli #["rename", "x", "y"]
   let (waitRc, _, _) ← e.cli #["wait", "y"]
   let (oldWait, _, _) ← e.cli #["wait", "x"]
-  expect (ended && xRc == 0 && (← e.status "y") == .exitedBad && waitRc == 3 && oldWait == 127)
+  expect (ended && xRc == 0 && (← e.state "y") == .exitedBad && waitRc == 3 && oldWait == 127)
       s!"an ended session renamed keeps how it ended under its new name alone ({waitRc})"
 
 /-- Each refusal changes nothing, and nothing is ever replaced. -/
@@ -134,8 +134,8 @@ private def refusalChecks (e : Env) : IO Unit := do
     refused := refused && rc == 1 && has err "replaces no session"
   expect
       (refused && (← e.info "b" "pid") == pid && (← e.info "d" "pid") == dPid &&
-        (← e.status "t") == .resumable &&
-        (← e.status "y") == .exitedBad &&
+        (← e.state "t") == .resumable &&
+        (← e.state "y") == .exitedBad &&
         (← contents s!"{e.dir}/names/d") == some "c")
       "rename refuses a new name a live, saved or ended session has, itself included, and \
         replaces nothing"
@@ -191,7 +191,7 @@ private def layoutChecks (e : Env) : IO Unit := do
   IO.FS.writeBinFile s!"{e.dir}/legacy.ckpt" (Linger.Session.Checkpoint.saveBytes ⟨vt, e.dir, []⟩)
   IO.FS.writeBinFile s!"{e.dir}/kept.ckpt" (Linger.Session.Checkpoint.saveBytes ⟨vt, e.dir, []⟩)
   let names ← listed e
-  let status ← e.status "legacy"
+  let status ← e.state "legacy"
   let capture ← e.out #["capture", "legacy"]
   let (killRc, _, _) ← e.cli #["kill", "legacy"]
   expect

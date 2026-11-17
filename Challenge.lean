@@ -56,30 +56,39 @@ each with a kill, and says what it does not claim yet:
    session, every wait is bounded and says what it missed, and optional work is skipped or
    coalesced, never queued.
 
-The status rule: a session's status is one glyph for one observation, each a signal's and none
-a guess from timing, `⚑` a bell or a desktop notification since you looked, from a program still
-running, `!` its program declared that an error stopped its progress, `⣷` it says it is working,
-`⣤` it says it is paused, `⣿` new lines entered its history since you looked, `⣀` none of these,
-`✓` ended with status 0, `✗` ended any other way, `~` saved with no daemon and `?` no answer; a
-program waiting for you outranks what it declared, which outranks new lines, and titles and
-`ls --summary` count `⚑`, `⣿`, `✗`, `!` and `?`. No two statuses share a glyph, and
-`linger help`'s legend gives each glyph one line, which begins with it (`icon_glyphs`); a row of a
-session with no daemon shows the status the legend gives what its end record says, and a remote
-host's saved row only an ending or `~` (`rowStatus_saved`). Its section follows the ten parts, with
-the titles, listings and selector views that show statuses: a view ranks rows by what needs you
-to act, `⚑`, then `✗`, `!` and `?`, then `⣿`, first, then by where the session is in its life, the
-running sessions, `⣷`, `⣤` and `⣀` in one place, then the saved ones, `~`, then the ended ones,
-`✓` (`sort_two_keys`), so no row that ended well or can only be resumed sits above a live one, a
-finished session comes last, and a running session's row keeps its place whether it says it is
-working, paused or neither. Each state of ConEmu's OSC `9;4` progress report, which the terminal
-package's mediator hears byte by byte (`progress_source`), has its own status and keeps it until
+The status rule: a session's row shows two facts, each in its own column and each a signal's,
+none a guess from timing. Its attention says whether there is something for you since you looked:
+`⚑` a bell or a desktop notification, `∙` new lines in its history or an ending nobody was attached
+to see, and blank for neither, an ask winning when both hold. Its state says what it is: `!` its
+program declared that an error stopped its progress, `⣷` it says it is working, `⣤` it says it is
+paused, `⣀` it runs and declares nothing, `✓` it ended with status 0, `✗` it ended any other way,
+`~` saved with no daemon and `?` no answer. A row's first two columns are exactly its attention's
+mark and its state's glyph, and every attention shows with every state, as `⚑ ⣷` for a session
+that rang while it works (`row_pair`, killed by the single glyph rows had before, which cannot);
+attention reads the asks and the new lines alone, and the state the answer, the daemon, the
+ending, the declared progress and the shell's marks alone (`attention_independent`,
+`state_independent`, each killed by that single glyph). Titles and `ls --summary` count attention
+alone, `⚑` and `∙`. No two marks or states share a glyph, no mark is a state's, and `linger
+help`'s legend gives an `Attention` block, one line per mark, then a `State` block, one line per
+state, each beginning with its glyph (`icon_glyphs`); a row of a session with no daemon shows the
+state the legend gives what its end record says, with news nobody saw, and a remote host's saved
+row only an ending or `~` (`rowStatus_saved`). Its section follows the ten parts, with the titles,
+listings and selector views that show statuses: a view ranks rows by attention, `⚑`, then `∙`,
+then blank, first, then by where the session is in its life, the running sessions, `!`, `⣷`, `⣤`
+and `⣀` in one place, then the saved ones, `~`, then the ended ones, `✓` and `✗`, then `?`
+(`sort_two_keys`), so no row that ended or can only be resumed sits above a live one of its
+attention, and a running session's row keeps its place whatever its activity: an error is a state
+and ranks with the running ones. Each state of ConEmu's OSC `9;4` progress report, which the terminal
+package's mediator hears byte by byte (`progress_source`), has its own state and keeps it until
 the program reports another or removes it with state 0: state 1, normal, and 3, indeterminate,
-are `⣷`, state 2, an error, is `!`, and state 4, a pause, is `⣤` (`progress_status`, killed by an
+are `⣷`, state 2, an error, is `!`, and state 4, a pause, is `⣤`, whatever its attention
+(`progress_status`, killed by an
 error read as working, by a pause read as working, and by a declaration lost at the program's
 next output with no 0). Declaring no progress, a session is `⣷` exactly while its shell's OSC
 133 marks say a command runs, a `C` that no `D` or `A` has followed (`working_declared`, killed
-by the window rule before it, output within three seconds). A session is `⣿` exactly while new
-lines entered its terminal's history with nobody attached since it was last looked at
+by the window rule before it, output within three seconds). A running session's attention is `∙`
+exactly while new lines entered its terminal's history with nobody attached since it was last
+looked at, and it asks for none
 (`unseen_lines`, killed by any output since the last look, which a title or a line rewritten in
 place is): a redraw in place, a title, a status line's tick and a cursor move add no line, and a
 program on the alternate screen, which keeps no history, never sets it. No tick, the one event
@@ -196,15 +205,21 @@ def Linger.Os.Env.withColor : Bool → Option String → Option String → Bool 
 
 def Linger.Display.Status.classify : Status.Obs → Status.Status := sorry
 
-def Linger.Display.Status.icon : Status.Status → Char := sorry
+def Linger.Display.Status.mark : Status.Attention → Char := sorry
+
+def Linger.Display.Status.icon : Status.State → Char := sorry
 
 def Linger.Display.Status.legend : List String := sorry
 
-def Linger.Display.Status.summary : List Status.Status → String := sorry
+def Linger.Display.Status.summary : List Status.Attention → String := sorry
 
-def Linger.Display.Status.name : Status.Status → String := sorry
+def Linger.Display.Status.attentionName : Status.Attention → String := sorry
 
-def Linger.Display.Status.ofName : String → Status.Status := sorry
+def Linger.Display.Status.ofAttentionName : String → Status.Attention := sorry
+
+def Linger.Display.Status.name : Status.State → String := sorry
+
+def Linger.Display.Status.ofName : String → Status.State := sorry
 
 def Linger.Display.Listing.rowFields : String → List (String × String) → List (String × String) :=
   sorry
@@ -235,8 +250,8 @@ def Linger.Display.View.hidden : List String → Nat × List (String × Nat) := 
 def Linger.Display.Title.compose : String → String → String → Nat → String := sorry
 
 def Linger.Display.Alert.announce :
-    Option (List (String × Status.Status)) → List (String × Status.Status) → String → List String :=
-  sorry
+    Option (List (String × Status.Attention)) →
+      List (String × Status.Attention) → String → List String := sorry
 
 def Linger.Display.Alert.notification : String → String → List UInt8 := sorry
 
@@ -976,10 +991,10 @@ theorem step_owned (s : State) (ev : Event) :
         (∀ o, ev ≠ .observed o) →
         (∀ id chunk, ev ≠ .bytes id chunk) →
         (∀ d, ev ≠ .notified d) → (Session.step s ev).1.owned = s.owned) ∧
-      (Status.classify
-            { progress := s.seen.progress, running := s.seen.running, unseen := s.seen.unseen,
-              asks := s.seen.asks } =
-          .asks ↔
+      ((Status.classify
+              { progress := s.seen.progress, running := s.seen.running, unseen := s.seen.unseen,
+                asks := s.seen.asks }).attention =
+          .asked ↔
         s.owned.asks = true) := by
   sorry
 
@@ -1024,10 +1039,10 @@ theorem step_owned_rejects_rung :
             (∀ d, ev ≠ .notified d) →
             ((fun (s : State) (_ : Event) => Session.step s (.ptyOut [0x07])) s ev).1.owned =
               s.owned) ∧
-          (Status.classify
-                { progress := s.seen.progress, running := s.seen.running, unseen := s.seen.unseen,
-                  asks := s.seen.asks } =
-              .asks ↔
+          ((Status.classify
+                  { progress := s.seen.progress, running := s.seen.running, unseen := s.seen.unseen,
+                    asks := s.seen.asks }).attention =
+              .asked ↔
             s.owned.asks = true) := by
   sorry
 
@@ -1059,10 +1074,10 @@ theorem step_owned_rejects_lumped :
             (∀ o, ev ≠ .observed o) →
             (∀ id chunk, ev ≠ .bytes id chunk) →
             (∀ d, ev ≠ .notified d) → (Session.step s ev).1.owned = s.owned) ∧
-          (Status.lumped Status.classify
-                { progress := s.seen.progress, running := s.seen.running, unseen := s.seen.unseen,
-                  asks := s.seen.asks } =
-              .asks ↔
+          ((Status.lumped Status.classify
+                  { progress := s.seen.progress, running := s.seen.running, unseen := s.seen.unseen,
+                    asks := s.seen.asks }).attention =
+              .asked ↔
             s.owned.asks = true) := by
   sorry
 
@@ -1358,22 +1373,28 @@ theorem info_echo_rejects_unreported :
 
 theorem rowText_fits (width : Option Nat) (layout : Listing.Layout)
     (info : List (String × String)) :
-    (Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
+    (Status.mark (Status.ofAttentionName ((info.lookup "attention").getD "")) ::
+          ' ' ::
+          Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
           ' ' :: ((info.lookup "name").getD "").toList.map Terminal.Render.textChar <+:
         Listing.rowText width layout info) ∧
       ∀ w,
         width = some w →
           ((Listing.rowText width layout info).map Terminal.Vt.charWidth).sum ≤
-            max w (2 + (((info.lookup "name").getD "").toList.map Terminal.Vt.charWidth).sum) := by
+            max w (4 + (((info.lookup "name").getD "").toList.map Terminal.Vt.charWidth).sum) := by
   sorry
 
 @[kills rowText_fits]
 theorem rowText_fits_rejects_overflow :
     ¬∀ (width : Option Nat) (layout : Listing.Layout) (info : List (String × String)),
-        (Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
+        (Status.mark (Status.ofAttentionName ((info.lookup "attention").getD "")) ::
+              ' ' ::
+              Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
               ' ' :: ((info.lookup "name").getD "").toList.map Terminal.Render.textChar <+:
             (fun (_ : Option Nat) (_ : Listing.Layout) (info : List (String × String)) =>
-                Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
+                Status.mark (Status.ofAttentionName ((info.lookup "attention").getD "")) ::
+                  ' ' ::
+                  Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
                   ' ' ::
                   (((info.lookup "name").getD "").toList.map Terminal.Render.textChar ++
                     ['…', '…', '…']))
@@ -1381,14 +1402,17 @@ theorem rowText_fits_rejects_overflow :
           ∀ w,
             width = some w →
               (((fun (_ : Option Nat) (_ : Listing.Layout) (info : List (String × String)) =>
-                          Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
+                          Status.mark
+                              (Status.ofAttentionName ((info.lookup "attention").getD "")) ::
+                            ' ' ::
+                            Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
                             ' ' ::
                             (((info.lookup "name").getD "").toList.map Terminal.Render.textChar ++
                               ['…', '…', '…']))
                         width layout info).map
                     Terminal.Vt.charWidth).sum ≤
                 max w
-                  (2 + (((info.lookup "name").getD "").toList.map Terminal.Vt.charWidth).sum) := by
+                  (4 + (((info.lookup "name").getD "").toList.map Terminal.Vt.charWidth).sum) := by
   sorry
 
 theorem rowText_clean (width : Option Nat) (layout : Listing.Layout)
@@ -3814,20 +3838,20 @@ theorem classify_iff (o : Status.Obs) (s : Status.Status) :
 @[kills classify_iff]
 theorem classify_iff_rejects_idle :
     ¬∀ (o : Status.Obs) (s : Status.Status),
-        (fun (_ : Status.Obs) => Status.Status.idle) o = s ↔ Status.Is s o := by
+        (fun (_ : Status.Obs) => ({ attention := .none, state := .idle } : Status.Status)) o = s ↔
+          Status.Is s o := by
   sorry
 
 theorem working_declared (s : State) :
     s.seen.progress = s.owned.progress ∧
       s.seen.running = s.owned.commands.running.isSome ∧
-      (Status.classify
-            { progress := s.seen.progress, running := s.seen.running, unseen := s.seen.unseen,
-              asks := s.seen.asks } =
+      ((Status.classify
+              { progress := s.seen.progress, running := s.seen.running, unseen := s.seen.unseen,
+                asks := s.seen.asks }).state =
           .working ↔
-        s.owned.asks = false ∧
-          (s.owned.progress = some .normal ∨
-            s.owned.progress = some .indeterminate ∨
-            s.owned.progress = none ∧ s.owned.commands.running.isSome = true)) := by
+        s.owned.progress = some .normal ∨
+          s.owned.progress = some .indeterminate ∨
+          s.owned.progress = none ∧ s.owned.commands.running.isSome = true) := by
   sorry
 
 @[kills working_declared]
@@ -3836,16 +3860,15 @@ theorem working_declared_rejects_window :
         (Seen.windowed Session.infoFields State.seen s).progress = s.owned.progress ∧
           (Seen.windowed Session.infoFields State.seen s).running =
             s.owned.commands.running.isSome ∧
-          (Status.classify
-                { progress := (Seen.windowed Session.infoFields State.seen s).progress,
-                  running := (Seen.windowed Session.infoFields State.seen s).running,
-                  unseen := (Seen.windowed Session.infoFields State.seen s).unseen,
-                  asks := (Seen.windowed Session.infoFields State.seen s).asks } =
+          ((Status.classify
+                  { progress := (Seen.windowed Session.infoFields State.seen s).progress,
+                    running := (Seen.windowed Session.infoFields State.seen s).running,
+                    unseen := (Seen.windowed Session.infoFields State.seen s).unseen,
+                    asks := (Seen.windowed Session.infoFields State.seen s).asks }).state =
               .working ↔
-            s.owned.asks = false ∧
-              (s.owned.progress = some .normal ∨
-                s.owned.progress = some .indeterminate ∨
-                s.owned.progress = none ∧ s.owned.commands.running.isSome = true)) := by
+            s.owned.progress = some .normal ∨
+              s.owned.progress = some .indeterminate ∨
+              s.owned.progress = none ∧ s.owned.commands.running.isSome = true) := by
   sorry
 
 theorem progress_status (s : State) (ev : Event) :
@@ -3854,22 +3877,21 @@ theorem progress_status (s : State) (ev : Event) :
           (Session.step s ev).1.seen.progress =
             ((Mediation.feed s.terminal s.scanner chunk).progress).getD s.seen.progress) ∧
       ((∀ chunk, ev ≠ .ptyOut chunk) → (Session.step s ev).1.seen.progress = s.seen.progress) ∧
-      (s.seen.asks = false →
-        (s.seen.progress = some .error →
-            Status.classify
+      ((s.seen.progress = some .error →
+          (Status.classify
                 { progress := s.seen.progress, running := s.seen.running, unseen := s.seen.unseen,
-                  asks := s.seen.asks } =
-              .errored) ∧
-          (s.seen.progress = some .paused →
-            Status.classify
+                  asks := s.seen.asks }).state =
+            .errored) ∧
+        (s.seen.progress = some .paused →
+          (Status.classify
                 { progress := s.seen.progress, running := s.seen.running, unseen := s.seen.unseen,
-                  asks := s.seen.asks } =
-              .paused) ∧
-          (s.seen.progress = some .normal ∨ s.seen.progress = some .indeterminate →
-            Status.classify
+                  asks := s.seen.asks }).state =
+            .paused) ∧
+        (s.seen.progress = some .normal ∨ s.seen.progress = some .indeterminate →
+          (Status.classify
                 { progress := s.seen.progress, running := s.seen.running, unseen := s.seen.unseen,
-                  asks := s.seen.asks } =
-              .working)) := by
+                  asks := s.seen.asks }).state =
+            .working)) := by
   sorry
 
 @[kills progress_status]
@@ -3883,29 +3905,28 @@ theorem progress_status_rejects_error_working :
           ((∀ chunk, ev ≠ .ptyOut chunk) →
             (Seen.errorWorks State.seen (Session.step s ev).1).progress =
               (Seen.errorWorks State.seen s).progress) ∧
-          ((Seen.errorWorks State.seen s).asks = false →
-            ((Seen.errorWorks State.seen s).progress = some .error →
-                Status.classify
+          (((Seen.errorWorks State.seen s).progress = some .error →
+              (Status.classify
                     { progress := (Seen.errorWorks State.seen s).progress,
                       running := (Seen.errorWorks State.seen s).running,
                       unseen := (Seen.errorWorks State.seen s).unseen,
-                      asks := (Seen.errorWorks State.seen s).asks } =
-                  .errored) ∧
-              ((Seen.errorWorks State.seen s).progress = some .paused →
-                Status.classify
+                      asks := (Seen.errorWorks State.seen s).asks }).state =
+                .errored) ∧
+            ((Seen.errorWorks State.seen s).progress = some .paused →
+              (Status.classify
                     { progress := (Seen.errorWorks State.seen s).progress,
                       running := (Seen.errorWorks State.seen s).running,
                       unseen := (Seen.errorWorks State.seen s).unseen,
-                      asks := (Seen.errorWorks State.seen s).asks } =
-                  .paused) ∧
-              ((Seen.errorWorks State.seen s).progress = some .normal ∨
-                  (Seen.errorWorks State.seen s).progress = some .indeterminate →
-                Status.classify
+                      asks := (Seen.errorWorks State.seen s).asks }).state =
+                .paused) ∧
+            ((Seen.errorWorks State.seen s).progress = some .normal ∨
+                (Seen.errorWorks State.seen s).progress = some .indeterminate →
+              (Status.classify
                     { progress := (Seen.errorWorks State.seen s).progress,
                       running := (Seen.errorWorks State.seen s).running,
                       unseen := (Seen.errorWorks State.seen s).unseen,
-                      asks := (Seen.errorWorks State.seen s).asks } =
-                  .working)) := by
+                      asks := (Seen.errorWorks State.seen s).asks }).state =
+                .working)) := by
   sorry
 
 @[kills progress_status]
@@ -3919,29 +3940,28 @@ theorem progress_status_rejects_pause_working :
           ((∀ chunk, ev ≠ .ptyOut chunk) →
             (Seen.pauseWorks State.seen (Session.step s ev).1).progress =
               (Seen.pauseWorks State.seen s).progress) ∧
-          ((Seen.pauseWorks State.seen s).asks = false →
-            ((Seen.pauseWorks State.seen s).progress = some .error →
-                Status.classify
+          (((Seen.pauseWorks State.seen s).progress = some .error →
+              (Status.classify
                     { progress := (Seen.pauseWorks State.seen s).progress,
                       running := (Seen.pauseWorks State.seen s).running,
                       unseen := (Seen.pauseWorks State.seen s).unseen,
-                      asks := (Seen.pauseWorks State.seen s).asks } =
-                  .errored) ∧
-              ((Seen.pauseWorks State.seen s).progress = some .paused →
-                Status.classify
+                      asks := (Seen.pauseWorks State.seen s).asks }).state =
+                .errored) ∧
+            ((Seen.pauseWorks State.seen s).progress = some .paused →
+              (Status.classify
                     { progress := (Seen.pauseWorks State.seen s).progress,
                       running := (Seen.pauseWorks State.seen s).running,
                       unseen := (Seen.pauseWorks State.seen s).unseen,
-                      asks := (Seen.pauseWorks State.seen s).asks } =
-                  .paused) ∧
-              ((Seen.pauseWorks State.seen s).progress = some .normal ∨
-                  (Seen.pauseWorks State.seen s).progress = some .indeterminate →
-                Status.classify
+                      asks := (Seen.pauseWorks State.seen s).asks }).state =
+                .paused) ∧
+            ((Seen.pauseWorks State.seen s).progress = some .normal ∨
+                (Seen.pauseWorks State.seen s).progress = some .indeterminate →
+              (Status.classify
                     { progress := (Seen.pauseWorks State.seen s).progress,
                       running := (Seen.pauseWorks State.seen s).running,
                       unseen := (Seen.pauseWorks State.seen s).unseen,
-                      asks := (Seen.pauseWorks State.seen s).asks } =
-                  .working)) := by
+                      asks := (Seen.pauseWorks State.seen s).asks }).state =
+                .working)) := by
   sorry
 
 @[kills progress_status]
@@ -3953,22 +3973,21 @@ theorem progress_status_rejects_forgotten :
                 ((Mediation.feed s.terminal s.scanner chunk).progress).getD s.seen.progress) ∧
           ((∀ chunk, ev ≠ .ptyOut chunk) →
             (Session.forgetsProgress Session.step s ev).1.seen.progress = s.seen.progress) ∧
-          (s.seen.asks = false →
-            (s.seen.progress = some .error →
-                Status.classify
+          ((s.seen.progress = some .error →
+              (Status.classify
                     { progress := s.seen.progress, running := s.seen.running,
-                      unseen := s.seen.unseen, asks := s.seen.asks } =
-                  .errored) ∧
-              (s.seen.progress = some .paused →
-                Status.classify
+                      unseen := s.seen.unseen, asks := s.seen.asks }).state =
+                .errored) ∧
+            (s.seen.progress = some .paused →
+              (Status.classify
                     { progress := s.seen.progress, running := s.seen.running,
-                      unseen := s.seen.unseen, asks := s.seen.asks } =
-                  .paused) ∧
-              (s.seen.progress = some .normal ∨ s.seen.progress = some .indeterminate →
-                Status.classify
+                      unseen := s.seen.unseen, asks := s.seen.asks }).state =
+                .paused) ∧
+            (s.seen.progress = some .normal ∨ s.seen.progress = some .indeterminate →
+              (Status.classify
                     { progress := s.seen.progress, running := s.seen.running,
-                      unseen := s.seen.unseen, asks := s.seen.asks } =
-                  .working)) := by
+                      unseen := s.seen.unseen, asks := s.seen.asks }).state =
+                .working)) := by
   sorry
 
 theorem unseen_lines (s : State) (ev : Event) :
@@ -4021,77 +4040,142 @@ theorem status_clockless_rejects_window :
   sorry
 
 theorem icon_glyphs :
-    (∀ a b, Status.icon a = Status.icon b → a = b) ∧
-      (∀ st, (Status.legend.map fun line => line.toList.head?).count (some (Status.icon st)) = 1) ∧
-      ∀ line ∈ Status.legend, ∃ st, line.toList.head? = some (Status.icon st) := by
+    (∀ a b, Status.mark a = Status.mark b → a = b) ∧
+      (∀ a b, Status.icon a = Status.icon b → a = b) ∧
+      (∀ a s, Status.mark a ≠ Status.icon s) ∧
+      Status.mark .none = ' ' ∧
+      ∃ marks states,
+        Status.legend = "Attention" :: marks ++ "State" :: states ∧
+          (∀ a : Status.Attention,
+            a ≠ .none →
+              (marks.map fun line => line.toList.head?).count (some (Status.mark a)) = 1) ∧
+          (∀ line ∈ marks,
+            ∃ a : Status.Attention, a ≠ .none ∧ line.toList.head? = some (Status.mark a)) ∧
+          (∀ s, (states.map fun line => line.toList.head?).count (some (Status.icon s)) = 1) ∧
+          ∀ line ∈ states, ∃ s, line.toList.head? = some (Status.icon s) := by
   sorry
 
 @[kills icon_glyphs]
 theorem icon_glyphs_rejects_unknown :
-    ¬((∀ a b, (fun (_ : Status.Status) => '?') a = (fun (_ : Status.Status) => '?') b → a = b) ∧
-        (∀ st,
-          (Status.legend.map fun line => line.toList.head?).count
-              (some ((fun (_ : Status.Status) => '?') st)) =
-            1) ∧
-        ∀ line ∈ Status.legend,
-          ∃ st, line.toList.head? = some ((fun (_ : Status.Status) => '?') st)) := by
+    ¬((∀ a b, Status.mark a = Status.mark b → a = b) ∧
+        (∀ a b, (fun (_ : Status.State) => '?') a = (fun (_ : Status.State) => '?') b → a = b) ∧
+        (∀ a s, Status.mark a ≠ (fun (_ : Status.State) => '?') s) ∧
+        Status.mark .none = ' ' ∧
+        ∃ marks states,
+          Status.legend = "Attention" :: marks ++ "State" :: states ∧
+            (∀ a : Status.Attention,
+              a ≠ .none →
+                (marks.map fun line => line.toList.head?).count (some (Status.mark a)) = 1) ∧
+            (∀ line ∈ marks,
+              ∃ a : Status.Attention, a ≠ .none ∧ line.toList.head? = some (Status.mark a)) ∧
+            (∀ s,
+              (states.map fun line => line.toList.head?).count
+                  (some ((fun (_ : Status.State) => '?') s)) =
+                1) ∧
+            ∀ line ∈ states,
+              ∃ s, line.toList.head? = some ((fun (_ : Status.State) => '?') s)) := by
   sorry
 
-theorem summary_exact (statuses : List Status.Status) :
-    Status.summary statuses =
+theorem summary_exact (attentions : List Status.Attention) :
+    Status.summary attentions =
       String.intercalate " "
-        ((if statuses.count .asks = 0 then []
-          else [(toString (statuses.count .asks)).push (Status.icon .asks)]) ++
-          (if statuses.count .wantsYou = 0 then []
-          else [(toString (statuses.count .wantsYou)).push (Status.icon .wantsYou)]) ++
-          (if statuses.count .exitedBad = 0 then []
-          else [(toString (statuses.count .exitedBad)).push (Status.icon .exitedBad)]) ++
-          (if statuses.count .errored = 0 then []
-          else [(toString (statuses.count .errored)).push (Status.icon .errored)]) ++
-          (if statuses.count .unknown = 0 then []
-          else [(toString (statuses.count .unknown)).push (Status.icon .unknown)])) := by
+        ((if attentions.count .asked = 0 then []
+          else [(toString (attentions.count .asked)).push (Status.mark .asked)]) ++
+          (if attentions.count .unread = 0 then []
+          else [(toString (attentions.count .unread)).push (Status.mark .unread)])) := by
   sorry
 
 @[kills summary_exact]
 theorem summary_exact_rejects_count :
-    ¬∀ (statuses : List Status.Status),
-        (fun (all : List Status.Status) => toString all.length) statuses =
+    ¬∀ (attentions : List Status.Attention),
+        (fun (all : List Status.Attention) => toString all.length) attentions =
           String.intercalate " "
-            ((if statuses.count .asks = 0 then []
-              else [(toString (statuses.count .asks)).push (Status.icon .asks)]) ++
-              (if statuses.count .wantsYou = 0 then []
-              else [(toString (statuses.count .wantsYou)).push (Status.icon .wantsYou)]) ++
-              (if statuses.count .exitedBad = 0 then []
-              else [(toString (statuses.count .exitedBad)).push (Status.icon .exitedBad)]) ++
-              (if statuses.count .errored = 0 then []
-              else [(toString (statuses.count .errored)).push (Status.icon .errored)]) ++
-              (if statuses.count .unknown = 0 then []
-              else [(toString (statuses.count .unknown)).push (Status.icon .unknown)])) := by
+            ((if attentions.count .asked = 0 then []
+              else [(toString (attentions.count .asked)).push (Status.mark .asked)]) ++
+              (if attentions.count .unread = 0 then []
+              else [(toString (attentions.count .unread)).push (Status.mark .unread)])) := by
   sorry
 
 theorem rowStatus_saved (status : Nat) (st : Status.Status) :
-    Status.Is (Listing.rowStatus (.ended status)) { daemonUp := false, exit := some status } ∧
+    Status.Is (Listing.rowStatus (.ended status))
+        { daemonUp := false, exit := some status, unseen := true } ∧
       (∃ o : Status.Obs,
         o.known = true ∧
-          o.daemonUp = false ∧ Status.Is (Listing.rowStatus (.remote false (Status.name st))) o) ∧
-      (st = .exitedOk ∨ st = .exitedBad →
-        Listing.rowStatus (.remote false (Status.name st)) = st) := by
+          o.daemonUp = false ∧
+          Status.Is
+            (Listing.rowStatus
+              (.remote false (Status.attentionName st.attention) (Status.name st.state)))
+            o) ∧
+      (st.state = .exitedOk ∨ st.state = .exitedBad →
+        Listing.rowStatus
+            (.remote false (Status.attentionName st.attention) (Status.name st.state)) =
+          st) := by
   sorry
 
 @[kills rowStatus_saved]
 theorem rowStatus_saved_rejects_unknown :
     ¬∀ (status : Nat) (st : Status.Status),
-        Status.Is ((fun (_ : Listing.Row) => Status.Status.unknown) (.ended status))
-            { daemonUp := false, exit := some status } ∧
+        Status.Is
+            ((fun (_ : Listing.Row) => ({ attention := .none, state := .unknown } : Status.Status))
+              (.ended status))
+            { daemonUp := false, exit := some status, unseen := true } ∧
           (∃ o : Status.Obs,
             o.known = true ∧
               o.daemonUp = false ∧
               Status.Is
-                ((fun (_ : Listing.Row) => Status.Status.unknown) (.remote false (Status.name st)))
+                ((fun (_ : Listing.Row) =>
+                    ({ attention := .none, state := .unknown } : Status.Status))
+                  (.remote false (Status.attentionName st.attention) (Status.name st.state)))
                 o) ∧
-          (st = .exitedOk ∨ st = .exitedBad →
-            (fun (_ : Listing.Row) => Status.Status.unknown) (.remote false (Status.name st)) =
+          (st.state = .exitedOk ∨ st.state = .exitedBad →
+            (fun (_ : Listing.Row) => ({ attention := .none, state := .unknown } : Status.Status))
+                (.remote false (Status.attentionName st.attention) (Status.name st.state)) =
               st) := by
+  sorry
+
+theorem row_pair (layout : Listing.Layout) (info : List (String × String)) :
+    (∀ a s, ∃ o, Status.classify o = { attention := a, state := s }) ∧
+      (Listing.columns layout info).take 2 =
+        [[Status.mark (Status.ofAttentionName ((info.lookup "attention").getD "")), ' '],
+          [Status.icon (Status.ofName ((info.lookup "status").getD "")), ' ']] := by
+  sorry
+
+@[kills row_pair]
+theorem row_pair_rejects_single :
+    ¬∀ (layout : Listing.Layout) (info : List (String × String)),
+        (∀ a s, ∃ o, Status.single Status.classify o = { attention := a, state := s }) ∧
+          (Listing.columns layout info).take 2 =
+            [[Status.mark (Status.ofAttentionName ((info.lookup "attention").getD "")), ' '],
+              [Status.icon (Status.ofName ((info.lookup "status").getD "")), ' ']] := by
+  sorry
+
+theorem attention_independent (o o' : Status.Obs) (asks : o.asks = o'.asks)
+    (unseen : o.unseen = o'.unseen) :
+    (Status.classify o).attention = (Status.classify o').attention := by sorry
+
+@[kills attention_independent]
+theorem attention_independent_rejects_single :
+    ¬∀ (o o' : Status.Obs),
+        o.asks = o'.asks →
+          o.unseen = o'.unseen →
+          (Status.single Status.classify o).attention =
+            (Status.single Status.classify o').attention := by
+  sorry
+
+theorem state_independent (o o' : Status.Obs) (known : o.known = o'.known)
+    (daemonUp : o.daemonUp = o'.daemonUp) (exit : o.exit = o'.exit)
+    (progress : o.progress = o'.progress) (running : o.running = o'.running) :
+    (Status.classify o).state = (Status.classify o').state := by sorry
+
+@[kills state_independent]
+theorem state_independent_rejects_single :
+    ¬∀ (o o' : Status.Obs),
+        o.known = o'.known →
+          o.daemonUp = o'.daemonUp →
+          o.exit = o'.exit →
+          o.progress = o'.progress →
+          o.running = o'.running →
+          (Status.single Status.classify o).state = (Status.single Status.classify o').state := by
   sorry
 
 theorem compose_attention_last (session application summary : String) (capacity : Nat) :
@@ -4113,30 +4197,31 @@ theorem compose_attention_last_rejects_first :
             (if summary.isEmpty then "" else " · " ++ summary) := by
   sorry
 
-theorem announce_changes (before current : List (String × Status.Status)) (own name : String) :
+theorem announce_changes (before current : List (String × Status.Attention)) (own name : String) :
     Alert.announce none current own = [] ∧
       (name ∈ Alert.announce (some before) current own ↔
-        name ≠ own ∧ (name, Status.Status.asks) ∈ current ∧ (name, Status.Status.asks) ∉ before) ∧
+        name ≠ own ∧
+          (name, Status.Attention.asked) ∈ current ∧ (name, Status.Attention.asked) ∉ before) ∧
       ((current.map (·.1)).Nodup → (Alert.announce (some before) current own).Nodup) := by
   sorry
 
 @[kills announce_changes]
 theorem announce_changes_rejects_every_sample :
-    ¬∀ (before current : List (String × Status.Status)) (own name : String),
+    ¬∀ (before current : List (String × Status.Attention)) (own name : String),
         Alert.everySample none current own = [] ∧
           (name ∈ Alert.everySample (some before) current own ↔
             name ≠ own ∧
-              (name, Status.Status.asks) ∈ current ∧ (name, Status.Status.asks) ∉ before) ∧
+              (name, Status.Attention.asked) ∈ current ∧ (name, Status.Attention.asked) ∉ before) ∧
           ((current.map (·.1)).Nodup → (Alert.everySample (some before) current own).Nodup) := by
   sorry
 
 @[kills announce_changes]
 theorem announce_changes_rejects_self :
-    ¬∀ (before current : List (String × Status.Status)) (own name : String),
+    ¬∀ (before current : List (String × Status.Attention)) (own name : String),
         Alert.withSelf none current own = [] ∧
           (name ∈ Alert.withSelf (some before) current own ↔
             name ≠ own ∧
-              (name, Status.Status.asks) ∈ current ∧ (name, Status.Status.asks) ∉ before) ∧
+              (name, Status.Attention.asked) ∈ current ∧ (name, Status.Attention.asked) ∉ before) ∧
           ((current.map (·.1)).Nodup → (Alert.withSelf (some before) current own).Nodup) := by
   sorry
 
@@ -4144,14 +4229,8 @@ theorem sort_attention_first {α : Type} (status : α → Status.Status) (rows :
     (View.sort status rows).Perm rows ∧
       ∃ first rest,
         View.sort status rows = first ++ rest ∧
-          (∀ x ∈ first,
-            status x = .asks ∨
-              status x = .wantsYou ∨
-              status x = .exitedBad ∨ status x = .errored ∨ status x = .unknown) ∧
-          ∀ x ∈ rest,
-            ¬(status x = .asks ∨
-                status x = .wantsYou ∨
-                status x = .exitedBad ∨ status x = .errored ∨ status x = .unknown) := by
+          (∀ x ∈ first, (status x).attention ≠ .none) ∧
+          ∀ x ∈ rest, (status x).attention = .none := by
   sorry
 
 @[kills sort_attention_first]
@@ -4160,22 +4239,20 @@ theorem sort_attention_first_rejects_arrival :
         (View.arrival status rows).Perm rows ∧
           ∃ first rest,
             View.arrival status rows = first ++ rest ∧
-              (∀ x ∈ first,
-                status x = .asks ∨
-                  status x = .wantsYou ∨
-                  status x = .exitedBad ∨ status x = .errored ∨ status x = .unknown) ∧
-              ∀ x ∈ rest,
-                ¬(status x = .asks ∨
-                    status x = .wantsYou ∨
-                    status x = .exitedBad ∨ status x = .errored ∨ status x = .unknown) := by
+              (∀ x ∈ first, (status x).attention ≠ .none) ∧
+              ∀ x ∈ rest, (status x).attention = .none := by
   sorry
 
 theorem sort_keeps_place {α : Type} (status status' : α → Status.Status) (rows : List α)
     (h :
       ∀ x ∈ rows,
         status x = status' x ∨
-          ((status x = .working ∨ status x = .paused ∨ status x = .idle) ∧
-            (status' x = .working ∨ status' x = .paused ∨ status' x = .idle))) :
+          (status x).attention = (status' x).attention ∧
+            ((status x).state = .working ∨
+              (status x).state = .paused ∨ (status x).state = .errored ∨ (status x).state = .idle) ∧
+            ((status' x).state = .working ∨
+              (status' x).state = .paused ∨
+              (status' x).state = .errored ∨ (status' x).state = .idle)) :
     View.sort status rows = View.sort status' rows := by sorry
 
 @[kills sort_keeps_place]
@@ -4183,17 +4260,23 @@ theorem sort_keeps_place_rejects_activity :
     ¬∀ {α : Type} (status status' : α → Status.Status) (rows : List α),
         (∀ x ∈ rows,
             status x = status' x ∨
-              ((status x = .working ∨ status x = .paused ∨ status x = .idle) ∧
-                (status' x = .working ∨ status' x = .paused ∨ status' x = .idle))) →
+              (status x).attention = (status' x).attention ∧
+                ((status x).state = .working ∨
+                  (status x).state = .paused ∨
+                  (status x).state = .errored ∨ (status x).state = .idle) ∧
+                ((status' x).state = .working ∨
+                  (status' x).state = .paused ∨
+                  (status' x).state = .errored ∨ (status' x).state = .idle)) →
           View.byActivity status rows = View.byActivity status' rows := by
   sorry
 
 theorem sort_live_above_done {α : Type} (status : α → Status.Status) (rows first rest : List α)
     (split : View.sort status rows = first ++ rest) (x : α) (above : x ∈ first)
-    (ended : status x = .exitedOk ∨ status x = .resumable) (y : α) (below : y ∈ rest) :
-    ¬(status y = .asks ∨
-        status y = .errored ∨
-        status y = .wantsYou ∨ status y = .working ∨ status y = .paused ∨ status y = .idle) := by
+    (ended :
+      (status x).state = .exitedOk ∨ (status x).state = .exitedBad ∨ (status x).state = .resumable)
+    (y : α) (below : y ∈ rest) (same : (status y).attention = (status x).attention) :
+    ¬((status y).state = .errored ∨
+        (status y).state = .working ∨ (status y).state = .paused ∨ (status y).state = .idle) := by
   sorry
 
 @[kills sort_live_above_done]
@@ -4202,23 +4285,24 @@ theorem sort_live_above_done_rejects_done_above :
         View.doneAboveLive status rows = first ++ rest →
           ∀ (x : α),
             x ∈ first →
-              (status x = .exitedOk ∨ status x = .resumable) →
+              ((status x).state = .exitedOk ∨
+                (status x).state = .exitedBad ∨ (status x).state = .resumable) →
               ∀ (y : α),
                 y ∈ rest →
-                  ¬(status y = .asks ∨
-                      status y = .errored ∨
-                      status y = .wantsYou ∨
-                      status y = .working ∨ status y = .paused ∨ status y = .idle) := by
+                  (status y).attention = (status x).attention →
+                  ¬((status y).state = .errored ∨
+                      (status y).state = .working ∨
+                      (status y).state = .paused ∨ (status y).state = .idle) := by
   sorry
 
 theorem sort_two_keys {α : Type} (status : α → Status.Status) (earlier : α → α → Prop)
     (rows : List α) (listed : rows.Pairwise earlier) :
     (View.sort status rows).Perm rows ∧
       (View.sort status rows).Pairwise fun a b =>
-        View.needs (status a) < View.needs (status b) ∨
-          View.needs (status a) = View.needs (status b) ∧
-            (View.lifecycle (status a) < View.lifecycle (status b) ∨
-              View.lifecycle (status a) = View.lifecycle (status b) ∧ earlier a b) := by
+        View.needs (status a).attention < View.needs (status b).attention ∨
+          View.needs (status a).attention = View.needs (status b).attention ∧
+            (View.lifecycle (status a).state < View.lifecycle (status b).state ∨
+              View.lifecycle (status a).state = View.lifecycle (status b).state ∧ earlier a b) := by
   sorry
 
 @[kills sort_two_keys]
@@ -4227,10 +4311,11 @@ theorem sort_two_keys_rejects_ended_above_saved :
         rows.Pairwise earlier →
           (View.endedAboveSaved status rows).Perm rows ∧
             (View.endedAboveSaved status rows).Pairwise fun a b =>
-              View.needs (status a) < View.needs (status b) ∨
-                View.needs (status a) = View.needs (status b) ∧
-                  (View.lifecycle (status a) < View.lifecycle (status b) ∨
-                    View.lifecycle (status a) = View.lifecycle (status b) ∧ earlier a b) := by
+              View.needs (status a).attention < View.needs (status b).attention ∨
+                View.needs (status a).attention = View.needs (status b).attention ∧
+                  (View.lifecycle (status a).state < View.lifecycle (status b).state ∨
+                    View.lifecycle (status a).state = View.lifecycle (status b).state ∧
+                      earlier a b) := by
   sorry
 
 theorem before_total (a b c : String) :

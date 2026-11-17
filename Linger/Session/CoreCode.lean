@@ -150,7 +150,7 @@ structure StateRec where
   private ready : Bool := false
   /-- The status text the program gave in the last notification it sent with one, `STATUS=`. -/
   private status : Option (List UInt8) := none
-  /-- Whether new lines entered the terminal's history since the last look: `⣿`, which `info`
+  /-- Whether new lines entered the terminal's history since the last look: `∙`, which `info`
   reports as `unseen`. Output with nobody attached that adds lines to the history raises it, as
   the mediator reads the terminal, and every look clears it. -/
   private unseenLines : Bool := false
@@ -257,7 +257,7 @@ private def closeClient (s : State) (id : Nat) : State × List (Effect Plan) :=
   else (s', focus)
 
 /-- Unread: new lines entered the history while nobody was watching. What
-`Status.wantsYou` is derived from — a property of the **session**, since
+a row's unread attention, `∙`, is derived from — a property of the **session**, since
 "last looked" is a session event rather than a viewer attribute, so a one-off
 connection creates no state. A redraw in place, a title, a cursor move and anything on the
 alternate screen, which keeps no history, add no line. -/

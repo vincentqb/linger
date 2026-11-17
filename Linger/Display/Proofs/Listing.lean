@@ -45,21 +45,23 @@ open Linger.Display.Status (Status)
 contained — so a daemon too busy to answer cannot be reported as idle, and a
 crafted reply cannot claim otherwise. -/
 theorem rowStatus_unanswered (info : List (String × String)) (h : answered info = false) :
-    rowStatus (.live info) = Status.unknown := by
-  simp [rowStatus, Linger.Display.Status.classify, h]
+    (rowStatus (.live info)).state = .unknown := by
+  simp [rowStatus, Linger.Display.Status.classify, Linger.Display.Status.stateOf, h]
 
 /-- No socket, but a checkpoint whose end record does not say how its program ended, is
 `resumable`, whatever the reply contained (there is no daemon to have sent one). -/
-theorem rowStatus_resumable : rowStatus .stale = Status.resumable := rfl
+theorem rowStatus_resumable : rowStatus .stale = ⟨.none, .resumable⟩ := rfl
 
-/-- **An ended session is a result**: a saved row whose end record says its program ended shows
-`✓` for status 0 and `✗` for any other, until the first attach shows it or `kill` discards it. -/
+/-- **An ended session is a result nobody saw**: a saved row whose end record says its program
+ended shows `✓` for status 0 and `✗` for any other, with news, `∙`, since a checkpoint is kept for
+an ending only while nobody was attached, until the first attach shows it or `kill` discards
+it. -/
 theorem rowStatus_ended (status : Nat) :
-    rowStatus (.ended status) = if status = 0 then Status.exitedOk else Status.exitedBad := by
+    rowStatus (.ended status) = ⟨.unread, if status = 0 then .exitedOk else .exitedBad⟩ := by
   cases status <;> rfl
 
 /-- No socket and an unreadable saved session is `unknown`. -/
-theorem rowStatus_gone : rowStatus .broken = Status.unknown := rfl
+theorem rowStatus_gone : rowStatus .broken = ⟨.none, .unknown⟩ := rfl
 
 /-- **A summary that reads records shows what asking would**: a row read from the name's end
 record has the status of any answer from its daemon that reports the same `progress`, `running`,
@@ -84,24 +86,32 @@ theorem answered_nil : answered [] = false := rfl
 /-- A peer cannot claim a state we could not read: an absent or unrecognised
 `status` reports `unknown`, not `idle`. This is what keeps a remote glyph an
 honest statement rather than an inference from liveness alone. -/
-theorem rowStatus_remote_unreadable (junk : String)
-    (h : Linger.Display.Status.ofName junk = Status.unknown) :
-    rowStatus (.remote true junk) = Status.unknown := by simp [rowStatus, h]
+theorem rowStatus_remote_unreadable (attention junk : String)
+    (h : Linger.Display.Status.ofName junk = .unknown) :
+    (rowStatus (.remote true attention junk)).state = .unknown := by simp [rowStatus, h]
 
 /-- …and a peer that does report one is taken at its word, since it is the
-authority on its own session. Round-trips through the porcelain name by
-`ofName_name`. -/
+authority on its own session. Round-trips through the porcelain names by
+`ofName_name` and `ofAttentionName_attentionName`. -/
 theorem rowStatus_remote_reported (st : Status) :
-    rowStatus (.remote true (Linger.Display.Status.name st)) = st := by
-  simp [rowStatus, Linger.Display.Status.ofName_name]
+    rowStatus
+        (.remote true (Linger.Display.Status.attentionName st.attention)
+          (Linger.Display.Status.name st.state)) =
+      st := by
+  simp [rowStatus, Linger.Display.Status.ofName_name,
+    Linger.Display.Status.ofAttentionName_attentionName]
 
-/-- A session a peer lists as saved shows how its program ended, `✓` or `✗`, as the peer says;
-any other status a peer reports for it, it shows as resumable, since only a running session
-can be working, idle or waiting. -/
+/-- A session a peer lists as saved shows its peer's attention and how its program ended, `✓` or
+`✗`, as the peer says; any other state a peer reports for it, it shows as resumable, since only a
+running session can be working, idle or in error. -/
 theorem rowStatus_remote_saved (st : Status) :
-    rowStatus (.remote false (Linger.Display.Status.name st)) =
-      if st = .exitedOk ∨ st = .exitedBad then st else .resumable := by
-  cases st <;> rfl
+    rowStatus
+        (.remote false (Linger.Display.Status.attentionName st.attention)
+          (Linger.Display.Status.name st.state)) =
+      ⟨st.attention,
+        if st.state = .exitedOk ∨ st.state = .exitedBad then st.state else .resumable⟩ := by
+  obtain ⟨a, s⟩ := st
+  cases a <;> cases s <;> rfl
 
 /-- An ended row says how its program ended in the words a client prints when a session ends:
 the status of an exit, -/
@@ -252,7 +262,7 @@ theorem mem_cut {room : Nat} {cs : List Char} {c : Char} (h : c ∈ cut room cs)
 /-- What a row shows after its name, before blanks are dropped: the name's padding and the cells,
 each in its column, made printable. -/
 theorem after_eq (layout : Layout) (info : List (String × String)) :
-    ((columns layout info).drop 1).flatten.drop (look info "name").length =
+    ((columns layout info).drop 2).flatten.drop (look info "name").length =
       (List.replicate (layout.nameCol - cols (look info "name").toList) ' ' ++
             (segments layout (project info)).flatten).map
         textChar := by
@@ -284,13 +294,19 @@ theorem humanRow_no_lf (layout : Layout) (info : List (String × String)) :
 
 /-- Pieces remove controls before width calculation or styling. A terminal
 renderer therefore never clips inside an untrusted escape sequence. -/
-theorem piecesOf_printable (width : Option Nat) (name status : String) (after : List Char)
+theorem piecesOf_printable (width : Option Nat) (name attention status : String) (after : List Char)
     (printable : ∀ c ∈ after, 32 ≤ c.toNat ∧ (c.toNat < 127 ∨ 160 ≤ c.toNat)) :
-    ∀ piece ∈ piecesOf width name status after,
+    ∀ piece ∈ piecesOf width name attention status after,
       ∀ c ∈ piece.text, 32 ≤ c.toNat ∧ (c.toNat < 127 ∨ 160 ≤ c.toNat) := by
   intro piece hp c hc
   simp only [piecesOf, List.mem_cons, List.not_mem_nil, or_false] at hp
-  rcases hp with rfl | rfl
+  rcases hp with rfl | rfl | rfl | rfl
+  · simp only [List.mem_singleton] at hc
+    subst c
+    cases Status.ofAttentionName attention <;> decide
+  · simp only [List.mem_singleton] at hc
+    subst c
+    decide
   · simp only [List.mem_singleton] at hc
     subst c
     cases Status.ofName status <;> decide
@@ -353,23 +369,29 @@ theorem rowText_printable (width : Option Nat) (layout : Layout) (info : List (S
   simp only [Linger.Display.Printable]
   omega
 
-/-- Exactly the badge is styled; the name, details, labels and watchers are plain. -/
+/-- Exactly the badges are styled; the space between them, the name, details, labels and
+watchers are plain. -/
 theorem rowPieces_styles (layout : Layout) (info : List (String × String)) :
-    (Linger.Display.Listing.rowPieces layout info).map (·.status) =
-      [some (Status.ofName ((info.lookup "status").getD "")), none] := rfl
+    (Linger.Display.Listing.rowPieces layout info).map (·.style) =
+      [Status.markStyle (Status.ofAttentionName ((info.lookup "attention").getD "")), none,
+        some (Status.style (Status.ofName ((info.lookup "status").getD ""))), none] := rfl
 
 /-- Query emphasis addresses only the name after the body's leading space.
 Its length comes from the actual name, independently of padding or metadata. -/
 theorem rowPieces_nameSpan (layout : Layout) (info : List (String × String)) :
     (Linger.Display.Listing.rowPieces layout info).map (·.nameSpan) =
-      [none, some (1, ((info.lookup "name").getD "").toList.length)] := rfl
+      [none, none, none, some (1, ((info.lookup "name").getD "").toList.length)] := rfl
 
-/-- A row's two pieces: the styled badge, then the text whose name span is the name's. -/
+/-- A row's four pieces: the styled mark, a space, the styled glyph, then the text whose name span
+is the name's. -/
 theorem rowPieces_eq (layout : Layout) (info : List (String × String)) :
     ∃ text,
       Linger.Display.Listing.rowPieces layout info =
-        [{ text := [Status.icon (Status.ofName ((info.lookup "status").getD ""))],
-           status := some (Status.ofName ((info.lookup "status").getD "")) },
+        [{ text := [Status.mark (Status.ofAttentionName ((info.lookup "attention").getD ""))],
+           style := Status.markStyle (Status.ofAttentionName ((info.lookup "attention").getD "")) },
+          { text := [' '] },
+          { text := [Status.icon (Status.ofName ((info.lookup "status").getD ""))],
+            style := some (Status.style (Status.ofName ((info.lookup "status").getD ""))) },
           { text, nameSpan := some (1, ((info.lookup "name").getD "").toList.length) }] := ⟨_, rfl⟩
 
 /-! ## Each field from its one source -/
@@ -421,10 +443,12 @@ theorem rowText_sources (width : Option Nat) (layout : Layout) (info info' : Lis
     simp only [look, h "name" (by simp [sources])]
   have hs : look info "status" = look info' "status" := by
     simp only [look, h "status" (by simp [sources])]
+  have ha : look info "attention" = look info' "attention" := by
+    simp only [look, h "attention" (by simp [sources])]
   have hc : columns layout info = columns layout info' := by
     unfold columns
-    rw [hn, hs, project_congr h]
-  simp only [rowText, rowPiecesIn, hn, hs, hc]
+    rw [hn, hs, ha, project_congr h]
+  simp only [rowText, rowPiecesIn, hn, hs, ha, hc]
 
 /-- **The program's words over linger's over the operating system's**: a nonempty title is the
 caption; without one, the program's status text is; without either, a description an older linger
@@ -448,30 +472,35 @@ theorem caption_precedence (info : List (String × String)) :
     · rename_i hn
       exact .inr (by simpa using hn)
 
-/-- **The width rule never cuts the glyph or the name**: every row, of any width, starts with
-its status glyph, a space and its whole name. -/
+/-- **The width rule never cuts the glyphs or the name**: every row, of any width, starts with
+its attention's mark, a space, its state's glyph, a space and its whole name. -/
 theorem rowText_head (width : Option Nat) (layout : Layout) (info : List (String × String)) :
-    Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
+    Status.mark (Status.ofAttentionName ((info.lookup "attention").getD "")) ::
+        ' ' ::
+        Status.icon (Status.ofName ((info.lookup "status").getD "")) ::
         ' ' :: ((info.lookup "name").getD "").toList.map Terminal.Render.textChar <+:
       rowText width layout info := by
   simp only [rowText, rowPiecesIn, piecesOf, look, List.flatMap_cons, List.flatMap_nil,
     List.append_nil, List.cons_append, List.nil_append, List.map_cons]
   exact ⟨_, rfl⟩
 
-theorem cols_icon (st : Status) : charWidth (Status.icon st) = 1 := by cases st <;> decide
+theorem cols_icon (st : Status.State) : charWidth (Status.icon st) = 1 := by cases st <;> decide
+
+theorem cols_mark (a : Status.Attention) : charWidth (Status.mark a) = 1 := by cases a <;> decide
 
 /-- **…and fits the rest within the width**: a row given a width takes no more display columns
 than it, unless its glyph and name alone do. -/
 theorem rowText_width (width : Nat) (layout : Layout) (info : List (String × String)) :
     cols (rowText (some width) layout info) ≤
-      max width (2 + cols ((info.lookup "name").getD "").toList) := by
+      max width (4 + cols ((info.lookup "name").getD "").toList) := by
   simp only [rowText, rowPiecesIn, piecesOf, look, List.flatMap_cons, List.flatMap_nil,
     List.append_nil]
-  rw [cols_append, cols_append, cols_map_textChar, cols_cons, cols_cons, cols_nil, cols_icon]
+  rw [cols_append, cols_append, cols_append, cols_append, cols_map_textChar, cols_cons, cols_cons,
+    cols_cons, cols_cons, cols_nil, cols_icon, cols_mark]
   have :=
-    cols_cut (width - 2 - cols ((info.lookup "name").getD "").toList)
+    cols_cut (width - 4 - cols ((info.lookup "name").getD "").toList)
       (Terminal.Render.dropTrailingBlanks
-        (((columns layout info).drop 1).flatten.drop ((info.lookup "name").getD "").length))
+        (((columns layout info).drop 2).flatten.drop ((info.lookup "name").getD "").length))
   have : charWidth ' ' = 1 := by decide
   omega
 
@@ -516,22 +545,24 @@ theorem columns_aligned (layout : Layout) (info : List (String × String)) :
   constructor
   · obtain ⟨blanks, hb, hsplit⟩ :=
       dropTrailingBlanks_blanks
-        (((columns layout info).drop 1).flatten.drop (look info "name").length)
+        (((columns layout info).drop 2).flatten.drop (look info "name").length)
     refine ⟨blanks, hb, ?_⟩
     have htc : textChar ' ' = ' ' := by decide
     have hname :
-      ((columns layout info).drop 1).flatten.take (look info "name").length =
+      ((columns layout info).drop 2).flatten.take (look info "name").length =
         (look info "name").toList.map textChar := by
       simp only [columns, pad, List.cons_append, List.nil_append, List.drop_succ_cons,
         List.drop_zero, List.flatten_cons, List.map_append, List.append_assoc]
       rw [List.take_left' (by simp [String.length])]
     have whole :
       (columns layout info).flatten =
-        Status.icon (Status.ofName (look info "status")) ::
-          ' ' :: ((columns layout info).drop 1).flatten := by
+        Status.mark (Status.ofAttentionName (look info "attention")) ::
+          ' ' ::
+          Status.icon (Status.ofName (look info "status")) ::
+          ' ' :: ((columns layout info).drop 2).flatten := by
       simp [columns]
     rw [whole, ←
-      List.take_append_drop (look info "name").length ((columns layout info).drop 1).flatten, hname,
+      List.take_append_drop (look info "name").length ((columns layout info).drop 2).flatten, hname,
       hsplit]
     simp [rowText, rowPiecesIn, piecesOf, htc]
   · intro hname
@@ -541,7 +572,9 @@ theorem columns_aligned (layout : Layout) (info : List (String × String)) :
     simp only [Function.comp_def] at this ⊢
     rw [this]
     simp only [List.cons_append, List.nil_append, List.cons.injEq, and_true]
-    refine ⟨?_, ?_⟩
+    refine ⟨?_, ?_, ?_⟩
+    · rw [cols_cons, cols_cons, cols_nil, cols_mark]
+      decide
     · rw [cols_cons, cols_cons, cols_nil, cols_icon]
       decide
     · rw [cols_map_textChar, cols_pad]
@@ -555,7 +588,7 @@ theorem renderPieces_plain (pieces : List RowPiece) :
   induction pieces with
   | nil => rfl
   | cons piece pieces ih =>
-    cases hs : piece.status <;> simp_all [renderPieces, Terminal.Render.utf8s, List.flatMap_append]
+    cases hs : piece.style <;> simp_all [renderPieces, Terminal.Render.utf8s, List.flatMap_append]
 
 /-- Uncoloured terminal output is exactly the plain rows: one row per session over the shared
 name column, within the width when one is given, each LF-terminated, or the empty-state line. -/

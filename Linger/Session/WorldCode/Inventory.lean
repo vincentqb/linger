@@ -258,8 +258,8 @@ def localRows (stopAt : Option Nat := none) (statusOnly : Bool := false)
   let liveRow := fun (listed : Paths.Listed) name info =>
     Linger.Display.Listing.rowFields name
         (if listed.name == name then info else info.filter (·.1 != "description")) ++
-      [("state", "live"),
-        ("status", Linger.Display.Status.name (Linger.Display.Listing.rowStatus (.live info)))]
+      ("state", "live") ::
+        Linger.Display.Listing.statusFields (Linger.Display.Listing.rowStatus (.live info))
   let mut confirmedLive : List String := []
   let mut rows : List (List (String × String)) := []
   let mut asked := sockets
@@ -274,8 +274,8 @@ def localRows (stopAt : Option Nat := none) (statusOnly : Bool := false)
         rows :=
           rows ++
             [Linger.Display.Listing.rowFields name
-                [("state", "live"),
-                  ("status", Linger.Display.Status.name (Linger.Display.Listing.rowStatus row))]]
+                (("state", "live") ::
+                  Linger.Display.Listing.statusFields (Linger.Display.Listing.rowStatus row))]
       | none =>
         asked := asked.push (listed, name)
   let infos ← queryInfos (asked.map (·.1)) deadline stopAt.isSome
@@ -301,8 +301,8 @@ def localRows (stopAt : Option Nat := none) (statusOnly : Bool := false)
           pure none
       let savedFields := fun (row : Linger.Display.Listing.Row) extra =>
         Linger.Display.Listing.rowFields name
-          ([("state", "resumable"),
-              ("status", Linger.Display.Status.name (Linger.Display.Listing.rowStatus row))] ++
+          (("state", "resumable") ::
+              Linger.Display.Listing.statusFields (Linger.Display.Listing.rowStatus row) ++
             extra)
       rows :=
         rows ++

@@ -146,7 +146,7 @@ last screen and how its program ended, and is discarded once that client leaves,
 still answering `wait`. -/
 private def unseenChecks (e : Env) : IO Unit := do
   let _ ← e.cli #["capture", "w5"]
-  expect ((← e.status "w5") == .exitedBad)
+  expect ((← e.state "w5") == .exitedBad)
       "an ended session nobody saw stays listed after wait, info, ls and capture"
   let looker ← e.spawn #["attach", "w5"]
   let shown ← looker.awaitNeedle "exit 37"
@@ -510,16 +510,16 @@ per change into asking, so again only after a look cleared the ask and the sessi
 never for its own session, whose bell its terminal hears as it rings; and never for a session that
 already asked when it attached, which its title counts from the first sample. -/
 def alertChecks (e : Env) : IO Unit := do
-  let asks := Linger.Display.Status.name .asks
+  let asks := Linger.Display.Status.attentionName .asked
   let _ ← e.typeIn "alert-early" #["printf", "'\\a'"]
   let _ ← e.typeIn "alert-other" #["true"]
-  let early ← waitFor patienceMs (return (← e.field "alert-early" "status") == some asks)
+  let early ← waitFor patienceMs (return (← e.field "alert-early" "attention") == some asks)
   let c ← e.spawn #["attach", "alert-own"] 80 24
   let out ← IO.mkRef ByteArray.empty
   try
     let attached ← waitFor patienceMs (return (← e.info "alert-own" "clients") == some "1")
     -- the title counts the early ask once the first sample is in: from then on, an ask is news
-    let counted := Linger.Display.Status.summary [.asks]
+    let counted := Linger.Display.Status.summary [.asked]
     c.type "echo own-$((1+1))\r"
     let titled ← c.awaitText out (hasText · counted)
     c.type "printf '\\a'; echo own-$((2+2))\r"
@@ -538,7 +538,7 @@ def alertChecks (e : Env) : IO Unit := do
           own or of one that asked before it attached ({occurrences osc9 first} notifications)"
     -- a look clears the ask; asking anew is a new change into asking
     let _ ← e.cli #["capture", "alert-other"]
-    let cleared ← waitFor patienceMs (return (← e.field "alert-other" "status") != some asks)
+    let cleared ← waitFor patienceMs (return (← e.field "alert-other" "attention") != some asks)
     -- the client samples the cleared ask before the next one, as its title shows, which counts
     -- the early ask alone again: an ask cleared and raised again between two samples is no
     -- change the samples show
@@ -732,7 +732,7 @@ def run : IO UInt32 :=
     let _ ← e.typeIn "w5" #["exec sh -c 'exit 37'"]
     let ended ←
       waitFor 5000 do
-          return (← e.status "w5") == .exitedBad && (← e.field "w5" "exit") == some "37"
+          return (← e.state "w5") == .exitedBad && (← e.field "w5" "exit") == some "37"
     let (lateRc, _, _) ← e.cli #["wait", "w5"]
     let (infoRc, lateInfo, _) ← e.cli #["ls", "w5", "--porcelain"]
     expect (ended && lateRc == 37 && infoRc == 0 && has lateInfo "exit\t37")

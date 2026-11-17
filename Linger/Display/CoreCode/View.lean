@@ -8,15 +8,14 @@ public section
 /-! # Linger.Display.View — what a view of many sessions shows first, and how it sums up the rest
 
 **Nothing that needs you is hidden, and every count adds up.** A view orders rows by two keys,
-what needs you to act, then where the session is in its life, running, saved, then ended
-(`sort_two_keys`): it lists the statuses that ask for someone first (`sort_attention_first`), no
-row that ended well or can only be resumed above a live one (`sort_live_above_done`), a finished
-session last, keeps the listing's order within a place
-(`sort_stable`) and loses no row (`sort_perm`). A running session has one place whether it is
-working, paused or quiet, so its row stays where it is when it starts or stops (`sort_keeps_place`),
-and a row moves only when its session starts or stops needing you, ends or can only be resumed.
-Its header counts every row and, among them,
-those that ask for someone, whatever a query shows (`headerParts`). The rows a window cannot
+whether there is something for you, then where the session is in its life, running, saved, ended,
+then unknown (`sort_two_keys`): it lists the rows with something for you first
+(`sort_attention_first`), no row that ended or can only be resumed above a live one of its
+attention (`sort_live_above_done`), keeps the listing's order within a place (`sort_stable`) and
+loses no row (`sort_perm`). A running session has one place whether it is working, paused, in
+error or quiet, so its row stays where it is when its activity changes (`sort_keeps_place`), and
+a row moves only when its attention changes, or its session ends or can only be resumed. Its
+header counts every row and their attention, whatever a query shows (`headerParts`). The rows a window cannot
 show are summed up by groups of names, with exact counts that add up to the rows left out
 (`groups_count`, `groups_sum`). A group is named by the start of its members' names, so typing
 its name keeps all of them (`stem_prefix`), and names are cut at the depth that splits the rows
@@ -26,18 +25,23 @@ namespace Linger.Display.View
 
 open Linger.Display.Status (Status)
 
-/-- The place a view shows a status in, named by a status: a running session's, working (`⣷`),
-paused (`⣤`) or quiet (`⣀`), is `working`'s, and every other status has its own. -/
-def place : Status → Status
-  | .idle | .paused => .working
+/-- The state a view shows a state's rows with: a running session's, `!`, `⣷`, `⣤` or `⣀`, is
+`⣷`'s, an ending's, `✓` or `✗`, is `✓`'s, and every other state has its own. -/
+def placeState : Status.State → Status.State
+  | .errored | .paused | .idle => .working
+  | .exitedBad => .exitedOk
   | st => st
 
-/-- The order a view shows places in, by two keys (`View.needs`, `View.lifecycle`): first what
-needs you to act, `⚑`, then `✗`, `!` and `?`, then `⣿`; then where the session is in its life,
-the running sessions, `⣷`, `⣤` and `⣀` together, then the saved ones, `~`, then the ended ones,
-`✓`. A program waiting for you comes before everything, and a finished session comes last. -/
+/-- The place a view shows a status in, named by a status: its attention, and its state's place. -/
+def place (st : Status) : Status := ⟨st.attention, placeState st.state⟩
+
+/-- The order a view shows places in, by two keys (`View.needs`, `View.lifecycle`): first
+whether there is something for you, `⚑`, then `∙`, then nothing; then where the session is in its
+life, the running sessions, `!`, `⣷`, `⣤` and `⣀` together, then the saved ones, `~`, then the
+ended ones, `✓` and `✗`, then `?`. -/
 def order : List Status :=
-  [.asks, .exitedBad, .errored, .unknown, .wantsYou, .working, .resumable, .exitedOk]
+  [Status.Attention.asked, .unread, .none].flatMap fun a =>
+    [Status.State.working, .resumable, .exitedOk, .unknown].map fun st => ⟨a, st⟩
 
 /-- Rows in `order` of their status's `place`, each place's rows in listing order. -/
 def sort {α : Type} (status : α → Status) (rows : List α) : List α :=
@@ -49,7 +53,8 @@ any (`Status.summary`). -/
 def headerParts (labels : List String) (statuses : List Status) : List String :=
   "linger" :: labels ++
     toString statuses.length ::
-      if (Status.summary statuses).isEmpty then [] else [Status.summary statuses]
+      if (Status.summary (statuses.map (·.attention))).isEmpty then []
+      else [Status.summary (statuses.map (·.attention))]
 
 /-- Whether `c` separates the parts of a session name: `-`, `_` or `.`. -/
 def separator (c : Char) : Bool := c == '-' || c == '_' || c == '.'

@@ -42,21 +42,21 @@ open Linger.Os (Answer)
 stderr for a word that names no command. -/
 private def usage : String := Linger.App.Commands.helpText
 
-/-- What `linger --help` prints after the commands: the program's two options, the eight statuses
-a session can show, which of them titles and `ls --summary` count, and the exit statuses every
-command shares: a program's and a signal's, then one line per answer of linger's own
-(`Answer.legend`). -/
+/-- What `linger --help` prints after the commands: the program's two options, the legend's two
+blocks, a row's attention and its state, which marks titles and `ls --summary` count, and the exit
+statuses every command shares: a program's and a signal's, then one line per answer of linger's
+own (`Answer.legend`). -/
 private def helpFooter : String :=
   let glyphs :=
     String.intercalate " "
-      (Linger.Display.Status.attention.map fun status =>
-        String.singleton (Linger.Display.Status.icon status))
+      (Linger.Display.Status.counted.map fun a => String.singleton (Linger.Display.Status.mark a))
   String.intercalate "\n"
     (["",
         s!"{Linger.App.Commands.helpOption} shows this; {Linger.App.Commands.versionOption} \
           prints the version and state paths",
-        "", "Statuses"] ++
-      Linger.Display.Status.legend.map ("  " ++ ·) ++
+        ""] ++
+      Linger.Display.Status.legend.map
+        (fun line => if line == "Attention" || line == "State" then line else "  " ++ line) ++
       [s!"Titles and ls --summary count {glyphs}", "",
         "Exit statuses: the program's own, when the command waits for it to end; 128+N when",
         "signal N stops the command, or the session it attaches to or waits for; otherwise"] ++
@@ -128,9 +128,7 @@ private def printRows (porcelain : Bool) (rows : List (List (String × String)))
             | none, some host => ("name", "@" ++ host) :: info
             | _, _ => info).filter
           fun kv => (Linger.App.Fields.table.map Linger.App.Fields.Field.key).contains kv.1
-    let ordered :=
-      Linger.Display.View.sort
-        (fun info => Linger.Display.Status.ofName ((info.lookup "status").getD "")) named
+    let ordered := Linger.Display.View.sort Linger.Display.Listing.statusOf named
     let width ← humanWidth
     let home ← accountHome
     writeAll stdoutFd

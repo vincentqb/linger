@@ -448,14 +448,13 @@ private def signalChecks (e : Env) : IO Unit := do
       "SIGTERM to a daemon saves the screen as of the signal, keeps it and removes the socket"
   let record := (← (IO.FS.readBinFile s!"{e.dir}/{name}.end").toBaseIO).toOption.map (·.toList)
   let (waitRc, _, waitErr) ← e.cli #["wait", name]
-  let status ← e.status name
+  let status ← e.state name
   let savedBy ← e.info name "saved"
   let says :=
     (lines (← e.out #["ls"])).any fun row =>
       has row s!" {name} " && has row "(resumable, saved by signal 15)"
   expect
-      (record == some (Linger.Session.Record.encode (.saved 15)) && status == Status.resumable &&
-        says &&
+      (record == some (Linger.Session.Record.encode (.saved 15)) && status == .resumable && says &&
         savedBy == some "15" &&
         waitRc == 143)
       s!"a session a signal saved says so in its end record, lists as resumable, saved by the \
@@ -572,7 +571,7 @@ def run : IO UInt32 :=
     -- this line left to mean anything.
     unless (← e.crashDaemon "boot") do
       throw (IO.userError "daemon for this LINGER_DIR not found, or the SIGKILL did not land")
-    expect ((← e.status "boot") == Status.resumable && has (← e.out #["ls"]) "boot")
+    expect ((← e.state "boot") == .resumable && has (← e.out #["ls"]) "boot")
         "killed session listed as resumable"
     -- attach again: fresh shell, restored screen, restored description, saved cwd
     let boot2 ← e.spawn #["attach", "boot"] cols rows
@@ -594,7 +593,7 @@ def run : IO UInt32 :=
     let _ ← boot2.awaitNeedle "LAST-42"
     boot2.bye
     IO.FS.writeFile trigger ""
-    let ended ← waitFor 5000 (return (← e.status "boot") == Status.exitedOk)
+    let ended ← waitFor 5000 (return (← e.state "boot") == .exitedOk)
     let ckpts2 ← e.dirNames ".ckpt"
     expect
         (ended && (← e.field "boot" "exit") == some "0" && ckpts2 == ["boot.ckpt"] &&
@@ -606,7 +605,7 @@ def run : IO UInt32 :=
     let (resumedRc, _, _) ← e.cli #["resume", "boot"]
     let live ←
       waitFor 4000 do
-          return (← e.status "boot") != Status.exitedOk && (← e.info "boot" "pid").isSome
+          return (← e.state "boot") != .exitedOk && (← e.info "boot" "pid").isSome
     let pid ← e.info "boot" "pid"
     let (againRc, _, _) ← e.cli #["resume", "boot"]
     expect
@@ -618,7 +617,7 @@ def run : IO UInt32 :=
     -- the resumed shell ends with nobody attached; the first attach shows its last screen and how
     -- it ended, and once it leaves nothing of the session stays but its end record
     let _ ← e.cli #["send", "boot", "exit\n"]
-    let _ ← waitFor 5000 (return (← e.status "boot") == Status.exitedOk)
+    let _ ← waitFor 5000 (return (← e.state "boot") == .exitedOk)
     let boot3 ← e.spawn #["attach", "boot"] cols rows
     let shown ← boot3.awaitNeedle "LAST-42" (ms := 5000)
     boot3.detach

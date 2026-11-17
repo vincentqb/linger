@@ -207,7 +207,8 @@ inductive Outcome where
   deriving Repr, Inhabited
 
 /-- A fixed checkpoint view. Redraw from the original snapshot on resize;
-discard input except the detach key. The title shows `status`, the saved session's.
+discard input except the detach key. The title shows the glyph of `status`'s state, the saved
+session's.
 Ownership was released after loading, so this viewer cannot block another process from
 resuming the session. A signal of `handbackSignals` ends it as the detach key does, and it answers
 `stopped` with the first that came, even during the handback (`watching`). -/
@@ -238,7 +239,7 @@ def viewSaved (name : String) (snapshot : Terminal.Vt.Vt) (status : Linger.Displ
               repaint := next
           let title :=
             Linger.Display.Title.compose name view.windowTitle
-              (String.singleton (Linger.Display.Status.icon status)) Terminal.Title.maxChars
+              (String.singleton (Linger.Display.Status.icon status.state)) Terminal.Title.maxChars
           writeAll stdoutFd (ByteArray.mk (Terminal.Title.update view title).toArray)
           lastSize := some size
         let ready ← poll fds events 200
@@ -261,13 +262,13 @@ def viewSaved (name : String) (snapshot : Terminal.Vt.Vt) (status : Linger.Displ
         termRestore stdinFd saved
 
 /-- What one attention sample tells an attached client: the summary its title shows, each local
-session's status, from which the next sample tells what changed, and the desktop notifications
+session's attention, from which the next sample tells what changed, and the desktop notifications
 to write to its terminal (`Display.Alert.announce`). -/
 structure Sample where
   /-- The attention summary over every local session. -/
   summary : String
-  /-- Each local session's name and status. -/
-  statuses : List (String × Linger.Display.Status.Status)
+  /-- Each local session's name and attention. -/
+  statuses : List (String × Linger.Display.Status.Attention)
   /-- The notifications of the sessions that changed into asking since the previous sample. -/
   alerts : List (List UInt8)
 
@@ -283,8 +284,8 @@ the program's sequences, as a title is (`Terminal.Title.update`), at most `alert
 the terminal handed back on the same path, and it answers `stopped` with the first that came,
 even during the handback (`watching`). -/
 private def converse (name : String) (fd : UInt32)
-    (sample : Option (List (String × Linger.Display.Status.Status)) → IO Sample) (readOnly : Bool)
-    (pending : IO.Ref (Option (Task (Except IO.Error Sample)))) : IO Outcome := do
+    (sample : Option (List (String × Linger.Display.Status.Attention)) → IO Sample)
+    (readOnly : Bool) (pending : IO.Ref (Option (Task (Except IO.Error Sample)))) : IO Outcome := do
   try
     watching handbackSignals Outcome.stopped fun stops => do
         let detachEnabled :=
@@ -304,7 +305,7 @@ private def converse (name : String) (fd : UInt32)
         let mut observer := Terminal.Vt.Vt.init 1 1
         let mut receivedOutput := false
         let mut titleDirty := false
-        let mut previous : Option (List (String × Linger.Display.Status.Status)) := none
+        let mut previous : Option (List (String × Linger.Display.Status.Attention)) := none
         let mut alerts : List (List UInt8) := []
         try
           while !leaving do
@@ -410,7 +411,7 @@ forwarded, detach key still works. The title appends
 joined after the socket closes, so the daemon sees a detach at once and no sample outlives the
 attachment. -/
 def attach (name : String) (fd : UInt32)
-    (sample : Option (List (String × Linger.Display.Status.Status)) → IO Sample)
+    (sample : Option (List (String × Linger.Display.Status.Attention)) → IO Sample)
     (readOnly : Bool := false) : IO Outcome := do
   let pending ← IO.mkRef (none : Option (Task (Except IO.Error Sample)))
   try

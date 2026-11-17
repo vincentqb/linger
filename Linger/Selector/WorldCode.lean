@@ -39,8 +39,9 @@ inductive Choice where
   | stopped (signal : UInt8)
 
 /-- Each listed target's status, read once per listing in one pass over its records: a name
-record starts a row, a blank record ends it, and its `status` record says its status, as
-`Picker.Snapshot.row` reads it. A target without one is unknown. -/
+record starts a row, a blank record ends it, its `status` record says its state and its
+`attention` record its attention, as `Picker.Snapshot.row` reads them. A target without a state is
+unknown, and one without an attention has none. -/
 private def statusesOf (snapshot : Linger.Selector.Picker.Snapshot) :
     Std.HashMap String Linger.Display.Status.Status :=
   Id.run do
@@ -54,7 +55,15 @@ private def statusesOf (snapshot : Linger.Selector.Picker.Snapshot) :
         current := none
       | ["status", name] =>
         if let some target := current then
-          statuses := statuses.insert target (Linger.Display.Status.ofName name)
+          statuses :=
+            statuses.insert target
+              { (statuses.getD target default) with state := Linger.Display.Status.ofName name }
+      | ["attention", name] =>
+        if let some target := current then
+          statuses :=
+            statuses.insert target
+              { (statuses.getD target default) with
+                attention := Linger.Display.Status.ofAttentionName name }
       | _ =>
         pure ()
     return statuses
@@ -117,17 +126,17 @@ def choose (executable : String) (readOnly : Bool := false) (heard : IO (Option 
       let current ← winsizeGet stdoutFd
       if dirty || current != size then
         let rows :=
-          Linger.Selector.Picker.frameRows state snapshot (statuses.getD · .unknown) loaded
-            withColor false remoteAge current.1.toNat current.2.toNat
+          Linger.Selector.Picker.frameRows state snapshot (statuses.getD · default) loaded withColor
+            false remoteAge current.1.toNat current.2.toNat
         let frame :=
           match shown with
           | some before =>
             if current == size then Linger.Selector.Picker.update before rows
             else
-              Linger.Selector.Picker.frame state snapshot (statuses.getD · .unknown) loaded
-                withColor false remoteAge current.1.toNat current.2.toNat
+              Linger.Selector.Picker.frame state snapshot (statuses.getD · default) loaded withColor
+                false remoteAge current.1.toNat current.2.toNat
           | none =>
-            Linger.Selector.Picker.frame state snapshot (statuses.getD · .unknown) loaded withColor
+            Linger.Selector.Picker.frame state snapshot (statuses.getD · default) loaded withColor
               false remoteAge current.1.toNat current.2.toNat
         if !frame.isEmpty then
           writeAll stdoutFd (ByteArray.mk frame.toArray)
@@ -163,7 +172,7 @@ def choose (executable : String) (readOnly : Bool := false) (heard : IO (Option 
           dirty := true
           state :=
             Linger.Selector.Picker.relist state true
-              (Linger.Display.View.sort (statuses.getD · .unknown) state.candidates)
+              (Linger.Display.View.sort (statuses.getD · default) state.candidates)
               state.descriptions
           snapshot := snapshot.keepColumns none
           sortNext := true
@@ -193,7 +202,7 @@ def choose (executable : String) (readOnly : Bool := false) (heard : IO (Option 
         -- were, so they never move under the person (`Picker.Snapshot.keepColumns`)
         let incomingStatuses := statusesOf incoming
         let ordered :=
-          Linger.Display.View.sort (incomingStatuses.getD · .unknown) incoming.candidates
+          Linger.Display.View.sort (incomingStatuses.getD · default) incoming.candidates
         let next :=
           if loaded then Linger.Selector.Picker.relist state sorting ordered incoming.descriptions
           else Linger.Selector.Picker.enter state left focus ordered incoming.descriptions

@@ -43,7 +43,7 @@ namespace Linger.Session.Suites.Robust
 open Linger.Session.Shell
 open Verify.Harness
 open Linger.Display.Status (Status)
-open Linger.Display.Listing (terminalListing rowFields rowStatus)
+open Linger.Display.Listing (terminalListing rowFields rowStatus statusFields)
 open Linger.Session (maxClients)
 open Linger.Session.Shell.Daemon (outbufCap ptyInCap claimWaitLine)
 
@@ -673,14 +673,13 @@ def run : IO UInt32 :=
     -- `state=live` and `rowStatus (.live [])`.
     let expected :=
       terminalListing false none
-        [rowFields "busy"
-            [("state", "live"), ("status", Linger.Display.Status.name (rowStatus (.live [])))]]
+        [rowFields "busy" (("state", "live") :: statusFields (rowStatus (.live [])))]
     expect (out.toUTF8.toList == expected)
         s!"busy daemon lists under its name, marked unknown (got '{out.trimAscii.toString}')"
     let recs := records porc
     expect
         (recs.contains ("name", "busy") &&
-          recs.contains ("status", Linger.Display.Status.name Status.unknown))
+          recs.contains ("status", Linger.Display.Status.name .unknown))
         "porcelain carries the name for a busy daemon"
     expect (socks == ["busy.sock"]) s!"busy daemon keeps its socket ({socks})"
     expect ((← e.cli #["send", "busy", "echo x\n"]).1 == 0) "busy daemon still reachable afterwards"

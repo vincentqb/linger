@@ -6,48 +6,88 @@ public section
 
 /-! # What the status headline theorems mean
 
-A session's status says what linger saw of it, in one glyph: the eight statuses, the observation
-a listing row is classified from, and the legend line each status stands for, written as
-predicates on that observation independently of the classifier that computes them. -/
+A session's status says what linger saw of it in two columns, each a fact of its own: whether
+there is something for you since you last looked, its attention, and what the session is, its
+state. The observation a listing row is classified from, and the legend line each attention and
+each state stands for, are written as predicates on that observation independently of the
+classifier that computes them. -/
 
 namespace Linger.Display.Status
 
-/-- Ten mutually exclusive states. A row shows the first that applies, in the order `?`, the
-endings `✓` and `✗`, `~`, `⚑`, then the progress its program declared, `!`, `⣷` or `⣤`, a command
-its shell's marks say runs, `⣷`, then `⣿`, `⣀`: a program waiting for you outranks one that says
-how it is doing. -/
-inductive Status where
+/-- Whether there is something for you since you last looked, a row's first column. Three
+mutually exclusive answers, read from the bells, notifications and history lines alone: an ask
+wins when both hold. -/
+inductive Attention where
+  /-- `⚑` — the program rang the bell or posted a desktop notification since you looked. -/
+  | asked
+  /-- `∙` — new lines entered the session's history since you looked, or its program ended
+  while nobody was attached. -/
+  | unread
+  /-- blank — neither. -/
+  | none
+  deriving DecidableEq, Repr
+
+instance : Inhabited Attention := ⟨.none⟩
+
+/-- What the session is, a row's second column: eight mutually exclusive states, read from the
+answer, the daemon, the ending, the progress the program declared and its shell's marks alone. -/
+inductive State where
   /-- `?` — no answer: the daemon did not answer, or the saved session could not be read. -/
   | unknown
   /-- `✗` — the program ended any other way: a nonzero exit, a signal, or an ending linger did
   not see. -/
   | exitedBad
-  /-- `✓` — the program exited 0. It did its job. -/
+  /-- `✓` — the program exited 0. -/
   | exitedOk
   /-- `~` — no daemon, but a checkpoint is on disk whose program was interrupted before it
   ended: attach resumes it. -/
   | resumable
-  /-- `⚑` — since the session was last looked at, its program rang the bell or posted a desktop
-  notification, and it is still running: it asks for you. -/
-  | asks
   /-- `!` — its program declared that an error stopped its progress, ConEmu's OSC `9;4` state 2,
-  and it still runs: it needs you. -/
+  and it still runs. -/
   | errored
-  /-- `⣿` — new lines entered the session's history since it was last looked at, and its program
-  neither asks nor says it is working. -/
-  | wantsYou
   /-- `⣷` — its program says it is working: it declared progress under way, OSC `9;4` state 1 or
   3, or, declaring none, its shell's marks say a command runs. -/
   | working
   /-- `⣤` — its program declared its progress paused, ConEmu's OSC `9;4` state 4. -/
   | paused
-  /-- `⣀` — nothing new since you last looked. -/
+  /-- `⣀` — it runs and declares nothing. -/
   | idle
-  deriving DecidableEq, Repr, Inhabited
+  deriving DecidableEq, Repr
+
+instance : Inhabited State := ⟨.unknown⟩
+
+/-- A row's status: its attention and its state, two columns. -/
+structure Status where
+  /-- Whether there is something for you. -/
+  attention : Attention
+  /-- What the session is. -/
+  state : State
+  deriving Repr
+
+/-- Two statuses are equal when both columns are, decided column by column so that a proof by
+`decide` reduces it. -/
+instance : DecidableEq Status := fun a b =>
+  if h : a.attention = b.attention ∧ a.state = b.state then
+    isTrue
+      (by
+        cases a; cases b; simp_all)
+  else
+    isFalse fun e =>
+      h
+        (by
+          subst e; exact ⟨rfl, rfl⟩)
+
+instance : Inhabited Status := ⟨⟨.none, .unknown⟩⟩
+
+/-- A state of a running program: `!`, `⣷`, `⣤` or `⣀`. -/
+@[expose]
+def State.live : State → Bool
+  | .errored | .working | .paused | .idle => true
+  | _ => false
 
 /-- What a row is classified from. Booleans the runtime computes, so the
 classifier depends on nothing else — no clock, no filesystem. Each is a signal's: none is a guess
-from timing. -/
+from timing. The last two are attention's sources and the first five the state's. -/
 structure Obs where
   /-- We got a trustworthy answer about this row. -/
   known : Bool := true
@@ -62,46 +102,61 @@ structure Obs where
   /-- The program's shell's marks say a command runs. -/
   running : Bool := false
   /-- New lines entered the session's history since it was last looked at (attach, output while
-  attached, or capture). -/
+  attached, or capture), or its program ended while nobody was attached. -/
   unseen : Bool := false
   /-- A bell or a desktop notification since the session was last looked at. -/
   asks : Bool := false
   deriving DecidableEq, Repr, Inhabited
 
-/-- The legend, as predicates on an observation: the observation each status's line in
+/-- The attention legend, as predicates on an observation: the observation each attention's
+line in `linger help` describes. -/
+@[expose]
+def Attention.Is : Attention → Obs → Prop
+  | .asked, o => o.asks = true
+  | .unread, o => o.asks = false ∧ o.unseen = true
+  | .none, o => o.asks = false ∧ o.unseen = false
+
+/-- The state legend, as predicates on an observation: the observation each state's line in
 `linger help` describes. -/
 @[expose]
-def Is : Status → Obs → Prop
+def State.Is : State → Obs → Prop
   | .unknown, o => o.known = false
   | .exitedOk, o => o.known = true ∧ o.exit = some 0
   | .exitedBad, o => o.known = true ∧ ∃ n, o.exit = some n ∧ n ≠ 0
   | .resumable, o => o.known = true ∧ o.exit = none ∧ o.daemonUp = false
-  | .asks, o => o.known = true ∧ o.exit = none ∧ o.daemonUp = true ∧ o.asks = true
-  | .errored, o =>
-    o.known = true ∧ o.exit = none ∧ o.daemonUp = true ∧ o.asks = false ∧ o.progress = some .error
+  | .errored, o => o.known = true ∧ o.exit = none ∧ o.daemonUp = true ∧ o.progress = some .error
   | .working, o =>
     o.known = true ∧
       o.exit = none ∧
       o.daemonUp = true ∧
-      o.asks = false ∧
       (o.progress = some .normal ∨
         o.progress = some .indeterminate ∨ o.progress = none ∧ o.running = true)
-  | .paused, o =>
-    o.known = true ∧ o.exit = none ∧ o.daemonUp = true ∧ o.asks = false ∧ o.progress = some .paused
-  | .wantsYou, o =>
-    o.known = true ∧
-      o.exit = none ∧
-      o.daemonUp = true ∧ o.asks = false ∧ o.progress = none ∧ o.running = false ∧ o.unseen = true
+  | .paused, o => o.known = true ∧ o.exit = none ∧ o.daemonUp = true ∧ o.progress = some .paused
   | .idle, o =>
-    o.known = true ∧
-      o.exit = none ∧
-      o.daemonUp = true ∧ o.asks = false ∧ o.progress = none ∧ o.running = false ∧ o.unseen = false
+    o.known = true ∧ o.exit = none ∧ o.daemonUp = true ∧ o.progress = none ∧ o.running = false
+
+/-- The legend, as predicates on an observation: a status describes an observation when its
+attention and its state each do. -/
+@[expose]
+def Is (s : Status) (o : Obs) : Prop := s.attention.Is o ∧ s.state.Is o
 
 /-- A wrong classifier: the rule before asks, which lumps a bell and a notification in with the
-rest of what a session shows, so a running session that asks shows another status. The headline that a bell
-or a notification since the last look makes a running session ask is shown to reject it. -/
+rest of what a session shows, so a running session that asks shows another status. The headline
+that a bell or a notification since the last look makes a running session ask is shown to reject
+it. -/
 @[expose]
 def lumped (classify : Obs → Status) (o : Obs) : Status := classify { o with asks := false }
+
+/-- A wrong classifier: the single glyph before a row had two columns, which shows one of ten
+statuses, so a flag hides what a running program does and what it declared hides its new lines.
+The headlines that a row shows every attention with every state, and that each column reads only
+its own sources, are shown to reject it. -/
+@[expose]
+def single (classify : Obs → Status) (o : Obs) : Status :=
+  if (classify o).state.live then
+    if (classify o).attention = .asked then ⟨.asked, .idle⟩
+    else if (classify o).state = .idle then classify o else ⟨.none, (classify o).state⟩
+  else ⟨.none, (classify o).state⟩
 
 end Linger.Display.Status
 
@@ -130,9 +185,9 @@ inductive Row where
   program ended, cannot be read. A checkpoint that will not load would be one too, but the
   listing does not load checkpoints. -/
   | broken
-  /-- From a peer's porcelain over ssh: whether the peer lists the session live,
-  and the peer's own `status` name, read by `Status.ofName`. -/
-  | remote (live : Bool) (peerStatus : String)
+  /-- From a peer's porcelain over ssh: whether the peer lists the session live, and the peer's
+  own `attention` and `status` names, read by `Status.ofAttentionName` and `Status.ofName`. -/
+  | remote (live : Bool) (peerAttention peerStatus : String)
   /-- A socket whose daemon holds the name, read from the name's end record instead of asking:
   the progress the daemon last saw its program declare, whether its shell's marks said a command
   runs, new lines in its history since the session was last looked at, and a bell or a
@@ -142,6 +197,7 @@ inductive Row where
 
 /-- The fields of a listing record a human row reads, each from its one source: the socket's
 name; the status and how a saved session ended, from the caller and the name's end record;
+its attention, from the same reply or record;
 `pid` and `cmd`, which tell a busy daemon or a peer's row; `source`, which marks a row a source
 linger only reads, as a saved tmux pane's, gives; the description, which only the user
 sets, as the field `description`; the title, which the session's program gave its window, the
@@ -153,9 +209,9 @@ reports; the seconds since the program last wrote; and the watchers. No other fi
 a human row shows. -/
 @[expose]
 def sources : List String :=
-  ["name", "status", "state", "saved", "signal", "outcome", "exit", "pid", "cmd", "source",
-    "description", "title", "status_text", "notice", "lastcmd", "lastexit", "login", "fg", "fgpid",
-    "fgdir", "idle", "clients"]
+  ["name", "attention", "status", "state", "saved", "signal", "outcome", "exit", "pid", "cmd",
+    "source", "description", "title", "status_text", "notice", "lastcmd", "lastexit", "login", "fg",
+    "fgpid", "fgdir", "idle", "clients"]
 
 /-- The fields a human row prints of, each as clean text: every field it reads (`sources`) but
 the processes and the login flag, which only decide what it prints. -/
@@ -172,22 +228,22 @@ structure Layout where
   widths : List Nat := []
   deriving DecidableEq, BEq, Repr, Inhabited
 
-/-- The display columns each part of a row laid out by `layout` takes: the glyph and a space, the
-name column, then each later column with a space on each side, or nothing for a column no row
+/-- The display columns each part of a row laid out by `layout` takes: the attention's mark and a
+space, the state's glyph and a space, the name column, then each later column with a space on each side, or nothing for a column no row
 fills. -/
 @[expose]
 def Layout.spans (layout : Layout) : List Nat :=
-  2 :: layout.nameCol :: layout.widths.map fun w => if w = 0 then 0 else w + 2
+  2 :: 2 :: layout.nameCol :: layout.widths.map fun w => if w = 0 then 0 else w + 2
 
 /-- The fields each cell after the name reads, in order: the caption, which says how a session
 that is not running stands, the program's title or status text or a description an older linger
-saved, a notification's text and how the last command ended; the foreground program, which the
+saved, a notification's text while it asks and how the last command ended; the foreground program, which the
 caption may already name; its directory, which the caption may already hold; the age, which a
 printing session lacks; and the watchers. -/
 @[expose]
 def cellSources : List (List String) :=
-  [["status", "state", "saved", "signal", "outcome", "exit", "pid", "cmd", "source", "description",
-      "title", "status_text", "notice", "lastcmd", "lastexit"],
+  [["attention", "status", "state", "saved", "signal", "outcome", "exit", "pid", "cmd", "source",
+      "description", "title", "status_text", "notice", "lastcmd", "lastexit"],
     ["fg", "login", "fgpid", "pid", "cmd", "description", "title", "status_text"],
     ["fgdir", "description", "title", "status_text"], ["status", "idle"], ["clients"]]
 
@@ -287,79 +343,82 @@ view lists the sessions that want attention first is shown to reject it. -/
 @[expose]
 def View.arrival {α : Type} (_ : α → Status.Status) (rows : List α) : List α := rows
 
-/-- A wrong order: each status has its own place, a working session's before a quiet one's, so
-a row moves whenever its program starts or stops saying it works. The headline that a running session's
-row keeps its place is shown to reject it. -/
+/-- The first key a view orders rows by, whether there is something for you: `⚑` 0, `∙` 1, and
+2 for nothing. -/
 @[expose]
-def View.byActivity {α : Type} (status : α → Status.Status) (rows : List α) : List α :=
-  [Status.Status.asks, .unknown, .exitedBad, .errored, .wantsYou, .exitedOk, .working, .paused,
-        .idle, .resumable].flatMap
-    fun st => rows.filter fun x => status x == st
+def View.needs : Status.Attention → Nat
+  | .asked => 0
+  | .unread => 1
+  | .none => 2
 
-/-- The first key a view orders rows by, what needs you to act: `⚑` 0, then `✗` 1, `!` 2, `?` 3
-and `⣿` 4, and 5 for every status that needs nothing of you. -/
+/-- The second key a view orders rows by, where a session is in its life: running 0, `!`, `⣷`,
+`⣤` and `⣀` in one place, saved 1, `~`, which a resume runs again, ended 2, `✓` and `✗`, and 3 for
+`?`, a session linger could not read. -/
 @[expose]
-def View.needs : Status.Status → Nat
-  | .asks => 0
-  | .exitedBad => 1
-  | .errored => 2
-  | .unknown => 3
-  | .wantsYou => 4
-  | _ => 5
-
-/-- The second key a view orders rows by, where a session is in its life: running 0, `⣷`, `⣤`
-and `⣀` in one place, saved 1, `~`, which a resume runs again, and ended 2, `✓`. A status that
-needs you ranks by the first key alone, and takes its session's place: `⚑`, `!` and `⣿` running,
-`✗` ended and `?`, of a session linger could not read, with the running ones. -/
-@[expose]
-def View.lifecycle : Status.Status → Nat
+def View.lifecycle : Status.State → Nat
+  | .errored | .working | .paused | .idle => 0
   | .resumable => 1
   | .exitedOk | .exitedBad => 2
-  | _ => 0
+  | .unknown => 3
 
-/-- A wrong order: the one before views ordered by lifecycle, `⚑ ✗ ! ? ⣿`, then the running
-sessions, then `✓`, then `~`, so a session that ended sits above one a resume runs again. The
-headline that a view is ordered by what needs you, then by lifecycle, is shown to reject it. -/
+/-- Rows in the order of `places`, each a list of statuses, every attention's places in turn
+from `⚑` to blank. -/
+@[expose]
+def View.byPlaces {α : Type} (places : List (List Status.State)) (status : α → Status.Status)
+    (rows : List α) : List α :=
+  ([Status.Attention.asked, .unread, .none].flatMap fun a =>
+        places.map fun place => (a, place)).flatMap
+    fun (a, place) =>
+    rows.filter fun x => (status x).attention == a && place.contains (status x).state
+
+/-- A wrong order: each state has its own place, a working session's before a quiet one's, so
+a row moves whenever its program starts or stops saying it works. The headline that a running
+session's row keeps its place is shown to reject it. -/
+@[expose]
+def View.byActivity {α : Type} (status : α → Status.Status) (rows : List α) : List α :=
+  View.byPlaces
+    [[.working], [.paused], [.errored], [.idle], [.resumable], [.exitedOk, .exitedBad], [.unknown]]
+    status rows
+
+/-- A wrong order: one that puts ended sessions above those a resume runs again. The headline
+that a view is ordered by attention, then by lifecycle, is shown to reject it. -/
 @[expose]
 def View.endedAboveSaved {α : Type} (status : α → Status.Status) (rows : List α) : List α :=
-  ([[Status.Status.asks], [.exitedBad], [.errored], [.unknown], [.wantsYou],
-          [.working, .paused, .idle], [.exitedOk], [.resumable]] :
-        List (List Status.Status)).flatMap
-    fun place => rows.filter fun x => place.contains (status x)
+  View.byPlaces
+    [[.errored, .working, .paused, .idle], [.exitedOk, .exitedBad], [.resumable], [.unknown]] status
+    rows
 
-/-- A wrong order: the one before views ranked by what needs you to act, `⚑ ? ✗ ! ⣿`, then `✓`,
-the running sessions, `⣷`, `⣤` and `⣀` together, then `~`, so a session that ended well sits above
-the live ones. The headline that no row that ended well or can only be resumed sits above a live
-one is shown to reject it. -/
+/-- A wrong order: one that puts a session that ended or can only be resumed above the live ones
+of its attention. The headline that no row that ended or can only be resumed sits above a live one
+of its attention is shown to reject it. -/
 @[expose]
 def View.doneAboveLive {α : Type} (status : α → Status.Status) (rows : List α) : List α :=
-  ([[Status.Status.asks], [.unknown], [.exitedBad], [.errored], [.wantsYou], [.exitedOk],
-          [.working, .paused, .idle], [.resumable]] :
-        List (List Status.Status)).flatMap
-    fun place => rows.filter fun x => place.contains (status x)
+  View.byPlaces
+    [[.exitedOk, .exitedBad, .resumable], [.errored, .working, .paused, .idle], [.unknown]] status
+    rows
 
 end Linger.Display
 
 namespace Linger.Display.Alert
 
-open Linger.Display.Status (Status)
+open Linger.Display.Status (Attention)
 
 /-- A wrong alert: one for every session that asks in each sample, the first included, whether
 or not it asked before, and never for the attached session. The headline that an alert fires once
 per change into asking is shown to reject it. -/
 @[expose]
-def everySample (_ : Option (List (String × Status))) (current : List (String × Status))
+def everySample (_ : Option (List (String × Attention))) (current : List (String × Attention))
     (own : String) : List String :=
-  (current.filter fun row => row.2 == .asks && row.1 != own).map (·.1)
+  (current.filter fun row => row.2 == .asked && row.1 != own).map (·.1)
 
 /-- A wrong alert: one for every session that changed into asking since the previous sample, the
 attached session included, whose own bell its terminal already hears. The headline that an
 alert never names the attached session is shown to reject it. -/
 @[expose]
-def withSelf (previous : Option (List (String × Status))) (current : List (String × Status))
+def withSelf (previous : Option (List (String × Attention))) (current : List (String × Attention))
     (_ : String) : List String :=
   match previous with
   | none => []
-  | some before => (current.filter fun row => row.2 == .asks && !before.contains row).map (·.1)
+  | some before => (current.filter fun row => row.2 == .asked && !before.contains row).map (·.1)
 
 end Linger.Display.Alert

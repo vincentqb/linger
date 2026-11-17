@@ -32,7 +32,7 @@ open Linger.Display.Listing (terminalListing)
 /-- The row of session `name` in a plain `linger ls`, or `""` when none lists it. -/
 def rowOf (e : Env) (name : String) : IO String := do
   let rows ← lines <$> e.out #["ls"]
-  return (rows.find? fun row => (row.splitOn " ").getD 1 "" == name).getD ""
+  return (rows.find? fun row => rowName row == name).getD ""
 
 /-- A row shows the session's present: a description an older linger saved, where the program's
 title would be while the program sets none, until a rename ends it; the program in its foreground
@@ -129,6 +129,48 @@ def aligned (e : Env) : IO Unit :=
         s!"each field starts at one display column in every row: {short} / {long}"
     e.killAll #["a", "longer-name"]
 
+/-- A row shows two facts, each in its own column: whether there is something for you, then what
+the session is (`row_pair`). A program that rang while it declares itself working lists `⚑ ⣷`, one
+that printed more lines than its screen holds `∙ ⣀`, a quiet program on the alternate screen, which
+keeps no history, a blank mark and `⣀`, and one that ended while nobody was attached `∙ ✗`. A view
+lists them by attention, then by lifecycle, then by name, and the summary counts attention alone;
+the porcelain gives each column one machine field. -/
+def columns (e : Env) : IO Unit := do
+  let mark := fun (a : Linger.Display.Status.Attention) => Linger.Display.Status.mark a
+  let icon := fun (st : Linger.Display.Status.State) => Linger.Display.Status.icon st
+  let head := fun (a : Linger.Display.Status.Attention) (st : Linger.Display.Status.State) name =>
+    s!"{mark a} {icon st} {name}"
+  let _ ← e.cli #["start", "a-alt", "sh", "-c", "printf '\\033[?1049h'; exec sleep 100"]
+  let _ ← e.cli #["start", "b-printed", "sh", "-c", "seq 100; exec sleep 100"]
+  let _ ← e.cli #["start", "c-rang", "sh", "-c", "printf '\\033]9;4;3;\\007\\a'; exec sleep 100"]
+  let _ ← e.cli #["start", "d-ended", "sh", "-c", "seq 100; exit 3"]
+  let settled ←
+    waitFor patienceMs do
+        return (← e.status "c-rang") == ⟨.asked, .working⟩ &&
+            (← e.status "b-printed") == ⟨.unread, .idle⟩ &&
+            (← e.field "a-alt" "fg") == some "sleep 100" &&
+            (← e.state "d-ended") == .exitedBad
+  let rows := lines (← e.out #["ls"])
+  let rowOf := fun name => (rows.find? fun row => rowName row == name).getD ""
+  expect (settled && (rowOf "c-rang").startsWith (head .asked .working "c-rang"))
+      s!"a session that rang while it works shows both, {mark .asked} {icon .working}: {rows}"
+  expect ((rowOf "b-printed").startsWith (head .unread .idle "b-printed"))
+      s!"a session that printed lines nobody saw shows {mark .unread} {icon .idle}: {rows}"
+  expect ((rowOf "a-alt").startsWith (head .none .idle "a-alt"))
+      s!"a quiet program on the alternate screen shows a blank mark and {icon .idle}: {rows}"
+  expect ((rowOf "d-ended").startsWith (head .unread .exitedBad "d-ended"))
+      s!"an ending nobody was attached to see is news, {mark .unread} {icon .exitedBad}: {rows}"
+  let order := rows.map rowName
+  expect (order == ["c-rang", "b-printed", "d-ended", "a-alt"])
+      s!"a view lists by attention, then by lifecycle, then by name: {order}"
+  let (src, summary, _) ← e.cli #["ls", "--summary"]
+  expect (src == 0 && summary == Linger.Display.Status.summary [.asked, .unread, .unread] ++ "\n")
+      s!"the summary counts attention alone: {summary.trimAscii}"
+  let fields := (← e.row "c-rang").filter fun kv => kv.1 == "attention" || kv.1 == "status"
+  expect (fields == [("status", "working"), ("attention", "asked")])
+      s!"the porcelain gives each column one machine field: {fields}"
+  e.killAll #["a-alt", "b-printed", "c-rang", "d-ended"]
+
 /-- The overview suite: explicit `linger ls` lists, exits and never reads stdin. -/
 def run : IO UInt32 :=
   Env.suite "overview" fun e => do
@@ -184,5 +226,6 @@ def run : IO UInt32 :=
     present e
     aligned e
     echoes e
+    columns e
 
 end Linger.Display.Suites.Overview

@@ -2,6 +2,7 @@ module
 
 public import Os.WorldCode
 public import Linger.Display.CoreCode.Status
+public import Linger.Display.CoreCode.Listing
 public import Terminal.CoreCode.Render
 
 public section
@@ -10,7 +11,7 @@ public section
 
 The suites drive the real binary through ptys, so they are `IO` and tested, not
 proved. Assertions read the implementation's definitions (`status` parses with
-`Linger.Display.Status.ofName`), so renaming a status constructor is a compile error.
+`Linger.Display.Listing.statusOf`), so renaming a status constructor is a compile error.
 Ptys, sockets and polling come from `Os.Shell`.
 
 OUTPUT CONTRACT — load-bearing, do not reformat. Every check prints `PASS <name>`,
@@ -584,11 +585,35 @@ def Env.field (e : Env) (name field : String) : IO (Option String) := do
       found := some v
   return found
 
-/-- A session's status column as the `Status` type, parsed with `Linger.Display.Status.ofName`
-rather than compared as a string literal, so a renamed constructor is a compile error in the
-suites that read it. -/
+/-- The name a human `linger ls` row lists: its first word after the attention's mark, the
+state's glyph and the space after each. -/
+def rowName (row : String) : String := ((String.ofList (row.toList.drop 4)).splitOn " ").headD ""
+
+/-- One session's `ls --porcelain` row, from one listing: its records after its `name` record,
+until the next row's. -/
+def Env.row (e : Env) (name : String) : IO (List (String × String)) := do
+  let mut cur : Option String := none
+  let mut row : List (String × String) := []
+  for (k, v) in records (← e.out #["ls", "--porcelain"]) do
+    if k == "name" then
+      cur := some v
+    else if cur == some name then
+      row := row ++ [(k, v)]
+  return row
+
+/-- A session's two status columns, its attention and its state, from one listing, parsed with
+`Linger.Display.Listing.statusOf` rather than compared as string literals, so a renamed
+constructor is a compile error in the suites that read it. -/
 def Env.status (e : Env) (name : String) : IO Linger.Display.Status.Status := do
-  return Linger.Display.Status.ofName ((← e.field name "status").getD "")
+  return Linger.Display.Listing.statusOf (← e.row name)
+
+/-- A session's state column, as `Env.status` reads it. -/
+def Env.state (e : Env) (name : String) : IO Linger.Display.Status.State := do
+  return (← e.status name).state
+
+/-- A session's attention column, as `Env.status` reads it. -/
+def Env.attention (e : Env) (name : String) : IO Linger.Display.Status.Attention := do
+  return (← e.status name).attention
 
 /-- The pid of the daemon behind `name`. `linger ls` is answered over
 `<LINGER_DIR>/<name>.sock`, so the reply comes from this directory's daemon. Its `pid` is

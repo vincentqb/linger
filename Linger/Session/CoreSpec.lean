@@ -51,7 +51,7 @@ def Outcome.answer : Outcome → Os.Answer
 
 /-- What a daemon last saw of its program: the progress it declared (`!`, `⣷`, `⣤`), whether its
 shell's marks say a command runs (`⣷`), whether new lines entered the session's history since it
-was last looked at (`⣿`), and whether, since then, the program rang the bell or posted a desktop
+was last looked at (`∙`), and whether, since then, the program rang the bell or posted a desktop
 notification (`⚑`), as `info` reports `progress`, `running`, `unseen` and `asks`. -/
 structure Seen where
   /-- The progress the program last declared, ConEmu's OSC `9;4`; `none` when it declared none

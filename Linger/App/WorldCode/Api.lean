@@ -738,19 +738,18 @@ says what it saw is not asked. -/
 private def summaryText : IO String := do
   let rows ← localRows (some ((← monotonicMs) + 250)) (statusOnly := true)
   return Linger.Display.Status.summary
-      (rows.map fun info => Linger.Display.Status.ofName ((info.lookup "status").getD "unknown"))
+      (rows.map fun info => (Linger.Display.Listing.statusOf info).attention)
 
 /-- One attention sample for a client attached to `own`: the summary `summaryText` gives, each
-local session's status, and a notification for each session that changed into asking since
+local session's attention, and a notification for each session that changed into asking since
 `previous`, other than `own` (`Alert.announce`), with its notification's text, which only those
 sessions are asked for, or `bell`. -/
 private def attentionSample (own : String)
-    (previous : Option (List (String × Linger.Display.Status.Status))) : IO Client.Sample := do
+    (previous : Option (List (String × Linger.Display.Status.Attention))) : IO Client.Sample := do
   let rows ← localRows (some ((← monotonicMs) + 250)) (statusOnly := true)
   let statuses :=
     rows.map fun info =>
-      ((info.lookup "name").getD "",
-        Linger.Display.Status.ofName ((info.lookup "status").getD "unknown"))
+      ((info.lookup "name").getD "", (Linger.Display.Listing.statusOf info).attention)
   let announced := Linger.Display.Alert.announce previous statuses own
   let told ←
     if announced.isEmpty then
@@ -973,7 +972,7 @@ private def cmdList (env : Env) (porcelain : Bool)
   for ((host, _), output) in remotes.zip remote.toList do
     match output with
     | none =>
-      rows := rows ++ [[("host", host), ("status", Linger.Display.Status.name .unknown)]]
+      rows := rows ++ [("host", host) :: Linger.Display.Listing.statusFields default]
     | some output =>
       for row in Linger.Target.Remote.parse output do
         -- a remote row is built from what the peer's porcelain says about identity
@@ -983,10 +982,9 @@ private def cmdList (env : Env) (porcelain : Bool)
         rows :=
           rows ++
             [[("name", s!"{row.name}@{host}"), ("cmd", row.cmd),
-                ("state", if row.live then "live" else "resumable"),
-                ("status",
-                  Linger.Display.Status.name
-                    (Linger.Display.Listing.rowStatus (.remote row.live row.status)))]]
+                  ("state", if row.live then "live" else "resumable")] ++
+                Linger.Display.Listing.statusFields
+                  (Linger.Display.Listing.rowStatus (.remote row.live row.attention row.status))]
   let records : Linger.Session.Records :=
     { sockets := (← Paths.listSocketNames).map (·.name),
       checkpoints := (← Paths.listCkptNames).map (·.name),

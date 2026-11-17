@@ -171,7 +171,7 @@ def run : IO UInt32 :=
         (settled && burstRc == 0 && burstPid.isSome && burst.all (· == 0) &&
           has (← e.out #["capture", "--history", "q-burst"]) "QUIET-42")
         s!"a session whose output stopped and is saved sleeps ({burst} wakeups in 3 s)"
-    let unread := s!"1{Linger.Display.Status.icon .wantsYou}\n"
+    let unread := Linger.Display.Status.summary [.unread] ++ "\n"
     expectMeasured (idleAsked.isSome && burstAsked.isSome)
         (idlePid.isSome && burstPid.isSome && idleAsked.all (· == 0) && burstAsked.all (· == 0) &&
           summaries.all (fun (rc, text, _) => rc == 0 && text == unread))

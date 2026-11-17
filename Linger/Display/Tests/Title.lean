@@ -11,11 +11,11 @@ open Terminal.Title (maxChars)
 
 example : compose "work" "" "" maxChars = "work" := by native_decide
 
-example : compose "work" "" "1⚑ 2⣿ 1✗" maxChars = "work · 1⚑ 2⣿ 1✗" := by native_decide
+example : compose "work" "" "1⚑ 2∙" maxChars = "work · 1⚑ 2∙" := by native_decide
 
 example : compose "work" "editor" "" maxChars = "work · editor" := by native_decide
 
-example : compose "work" "editor" "2⣿" maxChars = "work · editor · 2⣿" := by native_decide
+example : compose "work" "editor" "2∙" maxChars = "work · editor · 2∙" := by native_decide
 
 example : compose "../my build ✓" "" "" maxChars = "../my build ✓" := by native_decide
 
@@ -24,10 +24,10 @@ example : compose "bad\x1bname" "" "" maxChars = "bad_name" := by native_decide
 example :
     String.ofList
         (Terminal.Title.payload
-          (compose "work" (String.ofList (List.replicate 500 'x')) "1✗" maxChars)) =
-      "work · " ++ String.ofList (List.replicate 488 'x') ++ " · 1✗" := by
+          (compose "work" (String.ofList (List.replicate 500 'x')) "1∙" maxChars)) =
+      "work · " ++ String.ofList (List.replicate 488 'x') ++ " · 1∙" := by
   native_decide
 
-example : compose "work" "editor" "1✗" 9 = "work · 1✗" := by native_decide
+example : compose "work" "editor" "1∙" 9 = "work · 1∙" := by native_decide
 
 end Linger.Display.Title.Tests

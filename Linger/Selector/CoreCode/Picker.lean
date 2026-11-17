@@ -155,8 +155,8 @@ private def presentation (snapshot : Snapshot) (layout : Linger.Display.Listing.
 structure HighlightedChar where
   /-- One displayed Unicode scalar. -/
   char : Char
-  /-- The status whose badge style it carries; none outside the badge. -/
-  status : Option Linger.Display.Status.Status
+  /-- The SGR parameters of the badge style it carries; none outside the badges. -/
+  style : Option (List Nat)
   /-- Whether it receives query emphasis. -/
   matched : Bool
   deriving BEq, Repr
@@ -164,7 +164,7 @@ structure HighlightedChar where
 private def markPiece (marks : Array Bool) (piece : Linger.Display.Listing.RowPiece) :
     List HighlightedChar :=
   piece.text.zipIdx.map fun (char, index) =>
-    { char, status := piece.status,
+    { char, style := piece.style,
       matched :=
         match piece.nameSpan with
         | none => false
@@ -384,9 +384,7 @@ def frameLines (state : State) (snapshot : Snapshot)
               (emphasizeCells (highlightedPresentation snapshot layout state.query item)).map
                 fun char =>
                 (String.singleton char.char,
-                  selection ++
-                    (if withColor then char.status.toList.map Linger.Display.Status.style
-                    else []) ++
+                  selection ++ (if withColor then char.style.toList else []) ++
                     if char.matched then [[4]] else [])
         let left :=
           (choices.take start ++ choices.drop (start + shown)).filterMap fun item =>

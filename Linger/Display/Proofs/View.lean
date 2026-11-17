@@ -6,10 +6,9 @@ import all Init.Data.Repr
 
 /-! # Views of many sessions — nothing that needs you is hidden, and every count adds up
 
-A view's order lists every place once, those that ask for someone first and those whose session
-ended well or can only be resumed last, and a running session
-has one place whether it is printing or quiet; sorting by it loses no row, keeps the listing's
-order within a place and moves no row whose session only starts or stops printing. Groups count exactly and add up to the
+A view's order lists every place once, those with something for you first, and a running
+session has one place whatever its activity; sorting by it loses no row, keeps the listing's
+order within a place and moves no row whose activity alone changes. Groups count exactly and add up to the
 rows they sum up, a group's name starts every member's name, and the depth names are cut at is
 the most even of those that help a summary. -/
 
@@ -18,20 +17,20 @@ namespace Linger.Display.View
 open Linger.Display.Status (Status)
 
 /-- Every status's place is in a view's order, -/
-theorem place_mem_order (st : Status) : place st ∈ order := by cases st <;> decide
+theorem place_mem_order (st : Status) : place st ∈ order := by
+  obtain ⟨a, s⟩ := st
+  cases a <;> cases s <;> decide
 
 /-- …once. -/
 theorem order_nodup : order.Nodup := by decide
 
-/-- A quiet session's place is a working one's… -/
-theorem place_idle : place .idle = place .working := rfl
+/-- A running session's place is a working one's, whatever its activity. -/
+theorem place_live (a : Status.Attention) (s : Status.State) (h : s.live = true) :
+    place ⟨a, s⟩ = place ⟨a, .working⟩ := by
+  cases s <;> simp_all [place, placeState, Status.State.live]
 
-/-- …as is a paused one's. -/
-theorem place_paused : place .paused = place .working := rfl
-
-/-- A status asks for someone exactly when its place does. -/
-theorem place_attention (st : Status) : place st ∈ Status.attention ↔ st ∈ Status.attention := by
-  cases st <;> decide
+/-- A status's place keeps its attention. -/
+theorem place_attention (st : Status) : (place st).attention = st.attention := rfl
 
 /-- Rows that no two filters both keep are, between the two, the rows either keeps. -/
 theorem filter_append_filter_perm {α : Type} (p q : α → Bool) (l : List α)
@@ -84,89 +83,38 @@ theorem sort_perm {α : Type} (status : α → Status) (rows : List α) :
   rw [hall] at h
   exact h
 
-/-- **Nothing that needs you is hidden**: a view lists every row whose status asks for someone
-before any row whose status does not. -/
+/-- A view's order cut where the places with something for you end. -/
+theorem order_split :
+    order =
+      ([Status.Attention.asked, .unread].flatMap fun a =>
+          [Status.State.working, .resumable, .exitedOk, .unknown].map fun st => ⟨a, st⟩) ++
+        [Status.State.working, .resumable, .exitedOk, .unknown].map fun st => ⟨.none, st⟩ := rfl
+
+/-- **Nothing that needs you is hidden**: a view lists every row with something for you before
+any row with nothing. -/
 theorem sort_attention_first {α : Type} (status : α → Status) (rows : List α) :
     ∃ first rest,
       sort status rows = first ++ rest ∧
-        (∀ x ∈ first, status x ∈ Status.attention) ∧ ∀ x ∈ rest, status x ∉ Status.attention := by
+        (∀ x ∈ first, (status x).attention ≠ .none) ∧ ∀ x ∈ rest, (status x).attention = .none := by
   refine
-    ⟨[Status.asks, .exitedBad, .errored, .unknown, .wantsYou].flatMap fun st =>
-        rows.filter fun x => place (status x) == st,
-      [Status.working, .resumable, .exitedOk].flatMap fun st =>
-        rows.filter fun x => place (status x) == st,
+    ⟨([Status.Attention.asked, .unread].flatMap fun a =>
+            [Status.State.working, .resumable, .exitedOk, .unknown].map fun st => ⟨a, st⟩).flatMap
+        fun st => rows.filter fun x => place (status x) == st,
+      ([Status.State.working, .resumable, .exitedOk, .unknown].map fun st => ⟨.none, st⟩).flatMap
+        fun st => rows.filter fun x => place (status x) == st,
       ?_, ?_, ?_⟩
-  · rw [← List.flatMap_append]
-    rfl
+  · unfold sort
+    rw [order_split, List.flatMap_append]
   · intro x hx
-    simp only [List.mem_flatMap, List.mem_filter, beq_iff_eq] at hx
-    obtain ⟨st, hst, _, heq⟩ := hx
-    apply (place_attention (status x)).mp
-    rw [heq]
-    simp only [List.mem_cons, List.not_mem_nil, or_false] at hst
-    rcases hst with rfl | rfl | rfl | rfl | rfl <;> simp [Status.attention]
+    simp only [List.mem_flatMap, List.mem_filter, beq_iff_eq, List.mem_map, List.mem_cons,
+      List.not_mem_nil, or_false] at hx
+    obtain ⟨st, ⟨a, ha, s, _, rfl⟩, _, heq⟩ := hx
+    rw [← place_attention, heq]
+    rcases ha with rfl | rfl <;> simp
   · intro x hx
-    simp only [List.mem_flatMap, List.mem_filter, beq_iff_eq] at hx
-    obtain ⟨st, hst, _, heq⟩ := hx
-    rw [← place_attention (status x), heq]
-    simp only [List.mem_cons, List.not_mem_nil, or_false] at hst
-    rcases hst with rfl | rfl | rfl <;> simp [Status.attention]
-
-/-- A status is done when its session ended well or can only be resumed: `✓` or `~`. -/
-def done (st : Status) : Bool := st == .exitedOk || st == .resumable
-
-/-- A view lists every row whose session is still to be done with before every row whose session
-ended well or can only be resumed. -/
-theorem sort_done_last {α : Type} (status : α → Status) (rows : List α) :
-    ∃ first rest,
-      sort status rows = first ++ rest ∧
-        (∀ x ∈ first, done (status x) = false) ∧ ∀ x ∈ rest, done (status x) = true := by
-  refine
-    ⟨[Status.asks, .exitedBad, .errored, .unknown, .wantsYou, .working].flatMap fun st =>
-        rows.filter fun x => place (status x) == st,
-      [Status.resumable, .exitedOk].flatMap fun st => rows.filter fun x => place (status x) == st,
-      ?_, ?_, ?_⟩
-  · rw [← List.flatMap_append]
-    rfl
-  · intro x hx
-    simp only [List.mem_flatMap, List.mem_filter, beq_iff_eq] at hx
-    obtain ⟨st, hst, _, heq⟩ := hx
-    simp only [List.mem_cons, List.not_mem_nil, or_false] at hst
-    revert heq
-    cases status x <;> rcases hst with rfl | rfl | rfl | rfl | rfl | rfl <;> simp [place, done]
-  · intro x hx
-    simp only [List.mem_flatMap, List.mem_filter, beq_iff_eq] at hx
-    obtain ⟨st, hst, _, heq⟩ := hx
-    simp only [List.mem_cons, List.not_mem_nil, or_false] at hst
-    revert heq
-    cases status x <;> rcases hst with rfl | rfl <;> simp [place, done]
-
-/-- **What ended well or can only be resumed comes after what is live**: wherever a view's rows
-are cut in two, a row above the cut whose session exited 0 or can only be resumed leaves no live
-row, `⚑`, `⣿`, `⣷` or `⣀`, below it. -/
-theorem sort_live_above_done {α : Type} (status : α → Status) (rows first rest : List α)
-    (split : sort status rows = first ++ rest) (x : α) (above : x ∈ first)
-    (ended : status x = .exitedOk ∨ status x = .resumable) (y : α) (below : y ∈ rest) :
-    ¬(status y = .asks ∨
-        status y = .errored ∨
-        status y = .wantsYou ∨ status y = .working ∨ status y = .paused ∨ status y = .idle) := by
-  obtain ⟨front, back, whole, live, settled⟩ := sort_done_last status rows
-  rw [whole] at split
-  have hx : done (status x) = true := by rcases ended with h | h <;> simp [h, done]
-  rcases List.append_eq_append_iff.mp split with ⟨mid, hfirst, hback⟩ | ⟨mid, hfront, hrest⟩
-  · have hy :=
-      settled y
-        (by
-          rw [hback]; exact List.mem_append_right _ below)
-    revert hy
-    cases status y <;> simp [done]
-  · exact
-      absurd hx
-        (by
-          rw [live x
-              (by
-                rw [hfront]; exact List.mem_append_left _ above)];
-          simp)
+    simp only [List.mem_flatMap, List.mem_filter, beq_iff_eq, List.mem_map] at hx
+    obtain ⟨st, ⟨s, _, rfl⟩, _, heq⟩ := hx
+    rw [← place_attention, heq]
 
 /-- Filtering by one status after filtering by distinct statuses keeps that status's rows when
 it is among them, and none otherwise. -/
@@ -213,48 +161,64 @@ theorem sort_stable {α : Type} (status : α → Status) (rows : List α) (st : 
     intro x _ heq
     exact hst ((beq_iff_eq.mp heq) ▸ place_mem_order (status x))
 
-/-- **A row keeps its place while its session prints or goes quiet**: statuses that differ only
-between `⣷` and `⣀` sort rows the same. -/
+/-- A running state, by name. -/
+theorem live_of (s : Status.State) (h : s = .working ∨ s = .paused ∨ s = .errored ∨ s = .idle) :
+    s.live = true := by rcases h with rfl | rfl | rfl | rfl <;> rfl
+
+/-- **A row keeps its place while its activity changes**: statuses that differ only between
+`!`, `⣷`, `⣤` and `⣀`, with one attention, sort rows the same. -/
 theorem sort_keeps_place {α : Type} (status status' : α → Status) (rows : List α)
     (h :
       ∀ x ∈ rows,
         status x = status' x ∨
-          ((status x = .working ∨ status x = .paused ∨ status x = .idle) ∧
-            (status' x = .working ∨ status' x = .paused ∨ status' x = .idle))) :
+          (status x).attention = (status' x).attention ∧
+            ((status x).state = .working ∨
+              (status x).state = .paused ∨ (status x).state = .errored ∨ (status x).state = .idle) ∧
+            ((status' x).state = .working ∨
+              (status' x).state = .paused ∨
+              (status' x).state = .errored ∨ (status' x).state = .idle)) :
     sort status rows = sort status' rows := by
   have hp : ∀ x ∈ rows, place (status x) = place (status' x) := by
     intro x hx
-    rcases h x hx with heq | ⟨h1, h2⟩
+    rcases h x hx with heq | ⟨ha, h1, h2⟩
     · rw [heq]
-    · rcases h1 with h1 | h1 | h1 <;> rcases h2 with h2 | h2 | h2 <;>
-        simp only [h1, h2, place_idle, place_paused]
+    · have e1 := place_live (status x).attention _ (live_of _ h1)
+      have e2 := place_live (status' x).attention _ (live_of _ h2)
+      rw [show status x = ⟨(status x).attention, (status x).state⟩ from rfl,
+        show status' x = ⟨(status' x).attention, (status' x).state⟩ from rfl, e1, e2, ha]
   unfold sort
   congr 1
   funext st
   exact List.filter_congr fun x hx => by rw [hp x hx]
 
-/-- A status's place has its keys: a quiet session's are a printing one's. -/
+/-- A status's place has its keys: a quiet session's are a working one's. -/
 theorem keys_place (st : Status) :
-    needs (place st) = needs st ∧ lifecycle (place st) = lifecycle st := by cases st <;> decide
+    needs (place st).attention = needs st.attention ∧
+      lifecycle (place st).state = lifecycle st.state := by
+  obtain ⟨a, s⟩ := st
+  cases a <;> cases s <;> decide
 
-/-- **A view is ordered by two keys**: what needs you to act, then where the session is in its
-life, running, saved, then ended, and rows with the same keys in the order they came in, so by
-any order the rows were listed in, as names as people read them (`before_total`). -/
+/-- **A view is ordered by two keys**: whether there is something for you, then where the
+session is in its life, running, saved, ended, then unknown, and rows with the same keys in the
+order they came in, so by any order the rows were listed in, as names as people read them
+(`before_total`). -/
 theorem sort_two_keys {α : Type} (status : α → Status) (earlier : α → α → Prop) (rows : List α)
     (listed : rows.Pairwise earlier) :
     (sort status rows).Pairwise fun a b =>
-      needs (status a) < needs (status b) ∨
-        needs (status a) = needs (status b) ∧
-          (lifecycle (status a) < lifecycle (status b) ∨
-            lifecycle (status a) = lifecycle (status b) ∧ earlier a b) := by
+      needs (status a).attention < needs (status b).attention ∨
+        needs (status a).attention = needs (status b).attention ∧
+          (lifecycle (status a).state < lifecycle (status b).state ∨
+            lifecycle (status a).state = lifecycle (status b).state ∧ earlier a b) := by
   have ranked :
     order.Pairwise fun a b =>
-      needs a < needs b ∨ needs a = needs b ∧ lifecycle a < lifecycle b := by
+      needs a.attention < needs b.attention ∨
+        needs a.attention = needs b.attention ∧ lifecycle a.state < lifecycle b.state := by
     decide
   have keys :
     ∀ x st,
       place (status x) = st →
-        needs (status x) = needs st ∧ lifecycle (status x) = lifecycle st := by
+        needs (status x).attention = needs st.attention ∧
+          lifecycle (status x).state = lifecycle st.state := by
     intro x st h
     have := keys_place (status x)
     rw [h] at this
@@ -275,15 +239,36 @@ theorem sort_two_keys {α : Type} (status : α → Status) (earlier : α → α 
     · exact Or.inl (by omega)
     · exact Or.inr ⟨by omega, Or.inl (by omega)⟩
 
+/-- **What ended or can only be resumed comes after what is live**: wherever a view's rows are
+cut in two, a row above the cut whose session ended or can only be resumed leaves no live row of
+its attention, `!`, `⣷`, `⣤` or `⣀`, below it. -/
+theorem sort_live_above_done {α : Type} (status : α → Status) (rows first rest : List α)
+    (split : sort status rows = first ++ rest) (x : α) (above : x ∈ first)
+    (ended :
+      (status x).state = .exitedOk ∨ (status x).state = .exitedBad ∨ (status x).state = .resumable)
+    (y : α) (below : y ∈ rest) (same : (status y).attention = (status x).attention) :
+    ¬((status y).state = .errored ∨
+        (status y).state = .working ∨ (status y).state = .paused ∨ (status y).state = .idle) := by
+  intro live
+  have pw := sort_two_keys status (fun _ _ => True) rows (List.pairwise_of_forall (by simp))
+  rw [split] at pw
+  have hxy := List.pairwise_append.mp pw |>.2.2 x above y below
+  have lx : lifecycle (status x).state ≥ 1 := by rcases ended with h | h | h <;> simp [h, lifecycle]
+  have ly : lifecycle (status y).state = 0 := by
+    rcases live with h | h | h | h <;> simp [h, lifecycle]
+  rw [same] at hxy
+  omega
+
 /-- A view's header says how many rows it lists, -/
 theorem headerParts_count (labels : List String) (statuses : List Status) :
     toString statuses.length ∈ headerParts labels statuses := by simp [headerParts]
 
-/-- …and, when any ask for someone, how many do of each kind, over all of them
+/-- …and, when any has something for you, how many do of each kind, over all of them
 (`Status.summary_exact`). -/
 theorem headerParts_summary (labels : List String) (statuses : List Status)
-    (h : (Status.summary statuses).isEmpty = false) :
-    Status.summary statuses ∈ headerParts labels statuses := by simp [headerParts, h]
+    (h : (Status.summary (statuses.map (·.attention))).isEmpty = false) :
+    Status.summary (statuses.map (·.attention)) ∈ headerParts labels statuses := by
+  simp [headerParts, h]
 
 /-- A target's group at any depth is the start of its characters. -/
 theorem stemChars_prefix : ∀ (depth : Nat) (cs : List Char), stemChars depth cs <+: cs
@@ -509,12 +494,6 @@ theorem hidden_adds_up (targets : List String) :
     left; rfl
   | some depth =>
     right; simp [groups_sum]
-
-/-- The statuses that ask for someone, by name: `⚑`, `⣿`, `✗`, `!` and `?`. -/
-theorem mem_attention (st : Status) :
-    st ∈ Status.attention ↔
-      st = .asks ∨ st = .wantsYou ∨ st = .exitedBad ∨ st = .errored ∨ st = .unknown := by
-  simp [Status.attention]
 
 /-! ## Names as people read them -/
 

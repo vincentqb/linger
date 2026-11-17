@@ -39,7 +39,7 @@ row look healthier than it is, because `daemonUp` comes from the caller and
 `known` requires the `pid` or `cmd` field every real reply carries.
 -/
 
-open Linger.Display.Status (Status classify ofName)
+open Linger.Display.Status (Status classify ofName ofAttentionName)
 
 /-- One boolean from the reply, defaulting to `false` when absent or
 malformed — a reply cannot make a row *more* alive by omission. -/
@@ -53,9 +53,10 @@ always carries, so their absence is the signal. -/
 private def answered (info : List (String × String)) : Bool :=
   info.any (fun kv => (kv.1 == "pid" || kv.1 == "cmd") && kv.2 != "")
 
-/-- The status a row displays. Only a live row consults the daemon's reply, and a remote row
-shows its peer's status while the peer reports it live, or once the peer says its program
-ended. -/
+/-- The status a row displays. Only a live row consults the daemon's reply; a row whose program
+ended with nobody attached, the only ending a checkpoint is kept for, has news nobody saw; and a
+remote row shows its peer's attention, and its peer's state while the peer reports it live, or once
+the peer says its program ended. -/
 def rowStatus : Row → Status
   | .live info =>
     classify
@@ -66,15 +67,26 @@ def rowStatus : Row → Status
         exit := (info.lookup "exit").bind String.toNat?,
         progress := Status.progressOfName ((info.lookup "progress").getD ""),
         running := flag info "running", unseen := flag info "unseen", asks := flag info "asks" }
-  | .stale => .resumable
-  | .ended status => classify { daemonUp := false, exit := some status }
-  | .broken => .unknown
-  | .remote live peerStatus =>
+  | .stale => ⟨.none, .resumable⟩
+  | .ended status => classify { daemonUp := false, exit := some status, unseen := true }
+  | .broken => ⟨.none, .unknown⟩
+  | .remote live peerAttention peerStatus =>
     -- a session the peer lists as saved shows how its program ended, and never what only a
     -- running session can show
-    let status := ofName peerStatus
-    if live || status == .exitedOk || status == .exitedBad then status else .resumable
+    let state := ofName peerStatus
+    ⟨ofAttentionName peerAttention,
+      if live || state == .exitedOk || state == .exitedBad then state else .resumable⟩
   | .published progress running unseen asks => classify { progress, running, unseen, asks }
+
+/-- A status's porcelain fields: its state's name as `status` and its attention's as
+`attention`, each one machine-readable word. -/
+def statusFields (st : Status) : List (String × String) :=
+  [("status", Status.name st.state), ("attention", Status.attentionName st.attention)]
+
+/-- A record's status, read back from the fields `statusFields` writes: a missing state is
+unknown and a missing attention none. -/
+def statusOf (info : List (String × String)) : Status :=
+  ⟨ofAttentionName ((info.lookup "attention").getD ""), ofName ((info.lookup "status").getD "")⟩
 
 /-! ## Rendering the human-readable listing
 
@@ -98,8 +110,9 @@ parsing rendered text. -/
 structure RowPiece where
   /-- The characters to display, already printable. -/
   text : List Char
-  /-- The status whose style the piece takes; names and detail text never carry one. -/
-  status : Option Status := none
+  /-- The SGR parameters of the badge style the piece takes; names and detail text never carry
+  one. -/
+  style : Option (List Nat) := none
   /-- The session name's offset and length within `text`, in Unicode scalars. -/
   nameSpan : Option (Nat × Nat) := none
   deriving BEq, Repr
@@ -129,9 +142,9 @@ def caption (info : List (String × String)) : String :=
   else look info "title"
 
 /-- The text of the program's last notification since the session was last looked at, while the
-session asks; nothing for any other status. -/
+session asks; nothing for any other attention. -/
 def notice (info : List (String × String)) : String :=
-  if Status.ofName (look info "status") == .asks then look info "notice" else ""
+  if ofAttentionName (look info "attention") == .asked then look info "notice" else ""
 
 /-- How the last command that finished since the session was last looked at ended, as its
 shell's marks reported it: its command line and `exit` with its status, as `make test: exit 2`,
@@ -258,27 +271,33 @@ def segments (layout : Layout) (rest : List (String × String)) : List (List Cha
   layout.widths.zipIdx.map fun (w, i) =>
     if w = 0 then [] else ' ' :: pad w (cut w ((cells rest).getD i "").toList) ++ [' ']
 
-/-- A row's parts, one to a column, as a terminal shows them: the glyph and a space, the name
-padded to the name column, then the cells (`segments`). Each part takes the display columns
-`Layout.spans` gives it while the name fits its column (`columns_aligned`). -/
+/-- A row's parts, one to a column, as a terminal shows them: the attention's mark and a space,
+the state's glyph and a space (`row_pair`), the name padded to the name column, then the cells
+(`segments`). Each part takes the display columns `Layout.spans` gives it while the name fits its
+column (`columns_aligned`). -/
 def columns (layout : Layout) (info : List (String × String)) : List (List Char) :=
-  [[Status.icon (Status.ofName (look info "status")), ' '],
+  [[Status.mark (ofAttentionName (look info "attention")), ' '],
+      [Status.icon (Status.ofName (look info "status")), ' '],
       (pad layout.nameCol (look info "name").toList).map textChar] ++
     (segments layout (project info)).map (·.map textChar)
 
-/-- A row's pieces within `width` display columns, if any: the status badge, then the name and
-what `after` shows after it, already printable. The badge and the name are never cut; what follows
-shrinks from the right to fit. Every untrusted value is made printable before a renderer sees it,
-including C1 controls that can otherwise be interpreted as terminal commands. -/
-def piecesOf (width : Option Nat) (name status : String) (after : List Char) : List RowPiece :=
+/-- A row's pieces within `width` display columns, if any: the attention's mark, a space and the
+state's glyph, the two badges, then the name and what `after` shows after it, already printable.
+The badges and the name are never cut; what follows shrinks from the right to fit. Every untrusted
+value is made printable before a renderer sees it, including C1 controls that can otherwise be
+interpreted as terminal commands. -/
+def piecesOf (width : Option Nat) (name attention status : String) (after : List Char) :
+    List RowPiece :=
+  let a := ofAttentionName attention
   let st := Status.ofName status
   let name := name.toList
   let tail := dropTrailingBlanks after
   let tail :=
     match width with
-    | some w => cut (w - 2 - cols name) tail
+    | some w => cut (w - 4 - cols name) tail
     | none => tail
-  [{ text := [Status.icon st], status := some st },
+  [{ text := [Status.mark a], style := Status.markStyle a }, { text := [' '] },
+    { text := [Status.icon st], style := some (Status.style st) },
     { text := (' ' :: name).map textChar ++ tail, nameSpan := some (1, name.length) }]
 
 /-- A row's pieces within `width` display columns, if any, from the fields `sources` names: the
@@ -286,10 +305,10 @@ badge, then its parts one to a column (`columns`), the name's padding and each c
 from the fields `sources` names. -/
 def rowPiecesIn (width : Option Nat) (layout : Layout) (info : List (String × String)) :
     List RowPiece :=
-  piecesOf width (look info "name") (look info "status")
-    (((columns layout info).drop 1).flatten.drop (look info "name").length)
+  piecesOf width (look info "name") (look info "attention") (look info "status")
+    (((columns layout info).drop 2).flatten.drop (look info "name").length)
 
-/-- One shared row of any width: status badge, aligned name and the session's present. -/
+/-- One shared row of any width: the two badges, aligned name and the session's present. -/
 def rowPieces (layout : Layout) (info : List (String × String)) : List RowPiece :=
   rowPiecesIn none layout info
 
@@ -335,8 +354,8 @@ resets immediately, so names and details retain the default foreground. -/
 private def renderPieces (withColor : Bool) (pieces : List RowPiece) : List UInt8 :=
   pieces.flatMap fun piece =>
     let text := utf8s piece.text
-    match piece.status with
-    | some status => if withColor then sgr (Status.style status) ++ text ++ sgr [0] else text
+    match piece.style with
+    | some style => if withColor then sgr style ++ text ++ sgr [0] else text
     | none => text
 
 /-- The whole human-readable listing, one LF-terminated row per session (or the

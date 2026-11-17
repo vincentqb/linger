@@ -145,9 +145,8 @@ source "$argv[1]"; or exit 98
       (loaded.exitCode == 0 && loaded.stdout == "LEFTTITLE" && loaded.stderr.isEmpty &&
         calls == "TITLE\n")
       "fish recipe preserves the left prompt and title hook and samples nothing when sourced"
-  let attention :=
-    Linger.Display.Status.summary [.wantsYou, .unknown, .exitedBad, .wantsYou, .working] ++ "\n"
-  let unknown := Linger.Display.Status.summary [.unknown] ++ "\n"
+  let attention := Linger.Display.Status.summary [.unread, .asked, .none, .unread, .none] ++ "\n"
+  let unknown := Linger.Display.Status.summary [.asked] ++ "\n"
   for (context, contextSetup) in
     [("outside", "set -e LINGER_SESSION\n"), ("inside", "set -gx LINGER_SESSION work\n")] do
     for (label, text, err, rc, previous) in
@@ -271,9 +270,8 @@ source "$1" || exit 98
       (loaded.exitCode == 0 && loaded.stdout == "LEFTTITLE" && loaded.stderr.isEmpty &&
         calls == "TITLE\n")
       "zsh recipe preserves the left prompt and title hook and samples nothing when sourced"
-  let attention :=
-    Linger.Display.Status.summary [.wantsYou, .unknown, .exitedBad, .wantsYou, .working] ++ "\n"
-  let unknown := Linger.Display.Status.summary [.unknown] ++ "\n"
+  let attention := Linger.Display.Status.summary [.unread, .asked, .none, .unread, .none] ++ "\n"
+  let unknown := Linger.Display.Status.summary [.asked] ++ "\n"
   let shown := fun (text : String) =>
     String.ofList (text.toList.reverse.dropWhile (· == '\n')).reverse
   for (context, contextSetup) in
@@ -487,7 +485,7 @@ def run : IO UInt32 :=
     IO.sleep 700
     expect
         (echoed && checkpointed && crashed && src == 0 && sourceNames sout == [] &&
-          resumableState == .resumable &&
+          resumableState.state == .resumable &&
           rsrc == 0 &&
           has (← e.out #["capture", "resumable-w1-p0"]) "CHECKPOINTED" &&
           !(← System.FilePath.pathExists resumableSink))
