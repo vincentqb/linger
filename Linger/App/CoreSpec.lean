@@ -144,6 +144,11 @@ structure Field where
   role : String
   deriving DecidableEq, Repr
 
+/-- Whether a table gives the field of this key this owner. -/
+@[expose]
+def owns (table : List Field) (owner : Owner) (key : String) : Bool :=
+  table.any fun f => f.key == key && f.owner == owner
+
 /-- A wrong table: today's before names said what a session is, the name and the description
 both the user's, and both what the user calls the session. The headline that each owner's fields
 have one role each is shown to reject it. -/

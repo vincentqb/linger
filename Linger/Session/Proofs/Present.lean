@@ -21,6 +21,6 @@ theorem infoFields_foreground (s : State) (o : Observation) {fg : Foreground}
       ("fgpid", toString fg.pid) ∈ infoFields (step s (.observed o)).1 ∧
       ("fgdir", fg.dir) ∈ infoFields (step s (.observed o)).1 := by
   rw [step_observed]
-  simp [infoFields, presentFields, h]
+  simp [infoFields, presentFields, State.owned, h]
 
 end Linger.Session

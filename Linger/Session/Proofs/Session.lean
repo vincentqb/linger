@@ -4924,4 +4924,187 @@ theorem steady_working (s : State) (chunk : List UInt8) (start period : Nat)
     simp only [decide_eq_false_iff_not, Nat.not_lt]
     exact late
 
+/-! ## What the program owns
+
+Each field of `Owned` has one source, and the session machine reads each from it alone: output,
+as the mediator hears it, changes the title, the ask, its text and the commands; the daemon's
+reading of the world changes what it observed; a look clears what is told until someone sees it;
+and no other event changes any. -/
+
+/-- A resize keeps the window's title. -/
+theorem windowTitle_resize (v : Vt.Vt) (cols rows : Nat) :
+    (v.resize cols rows).windowTitle = v.windowTitle := rfl
+
+/-- Replacing a client's record keeps what the program owns. -/
+theorem owned_setClient (s : State) (c : Client) : (s.setClient c).owned = s.owned := rfl
+
+/-- Every message keeps the window's title. -/
+theorem onMsg_title (s : State) (c : Client) (m : Msg) :
+    (onMsg s c m).1.vt.windowTitle = s.vt.windowTitle :=
+  onMsg_vt_preserves (P := fun vt => vt.windowTitle = s.vt.windowTitle) (fun _ _ _ h => h) m rfl
+
+/-- Every message keeps the latest reading of the world. -/
+theorem onMsg_observed (s : State) (c : Client) (m : Msg) :
+    (onMsg s c m).1.observed = s.observed := by
+  cases m
+  all_goals
+    unfold onMsg controlResize resizeOwned resize focusEffects infoMsgs outputMsgs
+    dsimp only
+    repeat' split
+  all_goals simp_all [State.setClient]
+
+/-- Resizing on behalf of the size owner keeps what the program owns. -/
+theorem resizeOwned_owned (s : State) (c : Client) : (resizeOwned s c).1.owned = s.owned := by
+  unfold resizeOwned resize
+  repeat' split
+  all_goals rfl
+
+/-- A message that is no look keeps what the program owns. -/
+theorem onMsg_owned_kept (s : State) (c : Client) (m : Msg) (h : ¬m.Looks) :
+    (onMsg s c m).1.owned = s.owned := by
+  obtain ⟨ha, hn⟩ := onMsg_asking_kept s c m h
+  obtain ⟨hr, hf⟩ := onMsg_commands_kept s c m h
+  simp only [State.owned, State.commands, ha, hn, hr, hf, onMsg_title, onMsg_observed]
+
+/-- An attach from a connection not yet attached, and a capture of a read not yet answered, are
+looks; every other message keeps what the program owns. -/
+theorem onMsg_owned (s : State) (c : Client) (m : Msg) :
+    (onMsg s c m).1.owned = s.owned ∨ ((onMsg s c m).1.owned = s.owned.look ∧ m.Looks) := by
+  by_cases hl : m.Looks
+  · cases m <;> simp only [Msg.Looks] at hl
+    · by_cases ha : c.attached = true
+      · left
+        unfold onMsg
+        simp only [ha, ↓reduceIte]
+      · right
+        refine ⟨?_, trivial⟩
+        unfold onMsg
+        simp only [ha, Bool.false_eq_true, ↓reduceIte]
+        exact (resizeOwned_owned _ _).trans rfl
+    · by_cases ha : c.answered = true
+      · left
+        unfold onMsg
+        simp only [ha, ↓reduceIte]
+      · right
+        rw [onMsg_screen _ _ (by simpa using ha)]
+        exact ⟨rfl, trivial⟩
+  · exact .inl (onMsg_owned_kept s c m hl)
+
+/-- A look twice is a look once. -/
+theorem Owned.look_look (o : Owned) : o.look.look = o.look := rfl
+
+/-- A batch of messages keeps what the program owns, or is a look, which only a message that looks
+makes. -/
+theorem feedMsgs_owned (id : Nat) (msgs : List Msg) (acc : State × List (Effect Plan)) :
+    (feedMsgs id msgs acc).1.owned = acc.1.owned ∨
+      ((feedMsgs id msgs acc).1.owned = acc.1.owned.look ∧ ∃ m ∈ msgs, m.Looks) :=
+  feedMsgs_induct id msgs acc (P := fun r =>
+    r.1.owned = acc.1.owned ∨ (r.1.owned = acc.1.owned.look ∧ ∃ m ∈ msgs, m.Looks))
+    (fun current c m hm _ _ _ hs => by
+      rcases onMsg_owned current.1 c m with h | ⟨h, hl⟩
+      · rcases hs with hs | ⟨hs, hx⟩
+        · exact .inl (h.trans hs)
+        · exact .inr ⟨h.trans hs, hx⟩
+      · rcases hs with hs | ⟨hs, -⟩
+        · exact .inr ⟨h.trans (by rw [hs]), m, hm, hl⟩
+        · exact
+            .inr
+              ⟨h.trans
+                  (by
+                    rw [hs]; rfl),
+                m, hm, hl⟩)
+    (.inl rfl)
+
+/-- Closing a connection keeps what the program owns. -/
+theorem closeClient_owned (s : State) (id : Nat) : (closeClient s id).1.owned = s.owned := by
+  unfold closeClient
+  dsimp only
+  split <;> rfl
+
+/-- A read keeps what the program owns, or is a look, which only a read that holds a message that
+looks makes. -/
+theorem step_bytes_owned (s : State) (id : Nat) (chunk : List UInt8) :
+    (step s (.bytes id chunk)).1.owned = s.owned ∨
+      (step s (.bytes id chunk)).1.owned = s.owned.look ∧
+        ∃ c, s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks := by
+  unfold step
+  dsimp only
+  split
+  · exact .inl rfl
+  · rename_i c hc
+    split
+    · exact .inl (by simp only [closeClient_owned])
+    · rcases
+        feedMsgs_owned id (c.decoder.feed chunk).2
+          (s.setClient
+              { c with
+                decoder := (c.decoder.feed chunk).1, answered := false },
+            []) with
+        h | ⟨h, hl⟩
+      · exact .inl h
+      · exact .inr ⟨h, c, hc, hl⟩
+
+/-- A read that holds one look alone, from a connection not yet attached and a healthy decoder, is
+a look. -/
+theorem step_look_owned (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
+    {dec : Wire.Decoder} {m : Msg} (hc : s.client? id = some c) (fresh : c.attached = false)
+    (read : c.decoder.feed chunk = (dec, [m])) (healthy : dec.errored = false) (looks : m.Looks) :
+    (step s (.bytes id chunk)).1.owned = s.owned.look := by
+  rw [step_bytes_single hc read healthy]
+  cases m <;> simp only [Msg.Looks] at looks
+  · unfold onMsg
+    simp only [fresh, Bool.false_eq_true, ↓reduceIte]
+    exact (resizeOwned_owned _ _).trans rfl
+  · rw [onMsg_screen _ _ rfl]
+    rfl
+
+/-- Output tells what the program owns as the mediator heard it. -/
+theorem step_ptyOut_owned (s : State) (chunk : List UInt8) :
+    (step s (.ptyOut chunk)).1.owned =
+      s.owned.hear (Terminal.Mediation.feed s.terminal s.scanner chunk).vt.windowTitle
+        (Terminal.Mediation.feed s.terminal s.scanner chunk).asks
+        (Terminal.Mediation.feed s.terminal s.scanner chunk).notice
+        (Terminal.Mediation.feed s.terminal s.scanner chunk).marks (seenBy s.roster) := by
+  have h := foldl_hearMark (Terminal.Mediation.feed s.vt s.scan chunk).marks s.commands
+  simp only [State.commands] at h
+  simp only [step, State.owned, Owned.hear, State.commands, seenBy, State.roster, State.terminal,
+    State.scanner, h]
+  rfl
+
+/-- The daemon's reading of the world is what it observed. -/
+theorem step_observed_owned (s : State) (o : Observation) :
+    (step s (.observed o)).1.owned = s.owned.observe o := rfl
+
+/-- No other event changes what the program owns. -/
+theorem step_owned_kept (s : State) (ev : Event) (out : ∀ chunk, ev ≠ .ptyOut chunk)
+    (seen : ∀ o, ev ≠ .observed o) (read : ∀ id chunk, ev ≠ .bytes id chunk) :
+    (step s ev).1.owned = s.owned := by
+  cases ev with
+  | ptyOut chunk => exact absurd rfl (out chunk)
+  | observed o => exact absurd rfl (seen o)
+  | bytes id chunk => exact absurd rfl (read id chunk)
+  | connected id =>
+    unfold step
+    dsimp only
+    split <;> rfl
+  | closed id => exact closeClient_owned s id
+  | childExited o => rfl
+  | stopped o => rfl
+  | signal n => rfl
+  | tick now =>
+    unfold step
+    dsimp only
+    split <;> rfl
+  | checkpointFailed => rfl
+
+/-- A bell rung on its own, with nobody attached, makes a fresh session ask. -/
+theorem rung_asks :
+    (step (State.boot (Vt.Vt.init 80 24) [] []) (.ptyOut [0x07])).1.owned.asks = true := by
+  have := step_ptyOut_asking (State.boot (Vt.Vt.init 80 24) [] []) [0x07]
+  simp only [State.seen] at this
+  simp only [State.owned, this]
+  rw [show State.terminal (State.boot (Vt.Vt.init 80 24) [] []) = Vt.Vt.init 80 24 from rfl,
+    show State.scanner (State.boot (Vt.Vt.init 80 24) [] []) = .ground from rfl, feed_bel_asks]
+  rfl
+
 end Linger.Session

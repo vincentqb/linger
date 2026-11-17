@@ -185,6 +185,40 @@ so it leaves an ask as it was. -/
 private def printed (e : Env) (name marker : String) : IO Bool :=
   waitFor patienceMs (return has (← e.out #["capture", "--history", name]) marker)
 
+/-- What a program owns comes from its own output alone (`step_owned`): a client that types the
+sequences that would title its window, post a notification, ring the bell and mark a command, to a
+program that does not echo them, changes none of what it owns, and the program writing the same
+sequences does. The program reads every line it is sent and answers `synced` to one, so the check
+reads the fields once it has read what came before. -/
+def checkInputUnowned (e : Env) : IO Unit := do
+  let marks :=
+    "\x1b]2;owned-title\x07\x1b]9;owned-notice\x07\x07\x1b]133;C;cmdline_url=owned-cmd\x07" ++
+      "\x1b]133;D;3\x07"
+  let script :=
+    s!"stty -echo; echo ready-$((1+1)); while read -r line; do \
+      case \"$line\" in sync) echo synced-$((1+1));; emit) printf '%s' {shellQuote marks};; \
+      esac; done"
+  let _ ← e.cli #["start", "typed", "sh", "-c", script]
+  let ready ← printed e "typed" "ready-2"
+  let _ ← e.cli #["send", "typed", marks ++ "\n"]
+  let _ ← e.cli #["send", "typed", "sync\n"]
+  let synced ← printed e "typed" "synced-2"
+  let fields ← records <$> e.out #["ls", "--porcelain", "--", "typed"]
+  let untouched :=
+    ["title", "notice", "lastcmd", "lastexit"].all (fun k => fields.lookup k |>.isNone) &&
+      fields.lookup "status" != some (Linger.Display.Status.name .asks)
+  expect (ready && synced && untouched) s!"a client's input sets nothing the program owns: {fields}"
+  let _ ← e.cli #["send", "typed", "emit\n"]
+  let titled ← waitFor patienceMs (return (← e.info "typed" "title") == some "owned-title")
+  let fields ← records <$> e.out #["ls", "--porcelain", "--", "typed"]
+  expect
+      (titled && fields.lookup "notice" == some "owned-notice" &&
+        fields.lookup "lastcmd" == some "owned-cmd" &&
+        fields.lookup "lastexit" == some "3" &&
+        fields.lookup "status" == some (Linger.Display.Status.name .asks))
+      s!"the program's own output sets each of them: {fields}"
+  e.killAll #["typed"]
+
 /-- A program asks for you when it rings the bell or posts a desktop notification, OSC 9 or
 OSC 777, and its session lists `⚑`, first, until someone looks: an attach, or output while a
 client is attached. A notification's text is in `info`, the porcelain and the row. Each marker a
@@ -430,6 +464,7 @@ def run : IO UInt32 :=
     expect (daemon.isSome && program.isSome && (← summaryBecomes e unanswered))
         "a summary counts a killed daemon as not answering, not from what it last wrote"
     e.killAll #["st"]
+    checkInputUnowned e
     checkAsks e
     checkSteady e
     checkEndings e

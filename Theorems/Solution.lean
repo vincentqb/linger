@@ -42,6 +42,7 @@ import all Linger.App.Proofs.Recovery
 import all Linger.App.Proofs.Wait
 import Linger.Display.Proofs.Clean
 import all Linger.App.Proofs.Fields
+import all Linger.App.Proofs.Owned
 import all Linger.Display.Proofs.Alert
 import all Linger.Display.Proofs.Listing
 import all Linger.Display.Proofs.Status
@@ -628,6 +629,131 @@ theorem step_terminal_sources_rejects_print :
     have moved : ((Vt.Vt.init 2 1).feed [0x41]).cursorPos = (1, 0) := by decide +kernel
     rw [resized, Session.foldl_resize_origin _ (by decide +kernel)] at moved
     simp at moved
+
+theorem step_owned (s : State) (ev : Event) :
+    (∀ chunk,
+        ev = .ptyOut chunk →
+          (Session.step s ev).1.owned =
+            s.owned.hear (Mediation.feed s.terminal s.scanner chunk).vt.windowTitle
+              (Mediation.feed s.terminal s.scanner chunk).asks
+              (Mediation.feed s.terminal s.scanner chunk).notice
+              (Mediation.feed s.terminal s.scanner chunk).marks (seenBy s.roster)) ∧
+      (∀ o, ev = .observed o → (Session.step s ev).1.owned = s.owned.observe o) ∧
+      (∀ id chunk,
+        ev = .bytes id chunk →
+          (Session.step s ev).1.owned = s.owned ∨
+            (Session.step s ev).1.owned = s.owned.look ∧
+              ∃ c, s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks) ∧
+      (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
+        ev = .bytes id chunk →
+          s.client? id = some c →
+          c.attached = false →
+          c.decoder.feed chunk = (dec, [m]) →
+          dec.errored = false → m.Looks → (Session.step s ev).1.owned = s.owned.look) ∧
+      ((∀ chunk, ev ≠ .ptyOut chunk) →
+        (∀ o, ev ≠ .observed o) →
+        (∀ id chunk, ev ≠ .bytes id chunk) → (Session.step s ev).1.owned = s.owned) ∧
+      (Status.classify { fresh := s.seen.fresh, unseen := s.seen.unseen, asks := s.seen.asks } =
+          .asks ↔
+        s.owned.asks = true) :=
+  ⟨fun chunk hev => by
+    subst hev
+    exact Session.step_ptyOut_owned s chunk, fun o hev => by
+    subst hev
+    exact Session.step_observed_owned s o, fun id chunk hev => by
+    subst hev
+    exact Session.step_bytes_owned s id chunk,
+    fun id chunk c dec m hev hc fresh read healthy looks => by
+    subst hev
+    exact Session.step_look_owned s id chunk hc fresh read healthy looks, fun out seen read =>
+    Session.step_owned_kept s ev out seen read, Status.classify_running_asks _ _ _⟩
+
+theorem step_owned_rejects_rung :
+    ¬∀ (s : State) (ev : Event),
+        (∀ chunk,
+            ev = .ptyOut chunk →
+              ((fun (s : State) (_ : Event) => Session.step s (.ptyOut [0x07])) s ev).1.owned =
+                s.owned.hear (Mediation.feed s.terminal s.scanner chunk).vt.windowTitle
+                  (Mediation.feed s.terminal s.scanner chunk).asks
+                  (Mediation.feed s.terminal s.scanner chunk).notice
+                  (Mediation.feed s.terminal s.scanner chunk).marks (seenBy s.roster)) ∧
+          (∀ o,
+            ev = .observed o →
+              ((fun (s : State) (_ : Event) => Session.step s (.ptyOut [0x07])) s ev).1.owned =
+                s.owned.observe o) ∧
+          (∀ id chunk,
+            ev = .bytes id chunk →
+              ((fun (s : State) (_ : Event) => Session.step s (.ptyOut [0x07])) s ev).1.owned =
+                  s.owned ∨
+                ((fun (s : State) (_ : Event) => Session.step s (.ptyOut [0x07])) s ev).1.owned =
+                    s.owned.look ∧
+                  ∃ c, s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks) ∧
+          (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
+            ev = .bytes id chunk →
+              s.client? id = some c →
+              c.attached = false →
+              c.decoder.feed chunk = (dec, [m]) →
+              dec.errored = false →
+              m.Looks →
+              ((fun (s : State) (_ : Event) => Session.step s (.ptyOut [0x07])) s ev).1.owned =
+                s.owned.look) ∧
+          ((∀ chunk, ev ≠ .ptyOut chunk) →
+            (∀ o, ev ≠ .observed o) →
+            (∀ id chunk, ev ≠ .bytes id chunk) →
+            ((fun (s : State) (_ : Event) => Session.step s (.ptyOut [0x07])) s ev).1.owned =
+              s.owned) ∧
+          (Status.classify { fresh := s.seen.fresh, unseen := s.seen.unseen, asks := s.seen.asks } =
+              .asks ↔
+            s.owned.asks = true) := by
+  -- a session that rings the bell on a client's read asks, with no output and no look
+  intro h
+  rcases (h (State.boot (Vt.Vt.init 80 24) [] []) (.bytes 0 [])).2.2.1 0 [] rfl with kept |
+    ⟨-, c, hc, -⟩
+  · have := congrArg Owned.asks kept
+    simp only at this
+    rw [Session.rung_asks] at this
+    cases this
+  · cases hc
+
+theorem step_owned_rejects_lumped :
+    ¬∀ (s : State) (ev : Event),
+        (∀ chunk,
+            ev = .ptyOut chunk →
+              (Session.step s ev).1.owned =
+                s.owned.hear (Mediation.feed s.terminal s.scanner chunk).vt.windowTitle
+                  (Mediation.feed s.terminal s.scanner chunk).asks
+                  (Mediation.feed s.terminal s.scanner chunk).notice
+                  (Mediation.feed s.terminal s.scanner chunk).marks (seenBy s.roster)) ∧
+          (∀ o, ev = .observed o → (Session.step s ev).1.owned = s.owned.observe o) ∧
+          (∀ id chunk,
+            ev = .bytes id chunk →
+              (Session.step s ev).1.owned = s.owned ∨
+                (Session.step s ev).1.owned = s.owned.look ∧
+                  ∃ c, s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks) ∧
+          (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
+            ev = .bytes id chunk →
+              s.client? id = some c →
+              c.attached = false →
+              c.decoder.feed chunk = (dec, [m]) →
+              dec.errored = false → m.Looks → (Session.step s ev).1.owned = s.owned.look) ∧
+          ((∀ chunk, ev ≠ .ptyOut chunk) →
+            (∀ o, ev ≠ .observed o) →
+            (∀ id chunk, ev ≠ .bytes id chunk) → (Session.step s ev).1.owned = s.owned) ∧
+          (Status.lumped Status.classify
+                { fresh := s.seen.fresh, unseen := s.seen.unseen, asks := s.seen.asks } =
+              .asks ↔
+            s.owned.asks = true) := by
+  -- today's rule lists a session whose program rang the bell by its output, never as asking
+  intro h
+  have heard :=
+    ((h (Session.step (State.boot (Vt.Vt.init 80 24) [] []) (.ptyOut [0x07])).1
+            (.tick 0)).2.2.2.2.2).mpr
+      Session.rung_asks
+  have never : ∀ o : Status.Obs, Status.lumped Status.classify o ≠ .asks := fun o hasks => by
+    unfold Status.lumped at hasks
+    have := (Status.classify_iff _ _).mp hasks
+    simp [Status.Is] at this
+  exact never _ heard
 
 theorem start_plan (live saved : Bool) :
     (Start.plan live saved = .take ↔ live = false ∧ saved = false) ∧
@@ -1219,9 +1345,25 @@ theorem fields_owned :
         ∀ op,
           f.owner = .user op →
             op ∈ App.Commands.Op.all ∧ ∀ g ∈ App.Fields.table, g.owner = .user op → g = f) ∧
-      ∀ f ∈ App.Fields.table, ∀ g ∈ App.Fields.table, f.owner = g.owner → f.role = g.role → f = g :=
+      ∀ (vt vt' : Vt.Vt) (fields fields' metadata : List (String × String)) (evs evs' : List Event),
+        (∀ kv ∈ metadata, App.Fields.owns App.Fields.table .program kv.1 = false) →
+          (Session.trace Session.step (State.boot vt fields metadata) evs).1.owned =
+            (Session.trace Session.step (State.boot vt' fields' metadata) evs').1.owned →
+          (Session.infoFields
+                  (Session.trace Session.step (State.boot vt fields metadata) evs).1).filter
+              (fun kv => App.Fields.owns App.Fields.table .program kv.1) =
+            (Session.infoFields
+                  (Session.trace Session.step (State.boot vt' fields' metadata) evs').1).filter
+              fun kv => App.Fields.owns App.Fields.table .program kv.1 :=
   ⟨App.Fields.keys_nodup, App.Fields.sources_listed, App.Fields.kind_shown,
-    App.Fields.user_one_writer, App.Fields.roles_distinct⟩
+    App.Fields.user_one_writer, fun vt vt' fields fields' metadata evs evs' kept owned => by
+    rw [App.Fields.infoFields_programs _
+        (by
+          rw [App.Fields.trace_metaKv]; exact kept),
+      App.Fields.infoFields_programs _
+        (by
+          rw [App.Fields.trace_metaKv]; exact kept),
+      owned]⟩
 
 theorem fields_owned_rejects_named_twice :
     ¬((App.Fields.namedTwice.map (·.key)).Nodup ∧
@@ -1231,11 +1373,52 @@ theorem fields_owned_rejects_named_twice :
           ∀ op,
             f.owner = .user op →
               op ∈ App.Commands.Op.all ∧ ∀ g ∈ App.Fields.namedTwice, g.owner = .user op → g = f) ∧
-        ∀ f ∈ App.Fields.namedTwice,
-          ∀ g ∈ App.Fields.namedTwice, f.owner = g.owner → f.role = g.role → f = g) := by
+        ∀ (vt vt' : Vt.Vt) (fields fields' metadata : List (String × String))
+          (evs evs' : List Event),
+          (∀ kv ∈ metadata, App.Fields.owns App.Fields.namedTwice .program kv.1 = false) →
+            (Session.trace Session.step (State.boot vt fields metadata) evs).1.owned =
+              (Session.trace Session.step (State.boot vt' fields' metadata) evs').1.owned →
+            (Session.infoFields
+                    (Session.trace Session.step (State.boot vt fields metadata) evs).1).filter
+                (fun kv => App.Fields.owns App.Fields.namedTwice .program kv.1) =
+              (Session.infoFields
+                    (Session.trace Session.step (State.boot vt' fields' metadata) evs').1).filter
+                fun kv => App.Fields.owns App.Fields.namedTwice .program kv.1) := by
   intro h
   have := h.2.1 "status" (by decide)
   revert this
+  decide
+
+theorem fields_owned_rejects_counted :
+    ¬((App.Fields.table.map (·.key)).Nodup ∧
+        (∀ key ∈ Listing.sources, key ∈ App.Fields.table.map (·.key)) ∧
+        (∀ f ∈ App.Fields.table, (f.kind = .human ↔ f.key ∈ Listing.shown)) ∧
+        (∀ f ∈ App.Fields.table,
+          ∀ op,
+            f.owner = .user op →
+              op ∈ App.Commands.Op.all ∧ ∀ g ∈ App.Fields.table, g.owner = .user op → g = f) ∧
+        ∀ (vt vt' : Vt.Vt) (fields fields' metadata : List (String × String))
+          (evs evs' : List Event),
+          (∀ kv ∈ metadata, App.Fields.owns App.Fields.table .program kv.1 = false) →
+            (Session.trace Session.step (State.boot vt fields metadata) evs).1.owned =
+              (Session.trace Session.step (State.boot vt' fields' metadata) evs').1.owned →
+            ((fun (s : State) => [("title", toString s.roster.length)])
+                    (Session.trace Session.step (State.boot vt fields metadata) evs).1).filter
+                (fun kv => App.Fields.owns App.Fields.table .program kv.1) =
+              ((fun (s : State) => [("title", toString s.roster.length)])
+                    (Session.trace Session.step (State.boot vt' fields' metadata) evs').1).filter
+                fun kv => App.Fields.owns App.Fields.table .program kv.1) := by
+  -- a title read from the clients changes with a connection, which no source of it is
+  intro h
+  have owned :
+    (Session.trace Session.step (State.boot (Vt.Vt.init 1 1) [] []) []).1.owned =
+      (Session.trace Session.step (State.boot (Vt.Vt.init 1 1) [] []) [.connected 0]).1.owned :=
+    (Session.step_owned_kept _ _ (fun _ h => by cases h) (fun _ h => by cases h)
+        (fun _ _ h => by cases h)).symm
+  have := h.2.2.2.2 (Vt.Vt.init 1 1) (Vt.Vt.init 1 1) [] [] [] [] [.connected 0] (by simp) owned
+  revert this
+  simp [Session.trace, Session.step, State.roster, State.boot, App.Fields.owns, App.Fields.table,
+    Session.maxClients]
   decide
 
 theorem listed_unrecorded (records : Session.Records) (panes : List Import.Resurrect.Pane)
@@ -3422,154 +3605,6 @@ theorem classify_iff_rejects_idle :
         (fun (_ : Status.Obs) => Status.Status.idle) o = s ↔ Status.Is s o := by
   intro h
   exact absurd ((h { known := false } .unknown).mpr rfl) (by decide)
-
-theorem step_asks (s : State) (ev : Event) :
-    (∀ chunk,
-        ev = .ptyOut chunk →
-          (Status.classify
-                { fresh := (Session.step s ev).1.seen.fresh,
-                  unseen := (Session.step s ev).1.seen.unseen,
-                  asks := (Session.step s ev).1.seen.asks } =
-              .asks ↔
-            seenBy s.roster = false ∧
-              ((Mediation.feed s.terminal s.scanner chunk).asks = true ∨ s.seen.asks = true))) ∧
-      (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
-        ev = .bytes id chunk →
-          s.client? id = some c →
-          c.attached = false →
-          c.decoder.feed chunk = (dec, [m]) →
-          dec.errored = false → m.Looks → (Session.step s ev).1.seen.asks = false) ∧
-      ((Session.step s ev).1.seen.asks = true → s.seen.asks = true ∨ ∃ chunk, ev = .ptyOut chunk) ∧
-      (s.seen.asks = true →
-        (Session.step s ev).1.seen.asks = false →
-        (∃ chunk, ev = .ptyOut chunk) ∨
-          ∃ id chunk c,
-            ev = .bytes id chunk ∧
-              s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks) := by
-  refine
-    ⟨fun chunk hev => ?_, fun id chunk c dec m hev hc fresh read healthy looks => ?_,
-      Session.step_asking_raised s ev, Session.step_asking_cleared s ev⟩
-  · subst hev
-    rw [Status.classify_running_asks, Session.step_ptyOut_asking]
-    cases seenBy s.roster <;> cases (Mediation.feed s.terminal s.scanner chunk).asks <;>
-      cases s.seen.asks <;>
-      decide
-  · subst hev
-    exact (Session.step_look_clears s id chunk hc fresh read healthy looks).1
-
-theorem step_asks_rejects_lumped :
-    ¬∀ (s : State) (ev : Event),
-        (∀ chunk,
-            ev = .ptyOut chunk →
-              (Status.lumped Status.classify
-                    { fresh := (Session.step s ev).1.seen.fresh,
-                      unseen := (Session.step s ev).1.seen.unseen,
-                      asks := (Session.step s ev).1.seen.asks } =
-                  .asks ↔
-                seenBy s.roster = false ∧
-                  ((Mediation.feed s.terminal s.scanner chunk).asks = true ∨ s.seen.asks = true))) ∧
-          (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
-            ev = .bytes id chunk →
-              s.client? id = some c →
-              c.attached = false →
-              c.decoder.feed chunk = (dec, [m]) →
-              dec.errored = false → m.Looks → (Session.step s ev).1.seen.asks = false) ∧
-          ((Session.step s ev).1.seen.asks = true →
-            s.seen.asks = true ∨ ∃ chunk, ev = .ptyOut chunk) ∧
-          (s.seen.asks = true →
-            (Session.step s ev).1.seen.asks = false →
-            (∃ chunk, ev = .ptyOut chunk) ∨
-              ∃ id chunk c,
-                ev = .bytes id chunk ∧
-                  s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks) := by
-  -- today's rule lists a session whose program rang the bell by its output, never as asking
-  intro h
-  have heard :=
-    ((h (State.boot (Vt.Vt.init 80 24) [] []) (.ptyOut [0x07])).1 [0x07] rfl).mpr
-      ⟨rfl, .inl (Session.feed_bel_asks _)⟩
-  have never : ∀ o : Status.Obs, Status.lumped Status.classify o ≠ .asks := fun o hasks => by
-    unfold Status.lumped at hasks
-    have := (Status.classify_iff _ _).mp hasks
-    simp [Status.Is] at this
-  exact never _ heard
-
-theorem step_commands (s : State) (ev : Event) :
-    (∀ chunk,
-        ev = .ptyOut chunk →
-          (Session.step s ev).1.commands.running =
-              ((Mediation.feed s.terminal s.scanner chunk).marks.foldl Commands.hear
-                  s.commands).running ∧
-            (Session.step s ev).1.commands.finished =
-              if seenBy s.roster then none
-              else
-                ((Mediation.feed s.terminal s.scanner chunk).marks.foldl Commands.hear
-                    s.commands).finished) ∧
-      (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
-        ev = .bytes id chunk →
-          s.client? id = some c →
-          c.attached = false →
-          c.decoder.feed chunk = (dec, [m]) →
-          dec.errored = false → m.Looks → (Session.step s ev).1.commands.finished = none) ∧
-      ((∀ chunk, ev ≠ .ptyOut chunk) →
-        (Session.step s ev).1.commands.running = s.commands.running) ∧
-      ((Session.step s ev).1.commands.finished ≠ s.commands.finished →
-        (∃ chunk, ev = .ptyOut chunk) ∨
-          (Session.step s ev).1.commands.finished = none ∧
-            ∃ id chunk c,
-              ev = .bytes id chunk ∧
-                s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks) := by
-  refine
-    ⟨fun chunk hev => ?_, fun id chunk c dec m hev hc fresh read healthy looks => ?_,
-      Session.step_running_kept s ev, Session.step_finished_changed s ev⟩
-  · subst hev
-    exact Session.step_ptyOut_commands s chunk
-  · subst hev
-    exact (Session.step_look_clears_finished s id chunk hc fresh read healthy looks).1
-
-theorem step_commands_rejects_deaf :
-    ¬∀ (s : State) (ev : Event),
-        (∀ chunk,
-            ev = .ptyOut chunk →
-              ((fun (_ : State) => ({} : Commands)) (Session.step s ev).1).running =
-                  ((Mediation.feed s.terminal s.scanner chunk).marks.foldl Commands.hear
-                      ((fun (_ : State) => ({} : Commands)) s)).running ∧
-                ((fun (_ : State) => ({} : Commands)) (Session.step s ev).1).finished =
-                  if seenBy s.roster then none
-                  else
-                    ((Mediation.feed s.terminal s.scanner chunk).marks.foldl Commands.hear
-                        ((fun (_ : State) => ({} : Commands)) s)).finished) ∧
-          (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
-            ev = .bytes id chunk →
-              s.client? id = some c →
-              c.attached = false →
-              c.decoder.feed chunk = (dec, [m]) →
-              dec.errored = false →
-              m.Looks →
-              ((fun (_ : State) => ({} : Commands)) (Session.step s ev).1).finished = none) ∧
-          ((∀ chunk, ev ≠ .ptyOut chunk) →
-            ((fun (_ : State) => ({} : Commands)) (Session.step s ev).1).running =
-              ((fun (_ : State) => ({} : Commands)) s).running) ∧
-          (((fun (_ : State) => ({} : Commands)) (Session.step s ev).1).finished ≠
-              ((fun (_ : State) => ({} : Commands)) s).finished →
-            (∃ chunk, ev = .ptyOut chunk) ∨
-              ((fun (_ : State) => ({} : Commands)) (Session.step s ev).1).finished = none ∧
-                ∃ id chunk c,
-                  ev = .bytes id chunk ∧
-                    s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks) := by
-  -- today's rule hears no mark, so the command a `C` starts never runs
-  intro h
-  have heard :=
-    ((h (State.boot (Vt.Vt.init 80 24) [] [])
-            (.ptyOut [0x1B, 0x5D, 0x31, 0x33, 0x33, 0x3B, 0x43, 0x07])).1
-        _ rfl).1
-  have marks :
-    (Mediation.feed (State.boot (Vt.Vt.init 80 24) [] []).terminal
-          (State.boot (Vt.Vt.init 80 24) [] []).scanner
-          [0x1B, 0x5D, 0x31, 0x33, 0x33, 0x3B, 0x43, 0x07]).marks =
-      [.runs {}] :=
-    Session.feed_mark_runs _
-  rw [marks] at heard
-  simp [Commands.hear] at heard
 
 theorem icon_glyphs :
     (∀ a b, Status.icon a = Status.icon b → a = b) ∧

@@ -565,6 +565,52 @@ inductive Event where
   | checkpointFailed
   deriving Repr
 
+/-- What a session's program owns, as its session keeps it, each field from the one source its
+standard names: its window's title, which OSC 0 and OSC 2 set on the session's terminal; whether
+it rang the bell or posted a desktop notification, a BEL, an OSC 9 that is no ConEmu sub-command
+or an OSC 777 `notify`, since the session was last looked at, and that notification's text; what
+its shell's OSC 133 marks told of its commands; and what the operating system last reported of
+its terminal, its foreground among it. No other output and no client writes one; a look clears
+what is told only until someone sees it (`step_owned`). -/
+structure Owned where
+  /-- The window's title, as the session's terminal holds it. -/
+  title : String
+  /-- A bell or a notification since the session was last looked at. -/
+  asks : Bool
+  /-- The text of the last notification since the session was last looked at. -/
+  notice : Option (List UInt8)
+  /-- What the shell's marks told of its commands. -/
+  commands : Commands
+  /-- What the operating system last reported of the session's terminal. -/
+  observed : Option Observation
+  deriving Repr, DecidableEq
+
+/-- What one chunk of output tells of what the program owns, as the terminal package's mediator
+heard it: the title the terminal holds after it, whether it rang the bell or posted a
+notification, the text of its last notification, and the shell's marks, in order, each as
+`Commands.hear` says it tells; `seen` says that a client is attached, which sees the output as it
+arrives, so that it leaves no ask, no notification and no ending to tell. -/
+@[expose]
+def Owned.hear (o : Owned) (title : String) (asks : Bool) (notice : Option (List UInt8))
+    (marks : List Terminal.Mediation.Mark) (seen : Bool) : Owned :=
+  { o with
+    title, asks := !seen && (o.asks || asks), notice := if seen then none else notice.or o.notice,
+    commands :=
+      { running := (marks.foldl Commands.hear o.commands).running,
+        finished := if seen then none else (marks.foldl Commands.hear o.commands).finished } }
+
+/-- What a look leaves of what the program owns: no ask, no notification and no ending to tell,
+the rest as it was. -/
+@[expose]
+def Owned.look (o : Owned) : Owned :=
+  { o with
+    asks := false, notice := none, commands := { o.commands with finished := none } }
+
+/-- What the daemon's reading of the world leaves of what the program owns: that reading. -/
+@[expose]
+def Owned.observe (o : Owned) (observation : Observation) : Owned :=
+  { o with observed := some observation }
+
 /-- The time a session's events have told it: the latest time among their ticks, or 0 before
 any tick. A daemon's ticks read the monotonic clock as each poll round ends, so this is the time
 of the last tick, and an event after them happened no earlier. -/

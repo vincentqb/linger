@@ -79,14 +79,8 @@ of the samples its title takes, and of none on the first, whose asks the title c
 and a listing orders names as people read them: a total order (`before_total`) that puts names
 differing only in one number in the order of that number, `w2` before `w10` (`before_number`). A session
 asks exactly while its program has rung the bell or posted a notification since the session was
-last looked at: output with nobody attached asks as the terminal package's mediator hears it, a
-look, an attach, a capture or output while a client is attached, clears the ask, and nothing else
-changes it (`step_asks`). A session tells how its shell's last command ended until someone sees
-it: output hears the shell's OSC 133 marks as the mediator hears them, each as `Commands.hear`
-says the marks' standard means it, so a `D` after a `C` is that command's ending, with the
-command line the `C` gave and the status the `D` gave, a later `C` replaces it, and a `D` with no
-`C` since the last `D` or `A` is no ending; output while a client is attached is seen as it
-arrives, a look clears the ending, and nothing else changes it (`step_commands`). An ending is
+last looked at, and tells how its shell's last command ended until someone sees it, each as part 2
+says its program owns it (`step_owned`). An ending is
 no status: `✓` and `✗` stay the endings of the session's own program.
 
 Each theorem below is stated over definitions in the components' `CoreSpec` modules and the world
@@ -266,7 +260,7 @@ def Linger.Session.State.scanner : State → Mediation.Scan := sorry
 
 def Linger.Session.State.seen : State → Seen := sorry
 
-def Linger.Session.State.commands : State → Commands := sorry
+def Linger.Session.State.owned : State → Owned := sorry
 
 def Linger.Session.State.nextTick : State → Option Nat := sorry
 
@@ -673,6 +667,25 @@ name once and keys everything after by the ID, that the daemon takes the name on
 leads to its ID, holding the ID's locks, that `rename` holds the names lock and the new name's ID's
 locks while it places the name, which the rename suite checks, and that a client attached before
 a rename titles its terminal with the new name, which it does from its next attach.
+What a session's program owns has one source each, and the session machine reads each from it
+alone (`step_owned`): the title is what OSC 0 and OSC 2 set on the session's terminal, as the
+terminal it fed the output holds it; whether it asks, a bell or a notification since the last
+look, and the notification's text are what the terminal package's mediator hears of a BEL, an OSC
+9 that is no ConEmu sub-command and an OSC 777 `notify`; its commands are what its shell's OSC 133
+marks tell, each as `Commands.hear` says the marks' standard means it, so a `D` after a `C` is
+that command's ending, with the command line the `C` gave and the status the `D` gave, a later `C`
+replaces it, and a `D` with no `C` since the last `D` or `A` is no ending; and its foreground is
+what the operating system last reported of its terminal. Output changes each exactly as its
+source in that output tells, output while a client is attached is seen as it arrives, so it leaves
+nothing to tell, a look, an attach or a capture, clears the ask, its text and the ending and
+nothing else, the daemon's reading of the world changes the foreground and nothing else, and no
+other event, no client input among them, changes any; a session lists `⚑` exactly while its
+program asks. The program's fields a listing reports, as `Fields.table` gives the program each,
+are readings of these alone: two sessions whose programs own the same report the same program
+fields (`fields_owned`). Not claimed: which bytes the mediator hears as a bell, a notification or
+a mark, which `Terminal.Mediation` decides and its fixtures and the status suite check, and which
+set the title, which `Terminal.Vt` decides and its fixtures check; a mark inside a full-screen
+program, which the session hears as its shell's.
 The fields of a session's record, the description an older linger saved and an import's
 provenance, come from the checkpoint the session booted from, and no event changes them
 (`step_fields_kept`); they, the boot metadata and the terminal a session reports each have
@@ -902,6 +915,105 @@ theorem step_terminal_sources_rejects_print :
                     (State.boot (s.terminal.feed [0x41]) [] [], ([] : List (Effect Replay.Plan))))
                   s ev).1.terminal =
               sizes.foldl (fun v (size : Nat × Nat) => v.resize size.1 size.2) s.terminal := by
+  sorry
+
+theorem step_owned (s : State) (ev : Event) :
+    (∀ chunk,
+        ev = .ptyOut chunk →
+          (Session.step s ev).1.owned =
+            s.owned.hear (Mediation.feed s.terminal s.scanner chunk).vt.windowTitle
+              (Mediation.feed s.terminal s.scanner chunk).asks
+              (Mediation.feed s.terminal s.scanner chunk).notice
+              (Mediation.feed s.terminal s.scanner chunk).marks (seenBy s.roster)) ∧
+      (∀ o, ev = .observed o → (Session.step s ev).1.owned = s.owned.observe o) ∧
+      (∀ id chunk,
+        ev = .bytes id chunk →
+          (Session.step s ev).1.owned = s.owned ∨
+            (Session.step s ev).1.owned = s.owned.look ∧
+              ∃ c, s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks) ∧
+      (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
+        ev = .bytes id chunk →
+          s.client? id = some c →
+          c.attached = false →
+          c.decoder.feed chunk = (dec, [m]) →
+          dec.errored = false → m.Looks → (Session.step s ev).1.owned = s.owned.look) ∧
+      ((∀ chunk, ev ≠ .ptyOut chunk) →
+        (∀ o, ev ≠ .observed o) →
+        (∀ id chunk, ev ≠ .bytes id chunk) → (Session.step s ev).1.owned = s.owned) ∧
+      (Status.classify { fresh := s.seen.fresh, unseen := s.seen.unseen, asks := s.seen.asks } =
+          .asks ↔
+        s.owned.asks = true) := by
+  sorry
+
+@[kills step_owned]
+theorem step_owned_rejects_rung :
+    ¬∀ (s : State) (ev : Event),
+        (∀ chunk,
+            ev = .ptyOut chunk →
+              ((fun (s : State) (_ : Event) => Session.step s (.ptyOut [0x07])) s ev).1.owned =
+                s.owned.hear (Mediation.feed s.terminal s.scanner chunk).vt.windowTitle
+                  (Mediation.feed s.terminal s.scanner chunk).asks
+                  (Mediation.feed s.terminal s.scanner chunk).notice
+                  (Mediation.feed s.terminal s.scanner chunk).marks (seenBy s.roster)) ∧
+          (∀ o,
+            ev = .observed o →
+              ((fun (s : State) (_ : Event) => Session.step s (.ptyOut [0x07])) s ev).1.owned =
+                s.owned.observe o) ∧
+          (∀ id chunk,
+            ev = .bytes id chunk →
+              ((fun (s : State) (_ : Event) => Session.step s (.ptyOut [0x07])) s ev).1.owned =
+                  s.owned ∨
+                ((fun (s : State) (_ : Event) => Session.step s (.ptyOut [0x07])) s ev).1.owned =
+                    s.owned.look ∧
+                  ∃ c, s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks) ∧
+          (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
+            ev = .bytes id chunk →
+              s.client? id = some c →
+              c.attached = false →
+              c.decoder.feed chunk = (dec, [m]) →
+              dec.errored = false →
+              m.Looks →
+              ((fun (s : State) (_ : Event) => Session.step s (.ptyOut [0x07])) s ev).1.owned =
+                s.owned.look) ∧
+          ((∀ chunk, ev ≠ .ptyOut chunk) →
+            (∀ o, ev ≠ .observed o) →
+            (∀ id chunk, ev ≠ .bytes id chunk) →
+            ((fun (s : State) (_ : Event) => Session.step s (.ptyOut [0x07])) s ev).1.owned =
+              s.owned) ∧
+          (Status.classify { fresh := s.seen.fresh, unseen := s.seen.unseen, asks := s.seen.asks } =
+              .asks ↔
+            s.owned.asks = true) := by
+  sorry
+
+@[kills step_owned]
+theorem step_owned_rejects_lumped :
+    ¬∀ (s : State) (ev : Event),
+        (∀ chunk,
+            ev = .ptyOut chunk →
+              (Session.step s ev).1.owned =
+                s.owned.hear (Mediation.feed s.terminal s.scanner chunk).vt.windowTitle
+                  (Mediation.feed s.terminal s.scanner chunk).asks
+                  (Mediation.feed s.terminal s.scanner chunk).notice
+                  (Mediation.feed s.terminal s.scanner chunk).marks (seenBy s.roster)) ∧
+          (∀ o, ev = .observed o → (Session.step s ev).1.owned = s.owned.observe o) ∧
+          (∀ id chunk,
+            ev = .bytes id chunk →
+              (Session.step s ev).1.owned = s.owned ∨
+                (Session.step s ev).1.owned = s.owned.look ∧
+                  ∃ c, s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks) ∧
+          (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
+            ev = .bytes id chunk →
+              s.client? id = some c →
+              c.attached = false →
+              c.decoder.feed chunk = (dec, [m]) →
+              dec.errored = false → m.Looks → (Session.step s ev).1.owned = s.owned.look) ∧
+          ((∀ chunk, ev ≠ .ptyOut chunk) →
+            (∀ o, ev ≠ .observed o) →
+            (∀ id chunk, ev ≠ .bytes id chunk) → (Session.step s ev).1.owned = s.owned) ∧
+          (Status.lumped Status.classify
+                { fresh := s.seen.fresh, unseen := s.seen.unseen, asks := s.seen.asks } =
+              .asks ↔
+            s.owned.asks = true) := by
   sorry
 
 theorem start_plan (live saved : Bool) :
@@ -1393,9 +1505,9 @@ writes, the table has one row for each operation, in `Op.all`'s order, each word
 row, and help lists the rows, each line its command's word (`commands_minimal`). A command exists
 only for an `Op`, so adding one changes `Op`, and with it what linger claims. Every field a
 listing reports is human, shown in rows as clean text, or machine, exact and only in `--porcelain`;
-each has one owner, the user, through one command, the program or linger, and no two fields of one
-owner tell the same thing (`fields_owned`): the name is the one field the user owns, which `rename`
-writes, and says what the session is. Not claimed: that
+each has one owner, the user, through one command, the program or linger (`fields_owned`): the
+name is the one field the user owns, which `rename` writes, and says what the session is, and the
+program's fields are readings of what its session keeps of it alone, as part 2 says. Not claimed: that
 the session CLI dispatches each command line through `lookup` to its row's operation, which its IO
 code does and the manager suite checks, with any other word a usage error; nor that each option is
 one parameter of one operation with one spelling, which the suites check.
@@ -1475,8 +1587,16 @@ theorem fields_owned :
         ∀ op,
           f.owner = .user op →
             op ∈ App.Commands.Op.all ∧ ∀ g ∈ App.Fields.table, g.owner = .user op → g = f) ∧
-      ∀ f ∈ App.Fields.table,
-        ∀ g ∈ App.Fields.table, f.owner = g.owner → f.role = g.role → f = g := by
+      ∀ (vt vt' : Vt.Vt) (fields fields' metadata : List (String × String)) (evs evs' : List Event),
+        (∀ kv ∈ metadata, App.Fields.owns App.Fields.table .program kv.1 = false) →
+          (Session.trace Session.step (State.boot vt fields metadata) evs).1.owned =
+            (Session.trace Session.step (State.boot vt' fields' metadata) evs').1.owned →
+          (Session.infoFields
+                  (Session.trace Session.step (State.boot vt fields metadata) evs).1).filter
+              (fun kv => App.Fields.owns App.Fields.table .program kv.1) =
+            (Session.infoFields
+                  (Session.trace Session.step (State.boot vt' fields' metadata) evs').1).filter
+              fun kv => App.Fields.owns App.Fields.table .program kv.1 := by
   sorry
 
 @[kills fields_owned]
@@ -1488,8 +1608,39 @@ theorem fields_owned_rejects_named_twice :
           ∀ op,
             f.owner = .user op →
               op ∈ App.Commands.Op.all ∧ ∀ g ∈ App.Fields.namedTwice, g.owner = .user op → g = f) ∧
-        ∀ f ∈ App.Fields.namedTwice,
-          ∀ g ∈ App.Fields.namedTwice, f.owner = g.owner → f.role = g.role → f = g) := by
+        ∀ (vt vt' : Vt.Vt) (fields fields' metadata : List (String × String))
+          (evs evs' : List Event),
+          (∀ kv ∈ metadata, App.Fields.owns App.Fields.namedTwice .program kv.1 = false) →
+            (Session.trace Session.step (State.boot vt fields metadata) evs).1.owned =
+              (Session.trace Session.step (State.boot vt' fields' metadata) evs').1.owned →
+            (Session.infoFields
+                    (Session.trace Session.step (State.boot vt fields metadata) evs).1).filter
+                (fun kv => App.Fields.owns App.Fields.namedTwice .program kv.1) =
+              (Session.infoFields
+                    (Session.trace Session.step (State.boot vt' fields' metadata) evs').1).filter
+                fun kv => App.Fields.owns App.Fields.namedTwice .program kv.1) := by
+  sorry
+
+@[kills fields_owned]
+theorem fields_owned_rejects_counted :
+    ¬((App.Fields.table.map (·.key)).Nodup ∧
+        (∀ key ∈ Listing.sources, key ∈ App.Fields.table.map (·.key)) ∧
+        (∀ f ∈ App.Fields.table, (f.kind = .human ↔ f.key ∈ Listing.shown)) ∧
+        (∀ f ∈ App.Fields.table,
+          ∀ op,
+            f.owner = .user op →
+              op ∈ App.Commands.Op.all ∧ ∀ g ∈ App.Fields.table, g.owner = .user op → g = f) ∧
+        ∀ (vt vt' : Vt.Vt) (fields fields' metadata : List (String × String))
+          (evs evs' : List Event),
+          (∀ kv ∈ metadata, App.Fields.owns App.Fields.table .program kv.1 = false) →
+            (Session.trace Session.step (State.boot vt fields metadata) evs).1.owned =
+              (Session.trace Session.step (State.boot vt' fields' metadata) evs').1.owned →
+            ((fun (s : State) => [("title", toString s.roster.length)])
+                    (Session.trace Session.step (State.boot vt fields metadata) evs).1).filter
+                (fun kv => App.Fields.owns App.Fields.table .program kv.1) =
+              ((fun (s : State) => [("title", toString s.roster.length)])
+                    (Session.trace Session.step (State.boot vt' fields' metadata) evs').1).filter
+                fun kv => App.Fields.owns App.Fields.table .program kv.1) := by
   sorry
 
 theorem listed_unrecorded (records : Session.Records) (panes : List Import.Resurrect.Pane)
@@ -3477,17 +3628,12 @@ theorem capture_waits_unlocked_rejects_held :
 
 /-! ## The status rule
 
-And the titles, listings and selector views that show statuses, what makes a session ask, and
-what it tells of its shell's commands.
-Not claimed: which bytes ask, which `Terminal.Mediation` decides: a BEL a terminal executes as a
-control, and an OSC 9 or OSC 777 notification, which the status suite checks; that the porcelain
-and a row report the text of the last notification since the last look, which the status
-suite checks too; which bytes are a shell's marks and what a mark's parameters say, which
-`Terminal.Mediation` decides too and its fixtures pin, and that the porcelain and a row
-report an ending's command line and status, which the status suite checks; repainting the marks
-after a reattach, which a repaint does not carry, and marks inside a full-screen program, which the
-session hears as its shell's; and that the daemon publishes what it sees to its name's end record,
-which the quiet and status suites check. -/
+And the titles, listings and selector views that show statuses; what makes a session ask and what
+it tells of its shell's commands is part 2's (`step_owned`). Not claimed: that the porcelain and
+a row report the text of the last notification since the last look and an ending's command line
+and status, which the status suite checks; repainting the marks after a reattach, which a repaint
+does not carry; and that the daemon publishes what it sees to its name's end record, which the
+quiet and status suites check. -/
 
 theorem classify_iff (o : Status.Obs) (s : Status.Status) :
     Status.classify o = s ↔ Status.Is s o := by sorry
@@ -3496,119 +3642,6 @@ theorem classify_iff (o : Status.Obs) (s : Status.Status) :
 theorem classify_iff_rejects_idle :
     ¬∀ (o : Status.Obs) (s : Status.Status),
         (fun (_ : Status.Obs) => Status.Status.idle) o = s ↔ Status.Is s o := by
-  sorry
-
-theorem step_asks (s : State) (ev : Event) :
-    (∀ chunk,
-        ev = .ptyOut chunk →
-          (Status.classify
-                { fresh := (Session.step s ev).1.seen.fresh,
-                  unseen := (Session.step s ev).1.seen.unseen,
-                  asks := (Session.step s ev).1.seen.asks } =
-              .asks ↔
-            seenBy s.roster = false ∧
-              ((Mediation.feed s.terminal s.scanner chunk).asks = true ∨ s.seen.asks = true))) ∧
-      (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
-        ev = .bytes id chunk →
-          s.client? id = some c →
-          c.attached = false →
-          c.decoder.feed chunk = (dec, [m]) →
-          dec.errored = false → m.Looks → (Session.step s ev).1.seen.asks = false) ∧
-      ((Session.step s ev).1.seen.asks = true → s.seen.asks = true ∨ ∃ chunk, ev = .ptyOut chunk) ∧
-      (s.seen.asks = true →
-        (Session.step s ev).1.seen.asks = false →
-        (∃ chunk, ev = .ptyOut chunk) ∨
-          ∃ id chunk c,
-            ev = .bytes id chunk ∧
-              s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks) := by
-  sorry
-
-@[kills step_asks]
-theorem step_asks_rejects_lumped :
-    ¬∀ (s : State) (ev : Event),
-        (∀ chunk,
-            ev = .ptyOut chunk →
-              (Status.lumped Status.classify
-                    { fresh := (Session.step s ev).1.seen.fresh,
-                      unseen := (Session.step s ev).1.seen.unseen,
-                      asks := (Session.step s ev).1.seen.asks } =
-                  .asks ↔
-                seenBy s.roster = false ∧
-                  ((Mediation.feed s.terminal s.scanner chunk).asks = true ∨ s.seen.asks = true))) ∧
-          (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
-            ev = .bytes id chunk →
-              s.client? id = some c →
-              c.attached = false →
-              c.decoder.feed chunk = (dec, [m]) →
-              dec.errored = false → m.Looks → (Session.step s ev).1.seen.asks = false) ∧
-          ((Session.step s ev).1.seen.asks = true →
-            s.seen.asks = true ∨ ∃ chunk, ev = .ptyOut chunk) ∧
-          (s.seen.asks = true →
-            (Session.step s ev).1.seen.asks = false →
-            (∃ chunk, ev = .ptyOut chunk) ∨
-              ∃ id chunk c,
-                ev = .bytes id chunk ∧
-                  s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks) := by
-  sorry
-
-theorem step_commands (s : State) (ev : Event) :
-    (∀ chunk,
-        ev = .ptyOut chunk →
-          (Session.step s ev).1.commands.running =
-              ((Mediation.feed s.terminal s.scanner chunk).marks.foldl Commands.hear
-                  s.commands).running ∧
-            (Session.step s ev).1.commands.finished =
-              if seenBy s.roster then none
-              else
-                ((Mediation.feed s.terminal s.scanner chunk).marks.foldl Commands.hear
-                    s.commands).finished) ∧
-      (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
-        ev = .bytes id chunk →
-          s.client? id = some c →
-          c.attached = false →
-          c.decoder.feed chunk = (dec, [m]) →
-          dec.errored = false → m.Looks → (Session.step s ev).1.commands.finished = none) ∧
-      ((∀ chunk, ev ≠ .ptyOut chunk) →
-        (Session.step s ev).1.commands.running = s.commands.running) ∧
-      ((Session.step s ev).1.commands.finished ≠ s.commands.finished →
-        (∃ chunk, ev = .ptyOut chunk) ∨
-          (Session.step s ev).1.commands.finished = none ∧
-            ∃ id chunk c,
-              ev = .bytes id chunk ∧
-                s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks) := by
-  sorry
-
-@[kills step_commands]
-theorem step_commands_rejects_deaf :
-    ¬∀ (s : State) (ev : Event),
-        (∀ chunk,
-            ev = .ptyOut chunk →
-              ((fun (_ : State) => ({} : Commands)) (Session.step s ev).1).running =
-                  ((Mediation.feed s.terminal s.scanner chunk).marks.foldl Commands.hear
-                      ((fun (_ : State) => ({} : Commands)) s)).running ∧
-                ((fun (_ : State) => ({} : Commands)) (Session.step s ev).1).finished =
-                  if seenBy s.roster then none
-                  else
-                    ((Mediation.feed s.terminal s.scanner chunk).marks.foldl Commands.hear
-                        ((fun (_ : State) => ({} : Commands)) s)).finished) ∧
-          (∀ (id : Nat) (chunk : List UInt8) (c : Client) (dec : Wire.Decoder) (m : Wire.Msg),
-            ev = .bytes id chunk →
-              s.client? id = some c →
-              c.attached = false →
-              c.decoder.feed chunk = (dec, [m]) →
-              dec.errored = false →
-              m.Looks →
-              ((fun (_ : State) => ({} : Commands)) (Session.step s ev).1).finished = none) ∧
-          ((∀ chunk, ev ≠ .ptyOut chunk) →
-            ((fun (_ : State) => ({} : Commands)) (Session.step s ev).1).running =
-              ((fun (_ : State) => ({} : Commands)) s).running) ∧
-          (((fun (_ : State) => ({} : Commands)) (Session.step s ev).1).finished ≠
-              ((fun (_ : State) => ({} : Commands)) s).finished →
-            (∃ chunk, ev = .ptyOut chunk) ∨
-              ((fun (_ : State) => ({} : Commands)) (Session.step s ev).1).finished = none ∧
-                ∃ id chunk c,
-                  ev = .bytes id chunk ∧
-                    s.client? id = some c ∧ ∃ m ∈ (c.decoder.feed chunk).2, m.Looks) := by
   sorry
 
 theorem icon_glyphs :

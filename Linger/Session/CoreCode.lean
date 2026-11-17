@@ -169,6 +169,12 @@ def State.scanner (s : State) : Mediation.Scan := s.scan
 command that runs and the ending of the last one that finished since the last look. -/
 def State.commands (s : State) : Commands := { running := s.running, finished := s.finished }
 
+/-- What the session's program owns, as the headline theorems observe it: the terminal's title,
+the ask and its notification's text, the commands and the latest reading of the world. -/
+def State.owned (s : State) : Owned :=
+  { title := s.vt.windowTitle, asks := s.asking, notice := s.notice, commands := s.commands,
+    observed := s.observed }
+
 -- No `deriving` clause at all. `Inhabited` would need `Inhabited Vt`, a public door out of
 -- the `Vt` seal admitting a zero-column screen, and `Repr` would need `Repr Vt`, whose
 -- absence is what makes the seal hide reads. A `State` has exactly one door, `State.boot`.
@@ -397,10 +403,11 @@ def infoFields (s : State) : List (String × String) :=
     (match s.ended with
     | some ending => endingFields ending
     | none => []) ++
-    titleFields s.vt.windowTitle ++
-    noticeFields s.notice ++
-    finishedFields s.commands.finished ++
-    presentFields s.observed s.lastOutMs ++
+    -- what the program owns, each from its one source (`step_owned`)
+    titleFields s.owned.title ++
+    noticeFields s.owned.notice ++
+    finishedFields s.owned.commands.finished ++
+    presentFields s.owned.observed s.lastOutMs ++
     s.fields.filter (recordField ·.1)
 
 /-- Frame the fields as `k` TAB `v` LF records.
