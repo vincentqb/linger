@@ -619,6 +619,39 @@ Check Os.Exec.Keeps upgraded := do
         (IO.userError
           s!"the exec'd shell wrote nothing through the descriptor it kept: {out.stdout} {out.stderr}")
 
+/-- What a session's notification socket reads, one read of at most the first argument's bytes for
+each, of the notifications its program sent to it one after another: the observation
+`Os.Dgram.Whole` constrains, which `notify_exact` rests on. It has no body; the check below
+observes it. -/
+opaque notifications : Nat → List (List UInt8) → List (List UInt8)
+
+-- A session's notifications arrive whole and in order: at a socket bound as a daemon binds its
+-- own (`Os.Shell.dgramBind`), the notifications a program sends, `READY=1` and its status, a
+-- status `systemd-notify` would join to it, one of exactly `Notify.cap` bytes and a last one, read
+-- as the daemon reads them, one read of at most `Notify.cap` bytes each, are those, in order.
+Check Os.Dgram.Whole notifications := do
+  IO.FS.withTempDir fun dir => do
+      let path := (dir / "s.notify").toString
+      let fd ← dgramBind path
+      try
+        let sent : List (List UInt8) :=
+          ["READY=1".toUTF8.toList, "READY=1\nSTATUS=hi".toUTF8.toList,
+            List.replicate Linger.Session.Notify.cap 0x41, "STATUS=done".toUTF8.toList]
+        for d in sent do
+          unless ← dgramSend path (ByteArray.mk d.toArray) do
+            refute s!"a notification of {d.length} bytes was not sent whole"
+        let mut read : List (List UInt8) := []
+        for _ in sent do
+          match ← Os.Shell.read fd (USize.ofNat Linger.Session.Notify.cap) with
+          | some bytes =>
+            read := read ++ [bytes.toList]
+          | none =>
+            read := read ++ [[]]
+        unless read == sent do
+          refute s!"notifications of {sent.map (·.length)} bytes read back as {read.map (·.length)}"
+      finally
+        close fd
+
 /-- Whether a process is in the process group of a session's program when its ending signals
 the group: the membership `Os.Signal.Group` speaks of, which `ending_clean` rests on. It has no
 body; the check below observes it. -/

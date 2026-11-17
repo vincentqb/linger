@@ -43,9 +43,9 @@ theorem programOf_exact (shell : String) (argv : List String) :
 
 /-- A session's program reads each variable `session` sets as it sets it, none of linger's own
 of the command that asked for the session, and every other as that command had it. -/
-theorem environment_lookup (name key : String) (names : List String)
+theorem environment_lookup (name notify key : String) (names : List String)
     (inherited : String → Option String) (named : (inherited key).isSome → key ∈ names) :
-    ((environment name names).reverse.lookup key).getD (inherited key) =
+    ((environment name notify names).reverse.lookup key).getD (inherited key) =
       if key = "LINGER_SESSION" then some name
       else
         if key = "TERM" then some "xterm-256color"
@@ -55,7 +55,9 @@ theorem environment_lookup (name key : String) (names : List String)
             if key = "TERM_PROGRAM" then some "linger"
             else
               if key = "TERM_PROGRAM_VERSION" then some Terminal.Mediation.versionNumber
-              else if lingers key then none else inherited key := by
+              else
+                if key = "NOTIFY_SOCKET" then some notify
+                else if lingers key then none else inherited key := by
   have unsets :
     ∀ keys : List String,
       List.lookup key (keys.map fun x => (x, (none : Option String))) =
@@ -81,12 +83,16 @@ theorem environment_lookup (name key : String) (names : List String)
   · subst h3; rfl
   by_cases h4 : key = "TERM_PROGRAM_VERSION"
   · subst h4; rfl
+  by_cases h6 : key = "NOTIFY_SOCKET"
+  · subst h6; rfl
   have none_set :
-    List.lookup key ((session name).map fun (key, value) => (key, some value)).reverse = none := by
+    List.lookup key ((session name notify).map fun (key, value) => (key, some value)).reverse =
+      none := by
     simp [session, List.lookup, beq_eq_false_iff_ne.2 h1, beq_eq_false_iff_ne.2 h2,
-      beq_eq_false_iff_ne.2 h5, beq_eq_false_iff_ne.2 h3, beq_eq_false_iff_ne.2 h4]
+      beq_eq_false_iff_ne.2 h5, beq_eq_false_iff_ne.2 h3, beq_eq_false_iff_ne.2 h4,
+      beq_eq_false_iff_ne.2 h6]
   rw [none_set]
-  simp only [h1, h2, h5, h3, h4, ite_false, Option.none_or]
+  simp only [h1, h2, h5, h3, h4, h6, ite_false, Option.none_or]
   by_cases own : lingers key = true
   · by_cases listed : key ∈ names
     · simp [listed, own]

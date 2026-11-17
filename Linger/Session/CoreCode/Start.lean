@@ -70,18 +70,21 @@ def programOf (shell : String) : List String → String × Array String
   | program :: words => (program, words.toArray)
 
 /-- The variables a session sets for its program: the session's ID (`Linger.Session.Names`),
-which no rename changes, and the terminal linger is: an xterm of 256 colours that keeps and
-repaints 24-bit colour too, with linger's version. -/
-def session (id : String) : List (String × String) :=
+which no rename changes, the terminal linger is: an xterm of 256 colours that keeps and
+repaints 24-bit colour too, with linger's version, and `NOTIFY_SOCKET`, the path of the socket
+its daemon reads the program's `sd_notify` notifications from, as systemd sets it for a
+service. -/
+def session (id notify : String) : List (String × String) :=
   [("LINGER_SESSION", id), ("TERM", "xterm-256color"), ("COLORTERM", "truecolor"),
-    ("TERM_PROGRAM", "linger"), ("TERM_PROGRAM_VERSION", Terminal.Mediation.versionNumber)]
+    ("TERM_PROGRAM", "linger"), ("TERM_PROGRAM_VERSION", Terminal.Mediation.versionNumber),
+    ("NOTIFY_SOCKET", notify)]
 
 /-- What a session's program reads unlike the command that asked for the session, whose
 environment's variables `names` names: none of linger's own variables (`lingers`), then the
 session's (`session`). -/
-def environment (id : String) (names : List String) : List (String × Option String) :=
+def environment (id notify : String) (names : List String) : List (String × Option String) :=
   (names.filter lingers).map (fun key => (key, none)) ++
-    (session id).map fun (key, value) => (key, some value)
+    (session id notify).map fun (key, value) => (key, some value)
 
 /-- What a session's program starts without, of the process state its daemon would pass on, and
 through the daemon the command that asked for the session: every signal goes back to its default

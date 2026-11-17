@@ -639,6 +639,7 @@ theorem step_owned (s : State) (ev : Event) :
               (Mediation.feed s.terminal s.scanner chunk).notice
               (Mediation.feed s.terminal s.scanner chunk).marks (seenBy s.roster)) ∧
       (∀ o, ev = .observed o → (Session.step s ev).1.owned = s.owned.observe o) ∧
+      (∀ d, ev = .notified d → (Session.step s ev).1.owned = s.owned.notify d) ∧
       (∀ id chunk,
         ev = .bytes id chunk →
           (Session.step s ev).1.owned = s.owned ∨
@@ -652,7 +653,8 @@ theorem step_owned (s : State) (ev : Event) :
           dec.errored = false → m.Looks → (Session.step s ev).1.owned = s.owned.look) ∧
       ((∀ chunk, ev ≠ .ptyOut chunk) →
         (∀ o, ev ≠ .observed o) →
-        (∀ id chunk, ev ≠ .bytes id chunk) → (Session.step s ev).1.owned = s.owned) ∧
+        (∀ id chunk, ev ≠ .bytes id chunk) →
+        (∀ d, ev ≠ .notified d) → (Session.step s ev).1.owned = s.owned) ∧
       (Status.classify { fresh := s.seen.fresh, unseen := s.seen.unseen, asks := s.seen.asks } =
           .asks ↔
         s.owned.asks = true) :=
@@ -660,13 +662,15 @@ theorem step_owned (s : State) (ev : Event) :
     subst hev
     exact Session.step_ptyOut_owned s chunk, fun o hev => by
     subst hev
-    exact Session.step_observed_owned s o, fun id chunk hev => by
+    exact Session.step_observed_owned s o, fun d hev => by
+    subst hev
+    exact Session.step_notified_owned s d, fun id chunk hev => by
     subst hev
     exact Session.step_bytes_owned s id chunk,
     fun id chunk c dec m hev hc fresh read healthy looks => by
     subst hev
-    exact Session.step_look_owned s id chunk hc fresh read healthy looks, fun out seen read =>
-    Session.step_owned_kept s ev out seen read, Status.classify_running_asks _ _ _⟩
+    exact Session.step_look_owned s id chunk hc fresh read healthy looks, fun out seen read heard =>
+    Session.step_owned_kept s ev out seen read heard, Status.classify_running_asks _ _ _⟩
 
 theorem step_owned_rejects_rung :
     ¬∀ (s : State) (ev : Event),
@@ -681,6 +685,10 @@ theorem step_owned_rejects_rung :
             ev = .observed o →
               ((fun (s : State) (_ : Event) => Session.step s (.ptyOut [0x07])) s ev).1.owned =
                 s.owned.observe o) ∧
+          (∀ d,
+            ev = .notified d →
+              ((fun (s : State) (_ : Event) => Session.step s (.ptyOut [0x07])) s ev).1.owned =
+                s.owned.notify d) ∧
           (∀ id chunk,
             ev = .bytes id chunk →
               ((fun (s : State) (_ : Event) => Session.step s (.ptyOut [0x07])) s ev).1.owned =
@@ -700,6 +708,7 @@ theorem step_owned_rejects_rung :
           ((∀ chunk, ev ≠ .ptyOut chunk) →
             (∀ o, ev ≠ .observed o) →
             (∀ id chunk, ev ≠ .bytes id chunk) →
+            (∀ d, ev ≠ .notified d) →
             ((fun (s : State) (_ : Event) => Session.step s (.ptyOut [0x07])) s ev).1.owned =
               s.owned) ∧
           (Status.classify { fresh := s.seen.fresh, unseen := s.seen.unseen, asks := s.seen.asks } =
@@ -707,7 +716,7 @@ theorem step_owned_rejects_rung :
             s.owned.asks = true) := by
   -- a session that rings the bell on a client's read asks, with no output and no look
   intro h
-  rcases (h (State.boot (Vt.Vt.init 80 24) [] []) (.bytes 0 [])).2.2.1 0 [] rfl with kept |
+  rcases (h (State.boot (Vt.Vt.init 80 24) [] []) (.bytes 0 [])).2.2.2.1 0 [] rfl with kept |
     ⟨-, c, hc, -⟩
   · have := congrArg Owned.asks kept
     simp only at this
@@ -725,6 +734,7 @@ theorem step_owned_rejects_lumped :
                   (Mediation.feed s.terminal s.scanner chunk).notice
                   (Mediation.feed s.terminal s.scanner chunk).marks (seenBy s.roster)) ∧
           (∀ o, ev = .observed o → (Session.step s ev).1.owned = s.owned.observe o) ∧
+          (∀ d, ev = .notified d → (Session.step s ev).1.owned = s.owned.notify d) ∧
           (∀ id chunk,
             ev = .bytes id chunk →
               (Session.step s ev).1.owned = s.owned ∨
@@ -738,7 +748,8 @@ theorem step_owned_rejects_lumped :
               dec.errored = false → m.Looks → (Session.step s ev).1.owned = s.owned.look) ∧
           ((∀ chunk, ev ≠ .ptyOut chunk) →
             (∀ o, ev ≠ .observed o) →
-            (∀ id chunk, ev ≠ .bytes id chunk) → (Session.step s ev).1.owned = s.owned) ∧
+            (∀ id chunk, ev ≠ .bytes id chunk) →
+            (∀ d, ev ≠ .notified d) → (Session.step s ev).1.owned = s.owned) ∧
           (Status.lumped Status.classify
                 { fresh := s.seen.fresh, unseen := s.seen.unseen, asks := s.seen.asks } =
               .asks ↔
@@ -747,13 +758,47 @@ theorem step_owned_rejects_lumped :
   intro h
   have heard :=
     ((h (Session.step (State.boot (Vt.Vt.init 80 24) [] []) (.ptyOut [0x07])).1
-            (.tick 0)).2.2.2.2.2).mpr
+            (.tick 0)).2.2.2.2.2.2).mpr
       Session.rung_asks
   have never : ∀ o : Status.Obs, Status.lumped Status.classify o ≠ .asks := fun o hasks => by
     unfold Status.lumped at hasks
     have := (Status.classify_iff _ _).mp hasks
     simp [Status.Is] at this
   exact never _ heard
+
+theorem notify_exact (received : Nat → List (List UInt8) → List (List UInt8))
+    (whole : Os.Dgram.Whole received) (vt : Vt.Vt) (fields metadata : List (String × String))
+    (evs : List Event) (sent : List (List UInt8)) (fits : ∀ d ∈ sent, d.length ≤ Notify.cap)
+    (heard : Notify.heard evs = received Notify.cap sent) :
+    (Session.trace Session.step (State.boot vt fields metadata) evs).1.owned.ready =
+        Notify.ready sent ∧
+      (Session.trace Session.step (State.boot vt fields metadata) evs).1.owned.status =
+        Notify.status sent := by
+  have sent' : Notify.heard evs = sent := heard.trans (whole _ _ fits)
+  obtain ⟨ready, status⟩ := Session.trace_notified (State.boot vt fields metadata) evs
+  rw [ready, status, sent']
+  exact ⟨rfl, Option.or_none⟩
+
+theorem notify_exact_rejects_output :
+    ¬∀ (received : Nat → List (List UInt8) → List (List UInt8)),
+        Os.Dgram.Whole received →
+          ∀ (vt : Vt.Vt) (fields metadata : List (String × String)) (evs : List Event)
+            (sent : List (List UInt8)),
+            (∀ d ∈ sent, d.length ≤ Notify.cap) →
+              Notify.heard evs = received Notify.cap sent →
+              (Session.trace (Session.outputNotifies Session.step) (State.boot vt fields metadata)
+                      evs).1.owned.ready =
+                  Notify.ready sent ∧
+                (Session.trace (Session.outputNotifies Session.step) (State.boot vt fields metadata)
+                      evs).1.owned.status =
+                  Notify.status sent := by
+  -- a session that reads its program's output as notifications is ready once it prints `READY=1`
+  intro h
+  have :=
+    (h (fun _ sent => sent) (fun _ _ _ => rfl) (Vt.Vt.init 1 1) [] []
+        [.ptyOut [0x52, 0x45, 0x41, 0x44, 0x59, 0x3D, 0x31]] [] (by simp) rfl).1
+  rw [Session.outputNotifies_ready] at this
+  cases this
 
 theorem start_plan (live saved : Bool) :
     (Start.plan live saved = .take ↔ live = false ∧ saved = false) ∧
@@ -984,6 +1029,10 @@ theorem rowText_sources_rejects_every_field :
 theorem caption_precedence (info : List (String × String)) :
     ((info.lookup "title").getD "" ≠ "" → Listing.caption info = (info.lookup "title").getD "") ∧
       ((info.lookup "title").getD "" = "" →
+        (info.lookup "status_text").getD "" ≠ "" →
+        Listing.caption info = (info.lookup "status_text").getD "") ∧
+      ((info.lookup "title").getD "" = "" →
+        (info.lookup "status_text").getD "" = "" →
         Listing.caption info = (info.lookup "description").getD "") ∧
       (Listing.program info = "" ∨
         ¬(Listing.command (Listing.program info)).toList <:+: (Listing.caption info).toList) :=
@@ -995,6 +1044,11 @@ theorem caption_precedence_rejects_described :
             (fun (info : List (String × String)) => (info.lookup "description").getD "") info =
               (info.lookup "title").getD "") ∧
           ((info.lookup "title").getD "" = "" →
+            (info.lookup "status_text").getD "" ≠ "" →
+            (fun (info : List (String × String)) => (info.lookup "description").getD "") info =
+              (info.lookup "status_text").getD "") ∧
+          ((info.lookup "title").getD "" = "" →
+            (info.lookup "status_text").getD "" = "" →
             (fun (info : List (String × String)) => (info.lookup "description").getD "") info =
               (info.lookup "description").getD "") ∧
           (Listing.program info = "" ∨
@@ -1441,7 +1495,7 @@ theorem fields_owned_rejects_counted :
     (Session.trace Session.step (State.boot (Vt.Vt.init 1 1) [] []) []).1.owned =
       (Session.trace Session.step (State.boot (Vt.Vt.init 1 1) [] []) [.connected 0]).1.owned :=
     (Session.step_owned_kept _ _ (fun _ h => by cases h) (fun _ h => by cases h)
-        (fun _ _ h => by cases h)).symm
+        (fun _ _ h => by cases h) (fun _ h => by cases h)).symm
   have := h.2.2.2.2 (Vt.Vt.init 1 1) (Vt.Vt.init 1 1) [] [] [] [] [.connected 0] (by simp) owned
   revert this
   simp [Session.trace, Session.step, State.roster, State.boot, App.Fields.owns, App.Fields.table,
@@ -1463,7 +1517,7 @@ theorem listed_unrecorded_rejects_never :
           pane ∈ panes ∧ records.holds pane.name = false := by
   intro h
   have :=
-    (h ⟨[], [], [], [], []⟩ [{ name := "a", dir := "", line := 0 }]
+    (h ⟨[], [], [], [], [], []⟩ [{ name := "a", dir := "", line := 0 }]
           { name := "a", dir := "", line := 0 }).mpr
       ⟨by simp, by decide⟩
   simp at this
@@ -1482,7 +1536,7 @@ theorem adopt_exclusive_rejects_overwrite :
           if records.holds pane.name then none
           else some (Import.Resurrect.checkpoint pane contents) := by
   intro h
-  have := h ⟨["a"], [], [], [], []⟩ { name := "a", dir := "", line := 0 } none
+  have := h ⟨["a"], [], [], [], [], []⟩ { name := "a", dir := "", line := 0 } none
   simp [Session.Records.holds] at this
 
 theorem dismiss_hides (records later : Session.Records) (pane : Import.Resurrect.Pane)
@@ -1516,7 +1570,7 @@ theorem dismiss_hides_rejects_memory :
             pane ∉ Import.Resurrect.listed later panes := by
   intro h
   have :=
-    ((h ⟨[], [], [], [], []⟩ ⟨[], [], [], [], []⟩ { name := "a", dir := "", line := 0 } []
+    ((h ⟨[], [], [], [], [], []⟩ ⟨[], [], [], [], [], []⟩ { name := "a", dir := "", line := 0 } []
               (by simp)).2.2.1
           "a").mpr
       (Or.inl rfl)
@@ -1921,11 +1975,11 @@ theorem start_runs (inherited : String → Option String)
       String →
         String → Array String → List (String × Option String) → Spawn.Reset → Option Spawn.Started)
     (runs : Spawn.Runs inherited start) (names : List String)
-    (named : ∀ key, (inherited key).isSome → key ∈ names) (id dir shell : String)
+    (named : ∀ key, (inherited key).isSome → key ∈ names) (id notify dir shell : String)
     (argv : List String) {started : Spawn.Started}
     (ok :
       start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
-          (Start.environment id names) Start.reset =
+          (Start.environment id notify names) Start.reset =
         some started) :
     started.argv = argv.headD shell :: argv.drop 1 ∧
       started.dir = dir ∧
@@ -1934,20 +1988,24 @@ theorem start_runs (inherited : String → Option String)
       started.env "COLORTERM" = some "truecolor" ∧
       started.env "TERM_PROGRAM" = some "linger" ∧
       started.env "TERM_PROGRAM_VERSION" = some Mediation.versionNumber ∧
+      started.env "NOTIFY_SOCKET" = some notify ∧
       ∀ key,
-        key ∉ ["LINGER_SESSION", "TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"] →
+        key ∉
+            ["LINGER_SESSION", "TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION",
+              "NOTIFY_SOCKET"] →
           started.env key = if Start.lingers key then none else inherited key := by
   obtain ⟨hargv, hdir, henv⟩ := runs _ _ _ _ _ _ ok
   rw [Start.programOf_exact] at hargv
-  refine ⟨by simpa using hargv, hdir, ?_, ?_, ?_, ?_, ?_, fun key hkey => ?_⟩
-  all_goals rw [henv, Start.environment_lookup _ _ _ _ (named _)]
+  refine ⟨by simpa using hargv, hdir, ?_, ?_, ?_, ?_, ?_, ?_, fun key hkey => ?_⟩
+  all_goals rw [henv, Start.environment_lookup _ _ _ _ _ (named _)]
+  · simp
   · simp
   · simp
   · simp
   · simp
   · simp
   · simp only [List.mem_cons, List.not_mem_nil, or_false, not_or] at hkey
-    simp [hkey.1, hkey.2.1, hkey.2.2.1, hkey.2.2.2.1, hkey.2.2.2.2]
+    simp [hkey.1, hkey.2.1, hkey.2.2.1, hkey.2.2.2.1, hkey.2.2.2.2.1, hkey.2.2.2.2.2]
 
 theorem start_runs_rejects_passing :
     ¬∀ (inherited : String → Option String)
@@ -1958,9 +2016,11 @@ theorem start_runs_rejects_passing :
         Spawn.Runs inherited start →
           ∀ (names : List String),
             (∀ key, (inherited key).isSome → key ∈ names) →
-              ∀ (id dir shell : String) (argv : List String) {started : Spawn.Started},
+              ∀ (id notify dir shell : String) (argv : List String) {started : Spawn.Started},
                 start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
-                      ((fun (id : String) (_ : List String) => Start.environment id []) id names)
+                      ((fun (id notify : String) (_ : List String) =>
+                          Start.environment id notify [])
+                        id notify names)
                       Start.reset =
                     some started →
                   started.argv = argv.headD shell :: argv.drop 1 ∧
@@ -1970,10 +2030,11 @@ theorem start_runs_rejects_passing :
                     started.env "COLORTERM" = some "truecolor" ∧
                     started.env "TERM_PROGRAM" = some "linger" ∧
                     started.env "TERM_PROGRAM_VERSION" = some Mediation.versionNumber ∧
+                    started.env "NOTIFY_SOCKET" = some notify ∧
                     ∀ key,
                       key ∉
                           ["LINGER_SESSION", "TERM", "COLORTERM", "TERM_PROGRAM",
-                            "TERM_PROGRAM_VERSION"] →
+                            "TERM_PROGRAM_VERSION", "NOTIFY_SOCKET"] →
                         started.env key = if Start.lingers key then none else inherited key := by
   intro h
   -- a caller with `LINGER_DIR` set, which an environment that unsets nothing passes through
@@ -1993,18 +2054,19 @@ theorem start_runs_rejects_passing :
     · simp [dirKey]
     · simp [inherited, dirKey] at h
   have passed :=
-    (h _ _ runs ["LINGER_DIR"] named "x" "" "sh" [] rfl).2.2.2.2.2.2.2 "LINGER_DIR" (by decide)
+    (h _ _ runs ["LINGER_DIR"] named "x" "n" "" "sh" [] rfl).2.2.2.2.2.2.2.2 "LINGER_DIR"
+      (by decide)
   simp [Start.lingers, Start.environment, Start.session, List.lookup, inherited] at passed
 
 theorem start_clean
     (start :
       String →
         String → Array String → List (String × Option String) → Spawn.Reset → Option Spawn.Started)
-    (clean : Spawn.Clean start) (name dir shell : String) (names argv : List String)
+    (clean : Spawn.Clean start) (name notify dir shell : String) (names argv : List String)
     {started : Spawn.Started}
     (ok :
       start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
-          (Start.environment name names) Start.reset =
+          (Start.environment name notify names) Start.reset =
         some started) :
     (∀ sig, started.ignored sig = false) ∧
       (∀ sig, started.blocked sig = false) ∧
@@ -2025,9 +2087,9 @@ theorem start_clean_rejects_inherited :
             String →
             Array String → List (String × Option String) → Spawn.Reset → Option Spawn.Started),
         Spawn.Clean start →
-          ∀ (name dir shell : String) (names argv : List String) {started : Spawn.Started},
+          ∀ (name notify dir shell : String) (names argv : List String) {started : Spawn.Started},
             start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
-                  (Start.environment name names)
+                  (Start.environment name notify names)
                   ({ dispositions := false, mask := true, descriptors := true } : Spawn.Reset) =
                 some started →
               (∀ sig, started.ignored sig = false) ∧
@@ -2045,7 +2107,7 @@ theorem start_clean_rejects_inherited :
     cases hs
     refine ⟨fun fd low => ite_eq_left low, fun asked _ => by simp [asked], fun _ _ => rfl, ?_⟩
     exact fun _ fd high => ite_eq_right (Nat.not_lt_of_le high)
-  exact absurd ((h _ clean "x" "" "sh" [] [] rfl).1 2) (by simp)
+  exact absurd ((h _ clean "x" "n" "" "sh" [] [] rfl).1 2) (by simp)
 
 theorem step_kill_stops (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {rest : List Wire.Msg} (hc : s.client? id = some c)
@@ -2670,6 +2732,7 @@ theorem run_stop_exits_rejects_jump :
 theorem locks_named (records : Session.Records) (name : String)
     (before : ∀ held ∈ records.locks, held = name ∨ records.holds held = true) :
     (Session.Locks.release records name).sockets = records.sockets ∧
+      (Session.Locks.release records name).notifies = records.notifies ∧
       (Session.Locks.release records name).checkpoints = records.checkpoints ∧
       (Session.Locks.release records name).endings = records.endings ∧
       (∀ held ∈ records.locks,
@@ -2683,6 +2746,8 @@ theorem locks_named_rejects_kept :
         (∀ held ∈ records.locks, held = name ∨ records.holds held = true) →
           ((fun (records : Session.Records) (_ : String) => records) records name).sockets =
               records.sockets ∧
+            ((fun (records : Session.Records) (_ : String) => records) records name).notifies =
+              records.notifies ∧
             ((fun (records : Session.Records) (_ : String) => records) records name).checkpoints =
               records.checkpoints ∧
             ((fun (records : Session.Records) (_ : String) => records) records name).endings =
@@ -2696,7 +2761,7 @@ theorem locks_named_rejects_kept :
                 true := by
   intro h
   have :=
-    (h { sockets := [], checkpoints := [], endings := [], locks := ["a"] } "a" (by simp)).2.2.2.2
+    (h { sockets := [], checkpoints := [], endings := [], locks := ["a"] } "a" (by simp)).2.2.2.2.2
       "a" (by simp)
   simp [Session.Records.holds] at this
 

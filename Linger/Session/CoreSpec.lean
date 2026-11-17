@@ -155,7 +155,7 @@ def Ending.answer : Ending → Os.Answer
   | .dismissed => .notFound
 
 /-- What linger keeps of its sessions, by the key each file is kept under: one fact a file, a
-live session's socket, a saved session's checkpoint and the end record of the last session to
+live session's socket and its notification socket, a saved session's checkpoint and the end record of the last session to
 hold a key, each keyed by the session's ID, which also marks a saved tmux pane as dealt with,
 the names directory's entries, each a name and the ID it leads to, and the lock files a process
 takes to act on an ID, which mean nothing of their own. -/
@@ -170,13 +170,18 @@ structure Records where
   entries : List String := []
   /-- The names of the lock files, in the runtime directory and the state directory's `.locks`. -/
   locks : List String := []
+  /-- The IDs of the notification sockets in the runtime directory, each a live session's, at
+  the path its program's `NOTIFY_SOCKET` names. -/
+  notifies : List String := []
   deriving Repr, DecidableEq
 
-/-- Whether linger keeps a record of `key`, a name or an ID: its socket, its checkpoint, its end
-record, or an entry of the names directory that names it or leads to it. -/
+/-- Whether linger keeps a record of `key`, a name or an ID: its socket, its notification socket,
+its checkpoint, its end record, or an entry of the names directory that names it or leads to
+it. -/
 @[expose]
 def Records.holds (r : Records) (key : String) : Bool :=
-  r.sockets.contains key || r.checkpoints.contains key || r.endings.contains key ||
+  r.sockets.contains key || r.notifies.contains key || r.checkpoints.contains key ||
+    r.endings.contains key ||
     r.entries.contains key
 
 end Linger.Session
@@ -573,15 +578,87 @@ inductive Event where
   | observed (observation : Observation)
   /-- The last `.checkpoint` effect failed to save. -/
   | checkpointFailed
+  /-- The program sent the session this notification, one datagram to the socket its
+  `NOTIFY_SOCKET` names, as `sd_notify` sends one, of at most `Notify.cap` bytes. -/
+  | notified (datagram : List UInt8)
   deriving Repr
+
+/-- The most bytes of one notification a daemon reads: a read takes one datagram, and the kernel
+discards the rest of a longer one. -/
+@[expose]
+def Notify.cap : Nat := 4096
+
+/-- The most assignments of one notification a session reads. -/
+@[expose]
+def Notify.keys : Nat := 64
+
+/-- The most notifications a daemon reads in one poll round; the rest wait for the next. -/
+@[expose]
+def Notify.perRound : Nat := 16
+
+/-- A notification's lines, split at each newline. -/
+@[expose]
+def Notify.lines : List UInt8 → List (List UInt8)
+  | [] => [[]]
+  | b :: rest =>
+    if b = 0x0A then [] :: Notify.lines rest
+    else
+      match Notify.lines rest with
+      | line :: more => (b :: line) :: more
+      | [] => [[b]]
+
+/-- The assignment a line makes: its key, before its first `=`, and its value, after it; none
+for a line with no `=`. -/
+@[expose]
+def Notify.assignment : List UInt8 → Option (List UInt8 × List UInt8)
+  | [] => none
+  | b :: rest =>
+    if b = 0x3D then some ([], rest)
+    else (Notify.assignment rest).map fun (key, value) => (b :: key, value)
+
+/-- The assignments a notification makes, as `sd_notify` sends them: its lines, each a key, `=`
+and a value, the first `Notify.keys` of them; a line with no `=` makes none. -/
+@[expose]
+def Notify.assignments (datagram : List UInt8) : List (List UInt8 × List UInt8) :=
+  ((Notify.lines datagram).filterMap Notify.assignment).take Notify.keys
+
+/-- `READY`, the key that says a program is ready. -/
+@[expose]
+def Notify.readyKey : List UInt8 := [0x52, 0x45, 0x41, 0x44, 0x59]
+
+/-- `STATUS`, the key whose value is a program's status text. -/
+@[expose]
+def Notify.statusKey : List UInt8 := [0x53, 0x54, 0x41, 0x54, 0x55, 0x53]
+
+/-- Whether a program said it is ready in the notifications `sent`: one of them assigns
+`READY=1`. Every other assignment, `RELOADING=1`, `STOPPING=1`, `MAINPID=` and `WATCHDOG=1`
+among them, tells a session nothing. -/
+@[expose]
+def Notify.ready (sent : List (List UInt8)) : Bool :=
+  sent.any fun d => (Notify.assignments d).contains (Notify.readyKey, [0x31])
+
+/-- The status text a program last gave in the notifications `sent`, in order: the value of the
+last `STATUS=` assignment, `none` before any. -/
+@[expose]
+def Notify.status (sent : List (List UInt8)) : Option (List UInt8) :=
+  ((sent.flatMap Notify.assignments).filterMap fun (key, value) =>
+      if key = Notify.statusKey then some value else none).getLast?
+
+/-- The notifications a session's events bring it, in order. -/
+@[expose]
+def Notify.heard : List Event → List (List UInt8)
+  | [] => []
+  | .notified d :: evs => d :: Notify.heard evs
+  | _ :: evs => Notify.heard evs
 
 /-- What a session's program owns, as its session keeps it, each field from the one source its
 standard names: its window's title, which OSC 0 and OSC 2 set on the session's terminal; whether
 it rang the bell or posted a desktop notification, a BEL, an OSC 9 that is no ConEmu sub-command
 or an OSC 777 `notify`, since the session was last looked at, and that notification's text; what
-its shell's OSC 133 marks told of its commands; and what the operating system last reported of
-its terminal, its foreground among it. No other output and no client writes one; a look clears
-what is told only until someone sees it (`step_owned`). -/
+its shell's OSC 133 marks told of its commands; what the operating system last reported of its
+terminal, its foreground and its echo among it; and whether it said it is ready and the status
+text it last gave, through `sd_notify`'s socket. No other output and no client writes one; a look
+clears what is told only until someone sees it (`step_owned`). -/
 structure Owned where
   /-- The window's title, as the session's terminal holds it. -/
   title : String
@@ -593,6 +670,10 @@ structure Owned where
   commands : Commands
   /-- What the operating system last reported of the session's terminal. -/
   observed : Option Observation
+  /-- The program said it is ready. -/
+  ready : Bool
+  /-- The status text the program last gave. -/
+  status : Option (List UInt8)
   deriving Repr, DecidableEq
 
 /-- What one chunk of output tells of what the program owns, as the terminal package's mediator
@@ -620,6 +701,13 @@ def Owned.look (o : Owned) : Owned :=
 @[expose]
 def Owned.observe (o : Owned) (observation : Observation) : Owned :=
   { o with observed := some observation }
+
+/-- What a notification the program sent leaves of what it owns: ready once it said so, and the
+status text it gave last, the rest as it was. -/
+@[expose]
+def Owned.notify (o : Owned) (datagram : List UInt8) : Owned :=
+  { o with
+    ready := o.ready || Notify.ready [datagram], status := (Notify.status [datagram]).or o.status }
 
 /-- The time a session's events have told it: the latest time among their ticks, or 0 before
 any tick. A daemon's ticks read the monotonic clock as each poll round ends, so this is the time
@@ -769,6 +857,16 @@ output frames and without repaints. -/
 @[expose]
 def without {S E Plan : Type} (drop : Effect Plan → Bool) (step : S → E → S × List (Effect Plan))
     (s : S) (ev : E) : S × List (Effect Plan) := ((step s ev).1, (step s ev).2.filter (!drop ·))
+
+/-- A wrong transition: `step`, which also reads a program's notifications from its output, as
+if each chunk the program wrote to its terminal were a datagram to its notification socket. The
+headline that a program's readiness and status are what it sent is shown to reject it. -/
+@[expose]
+def outputNotifies {S F : Type} (step : S → Event → S × List F) (s : S) : Event → S × List F
+  | .ptyOut chunk =>
+    ((step (step s (.ptyOut chunk)).1 (.notified chunk)).1,
+      (step s (.ptyOut chunk)).2 ++ (step (step s (.ptyOut chunk)).1 (.notified chunk)).2)
+  | ev => step s ev
 
 /-- A wrong transition: `step`, after which a read's bytes are kept by `keep` too, as a checkpoint
 that appended the last input would keep them. The headline that input is never recorded is shown
@@ -1077,13 +1175,13 @@ def magic : List UInt8 := [0x4C, 0x4E, 0x47, 0x48]
 
 /-- The format of the handoffs this version writes. -/
 @[expose]
-def version : Nat := 2
+def version : Nat := 3
 
 /-- The formats of the handoffs this version reads, the one it writes among them: a newer
 version reads every older format it lists here, and a daemon hands its session only to a
 binary that lists the format it writes. -/
 @[expose]
-def formats : List Nat := [1, 2]
+def formats : List Nat := [1, 2, 3]
 
 /-- The first bytes of a handoff of format `v`. -/
 @[expose]

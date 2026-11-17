@@ -248,10 +248,13 @@ private def startChecks (e : Env) : IO Unit := do
       s!"start runs its argv exactly, in the caller's directory and environment (rc={rc})"
   let pid ← e.info "st1" "pid"
   -- the program's environment is exactly the caller's, without linger's own variables and with
-  -- the terminal's and the session's; the shell that writes it out may add its own few
+  -- the terminal's and the session's, its own NOTIFY_SOCKET in place of the caller's; the shell
+  -- that writes it out may add its own few
   let envFile := s!"{work}/env.out"
   let callers := ["PATH=/usr/bin:/bin", "SHELL=/bin/sh", "CANARY=c2"]
-  let caller := callers ++ [s!"LINGER_DIR={e.dir}", s!"LINGER_TMUX_CALLS={work}/calls"]
+  let caller :=
+    callers ++
+      [s!"LINGER_DIR={e.dir}", s!"LINGER_TMUX_CALLS={work}/calls", "NOTIFY_SOCKET=/run/caller.sock"]
   let exact ←
     IO.Process.output
         { cmd := "/usr/bin/env",
@@ -266,12 +269,13 @@ private def startChecks (e : Env) : IO Unit := do
   let expected :=
     callers ++
       ["LINGER_SESSION=st0", "TERM=xterm-256color", "COLORTERM=truecolor", "TERM_PROGRAM=linger",
-        s!"TERM_PROGRAM_VERSION={Terminal.Mediation.versionNumber}"]
+        s!"TERM_PROGRAM_VERSION={Terminal.Mediation.versionNumber}",
+        s!"NOTIFY_SOCKET={e.dir}/st0.notify"]
   expect
       (exact.exitCode == 0 && envRc == 0 && seen.length == expected.length &&
         expected.all seen.contains)
       s!"start passes the caller's environment exactly, without linger's own variables and \
-        with TERM*, COLORTERM and LINGER_SESSION ({seen})"
+        with TERM*, COLORTERM, LINGER_SESSION and the session's own NOTIFY_SOCKET ({seen})"
   let (liveRc, liveErr) ← startIn e work #[] #["st1", "true"]
   expect (liveRc == 1 && has liveErr "is running" && (← e.info "st1" "pid") == pid)
       "start refuses a name a live session holds, and says so"

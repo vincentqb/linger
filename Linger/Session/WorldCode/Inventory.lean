@@ -167,14 +167,19 @@ private def queryInfos (names : Array Paths.Listed) (deadline : Nat) (retainUnav
     for (_, task) in ← pending.get do
       discard <| IO.wait task
 
-/-- Remove a failed-connect socket only while holding its name lock. `false`
-means another owner holds the lock or the probe itself failed; both fail closed. With the socket
-gone, its name's lock files go too when nothing else names it (`Paths.Listed.withSessionLock`). -/
+/-- Remove a failed-connect socket, and the notification socket beside it, only while holding its
+name lock. `false` means another owner holds the lock or the probe itself failed; both fail
+closed. With the sockets gone, its name's lock files go too when nothing else names it (`Paths.Listed.withSessionLock`). -/
 private def removeStaleSocket (n : Paths.Listed) : IO Bool := do
   try
     n.withLock do
         try
           IO.FS.removeFile (← n.socketPath)
+        catch _ =>
+          pure ()
+        -- the notification socket beside it is the same dead session's
+        try
+          IO.FS.removeFile (← n.notifyPath)
         catch _ =>
           pure ()
     try

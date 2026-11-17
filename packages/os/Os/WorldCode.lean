@@ -218,6 +218,19 @@ def unixListen (path : String) : IO UInt32 := do
   checkCString "unixListen path" path
   Boundary.unixListen path
 
+/-- A datagram socket bound at `path`, close-on-exec and nonblocking, which `read` reads one
+datagram at a time: `some` an empty array when none waits, and `none` for an empty one. Throws on
+an empty or over-long path, or when socket or bind fails; the caller unlinks a stale path first. -/
+def dgramBind (path : String) : IO UInt32 := do
+  checkCString "dgramBind path" path
+  Boundary.dgramBind path
+
+/-- Send `bytes` as one datagram to the socket bound at `path`: whether it was sent whole, which it
+is not when no socket is bound there or its queue has no room. -/
+def dgramSend (path : String) (bytes : ByteArray) : IO Bool := do
+  checkCString "dgramSend path" path
+  return (← Boundary.dgramSend path bytes) == bytes.size.toInt64
+
 /-- `≥ 0` connected fd, close-on-exec; `< 0` is `-errno` — ENOENT (no socket) and
 ECONNREFUSED (stale socket, daemon dead) are expected outcomes, and an empty or
 over-long path is ENAMETOOLONG. Failing to create or configure the socket throws.

@@ -127,6 +127,12 @@ private opaque tcgetpgrp (fd : UInt32) : IO Int64
 @[extern "linger_tty_echo"]
 private opaque ttyEcho (fd : UInt32) : IO Int64
 
+@[extern "linger_dgram_bind"]
+private opaque dgramBind (path : @& String) : IO UInt32
+
+@[extern "linger_dgram_send"]
+private opaque dgramSend (path : @& String) (bytes : @& ByteArray) : IO Int64
+
 @[extern "linger_cmdline_of"]
 private opaque cmdlineOf (pid : UInt32) (valid : 0 < pid ∧ pid ≤ 0x7FFFFFFF) : IO ByteArray
 
@@ -204,3 +210,17 @@ WorldClaim Group (member reaches : Nat → Nat → Bool) :=
   ∀ pgid pid, member pgid pid = true → reaches pgid pid = true
 
 end Os.Signal
+
+namespace Os.Dgram
+
+/-- Datagrams sent to a Unix socket's path arrive whole and in order. `received cap sent` is what
+the datagram socket bound there reads, one read of at most `cap` bytes for each datagram, of the
+datagrams `sent`, sent to it one after another, each sent whole (`Os.Shell.dgramSend` answered
+that it sent all of it) and each of at most `cap` bytes: exactly those datagrams, in the order
+they were sent, none cut short, merged, split, repeated or reordered. A read that returns part of
+one of them, two at once or one out of its order falsifies it. Of a datagram the socket's queue
+had no room for, which the send refuses, it says nothing. -/
+WorldClaim Whole (received : Nat → List (List UInt8) → List (List UInt8)) :=
+  ∀ cap sent, (∀ d ∈ sent, d.length ≤ cap) → received cap sent = sent
+
+end Os.Dgram

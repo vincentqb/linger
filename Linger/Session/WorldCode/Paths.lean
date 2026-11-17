@@ -121,6 +121,15 @@ private def namedPath (dir name suffix : String) : IO String := pathIn dir name 
 def socketPath (name : String) : IO String := do
   namedPath (← socketDir) name ".sock"
 
+/-- The socket the session's daemon reads its program's `sd_notify` notifications from,
+`<name>.notify` in `socketDir`, which its program's `NOTIFY_SOCKET` names. -/
+def notifyPath (name : String) : IO String := do
+  namedPath (← socketDir) name ".notify"
+
+/-- The notification socket of a session a listing named. -/
+def Listed.notifyPath (n : Listed) : IO String := do
+  pathIn (← socketDir) n.name ".notify" true
+
 /-- The session's checkpoint, `<name>.ckpt` in `stateDir`. -/
 def ckptPath (name : String) : IO String := do
   namedPath (← stateDir) name ".ckpt"
@@ -211,10 +220,11 @@ private def entryLeadsTo (id : String) : IO Bool := do
 /-- Whether the lock files of an ID go as a process that holds them lets them go: whether no
 socket, checkpoint or end record has it, at the paths `socket`, `checkpoint` and `ending`, and no
 names entry leads to it, as `Locks.release` decides of the ID's lock file. -/
-private def lockFilesGo (name socket checkpoint ending : String) : IO Bool := do
+private def lockFilesGo (name socket notify checkpoint ending : String) : IO Bool := do
   let only := fun (present : Bool) => if present then [name] else []
   let records : Linger.Session.Records :=
     { sockets := only (← System.FilePath.pathExists socket),
+      notifies := only (← System.FilePath.pathExists notify),
       checkpoints := only (← System.FilePath.pathExists checkpoint),
       endings := only (← System.FilePath.pathExists ending), entries := only (← entryLeadsTo name),
       locks := [name] }
@@ -264,7 +274,7 @@ def withLock {α : Type} (path : String) (action : IO α) : IO α :=
 
 /-- Whether the lock files of `name` go as their holder lets them go (`lockFilesGo`). -/
 private def release (name : String) : IO Bool := do
-  lockFilesGo name (← socketPath name) (← ckptPath name) (← recordPath name)
+  lockFilesGo name (← socketPath name) (← notifyPath name) (← ckptPath name) (← recordPath name)
 
 /-- All daemon lifetimes and offline reads take both locks in the same order.
 Either shared socket storage or shared checkpoint storage excludes another owner.
@@ -298,6 +308,7 @@ def Listed.withSessionLock {α : Type} (n : Listed) (action : IO α) : IO α := 
       (pure false) true
       (do
         lockFilesGo n.name (← pathIn (← socketDir) n.name ".sock" true)
+            (← pathIn (← socketDir) n.name ".notify" true)
             (← pathIn (← stateDir) n.name ".ckpt" true) (← pathIn (← stateDir) n.name ".end" true))
       fun _ => action
 

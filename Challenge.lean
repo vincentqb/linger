@@ -314,7 +314,8 @@ def Linger.Session.Start.proceeds : Bool → Bool := sorry
 
 def Linger.Session.Start.answer : Bool → Bool → Start.Answer := sorry
 
-def Linger.Session.Start.environment : String → List String → List (String × Option String) := sorry
+def Linger.Session.Start.environment :
+    String → String → List String → List (String × Option String) := sorry
 
 def Linger.Session.Start.reset : Spawn.Reset := sorry
 
@@ -674,25 +675,33 @@ look, and the notification's text are what the terminal package's mediator hears
 9 that is no ConEmu sub-command and an OSC 777 `notify`; its commands are what its shell's OSC 133
 marks tell, each as `Commands.hear` says the marks' standard means it, so a `D` after a `C` is
 that command's ending, with the command line the `C` gave and the status the `D` gave, a later `C`
-replaces it, and a `D` with no `C` since the last `D` or `A` is no ending; and its foreground is
-what the operating system last reported of its terminal. Output changes each exactly as its
-source in that output tells, output while a client is attached is seen as it arrives, so it leaves
-nothing to tell, a look, an attach or a capture, clears the ask, its text and the ending and
-nothing else, the daemon's reading of the world changes the foreground and nothing else, and no
-other event, no client input among them, changes any; a session lists `⚑` exactly while its
-program asks. The program's fields a listing reports, as `Fields.table` gives the program each,
+replaces it, and a `D` with no `C` since the last `D` or `A` is no ending; its foreground and its
+echo are what the operating system last reported of its terminal; and whether it is ready and its
+status text are what it sent through `sd_notify`'s socket, which its `NOTIFY_SOCKET` names.
+Output changes each exactly as its source in that output tells, output while a client is attached
+is seen as it arrives, so it leaves nothing to tell, a look, an attach or a capture, clears the
+ask, its text and the ending and nothing else, the daemon's reading of the world changes what it
+reported and nothing else, a notification changes the readiness and the status and nothing else,
+and no other event, no client input among them, changes any; a session lists `⚑` exactly while
+its program asks. A program is ready exactly once it sent `READY=1`, and its status text is the
+value of the last `STATUS=` it sent, every other key telling nothing, when datagrams sent to a
+socket's path arrive whole and in order (`notify_exact`, over the os package's `Os.Dgram.Whole`,
+which its check tests); a daemon reads at most `Notify.cap` bytes of each, `Notify.keys`
+assignments of each and `Notify.perRound` of them a poll round, and a listing shows the status as
+clean text. The program's fields a listing reports, as `Fields.table` gives the program each,
 are readings of these alone: two sessions whose programs own the same report the same program
-fields (`fields_owned`). Not claimed: which bytes the mediator hears as a bell, a notification or
-a mark, which `Terminal.Mediation` decides and its fixtures and the status suite check, and which
+fields (`fields_owned`). Not claimed: a notification sent while a daemon upgrades, which the
+image that replaces it binds its socket afresh for; which bytes the mediator hears as a bell, a
+notification or a mark, which `Terminal.Mediation` decides and its fixtures and the status suite check, and which
 set the title, which `Terminal.Vt` decides and its fixtures check; a mark inside a full-screen
 program, which the session hears as its shell's.
 The fields of a session's record, the description an older linger saved and an import's
 provenance, come from the checkpoint the session booted from, and no event changes them
 (`step_fields_kept`); they, the boot metadata and the terminal a session reports each have
 one source, and a listing names each row by its socket. A human row reads only
-the fields `Listing.sources` names (`rowText_sources`): the program's title is the caption, and a
-description an older linger saved shows in its place while the program sets none, and the
-foreground program, which the operating system reports, shows only when that caption does not name
+the fields `Listing.sources` names (`rowText_sources`): the program's title is the caption, its
+status text in its place while it sets none, the program's own words first, and a description an
+older linger saved in their place while the program gives neither, and the foreground program, which the operating system reports, shows only when that caption does not name
 it (`caption_precedence`); its glyph and name are never cut, the rest
 fits a width in display columns (`rowText_fits`), and each character is printable
 (`rowText_clean`). One field, one column: a row's parts, the glyph, the name and the caption,
@@ -928,6 +937,7 @@ theorem step_owned (s : State) (ev : Event) :
               (Mediation.feed s.terminal s.scanner chunk).notice
               (Mediation.feed s.terminal s.scanner chunk).marks (seenBy s.roster)) ∧
       (∀ o, ev = .observed o → (Session.step s ev).1.owned = s.owned.observe o) ∧
+      (∀ d, ev = .notified d → (Session.step s ev).1.owned = s.owned.notify d) ∧
       (∀ id chunk,
         ev = .bytes id chunk →
           (Session.step s ev).1.owned = s.owned ∨
@@ -941,7 +951,8 @@ theorem step_owned (s : State) (ev : Event) :
           dec.errored = false → m.Looks → (Session.step s ev).1.owned = s.owned.look) ∧
       ((∀ chunk, ev ≠ .ptyOut chunk) →
         (∀ o, ev ≠ .observed o) →
-        (∀ id chunk, ev ≠ .bytes id chunk) → (Session.step s ev).1.owned = s.owned) ∧
+        (∀ id chunk, ev ≠ .bytes id chunk) →
+        (∀ d, ev ≠ .notified d) → (Session.step s ev).1.owned = s.owned) ∧
       (Status.classify { fresh := s.seen.fresh, unseen := s.seen.unseen, asks := s.seen.asks } =
           .asks ↔
         s.owned.asks = true) := by
@@ -961,6 +972,10 @@ theorem step_owned_rejects_rung :
             ev = .observed o →
               ((fun (s : State) (_ : Event) => Session.step s (.ptyOut [0x07])) s ev).1.owned =
                 s.owned.observe o) ∧
+          (∀ d,
+            ev = .notified d →
+              ((fun (s : State) (_ : Event) => Session.step s (.ptyOut [0x07])) s ev).1.owned =
+                s.owned.notify d) ∧
           (∀ id chunk,
             ev = .bytes id chunk →
               ((fun (s : State) (_ : Event) => Session.step s (.ptyOut [0x07])) s ev).1.owned =
@@ -980,6 +995,7 @@ theorem step_owned_rejects_rung :
           ((∀ chunk, ev ≠ .ptyOut chunk) →
             (∀ o, ev ≠ .observed o) →
             (∀ id chunk, ev ≠ .bytes id chunk) →
+            (∀ d, ev ≠ .notified d) →
             ((fun (s : State) (_ : Event) => Session.step s (.ptyOut [0x07])) s ev).1.owned =
               s.owned) ∧
           (Status.classify { fresh := s.seen.fresh, unseen := s.seen.unseen, asks := s.seen.asks } =
@@ -998,6 +1014,7 @@ theorem step_owned_rejects_lumped :
                   (Mediation.feed s.terminal s.scanner chunk).notice
                   (Mediation.feed s.terminal s.scanner chunk).marks (seenBy s.roster)) ∧
           (∀ o, ev = .observed o → (Session.step s ev).1.owned = s.owned.observe o) ∧
+          (∀ d, ev = .notified d → (Session.step s ev).1.owned = s.owned.notify d) ∧
           (∀ id chunk,
             ev = .bytes id chunk →
               (Session.step s ev).1.owned = s.owned ∨
@@ -1011,11 +1028,38 @@ theorem step_owned_rejects_lumped :
               dec.errored = false → m.Looks → (Session.step s ev).1.owned = s.owned.look) ∧
           ((∀ chunk, ev ≠ .ptyOut chunk) →
             (∀ o, ev ≠ .observed o) →
-            (∀ id chunk, ev ≠ .bytes id chunk) → (Session.step s ev).1.owned = s.owned) ∧
+            (∀ id chunk, ev ≠ .bytes id chunk) →
+            (∀ d, ev ≠ .notified d) → (Session.step s ev).1.owned = s.owned) ∧
           (Status.lumped Status.classify
                 { fresh := s.seen.fresh, unseen := s.seen.unseen, asks := s.seen.asks } =
               .asks ↔
             s.owned.asks = true) := by
+  sorry
+
+theorem notify_exact (received : Nat → List (List UInt8) → List (List UInt8))
+    (whole : Os.Dgram.Whole received) (vt : Vt.Vt) (fields metadata : List (String × String))
+    (evs : List Event) (sent : List (List UInt8)) (fits : ∀ d ∈ sent, d.length ≤ Notify.cap)
+    (heard : Notify.heard evs = received Notify.cap sent) :
+    (Session.trace Session.step (State.boot vt fields metadata) evs).1.owned.ready =
+        Notify.ready sent ∧
+      (Session.trace Session.step (State.boot vt fields metadata) evs).1.owned.status =
+        Notify.status sent := by
+  sorry
+
+@[kills notify_exact]
+theorem notify_exact_rejects_output :
+    ¬∀ (received : Nat → List (List UInt8) → List (List UInt8)),
+        Os.Dgram.Whole received →
+          ∀ (vt : Vt.Vt) (fields metadata : List (String × String)) (evs : List Event)
+            (sent : List (List UInt8)),
+            (∀ d ∈ sent, d.length ≤ Notify.cap) →
+              Notify.heard evs = received Notify.cap sent →
+              (Session.trace (Session.outputNotifies Session.step) (State.boot vt fields metadata)
+                      evs).1.owned.ready =
+                  Notify.ready sent ∧
+                (Session.trace (Session.outputNotifies Session.step) (State.boot vt fields metadata)
+                      evs).1.owned.status =
+                  Notify.status sent := by
   sorry
 
 theorem start_plan (live saved : Bool) :
@@ -1200,6 +1244,10 @@ theorem rowText_sources_rejects_every_field :
 theorem caption_precedence (info : List (String × String)) :
     ((info.lookup "title").getD "" ≠ "" → Listing.caption info = (info.lookup "title").getD "") ∧
       ((info.lookup "title").getD "" = "" →
+        (info.lookup "status_text").getD "" ≠ "" →
+        Listing.caption info = (info.lookup "status_text").getD "") ∧
+      ((info.lookup "title").getD "" = "" →
+        (info.lookup "status_text").getD "" = "" →
         Listing.caption info = (info.lookup "description").getD "") ∧
       (Listing.program info = "" ∨
         ¬(Listing.command (Listing.program info)).toList <:+: (Listing.caption info).toList) := by
@@ -1212,6 +1260,11 @@ theorem caption_precedence_rejects_described :
             (fun (info : List (String × String)) => (info.lookup "description").getD "") info =
               (info.lookup "title").getD "") ∧
           ((info.lookup "title").getD "" = "" →
+            (info.lookup "status_text").getD "" ≠ "" →
+            (fun (info : List (String × String)) => (info.lookup "description").getD "") info =
+              (info.lookup "status_text").getD "") ∧
+          ((info.lookup "title").getD "" = "" →
+            (info.lookup "status_text").getD "" = "" →
             (fun (info : List (String × String)) => (info.lookup "description").getD "") info =
               (info.lookup "description").getD "") ∧
           (Listing.program info = "" ∨
@@ -2009,10 +2062,12 @@ session's shell alone, which is what a resume runs again on the saved session's 
 (`resume_restores`, in part 7). The operating system runs it as asked: the world claim
 `Spawn.Runs`, which its check and the agent and resume suites test. Its terminal says what it is:
 `TERM=xterm-256color`, `COLORTERM=truecolor`, since the session's terminal keeps and repaints
-24-bit colour, and linger's name and version; it reads every other variable as the command that
-asked for the session has it, but linger's own, whose names begin `LINGER_` (`Start.lingers`),
-which it never sees but for its session's `LINGER_SESSION`, so `env -i K=V … linger start` gives
-it exactly `K=V` and the session's variables (`start_runs`).
+24-bit colour, and linger's name and version; its `NOTIFY_SOCKET` names the socket its daemon
+reads its `sd_notify` notifications from, as systemd's does for a service, whatever the command
+that asked for the session had; it reads every other variable as the command that asked for the
+session has it, but linger's own, whose names begin `LINGER_` (`Start.lingers`), which it never
+sees but for its session's `LINGER_SESSION`, so `env -i K=V … linger start` gives it exactly `K=V`
+and the session's variables (`start_runs`).
 
 The program starts from what its start asks, never from how linger was started: every signal at its
 default action, none blocked, and its terminal on descriptors 0, 1 and 2 with no other open,
@@ -2072,11 +2127,11 @@ theorem start_runs (inherited : String → Option String)
       String →
         String → Array String → List (String × Option String) → Spawn.Reset → Option Spawn.Started)
     (runs : Spawn.Runs inherited start) (names : List String)
-    (named : ∀ key, (inherited key).isSome → key ∈ names) (id dir shell : String)
+    (named : ∀ key, (inherited key).isSome → key ∈ names) (id notify dir shell : String)
     (argv : List String) {started : Spawn.Started}
     (ok :
       start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
-          (Start.environment id names) Start.reset =
+          (Start.environment id notify names) Start.reset =
         some started) :
     started.argv = argv.headD shell :: argv.drop 1 ∧
       started.dir = dir ∧
@@ -2085,8 +2140,11 @@ theorem start_runs (inherited : String → Option String)
       started.env "COLORTERM" = some "truecolor" ∧
       started.env "TERM_PROGRAM" = some "linger" ∧
       started.env "TERM_PROGRAM_VERSION" = some Mediation.versionNumber ∧
+      started.env "NOTIFY_SOCKET" = some notify ∧
       ∀ key,
-        key ∉ ["LINGER_SESSION", "TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"] →
+        key ∉
+            ["LINGER_SESSION", "TERM", "COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION",
+              "NOTIFY_SOCKET"] →
           started.env key = if Start.lingers key then none else inherited key := by
   sorry
 
@@ -2100,9 +2158,11 @@ theorem start_runs_rejects_passing :
         Spawn.Runs inherited start →
           ∀ (names : List String),
             (∀ key, (inherited key).isSome → key ∈ names) →
-              ∀ (id dir shell : String) (argv : List String) {started : Spawn.Started},
+              ∀ (id notify dir shell : String) (argv : List String) {started : Spawn.Started},
                 start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
-                      ((fun (id : String) (_ : List String) => Start.environment id []) id names)
+                      ((fun (id notify : String) (_ : List String) =>
+                          Start.environment id notify [])
+                        id notify names)
                       Start.reset =
                     some started →
                   started.argv = argv.headD shell :: argv.drop 1 ∧
@@ -2112,10 +2172,11 @@ theorem start_runs_rejects_passing :
                     started.env "COLORTERM" = some "truecolor" ∧
                     started.env "TERM_PROGRAM" = some "linger" ∧
                     started.env "TERM_PROGRAM_VERSION" = some Mediation.versionNumber ∧
+                    started.env "NOTIFY_SOCKET" = some notify ∧
                     ∀ key,
                       key ∉
                           ["LINGER_SESSION", "TERM", "COLORTERM", "TERM_PROGRAM",
-                            "TERM_PROGRAM_VERSION"] →
+                            "TERM_PROGRAM_VERSION", "NOTIFY_SOCKET"] →
                         started.env key = if Start.lingers key then none else inherited key := by
   sorry
 
@@ -2123,11 +2184,11 @@ theorem start_clean
     (start :
       String →
         String → Array String → List (String × Option String) → Spawn.Reset → Option Spawn.Started)
-    (clean : Spawn.Clean start) (name dir shell : String) (names argv : List String)
+    (clean : Spawn.Clean start) (name notify dir shell : String) (names argv : List String)
     {started : Spawn.Started}
     (ok :
       start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
-          (Start.environment name names) Start.reset =
+          (Start.environment name notify names) Start.reset =
         some started) :
     (∀ sig, started.ignored sig = false) ∧
       (∀ sig, started.blocked sig = false) ∧
@@ -2142,9 +2203,9 @@ theorem start_clean_rejects_inherited :
             String →
             Array String → List (String × Option String) → Spawn.Reset → Option Spawn.Started),
         Spawn.Clean start →
-          ∀ (name dir shell : String) (names argv : List String) {started : Spawn.Started},
+          ∀ (name notify dir shell : String) (names argv : List String) {started : Spawn.Started},
             start dir (Start.programOf shell argv).1 (Start.programOf shell argv).2
-                  (Start.environment name names)
+                  (Start.environment name notify names)
                   ({ dispositions := false, mask := true, descriptors := true } : Spawn.Reset) =
                 some started →
               (∀ sig, started.ignored sig = false) ∧
@@ -2752,10 +2813,12 @@ attached; the rest of the terminal session, which the attach suite tests; and th
 linger's signals miss: one that left the group and the terminal session with `setsid`, which only
 a PID namespace would hold, and one of another user.
 
-State is bounded by what it means: every file in linger's state is one fact, a session's socket
-or checkpoint or an ID's end record, or a names entry, and a lock file means nothing of its own.
+State is bounded by what it means: every file in linger's state is one fact, a session's socket,
+its notification socket, which its daemon removes as the session ends and a listing removes with
+a stale socket, or checkpoint or an ID's end record, or a names entry, and a lock file means
+nothing of its own.
 A process that held an ID's locks deletes their files, still holding them, as it lets them go,
-when no socket, checkpoint or end record has the ID and no names entry leads to it, and keeps
+when no socket, notification socket, checkpoint or end record has the ID and no names entry leads to it, and keeps
 every other lock file, so after any command every lock file names a session or an ending, when
 only the command's ID named nothing before (`locks_named`); the names lock, `names/.lock`, names
 no session, and its holder deletes it as it lets it go. A deleted lock file excludes as one kept: only a holder deletes one, and a
@@ -2772,6 +2835,7 @@ the next listing deletes. -/
 theorem locks_named (records : Session.Records) (name : String)
     (before : ∀ held ∈ records.locks, held = name ∨ records.holds held = true) :
     (Session.Locks.release records name).sockets = records.sockets ∧
+      (Session.Locks.release records name).notifies = records.notifies ∧
       (Session.Locks.release records name).checkpoints = records.checkpoints ∧
       (Session.Locks.release records name).endings = records.endings ∧
       (∀ held ∈ records.locks,
@@ -2786,6 +2850,8 @@ theorem locks_named_rejects_kept :
         (∀ held ∈ records.locks, held = name ∨ records.holds held = true) →
           ((fun (records : Session.Records) (_ : String) => records) records name).sockets =
               records.sockets ∧
+            ((fun (records : Session.Records) (_ : String) => records) records name).notifies =
+              records.notifies ∧
             ((fun (records : Session.Records) (_ : String) => records) records name).checkpoints =
               records.checkpoints ∧
             ((fun (records : Session.Records) (_ : String) => records) records name).endings =

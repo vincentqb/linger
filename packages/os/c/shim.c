@@ -694,6 +694,55 @@ LEAN_EXPORT lean_obj_res linger_unix_listen(b_lean_obj_arg path) {
     return lean_io_result_mk_ok(lean_box_uint32((uint32_t)fd));
 }
 
+/* A datagram socket, close-on-exec and nonblocking. */
+static int dgram_socket(void) {
+    int fd = socket(AF_UNIX, SOCK_DGRAM, 0);
+    if (fd >= 0 && (fcntl(fd, F_SETFD, FD_CLOEXEC) < 0 || set_nonblock(fd) < 0)) {
+        int e = errno;
+        close(fd);
+        errno = e;
+        return -1;
+    }
+    return fd;
+}
+
+/* linger_dgram_bind : @& String -> IO UInt32
+ * A datagram socket bound at path, close-on-exec and nonblocking, for a
+ * program's readiness notifications, which read(2) takes one datagram at a
+ * time (caller unlinks stale paths). */
+LEAN_EXPORT lean_obj_res linger_dgram_bind(b_lean_obj_arg path) {
+    struct sockaddr_un sa;
+    if (fill_sockaddr(lean_string_cstr(path), &sa) < 0)
+        return io_msg("bind: socket path empty or too long");
+    int fd = dgram_socket();
+    if (fd < 0) return io_err("socket");
+    if (bind(fd, (struct sockaddr *)&sa, sizeof sa) < 0) {
+        int e = errno;
+        close(fd);
+        return io_err_code("bind", e);
+    }
+    return lean_io_result_mk_ok(lean_box_uint32((uint32_t)fd));
+}
+
+/* linger_dgram_send : @& String -> @& ByteArray -> IO Int64
+ * Send bytes as one datagram to the socket at path: the bytes sent, or
+ * -errno, EAGAIN when its queue is full. */
+LEAN_EXPORT lean_obj_res linger_dgram_send(b_lean_obj_arg path, b_lean_obj_arg bytes) {
+    struct sockaddr_un sa;
+    if (fill_sockaddr(lean_string_cstr(path), &sa) < 0)
+        return lean_io_result_mk_ok(lean_box_uint64((uint64_t)(int64_t)-ENAMETOOLONG));
+    int fd = dgram_socket();
+    if (fd < 0) return io_err("socket");
+    ssize_t n;
+    do {
+        n = sendto(fd, lean_sarray_cptr(bytes), lean_sarray_size(bytes), 0,
+                   (struct sockaddr *)&sa, sizeof sa);
+    } while (n < 0 && errno == EINTR);
+    int64_t r = n < 0 ? -(int64_t)errno : (int64_t)n;
+    close(fd);
+    return lean_io_result_mk_ok(lean_box_uint64((uint64_t)r));
+}
+
 /* linger_unix_connect : @& String -> Bool -> IO Int64
  * >=0: fd. <0: -errno (ENOENT / ECONNREFUSED are normal: no daemon /
  * stale socket; the caller decides). */

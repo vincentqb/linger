@@ -234,7 +234,9 @@ def wState (s : State) : List UInt8 :=
     wNat s.tickOutSeq ++
     wBool s.freshFlag ++
     wOpt wNat s.lastOutMs ++
-    wOpt wObservation s.observed
+    wOpt wObservation s.observed ++
+    wBool s.ready ++
+    wOpt wBytes s.status
 
 /-- Inverse of `wState` for a state whose terminal's parser is quiet, in a handoff of format
 `v`. -/
@@ -258,9 +260,13 @@ def rState (v : Nat) : R State := fun l => do
   let (freshFlag, l) ← rBool l
   let (lastOutMs, l) ← rOpt rNat l
   let (observed, l) ← rOpt (rObservation v) l
+  -- a handoff of format 1 or 2 holds no notification
+  let (ready, l) ← if v < 3 then some (false, l) else rBool l
+  let (status, l) ← if v < 3 then some (none, l) else rOpt rBytes l
   some
     ({ vt, scan, clients, fields, metaKv, ended, dirty, lastCkptMs, attachSeq, outSeq, lookSeq,
-        asking, notice, running, finished, tickOutSeq, freshFlag, lastOutMs, observed },
+        asking, notice, running, finished, tickOutSeq, freshFlag, lastOutMs, observed, ready,
+        status },
       l)
 
 /-- One connection a daemon hands over. -/

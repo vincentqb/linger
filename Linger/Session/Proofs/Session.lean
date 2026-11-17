@@ -1030,6 +1030,8 @@ theorem step_bounded (s : State) (ev : Event) (h : Bounded s) : Bounded (step s 
     exact ⟨hcl, hlb, hdec, hscan⟩
   · -- failed checkpoint changes only persistence bookkeeping
     exact ⟨hcl, hlb, hdec, hscan⟩
+  · -- a notification changes only what `info` reports
+    exact ⟨hcl, hlb, hdec, hscan⟩
 
 /-! ## VT preservation through the daemon -/
 
@@ -1073,6 +1075,7 @@ theorem step_vt_preserves {P : Vt.Vt → Prop}
   · split
     · exact h
     · exact h
+  · exact h
   · exact h
   · exact h
 
@@ -2339,7 +2342,8 @@ theorem onMsg_info_bounded (s : State) (c : Client) (dest : Nat) (m : Msg) (ha :
     (h : Effect.send dest m ∈ (onMsg s c .info).2) :
     dest = c.id ∧ m.payload.length ≤ outputChunk ∧ m.WF := by
   rw [onMsg_info s c ha] at h
-  exact infoMsgs_bounded c.id (infoText s) dest m h
+  generalize infoText s = bytes at h
+  exact infoMsgs_bounded c.id bytes dest m h
 
 /-- An accepted info request delivers the complete serialized fields and labels. -/
 theorem onMsg_info_faithful (s : State) (c : Client) (ha : c.answered = false)
@@ -2351,7 +2355,8 @@ theorem onMsg_info_faithful (s : State) (c : Client) (ha : c.answered = false)
             | _ => none)).flatten =
       infoText s := by
   rw [onMsg_info s c ha]
-  exact infoMsgs_faithful c.id (infoText s) h
+  generalize infoText s = bytes at h ⊢
+  exact infoMsgs_faithful c.id bytes h
 
 /-! ## What a session shows
 
@@ -2992,6 +2997,7 @@ theorem step_exit_iff (s : State) (ev : Event) (seen : Bool) :
       split at h <;> simp at h
     | checkpointFailed => simp [checkpointFailed_effects] at h
     | observed o => simp [step] at h
+    | notified d => simp [step] at h
   · intro h
     cases ev with
     | childExited o => simp [step_childExited_effects, conclude_effects]
@@ -3293,6 +3299,7 @@ theorem step_vt_sources (s : State) (ev : Event) :
     split <;> exact kept
   | checkpointFailed => exact .inr kept
   | observed o => exact .inr kept
+  | notified d => exact .inr kept
 
 /-- Resizes keep a cursor at the origin there: the witness that the terminal's one source
 rejects a session that prints on its own. -/
@@ -3801,6 +3808,7 @@ theorem step_resizePty_source (s : State) (ev : Event) (cols rows : UInt32)
     split at resized <;> simp at resized
   | checkpointFailed => simp [checkpointFailed_effects] at resized
   | observed o => simp [step] at resized
+  | notified d => simp [step] at resized
 
 /-- **No pty resize has a zero dimension**: whatever event arrives, every resize the session asks
 for has positive dimensions, and is the size, clamped, of an attach or resize in the read that
@@ -3978,6 +3986,7 @@ theorem step_changed_dirty (s : State) (ev : Event)
   | ptyOut chunk => rfl
   | checkpointFailed => rfl
   | observed o => simp [step] at h
+  | notified d => simp [step] at h
   | connected id =>
     simp only [step] at h ⊢
     split at h <;> simp_all
@@ -4025,6 +4034,7 @@ theorem step_unsaved_kept (s : State) (ev : Event) (h : Effect.checkpoint ∉ (s
   | ptyOut chunk => exact ⟨rfl, fun _ => rfl⟩
   | checkpointFailed => exact ⟨rfl, fun _ => rfl⟩
   | observed o => exact ⟨rfl, fun d => d⟩
+  | notified d => exact ⟨rfl, fun d => d⟩
   | connected i =>
     simp only [step]
     split <;> exact ⟨rfl, fun d => d⟩
@@ -4090,6 +4100,7 @@ theorem step_lastCkptMs (s : State) (ev : Event) :
   | signal n => exact .inl rfl
   | checkpointFailed => exact .inl rfl
   | observed o => exact .inl rfl
+  | notified d => exact .inl rfl
 
 /-- The save clock is the boot's or a tick's time: never later than the clock the events give. -/
 theorem trace_lastCkptMs_le (s : State) (evs : List Event) :
@@ -4311,6 +4322,7 @@ theorem step_asking_raised (s : State) (ev : Event) (h : (step s ev).1.seen.asks
     dsimp only
     split <;> exact fun h => h
   | observed o => exact .inl h
+  | notified d => exact .inl h
   | checkpointFailed => exact .inl h
 
 /-- A batch with no look leaves the ask and its text as they were. -/
@@ -4367,6 +4379,7 @@ theorem step_asking_cleared (s : State) (ev : Event) (was : s.seen.asks = true)
     dsimp only [step]
     split <;> rfl
   | observed o => exact absurd rfl kept
+  | notified d => exact absurd rfl kept
   | checkpointFailed => exact absurd rfl kept
 
 /-- **A notification's text is bounded**: from a state whose scanner is within its caps and whose
@@ -4409,6 +4422,7 @@ theorem step_notice_le (s : State) (ev : Event) (hs : s.scan.Bounded)
     dsimp only [step]
     split <;> exact hn
   | observed o => exact hn
+  | notified d => exact hn
   | checkpointFailed => exact hn
 
 /-! ## A shell's commands
@@ -4582,6 +4596,7 @@ theorem step_running_kept (s : State) (ev : Event) (h : ∀ chunk, ev ≠ .ptyOu
     dsimp only [step]
     split <;> rfl
   | observed o => rfl
+  | notified d => rfl
   | checkpointFailed => rfl
 
 /-- **Only output and looks change the ending, and a look clears it**: an event after which the
@@ -4636,6 +4651,7 @@ theorem step_finished_changed (s : State) (ev : Event)
     dsimp only [step]
     split <;> rfl
   | observed o => exact absurd rfl changed
+  | notified d => exact absurd rfl changed
   | checkpointFailed => exact absurd rfl changed
 
 /-- Hearing marks whose command lines fit the OSC buffer's cap, from commands whose command lines
@@ -4959,12 +4975,23 @@ theorem resizeOwned_owned (s : State) (c : Client) : (resizeOwned s c).1.owned =
   repeat' split
   all_goals rfl
 
+/-- Every message keeps what the program said through `sd_notify`. -/
+theorem onMsg_notified (s : State) (c : Client) (m : Msg) :
+    (onMsg s c m).1.ready = s.ready ∧ (onMsg s c m).1.status = s.status := by
+  cases m
+  all_goals
+    unfold onMsg controlResize resizeOwned resize focusEffects infoMsgs outputMsgs
+    dsimp only
+    repeat' split
+  all_goals simp_all [State.setClient]
+
 /-- A message that is no look keeps what the program owns. -/
 theorem onMsg_owned_kept (s : State) (c : Client) (m : Msg) (h : ¬m.Looks) :
     (onMsg s c m).1.owned = s.owned := by
   obtain ⟨ha, hn⟩ := onMsg_asking_kept s c m h
   obtain ⟨hr, hf⟩ := onMsg_commands_kept s c m h
-  simp only [State.owned, State.commands, ha, hn, hr, hf, onMsg_title, onMsg_observed]
+  simp only [State.owned, State.commands, ha, hn, hr, hf, onMsg_title, onMsg_observed,
+    (onMsg_notified s c m).1, (onMsg_notified s c m).2]
 
 /-- An attach from a connection not yet attached, and a capture of a read not yet answered, are
 looks; every other message keeps what the program owns. -/
@@ -5071,17 +5098,22 @@ theorem step_ptyOut_owned (s : State) (chunk : List UInt8) :
     State.scanner, h]
   rfl
 
+/-- A notification is what the program sent. -/
+theorem step_notified_owned (s : State) (d : List UInt8) :
+    (step s (.notified d)).1.owned = s.owned.notify d := rfl
+
 /-- The daemon's reading of the world is what it observed. -/
 theorem step_observed_owned (s : State) (o : Observation) :
     (step s (.observed o)).1.owned = s.owned.observe o := rfl
 
 /-- No other event changes what the program owns. -/
 theorem step_owned_kept (s : State) (ev : Event) (out : ∀ chunk, ev ≠ .ptyOut chunk)
-    (seen : ∀ o, ev ≠ .observed o) (read : ∀ id chunk, ev ≠ .bytes id chunk) :
-    (step s ev).1.owned = s.owned := by
+    (seen : ∀ o, ev ≠ .observed o) (read : ∀ id chunk, ev ≠ .bytes id chunk)
+    (heard : ∀ d, ev ≠ .notified d) : (step s ev).1.owned = s.owned := by
   cases ev with
   | ptyOut chunk => exact absurd rfl (out chunk)
   | observed o => exact absurd rfl (seen o)
+  | notified d => exact absurd rfl (heard d)
   | bytes id chunk => exact absurd rfl (read id chunk)
   | connected id =>
     unfold step
@@ -5198,6 +5230,7 @@ theorem step_whole (s : State) (ev : Event) (framed : Framed Wire.encode ev) (h 
     dsimp only
     split <;> exact h
   | observed o => exact h
+  | notified d => exact h
   | checkpointFailed => exact h
 
 /-- Two messages that read the same but for their input are the same, or both inputs. -/
@@ -5340,5 +5373,73 @@ theorem keepsInput_terminal (bytes : List UInt8) (fits : bytes.length ≤ Wire.m
   rw [step_ptyOut_vt, step_bytes_single hc read rfl]
   simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil]
   simp [onMsg, State.setClient, step, State.boot, maxClients]
+
+/-! ## What the program says through `sd_notify`
+
+A program is ready once a notification it sent says `READY=1`, and its status text is the last
+`STATUS=` it sent: a notification changes these and nothing else does. -/
+
+/-- The notifications of a trace are its first event's, then the rest's. -/
+theorem Notify.heard_cons (ev : Event) (evs : List Event) :
+    Notify.heard (ev :: evs) = Notify.heard [ev] ++ Notify.heard evs := by cases ev <;> rfl
+
+/-- Notifications in turn say a program is ready when one of them does. -/
+theorem Notify.ready_append (a b : List (List UInt8)) :
+    Notify.ready (a ++ b) = (Notify.ready a || Notify.ready b) := by
+  simp [Notify.ready, List.any_append]
+
+/-- The status text of notifications in turn is the later ones' last, else the earlier ones'. -/
+theorem Notify.status_append (a b : List (List UInt8)) :
+    Notify.status (a ++ b) = (Notify.status b).or (Notify.status a) := by
+  simp only [Notify.status, List.flatMap_append, List.filterMap_append, List.getLast?_append]
+
+/-- One event leaves the readiness and the status text as its notification, if it is one, says. -/
+theorem step_notified_fields (s : State) (ev : Event) :
+    (step s ev).1.owned.ready = (s.owned.ready || Notify.ready (Notify.heard [ev])) ∧
+      (step s ev).1.owned.status = (Notify.status (Notify.heard [ev])).or s.owned.status := by
+  have none : Notify.ready [] = false ∧ Notify.status [] = none := ⟨rfl, rfl⟩
+  cases ev with
+  | notified d => exact ⟨rfl, rfl⟩
+  | ptyOut chunk =>
+    rw [step_ptyOut_owned]
+    simp [Owned.hear, Notify.heard, none]
+  | bytes id chunk =>
+    rcases step_bytes_owned s id chunk with h | ⟨h, -⟩ <;> rw [h] <;>
+      simp [Owned.look, Notify.heard, none]
+  | observed o =>
+    rw [step_observed_owned]
+    simp [Owned.observe, Notify.heard, none]
+  | _ =>
+    rw [step_owned_kept s _ (fun _ h => by cases h) (fun _ h => by cases h)
+        (fun _ _ h => by cases h) (fun _ h => by cases h)]
+    simp [Notify.heard, none]
+
+/-- **A program is ready once it said so, and its status is the last it gave**: a trace leaves the
+readiness and the status text as its notifications, in order, say, from what they were before. -/
+theorem trace_notified (s : State) (evs : List Event) :
+    (trace step s evs).1.owned.ready = (s.owned.ready || Notify.ready (Notify.heard evs)) ∧
+      (trace step s evs).1.owned.status = (Notify.status (Notify.heard evs)).or s.owned.status := by
+  induction evs generalizing s with
+  | nil =>
+    exact
+      ⟨by simp [trace, Notify.heard, Notify.ready], by simp [trace, Notify.heard, Notify.status]⟩
+  | cons ev evs ih =>
+    obtain ⟨h1, h2⟩ := ih (step s ev).1
+    obtain ⟨e1, e2⟩ := step_notified_fields s ev
+    simp only [trace]
+    rw [h1, h2, e1, e2, Notify.heard_cons ev evs, Notify.ready_append, Notify.status_append]
+    exact ⟨Bool.or_assoc _ _ _, Option.or_assoc.symm⟩
+
+/-- A session that reads its program's output as notifications is ready once the output says
+`READY=1`: the kill's witness. -/
+theorem outputNotifies_ready :
+    (trace (outputNotifies step) (State.boot (Vt.Vt.init 1 1) [] [])
+          [.ptyOut [0x52, 0x45, 0x41, 0x44, 0x59, 0x3D, 0x31]]).1.owned.ready =
+      true := by
+  simp only [trace, outputNotifies, List.append_nil]
+  rw [step_notified_owned]
+  simp only [Owned.notify]
+  have : Notify.ready [[0x52, 0x45, 0x41, 0x44, 0x59, 0x3D, 0x31]] = true := rfl
+  rw [this, Bool.or_true]
 
 end Linger.Session

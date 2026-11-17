@@ -423,16 +423,22 @@ theorem rowText_sources (width : Option Nat) (layout : Layout) (info info' : Lis
     rw [hn, hs, project_congr h]
   simp only [rowText, rowPiecesIn, hn, hs, hc]
 
-/-- **The user's words over the program's over the operating system's**: a nonempty description
-is the caption; without one, the program's title is; and the foreground program shows only when
-the caption does not already name it. -/
+/-- **The program's words over linger's over the operating system's**: a nonempty title is the
+caption; without one, the program's status text is; without either, a description an older linger
+saved is; and the foreground program shows only when the caption does not already name it. -/
 theorem caption_precedence (info : List (String × String)) :
     ((info.lookup "title").getD "" ≠ "" → caption info = (info.lookup "title").getD "") ∧
-      ((info.lookup "title").getD "" = "" → caption info = (info.lookup "description").getD "") ∧
+      ((info.lookup "title").getD "" = "" →
+        (info.lookup "status_text").getD "" ≠ "" →
+        caption info = (info.lookup "status_text").getD "") ∧
+      ((info.lookup "title").getD "" = "" →
+        (info.lookup "status_text").getD "" = "" →
+        caption info = (info.lookup "description").getD "") ∧
       (program info = "" ∨ ¬(command (program info)).toList <:+: (caption info).toList) := by
-  refine ⟨fun h => ?_, fun h => ?_, ?_⟩
+  refine ⟨fun h => ?_, fun h h' => ?_, fun h h' => ?_, ?_⟩
   · simp [caption, look, String.isEmpty_iff, h]
-  · simp [caption, look, String.isEmpty_iff, h]
+  · simp [caption, look, String.isEmpty_iff, h, h']
+  · simp [caption, look, String.isEmpty_iff, h, h']
   · unfold program
     split
     · exact .inl rfl

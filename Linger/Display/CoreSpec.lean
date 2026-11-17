@@ -118,8 +118,9 @@ inductive Row where
 name; the status and how a saved session ended, from the caller and the name's end record;
 `pid` and `cmd`, which tell a busy daemon or a peer's row; `source`, which marks a row a source
 linger only reads, as a saved tmux pane's, gives; the description, which only the user
-sets, as the field `description`; the title, which the session's program gave its window, and the
-text of its last notification since the session was last looked at; the command line and exit
+sets, as the field `description`; the title, which the session's program gave its window, the
+status text it last gave through `sd_notify`, and the text of its last notification since the
+session was last looked at; the command line and exit
 status of the last command that finished since then, as its shell's marks reported them; the
 login shell and the foreground program, its process and its directory, which the operating system
 reports; the seconds since the program last wrote; and the watchers. No other field changes what
@@ -127,8 +128,8 @@ a human row shows. -/
 @[expose]
 def sources : List String :=
   ["name", "status", "state", "saved", "signal", "outcome", "exit", "pid", "cmd", "source",
-    "description", "title", "notice", "lastcmd", "lastexit", "login", "fg", "fgpid", "fgdir",
-    "idle", "clients"]
+    "description", "title", "status_text", "notice", "lastcmd", "lastexit", "login", "fg", "fgpid",
+    "fgdir", "idle", "clients"]
 
 /-- The fields a human row prints of, each as clean text: every field it reads (`sources`) but
 the processes and the login flag, which only decide what it prints. -/
@@ -153,16 +154,16 @@ def Layout.spans (layout : Layout) : List Nat :=
   2 :: layout.nameCol :: layout.widths.map fun w => if w = 0 then 0 else w + 2
 
 /-- The fields each cell after the name reads, in order: the caption, which says how a session
-that is not running stands, the user's description or the program's title, a notification's text
-and how the last command ended; the foreground program, which the caption may already name; its
-directory, which the caption may already hold; the age, which a printing session lacks; and the
-watchers. -/
+that is not running stands, the program's title or status text or a description an older linger
+saved, a notification's text and how the last command ended; the foreground program, which the
+caption may already name; its directory, which the caption may already hold; the age, which a
+printing session lacks; and the watchers. -/
 @[expose]
 def cellSources : List (List String) :=
   [["status", "state", "saved", "signal", "outcome", "exit", "pid", "cmd", "source", "description",
-      "title", "notice", "lastcmd", "lastexit"],
-    ["fg", "login", "fgpid", "pid", "cmd", "description", "title"],
-    ["fgdir", "description", "title"], ["status", "idle"], ["clients"]]
+      "title", "status_text", "notice", "lastcmd", "lastexit"],
+    ["fg", "login", "fgpid", "pid", "cmd", "description", "title", "status_text"],
+    ["fgdir", "description", "title", "status_text"], ["status", "idle"], ["clients"]]
 
 /-- The name of the program a command line runs: its first word, after the word's last `/`. -/
 @[expose]

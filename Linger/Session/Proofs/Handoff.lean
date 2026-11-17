@@ -75,7 +75,7 @@ theorem rt_foreground : RT wForeground rForeground := by
 theorem rt_observation : RT wObservation (rObservation version) := by
   intro o rest
   simp only [wObservation, rObservation, List.append_assoc, rt_nat, rt_bool, rt_opt rt_foreground,
-    rt_opt rt_bool, version, Nat.lt_irrefl, ↓reduceIte, Option.bind_eq_bind, Option.bind_some]
+    rt_opt rt_bool, version, Nat.reduceLT, ↓reduceIte, Option.bind_eq_bind, Option.bind_some]
 
 theorem rt_fields : RT wFields rFields := fun kvs rest => rt_list (rt_pair rt_str rt_str) kvs rest
 
@@ -99,7 +99,9 @@ theorem rState_wState (s : State) (live : Vt.LiveReachableVt s.vt) (quiet : s.vt
   unfold rState wState
   simp only [List.append_assoc, rTerminal_wTerminal s.vt live quiet, rt_scan, rt_list rt_client,
     rt_fields, rt_opt rt_ending, rt_bool, rt_nat, rt_opt rt_bytes, rt_opt rt_cmdline,
-    rt_opt rt_finished, rt_opt rt_nat, rt_opt rt_observation, Option.bind_eq_bind, Option.bind_some]
+    rt_opt rt_finished, rt_opt rt_nat,
+    rt_opt (show RT wObservation (rObservation 3) from rt_observation), version, Nat.reduceLT,
+    ↓reduceIte, Option.bind_eq_bind, Option.bind_some]
 
 theorem rt_conn : RT wConn rConn := by
   intro c rest

@@ -185,6 +185,50 @@ so it leaves an ask as it was. -/
 private def printed (e : Env) (name marker : String) : IO Bool :=
   waitFor patienceMs (return has (← e.out #["capture", "--history", name]) marker)
 
+/-- Send the lines `lines`, joined by newlines, as one datagram to the socket `NOTIFY_SOCKET`
+names, as `sd_notify` does: exit 0 once it was sent whole, 1 when it was not, and 2 with no
+`NOTIFY_SOCKET`. The notification check's program runs it when the host has no
+`systemd-notify`. -/
+def notifyProbe (lines : List String) : IO UInt32 := do
+  let some path ← IO.getEnv "NOTIFY_SOCKET" | return 2
+  return if ← Os.Shell.dgramSend path ("\n".intercalate lines).toUTF8 then 0 else 1
+
+/-- A program says it is ready, and gives its status, through the socket its `NOTIFY_SOCKET`
+names, as systemd's services do (`notify_exact`): `systemd-notify --ready --status=hi`, or, on a
+host without it, the suite's own sender, makes `ls NAME --porcelain` say `ready true` and
+`status_text hi`, and a row with no title show the status as its caption. The same words printed
+to the terminal say nothing. The socket is a file of the live session alone: it is there while
+the session runs, and gone once a kill ends it. -/
+def checkNotify (e : Env) : IO Unit := do
+  let sender ←
+    if
+        (←
+              IO.Process.output
+                  { cmd := "sh", args := #["-c", "command -v systemd-notify"] }).exitCode ==
+          0 then
+      pure "systemd-notify --ready --status=hi"
+    else
+      pure s!"{shellQuote (← IO.appPath).toString} --notify READY=1 STATUS=hi"
+  let _ ← e.cli #["start", "notifier", "sh", "-c", s!"{sender}; echo sent-$((1+1)); exec sleep 100"]
+  let sent ← printed e "notifier" "sent-2"
+  let ready ← waitFor patienceMs (return (← e.info "notifier" "ready") == some "true")
+  let status ← e.info "notifier" "status_text"
+  let row ← rowOf e "notifier"
+  expect (sent && ready && status == some "hi" && has row " hi ")
+      s!"a program that notifies is ready with its status, which its row shows: {status} {row}"
+  let _ ←
+    e.typeIn "printer" #["printf", "'READY=1\\nSTATUS=printed\\n'", "&&", "echo", "p-$((1+1))"]
+  let printedOut ← printed e "printer" "p-2"
+  expect
+      (printedOut && (← e.info "printer" "ready") == some "false" &&
+        (← e.info "printer" "status_text").isNone)
+      "what a program prints to its terminal says nothing of its readiness"
+  let socket := s!"{e.dir}/notifier.notify"
+  let live ← System.FilePath.pathExists socket
+  e.killAll #["notifier", "printer"]
+  let gone ← waitFor patienceMs (return !(← System.FilePath.pathExists socket))
+  expect (live && gone) "the notification socket is the live session's, gone once it ends"
+
 /-- What a program owns comes from its own output alone (`step_owned`): a client that types the
 sequences that would title its window, post a notification, ring the bell and mark a command, to a
 program that does not echo them, changes none of what it owns, and the program writing the same
@@ -465,6 +509,7 @@ def run : IO UInt32 :=
         "a summary counts a killed daemon as not answering, not from what it last wrote"
     e.killAll #["st"]
     checkInputUnowned e
+    checkNotify e
     checkAsks e
     checkSteady e
     checkEndings e

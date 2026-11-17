@@ -981,7 +981,10 @@ code_grep "$VT_ALL_RE" '*.lean' \
 # own variables; Lean core reads a variable only by name.
 # 33: a pty's termios ECHO flag (tcgetattr), so that `info` says whether the program's terminal
 # echoes (`Pty.Echo`); Lean core reads no termios.
-SHIM_CAP=33
+# 35: a Unix datagram socket bound at a path and a datagram sent to one, so that a session's
+# program says it is ready and gives its status through `sd_notify`'s `NOTIFY_SOCKET`
+# (`Os.Dgram.Whole`); Lean core has no Unix datagram socket.
+SHIM_CAP=35
 shim_n="$(code_count 'LEAN_EXPORT' 'packages/os/c/shim.c')"
 [ "$shim_n" -le "$SHIM_CAP" ] \
   || fail "shim grew to $shim_n wrappers (cap $SHIM_CAP); justify the new syscall and bump the cap"
@@ -1094,15 +1097,15 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def Rt[.]closeConn [(]rt : 
 # empty SHELL makes sh (shellOf_absent). Linger.Session.Suites.Agent creates sessions with both.
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let [(]prog, args[)] := Start[.]programOf [(]Linger[.]Os[.]Env[.]shellOf [(]← IO[.]getEnv "SHELL"[)][)] argv([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "a session's program bypasses Start.programOf or Env.shellOf"
-# The program reads the session's variables as `Start.environment` sets them, of the daemon's own
-# environment's names, which it reads once for the start (`start_runs`, over
+# The program reads the session's variables as `Start.environment` sets them, its notification
+# socket's path among them, of the daemon's own environment's names, which it reads once for the start (`start_runs`, over
 # the world claim `Spawn.Runs`, which its check and the agent and resume suites test), and starts
 # without what `Start.reset` resets (`start_clean`, over the world claim `Spawn.Clean`, which its
 # check and the agent suite test); a program that cannot start reports `Start.failureStatus`
 # (`failureStatus_exact`); and `info` reports the start as `Start.metadata` says
 # (`metadata_dirs`). The daemon asks the operating system with exactly these.
 for tie in \
-  'trySpawnPty [(]UInt32[.]ofNat [(]Terminal[.]Vt[.]clampDim vt0[.]colCount[)][)] [(]UInt32[.]ofNat [(]Terminal[.]Vt[.]clampDim vt0[.]rowCount[)][)] cwd prog args [(][(]Start[.]environment id [(]← environNames[)][.]toList[)][.]toArray[.]map fun [|] [(]key, some value[)] => s!"[{]key[}]=[{]value[}]" [|] [(]key, none[)] => key[)] [(]resetOf Start[.]reset[)]' \
+  'trySpawnPty [(]UInt32[.]ofNat [(]Terminal[.]Vt[.]clampDim vt0[.]colCount[)][)] [(]UInt32[.]ofNat [(]Terminal[.]Vt[.]clampDim vt0[.]rowCount[)][)] cwd prog args [(][(]Start[.]environment id notifyPath [(]← environNames[)][.]toList[)][.]toArray[.]map fun [|] [(]key, some value[)] => s!"[{]key[}]=[{]value[}]" [|] [(]key, none[)] => key[)] [(]resetOf Start[.]reset[)]' \
   'private def resetOf [(]reset : Linger[.]Session[.]Spawn[.]Reset[)] : SpawnReset := [{] dispositions := reset[.]dispositions, mask := reset[.]mask, descriptors := reset[.]descriptors [}]' \
   'req[.]tell [(][.]failed [(]Start[.]failureStatus failure[)] why[.]toUTF8[.]toList[)]' \
   'private def failureOf : SpawnFailure → Linger[.]Session[.]Spawn[.]Failure [|] [.]directory why => [.]directory why [|] [.]notFound why => [.]notFound why [|] [.]notRunnable why => [.]notRunnable why' \
@@ -1302,8 +1305,9 @@ for tie in \
   'def withLockRetrying [{]α : Type[}] [(]path : String[)] [(]retry : IO Bool[)] [(]action : IO α[)] [(]listed : Bool := false[)] : IO α := do let some fd ← acquire path retry listed [|] throw [(]IO[.]userError s!"session is owned by another process [(][{]path[}][)]"[)] try action finally Os[.]Shell[.]close fd' \
   'def withOwnership [{]α : Type[}] [(]socket : String[)] [(]checkpoint : IO String[)] [(]retry : IO Bool[)] [(]listed : Bool[)] [(]release : IO Bool[)] [(]action : List UInt32 → IO α[)] : IO α := do let held ← acquire socket retry listed try let [(]state, refused[)] ← match held with [|] none => pure [(]none, socket[)] [|] some _ => do let path ← checkpoint pure [(]← acquire path retry listed, path[)] try unless Claim[.]enters held[.]isSome state[.]isSome do throw [(]IO[.]userError s!"session is owned by another process [(][{]refused[}][)]"[)] action [(]held[.]toList [+][+] state[.]toList[)] finally if let some fd := state then try if ← release then Os[.]Shell[.]unlinkHeld fd refused finally Os[.]Shell[.]close fd finally if let some fd := held then try if ← release then Os[.]Shell[.]unlinkHeld fd socket finally Os[.]Shell[.]close fd' \
   'def Listed[.]withLock [{]α : Type[}] [(]n : Listed[)] [(]action : IO α[)] : IO α := do withLockRetrying [(]← pathIn [(]← socketDir[)] n[.]name "[.]lock" true[)] [(]pure false[)] action [(]listed := true[)]' \
-  'def Listed[.]withSessionLock [{]α : Type[}] [(]n : Listed[)] [(]action : IO α[)] : IO α := do withOwnership [(]← pathIn [(]← socketDir[)] n[.]name "[.]lock" true[)] [(]do let locks := [(]← stateDir[)] [+][+] "/[.]locks" ensureDir locks pathIn locks n[.]name "[.]lock" true[)] [(]pure false[)] true [(]do lockFilesGo n[.]name [(]← pathIn [(]← socketDir[)] n[.]name "[.]sock" true[)] [(]← pathIn [(]← stateDir[)] n[.]name "[.]ckpt" true[)] [(]← pathIn [(]← stateDir[)] n[.]name "[.]end" true[)][)] fun _ => action' \
-  'def lockFilesGo [(]name socket checkpoint ending : String[)] : IO Bool := do let only := fun [(]present : Bool[)] => if present then [[]name[]] else [[][]] let records : Linger[.]Session[.]Records := [{] sockets := only [(]← System[.]FilePath[.]pathExists socket[)], checkpoints := only [(]← System[.]FilePath[.]pathExists checkpoint[)], endings := only [(]← System[.]FilePath[.]pathExists ending[)], entries := only [(]← entryLeadsTo name[)], locks := [[]name[]] [}] return ![(]Linger[.]Session[.]Locks[.]release records name[)][.]locks[.]contains name' \
+  'def Listed[.]withSessionLock [{]α : Type[}] [(]n : Listed[)] [(]action : IO α[)] : IO α := do withOwnership [(]← pathIn [(]← socketDir[)] n[.]name "[.]lock" true[)] [(]do let locks := [(]← stateDir[)] [+][+] "/[.]locks" ensureDir locks pathIn locks n[.]name "[.]lock" true[)] [(]pure false[)] true [(]do lockFilesGo n[.]name [(]← pathIn [(]← socketDir[)] n[.]name "[.]sock" true[)] [(]← pathIn [(]← socketDir[)] n[.]name "[.]notify" true[)] [(]← pathIn [(]← stateDir[)] n[.]name "[.]ckpt" true[)] [(]← pathIn [(]← stateDir[)] n[.]name "[.]end" true[)][)] fun _ => action' \
+  'def notifyPath [(]name : String[)] : IO String := do namedPath [(]← socketDir[)] name "[.]notify"' \
+  'def lockFilesGo [(]name socket notify checkpoint ending : String[)] : IO Bool := do let only := fun [(]present : Bool[)] => if present then [[]name[]] else [[][]] let records : Linger[.]Session[.]Records := [{] sockets := only [(]← System[.]FilePath[.]pathExists socket[)], notifies := only [(]← System[.]FilePath[.]pathExists notify[)], checkpoints := only [(]← System[.]FilePath[.]pathExists checkpoint[)], endings := only [(]← System[.]FilePath[.]pathExists ending[)], entries := only [(]← entryLeadsTo name[)], locks := [[]name[]] [}] return ![(]Linger[.]Session[.]Locks[.]release records name[)][.]locks[.]contains name' \
   'def withLock [{]α : Type[}] [(]path : String[)] [(]action : IO α[)] : IO α := withLockRetrying path [(]pure false[)] action' \
   'def withSessionLockRetrying [{]α : Type[}] [(]name : String[)] [(]retry : IO Bool[)] [(]action : IO α[)] : IO α := do withOwnership [(]← lockPath name[)] [(]stateLockPath name[)] retry false [(]release name[)] fun _ => action' \
   'def withSessionLockHeld [{]α : Type[}] [(]name : String[)] [(]retry : IO Bool[)] [(]action : List UInt32 → IO α[)] : IO α := do withOwnership [(]← lockPath name[)] [(]stateLockPath name[)] retry false [(]release name[)] action' \
@@ -1410,7 +1414,7 @@ retrying="$(code_grep '(^|[^[:alnum:]_])with(Session)?Lock(Retrying|Held)([^[:al
 [ "$retrying" = 'Linger/Session/WorldCode/Daemon.lean' ] \
   || fail "only the daemon's startup claim may retry a held lock: ${retrying:-no retrying claim}"
 for tie in \
-  'finally close listenFd try IO[.]FS[.]removeFile sockPath catch _ => pure [(][)][[:space:]]+end Linger[.]Session[.]Shell[.]Daemon' \
+  'finally close listenFd unbindNotify notifyPath notifyFd try IO[.]FS[.]removeFile sockPath catch _ => pure [(][)][[:space:]]+end Linger[.]Session[.]Shell[.]Daemon' \
   'finally let rt ← latest[.]get for c in rt[.]conns do close c[.]fd let outcome ← stopProgram rt let rt ← settleRecord rt try endSession rt[.]childPid catch err => report s!"[^"]*" try record[.]save [(]rt[.]final[.]getD [(][.]ended outcome[)][)]' \
   'let previous ← record[.]load record[.]save [(][.]running none[)] let spawned ← try trySpawnPty'; do
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
@@ -1755,7 +1759,7 @@ layout_bad="$( { git ls-files -- 'Linger/*.lean' | awk -F/ '{ print $3 "\t" $0 }
 # finds nothing fails too.
 cite_absent='mmap_id_gridAnsi sb_csiDispatch_any load_legacy_save save_no_legacy'
 cite_foreign="lean_chmod lean_io_process_get_pid pid_t tty_do_resize close_range \
-  native_decide lean_exe workflow_dispatch org_ foldl_append"
+  native_decide lean_exe workflow_dispatch org_ foldl_append sd_notify status_text"
 cite_scan() {                                # file:line:basename per backticked snake_case name
   git grep -noE '`[A-Za-z][A-Za-z0-9_.]*`' -- '*.lean' \
   | awk -F: '{ name = $3; gsub(/`/, "", name); base = name; sub(/.*[.]/, "", base)

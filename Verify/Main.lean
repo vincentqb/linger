@@ -79,6 +79,8 @@ def main (args : List String) : IO UInt32 := do
     Linger.Session.Suites.Quiet.pollProbe path ready
   | ["--malformed-server", socketPath, readyPath] =>
     Linger.Session.Suites.Agent.malformedServer socketPath readyPath
+  | "--notify" :: lines =>
+    Linger.Display.Suites.Status.notifyProbe lines
   | ["--info-server", socketPath, readyPath, mode] =>
     Linger.Session.Suites.Agent.infoServer socketPath readyPath mode
   | ["--stream-info-server", socketPath, readyPath] =>

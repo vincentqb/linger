@@ -196,6 +196,10 @@ structure Rt where
   /-- The descriptors that hold the session's locks, which a daemon that upgrades keeps open for
   the image that replaces it, so the name stays this session's across the exec. -/
   locks : List UInt32 := []
+  /-- The datagram socket at the path the program's `NOTIFY_SOCKET` names, which the daemon reads
+  the program's notifications from, or `none` when it could not be made. An upgrade does not
+  hand it over: the new image binds its own at the same path. -/
+  notifyFd : Option UInt32 := none
   /-- The upgrades connections asked for since the last round, in order, each with the path of
   the binary it names (`Effect.upgrade`). The daemon carries the first out after the round, and
   refuses the others. -/
@@ -735,10 +739,10 @@ def pollRound (rt : Rt) (limitMs : Option Nat := none) : IO (Rt × List Event) :
   let watchEnd := rt.ending.isNone && rt.signals.isSome
   let mut fds : Array UInt32 :=
     #[rt.listenFd, if rt.ptyOpen then rt.ptyFd else closedFd,
-      if watchEnd then rt.signals.getD closedFd else closedFd]
+      if watchEnd then rt.signals.getD closedFd else closedFd, rt.notifyFd.getD closedFd]
   let mut evts : Array UInt32 :=
     #[(if accepting then POLLIN else 0), POLLIN ||| (if owedLen rt.ptyIn != 0 then POLLOUT else 0),
-      POLLIN]
+      POLLIN, POLLIN]
   for c in polled do
     fds := fds.push c.fd
     evts := evts.push ((if c.closing then 0 else POLLIN) ||| (if c.pending then POLLOUT else 0))
@@ -782,8 +786,24 @@ def pollRound (rt : Rt) (limitMs : Option Nat := none) : IO (Rt × List Event) :
     | none =>
       -- the terminal closed; the session lasts until its program ends
       rt := { rt with ptyOpen := false }
+  -- the program's notifications, each one datagram of at most `Notify.cap` bytes, of which the
+  -- kernel discards the rest, at most `Notify.perRound` a round; the rest wait for the next round
+  if revs[3]! &&& POLLIN != 0 then
+    if let some fd := rt.notifyFd then
+      try
+        for _ in List.range Linger.Session.Notify.perRound do
+          match ← read fd (USize.ofNat Linger.Session.Notify.cap) with
+          | some bs =>
+            if bs.isEmpty then
+              break
+            events := events ++ [.notified bs.toList]
+          | none =>
+            -- an empty notification tells nothing
+            pure ()
+      catch err =>
+        report s!"linger: reading the program's notifications failed: {err}"
   -- clients (the polled snapshot only)
-  let mut idx := 3
+  let mut idx := 4
   for c in polled do
     let r := revs[idx]!
     idx := idx + 1
@@ -1176,6 +1196,29 @@ private def failureText (failure : Linger.Session.Spawn.Failure) (prog cwd : Str
   | .notFound _ => s!"{prog}: not found"
   | .notRunnable why => s!"{prog}: cannot be run: {why}"
 
+/-- The session's notification socket, bound afresh at `path`, the path its program's
+`NOTIFY_SOCKET` names: a file left there, which only a daemon of the session leaves, goes first.
+`none`, reported, when it cannot be bound; the program's notifications then go unread. -/
+private def bindNotify (path : String) : IO (Option UInt32) := do
+  try
+    IO.FS.removeFile path
+  catch _ =>
+    pure ()
+  try
+    return some (← dgramBind path)
+  catch err =>
+    report s!"linger: the program's notifications go unread: {err}"
+    return none
+
+/-- Close the session's notification socket and remove its file, as the session ends. -/
+private def unbindNotify (path : String) (fd : Option UInt32) : IO Unit := do
+  if let some fd := fd then
+    close fd
+  try
+    IO.FS.removeFile path
+  catch _ =>
+    pure ()
+
 /-- Take over the session the image this one replaced handed over at `path`, as `__upgraded`
 asks, and serve it as `serve` does: the session's whole state, and the listener, the pty, the
 signal pipe, the locks and every connection, open at the numbers the handoff names
@@ -1221,7 +1264,10 @@ def adopt (id path : String) (pid : UInt32) (saveCkpt : State → IO Unit) (drop
         IO.FS.removeFile sockPath
       catch _ =>
         pure ()
+      unbindNotify (← Paths.notifyPath id) none
   let listenFd := UInt32.ofNat w.listenFd
+  let notifyPath ← Paths.notifyPath id
+  let notifyFd ← bindNotify notifyPath
   let sigRead := UInt32.ofNat w.signals.1
   let sigWrite := UInt32.ofNat w.signals.2
   let signals ←
@@ -1244,14 +1290,15 @@ def adopt (id path : String) (pid : UInt32) (saveCkpt : State → IO Unit) (drop
   let rt : Rt :=
     { st, listenFd, ptyFd := UInt32.ofNat w.ptyFd, childPid := UInt32.ofNat w.childPid, conns,
       ptyIn := (bufOffer ptyInCap .empty (ByteArray.mk w.ptyIn.toArray)).1, signals,
-      signalWrite := signals.map fun _ => sigWrite, locks := w.locks.map UInt32.ofNat, saveCkpt,
-      dropCkpt, saveRecord := record.save }
+      signalWrite := signals.map fun _ => sigWrite, locks := w.locks.map UInt32.ofNat, notifyFd,
+      saveCkpt, dropCkpt, saveRecord := record.save }
   let (rt, answered) ← runEffect rt (.send w.asker .done)
   let latest ← IO.mkRef (← pump rt (cut ++ answered))
   try
     run id w.login record latest
   finally
     close listenFd
+    unbindNotify notifyPath notifyFd
     try
       IO.FS.removeFile sockPath
     catch _ =>
@@ -1368,6 +1415,8 @@ def serve (id name : String) (cwd : String) (argv : List String) (saveCkpt : Sta
         unless Start.proceeds (← req.take) do
           return
       let listenFd ← unixListen sockPath
+      let notifyPath ← Paths.notifyPath id
+      let notifyFd ← bindNotify notifyPath
       try
         setNonblock listenFd
         let (prog, args) := Start.programOf (Linger.Os.Env.shellOf (← IO.getEnv "SHELL")) argv
@@ -1396,7 +1445,7 @@ def serve (id name : String) (cwd : String) (argv : List String) (saveCkpt : Sta
           try
             trySpawnPty (UInt32.ofNat (Terminal.Vt.clampDim vt0.colCount))
                 (UInt32.ofNat (Terminal.Vt.clampDim vt0.rowCount)) cwd prog args
-                ((Start.environment id (← environNames).toList).toArray.map fun
+                ((Start.environment id notifyPath (← environNames).toList).toArray.map fun
                   | (key, some value) => s!"{key}={value}"
                   | (key, none) => key)
                 (resetOf Start.reset)
@@ -1425,12 +1474,13 @@ def serve (id name : String) (cwd : String) (argv : List String) (saveCkpt : Sta
         let latest ←
           IO.mkRef
               ({ st, listenFd, ptyFd, childPid := pid, signals := signals.map (·.1),
-                 signalWrite := signals.map (·.2), locks, saveCkpt, dropCkpt,
+                 signalWrite := signals.map (·.2), locks, notifyFd, saveCkpt, dropCkpt,
                  saveRecord := record.save } :
                 Rt)
         run id argv.isEmpty record latest
       finally
         close listenFd
+        unbindNotify notifyPath notifyFd
         try
           IO.FS.removeFile sockPath
         catch _ =>

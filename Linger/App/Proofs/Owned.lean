@@ -21,7 +21,7 @@ open Linger.Session
 `info` reports them. -/
 def programFields (o : Owned) : List (String × String) :=
   titleFields o.title ++ noticeFields o.notice ++ finishedFields o.commands.finished ++
-    match o.observed with
+    (match o.observed with
     | some obs =>
       (match obs.foreground with
         | some fg =>
@@ -30,7 +30,8 @@ def programFields (o : Owned) : List (String × String) :=
         match obs.echo with
         | some echo => [("echo", toString echo)]
         | none => []
-    | none => []
+    | none => []) ++
+    notifiedFields o.ready o.status
 
 /-- A record's own field is no program's. -/
 theorem owns_recordField (key : String) (h : recordField key = true) :
@@ -38,7 +39,8 @@ theorem owns_recordField (key : String) (h : recordField key = true) :
   cases hk : owns table .program key
   · rfl
   · simp [owns, table] at hk
-    rcases hk with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> simp [recordField] at h
+    rcases hk with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+      simp [recordField] at h
 
 /-- How a session ended is no program's field. -/
 theorem endingFields_programs (e : Ending) :
@@ -95,15 +97,22 @@ theorem infoFields_programs (s : State) (kept : ∀ kv ∈ s.metaKv, owns table 
     | some f =>
       cases h1 : cmdlineText f.cmdline <;> cases h2 : f.status <;>
         simp [finishedFields, h1, h2, owns, table]
+  have hnotified (ready : Bool) (status : Option (List UInt8)) :
+    (notifiedFields ready status).filter (fun kv => owns table .program kv.1) =
+      notifiedFields ready status := by
+    unfold notifiedFields
+    split
+    · split <;> simp [owns, table]
+    · simp [owns, table]
   cases he : StateRec.ended s with
   | none =>
     simp only [infoFields, he, List.filter_append, hmeta, hfields, htitle, hnotice, hfinished,
-      presentFields_programs, programFields, State.owned]
+      hnotified, presentFields_programs, programFields, State.owned]
     simp [owns, table]
   | some
     e =>
     simp only [infoFields, he, List.filter_append, hmeta, hfields, htitle, hnotice, hfinished,
-      presentFields_programs, programFields, State.owned, endingFields_programs]
+      hnotified, presentFields_programs, programFields, State.owned, endingFields_programs]
     simp [owns, table]
 
 /-- A session the daemon booted keeps its boot metadata through every trace. -/

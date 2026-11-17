@@ -148,6 +148,10 @@ structure StateRec where
   /-- What the daemon last read of the world, as it was about to answer; `none` before it read
   any. -/
   private observed : Option Observation := none
+  /-- Whether the program said it is ready, `READY=1`, in a notification it sent. -/
+  private ready : Bool := false
+  /-- The status text the program gave in the last notification it sent with one, `STATUS=`. -/
+  private status : Option (List UInt8) := none
 
 /-- The session's state, as the headline theorems name it: a definition over the sealed record
 `StateRec`, because `Challenge.lean` declares the type as a hole the program fills. -/
@@ -170,10 +174,11 @@ command that runs and the ending of the last one that finished since the last lo
 def State.commands (s : State) : Commands := { running := s.running, finished := s.finished }
 
 /-- What the session's program owns, as the headline theorems observe it: the terminal's title,
-the ask and its notification's text, the commands and the latest reading of the world. -/
+the ask and its notification's text, the commands, the latest reading of the world, and whether
+it said it is ready and the status text it last gave. -/
 def State.owned (s : State) : Owned :=
   { title := s.vt.windowTitle, asks := s.asking, notice := s.notice, commands := s.commands,
-    observed := s.observed }
+    observed := s.observed, ready := s.ready, status := s.status }
 
 -- No `deriving` clause at all. `Inhabited` would need `Inhabited Vt`, a public door out of
 -- the `Vt` seal admitting a zero-column screen, and `Repr` would need `Repr Vt`, whose
@@ -382,6 +387,15 @@ def presentFields (observed : Option Observation) (lastOutMs : Option Nat) :
       | some echo => [("echo", toString echo)]
       | none => []
 
+/-- How `info` reports what the program said through `sd_notify`: `ready`, whether it said it is
+ready, and `status_text`, its last status text as UTF-8 (`noticeText`), when it gave one that is
+not empty. -/
+def notifiedFields (ready : Bool) (status : Option (List UInt8)) : List (String × String) :=
+  [("ready", toString ready)] ++
+    match status.bind noticeText with
+    | some text => if text.isEmpty then [] else [("status_text", text)]
+    | none => []
+
 /-- The fields one listing record carries, as a named stage. Split out from
 `infoText` because the framing below is only unambiguous if no field contains a
 framing byte, and that is a claim about *these* — see `infoText_framing`. -/
@@ -412,6 +426,7 @@ def infoFields (s : State) : List (String × String) :=
     noticeFields s.owned.notice ++
     finishedFields s.owned.commands.finished ++
     presentFields s.owned.observed s.lastOutMs ++
+    notifiedFields s.owned.ready s.owned.status ++
     s.fields.filter (recordField ·.1)
 
 /-- Frame the fields as `k` TAB `v` LF records.
@@ -758,6 +773,11 @@ def step (s : State) (ev : Event) : State × List (Effect Plan) :=
     -- Keep the attempt time: retry at the next cadence, without needing more
     -- output and without spinning while storage remains unavailable.
     ({ s with dirty := true }, [])
+  | .notified datagram =>
+    ({ s with
+        ready := s.ready || Notify.ready [datagram],
+        status := (Notify.status [datagram]).or s.status },
+      [])
 
 /-- Removing a client can only take focus away. -/
 private theorem focused_dropClient (s : State) (id : Nat) (h : (s.dropClient id).focused = true) :

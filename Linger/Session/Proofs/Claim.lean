@@ -108,11 +108,12 @@ named nothing before. -/
 theorem release_named (records : Linger.Session.Records) (name : String)
     (before : ∀ held ∈ records.locks, held = name ∨ records.holds held = true) :
     (release records name).sockets = records.sockets ∧
+      (release records name).notifies = records.notifies ∧
       (release records name).checkpoints = records.checkpoints ∧
       (release records name).endings = records.endings ∧
       (∀ held ∈ records.locks, records.holds held = true → held ∈ (release records name).locks) ∧
       ∀ held ∈ (release records name).locks, (release records name).holds held = true := by
-  refine ⟨rfl, rfl, rfl, fun held member holds => ?_, fun held member => ?_⟩
+  refine ⟨rfl, rfl, rfl, rfl, fun held member holds => ?_, fun held member => ?_⟩
   · simp [release, member, holds]
   · simp only [release, List.mem_filter, Bool.or_eq_true, bne_iff_ne, ne_eq] at member
     obtain ⟨member, kept⟩ := member

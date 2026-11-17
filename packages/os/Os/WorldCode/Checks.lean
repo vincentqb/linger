@@ -10,7 +10,8 @@ import SoftwareChallenge.Commands
 that an exec keeps the process, its children and the descriptors it does not close,
 `Os.Place.NoReplace` that a link or a rename that may not replace never replaces a name, and
 `Os.Lock.Tells` that `fstat` and `stat` tell the file a descriptor holds from the one a path
-names, and `Os.Signal.Group` that a signal to a process group reaches every member. Each claim
+names, `Os.Signal.Group` that a signal to a process group reaches every member, and `Os.Dgram.Whole`
+that datagrams sent to a Unix socket's path arrive whole and in order. Each claim
 takes the behaviour it constrains as a parameter, which no Lean term computes: `slept`, `execd`,
 `placedBy`, `told`, `grouped` and `groupReached` name them, and the checks observe them, by
 sleeping and reading the monotonic clock around each sleep, by running a process that execs, by
@@ -224,5 +225,44 @@ Check Os.Signal.Group grouped groupReached := do
           | _ =>
             break
         Os.Shell.close master
+
+/-- What a datagram socket reads, one read of at most the first argument's bytes for each, of the
+datagrams sent to it one after another: the observation `Os.Dgram.Whole` constrains. It has no
+body; the check below observes it. -/
+opaque datagrams : Nat → List (List UInt8) → List (List UInt8)
+
+-- Datagrams sent to a Unix socket's path arrive whole and in order: four of different sizes, one
+-- of them 4000 bytes long, sent one after another to a socket bound in a directory of its own,
+-- read back one read each of at most 4096 bytes, are those four, in order, and then none waits.
+Check Os.Dgram.Whole datagrams := do
+  IO.FS.withTempDir fun dir => do
+      let path := (dir / "notify").toString
+      let fd ← Os.Shell.dgramBind path
+      try
+        let sent : List (List UInt8) :=
+          ["READY=1".toUTF8.toList, "STATUS=one\nX=2".toUTF8.toList, List.replicate 4000 0x41,
+            "STATUS=last".toUTF8.toList]
+        for d in sent do
+          unless ← Os.Shell.dgramSend path (ByteArray.mk d.toArray) do
+            throw (IO.userError s!"a datagram of {d.length} bytes was not sent whole")
+        let mut read : List (List UInt8) := []
+        for _ in sent do
+          match ← Os.Shell.read fd 4096 with
+          | some bytes =>
+            read := read ++ [bytes.toList]
+          | none =>
+            read := read ++ [[]]
+        unless read == sent do
+          throw
+              (IO.userError
+                s!"datagrams of {sent.map (·.length)} bytes read back as {read.map (·.length)}")
+        match ← Os.Shell.read fd 4096 with
+        | some bytes =>
+          unless bytes.isEmpty do
+            throw (IO.userError "a socket read more datagrams than were sent to it")
+        | none =>
+          throw (IO.userError "a socket read an empty datagram nobody sent")
+      finally
+        Os.Shell.close fd
 
 end Os.Checks
