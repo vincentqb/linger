@@ -65,17 +65,19 @@ theorem rowStatus_gone : rowStatus .broken = ⟨.none, .unknown⟩ := rfl
 
 /-- **A summary that reads records shows what asking would**: a row read from the name's end
 record has the status of any answer from its daemon that reports the same `progress`, `running`,
-`unseen` and `asks` and no ending. -/
+`unseen` and `asks` and no ending, from a daemon that reports `running`, as every daemon whose
+`unseen` means unread lines does. -/
 theorem rowStatus_published (progress : Option Terminal.Mediation.Progress)
     (running unseen asks : Bool) (info : List (String × String))
     (hans : info.any (fun kv => (kv.1 == "pid" || kv.1 == "cmd") && kv.2 != "") = true)
     (hexit : info.lookup "exit" = none)
     (hprogress : Status.progressOfName ((info.lookup "progress").getD "") = progress)
+    (hcurrent : (info.lookup "running").isSome = true)
     (hrunning : (info.lookup "running" == some "true") = running)
     (hunseen : (info.lookup "unseen" == some "true") = unseen)
     (hasks : (info.lookup "asks" == some "true") = asks) :
     rowStatus (.published progress running unseen asks) = rowStatus (.live info) := by
-  simp [rowStatus, answered, flag, hans, hexit, hprogress, hrunning, hunseen, hasks]
+  simp [rowStatus, answered, flag, hans, hexit, hprogress, hcurrent, hrunning, hunseen, hasks]
 
 /-- An empty reply is not an answer, so a busy daemon lists as `unknown`
 rather than as a healthy idle session. This is row identity applied to

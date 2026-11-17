@@ -155,3 +155,13 @@ example : summary (List.replicate 12 .unread) = "12∙" := by native_decide
 open Linger.Display.Status in
 example : attentionCounts [.unread, .none, .asked, .unread] = [(.asked, 1), (.unread, 2)] := by
   native_decide
+
+-- A daemon older than the field `running` meant by `unseen` any output since the look, so its
+-- `unseen` shows no unread mark; a current daemon's `unseen` is unread lines.
+example :
+    (rowStatus (.live [("pid", "1"), ("cmd", "sh"), ("unseen", "true")])).attention = .none ∧
+      (rowStatus
+            (.live
+              [("pid", "1"), ("cmd", "sh"), ("running", "false"), ("unseen", "true")])).attention =
+        .unread := by
+  native_decide

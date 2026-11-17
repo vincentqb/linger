@@ -66,7 +66,10 @@ def rowStatus : Row → Status
         -- completed run
         exit := (info.lookup "exit").bind String.toNat?,
         progress := Status.progressOfName ((info.lookup "progress").getD ""),
-        running := flag info "running", unseen := flag info "unseen", asks := flag info "asks" }
+        running := flag info "running",
+        -- a daemon older than the field `running` meant by `unseen` any output since the look,
+        -- which is not what unread lines mean, so its `unseen` is read as no news
+        unseen := (info.lookup "running").isSome && flag info "unseen", asks := flag info "asks" }
   | .stale => ⟨.none, .resumable⟩
   | .ended status => classify { daemonUp := false, exit := some status, unseen := true }
   | .broken => ⟨.none, .unknown⟩

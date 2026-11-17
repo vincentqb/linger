@@ -164,7 +164,7 @@ def infoServer (socketPath readyPath mode : String) : IO UInt32 := do
               Linger.Session.Shell.Client.sendMsg fd .done
             | "unread-info" =>
               Linger.Session.Shell.Client.sendMsg fd
-                  (.infoReply "exit\t7\nunseen\ttrue\n".toUTF8.toList)
+                  (.infoReply "exit\t7\nrunning\tfalse\nunseen\ttrue\n".toUTF8.toList)
               Linger.Session.Shell.Client.sendMsg fd .done
             | "empty" =>
               Linger.Session.Shell.Client.sendMsg fd .done
