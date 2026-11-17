@@ -21,8 +21,10 @@ declaration without a docstring fails the build. -/
 def implementationOptions : Array LeanOption := #[⟨`linter.missingDocs, true⟩]
 
 /-- The decoder, its specification, its proofs, the solution its challenge is checked against and
-its unit tests, checked at elaboration time: every module under `Input`. -/
+its unit tests, checked at elaboration time: every module under `Input`. Its roots are the
+modules no other imports, from which `lake lint` reaches every module. -/
 @[default_target] lean_lib Input where
+  roots := #[`Input.Solution, `Input.Tests, `Input.Tests.Api]
   globs := #[.submodules `Input]
   leanOptions := implementationOptions
 

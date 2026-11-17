@@ -21,8 +21,12 @@ declaration without a docstring fails the build. -/
 def implementationOptions : Array LeanOption := #[⟨`linter.missingDocs, true⟩]
 
 /-- The toolkit, its specification, its proofs, the solution its challenge is checked against
-and its unit tests, checked at elaboration time: every module under `Terminal`. -/
+and its unit tests, checked at elaboration time: every module under `Terminal`. Its roots are the
+modules no other imports, from which `lake lint` reaches every module. -/
 @[default_target] lean_lib Terminal where
+  roots :=
+  #[`Terminal.Solution, `Terminal.Tests.Fuzz, `Terminal.Tests.Mediation, `Terminal.Tests.Title,
+    `Terminal.Tests.ToolkitApi, `Terminal.Tests.Vt, `Terminal.Tests.VtApi]
   globs := #[.submodules `Terminal]
   leanOptions := implementationOptions
 

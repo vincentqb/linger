@@ -21,8 +21,10 @@ declaration without a docstring fails the build. -/
 def implementationOptions : Array LeanOption := #[⟨`linter.missingDocs, true⟩]
 
 /-- The matcher, its specification, its proofs, the solution its challenge is checked against
-and its unit tests, checked at elaboration time: every module under `Fuzzy`. -/
+and its unit tests, checked at elaboration time: every module under `Fuzzy`. Its roots are the
+modules no other imports, from which `lake lint` reaches every module. -/
 @[default_target] lean_lib Fuzzy where
+  roots := #[`Fuzzy.Solution, `Fuzzy.Tests, `Fuzzy.Tests.Api]
   globs := #[.submodules `Fuzzy]
   leanOptions := implementationOptions
 

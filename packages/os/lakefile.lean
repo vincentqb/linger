@@ -36,10 +36,11 @@ extern_lib liblingershim pkg := do
 /-- The boundary, its specification, its proofs, its checks and the solution its challenge is
 checked against: every module under `Os`. Each is also compiled to a shared library that links
 the shim, which a check of a world claim then calls, as a checkout's checks of its own claims
-do through `Os.Shell`. A root other than `Os`, which is no module, keeps that library from being
+do through `Os.Shell`. Its roots are the modules no other imports, from which `lake lint`
+reaches every module; a root other than `Os`, which is no module, keeps that library from being
 loaded as a plugin, whose initializer would be `Os`'s. -/
 @[default_target] lean_lib Os where
-  roots := #[`Os.Solution]
+  roots := #[`Os.Solution, `Os.WorldCode.Checks, `Os.WorldCode.Command]
   globs := #[.submodules `Os]
   leanOptions := implementationOptions
   precompileModules := true
