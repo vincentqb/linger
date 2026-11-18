@@ -459,7 +459,7 @@ module_imports ':(glob)Linger/Session/*.lean' 'Linger/Session/CoreCode/*' 'Linge
     packages/terminal/Terminal/CoreCode/Replay.lean Linger.lean \
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
-    if (mod !~ /^(Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](WorldCode([.]Api)?|CoreSpec|CoreCode[.](Commands|Fields|Wait|Recovery|Capture|Api))|Std[.]Async[.](System|Signal))$/ \
+    if (mod !~ /^(Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](WorldCode([.]Api)?|CoreSpec|CoreCode[.](Commands|Fields|Wait|Kill|Recovery|Capture|Api))|Std[.]Async[.](System|Signal))$/ \
         && mod != "SoftwareChallenge.Commands") {
       print "  " $0; bad = 1
     }
@@ -1933,7 +1933,9 @@ ed_n="$(code_count '(^|[^[:alnum:]_.])drain(Str)?[[:space:]]+[^[:space:]]+[[:spa
 #     up to socketWaitCapMs (30 s); remote listings, every 5 ms for at most
 #     remoteQueryTimeoutMs (3 s); `send -` wakes only for input, replies and closes; `wait`
 #     looks at a held name every 20 ms for at most heldNameMs (8 s) from the look that first
-#     found it so, as `Wait.decide` says, and `kill` for its release as long.
+#     found it so, as `Wait.decide` says, and `kill` at the name it asked to end as long from when
+#     its daemon took the request, as `Kill.decide` says, each look asking the daemon that answers
+#     for it no longer than replySilenceMs (10 s).
 #   Import/WorldCode: tmux's configuration and a pane archive, every 10 ms for at most 1 s and 5 s.
 #   packages/os, Os/WorldCode: `nap` and `pause`, the only sleeps; a full write's wait for its
 #     descriptor to take more (`writeAll`), with no deadline, on its reader, as a blocking
@@ -1961,7 +1963,7 @@ Linger/App/WorldCode/Api.lean: unless ← nap (start + socketWaitCapMs) 30 do
 Linger/App/WorldCode/Api.lean: unless ← nap deadline 5 do
 Linger/App/WorldCode/Api.lean: let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] (-1)
 Linger/App/WorldCode/Api.lean: discard <| nap (first + Wait.heldNameMs) 20
-Linger/App/WorldCode/Api.lean: unless ← nap deadline 20 do
+Linger/App/WorldCode/Api.lean: discard <| nap (taken + Wait.heldNameMs) 20
 Linger/Import/WorldCode.lean: unless ← Os.Shell.nap deadline 10 do
 Linger/Import/WorldCode.lean: unless ← Os.Shell.nap deadline 10 do
 Linger/Selector/WorldCode.lean: let ready ← poll fds events 50

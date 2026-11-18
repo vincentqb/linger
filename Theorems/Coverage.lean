@@ -33,6 +33,7 @@ import all Os.Solution
 import all Linger.Selector.Proofs.Key
 import all Linger.App.Proofs.Entry
 import all Linger.App.Proofs.Commands
+import all Linger.App.Proofs.Kill
 import all Linger.App.Proofs.Wait
 import all Linger.Os.Proofs.Answer
 import all Linger.Os.Proofs.Env

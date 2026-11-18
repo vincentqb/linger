@@ -10,7 +10,8 @@ public section
 The executor a command line reaches, where a command line of plain words goes, the operations of
 the session model and one row of the command table, an operation's one command, what a command
 does with a name's saved session and what an attach to it does, what `wait` hears on each look
-at a name and does next, and the steps of `capture` of a saved session, which of them hold the
+at a name and does next, what `kill` hears on each look at a name once a daemon has taken its
+request and does next, and the steps of `capture` of a saved session, which of them hold the
 name's locks and which wait on a party outside linger. What a command answers is the operating
 system's vocabulary, `Linger.Os.Answer`, which the selector answers in too. -/
 
@@ -429,6 +430,51 @@ def Next.told : Next → Option Os.Answer
   | .again _ => none
 
 end Linger.App.Wait
+
+namespace Linger.App.Kill
+
+/-- What one look at a name tells `kill` once the daemon it asked to end the session has taken the
+request: who holds the name now. A daemon gives its name up only once its session has ended, and
+another session can take the name only after that, so a name no process holds, or one a newer
+session holds, means that the session `kill` asked to end has ended. -/
+inductive Heard where
+  /-- No process holds the name: the session `kill` asked to end gave it up. -/
+  | free
+  /-- The daemon `kill` asked still answers for the name as itself: its session has not ended. -/
+  | asked
+  /-- A daemon answers for the name that is not the one `kill` asked: a newer session took the
+  name, after the session `kill` asked to end gave it up. -/
+  | newer
+  /-- A process holds the name that `kill` cannot tell from the daemon it asked: no daemon answers
+  for the name, as while that daemon removes its socket and exits, while a newer one starts or
+  while a reader holds the name, or `kill` could not learn which daemon it asked. -/
+  | held
+  deriving Repr, DecidableEq
+
+/-- What `kill` does after a look: answer, or look again. -/
+inductive Next where
+  /-- The kill is over, having found this. -/
+  | answer (found : Api.Found)
+  /-- Look again. -/
+  | again
+  deriving Repr, DecidableEq
+
+/-- The answer a kill gives after a look, if it is over. -/
+@[expose]
+def Next.told : Next → Option Os.Answer
+  | .answer found => some found.answer
+  | .again => none
+
+/-- The rule before the one `kill` follows, a wrong part, with its patience `patience`: only a name
+no process holds was an ending, so a newer session that took the name read as the session not
+ended, and so did a process `kill` cannot tell from the daemon it asked, once `patience` had
+passed since the daemon took the request at `taken`. -/
+@[expose]
+def byLock (patience taken now : Nat) : Heard → Next
+  | .free => .answer .done
+  | _ => if taken + patience ≤ now then .answer .refused else .again
+
+end Linger.App.Kill
 
 namespace Linger.App.Capture
 

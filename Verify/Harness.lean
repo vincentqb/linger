@@ -149,6 +149,20 @@ def waitOrKill {cfg : IO.Process.StdioConfig} (child : IO.Process.Child cfg) (ms
     reapOrKill child 0
   return code
 
+/-- Send a signal by NAME. The numbers for SIGSTOP and SIGCONT differ between Linux and macOS (19
+and 18 on Linux; 17 and 19 on macOS, where 18 is SIGTSTP), so they never enter Lean, as AGENTS.md
+keeps numeric errno values out of it: `kill -s` through `/bin/sh`, since on a minimal system
+`kill` is only a shell builtin. -/
+def signalByName (pid : UInt32) (sig : String) : IO Unit := do
+  let _ ← IO.Process.output { cmd := "/bin/sh", args := #["-c", s!"kill -s {sig} {pid}"] }
+  pure ()
+
+/-- Whether the process `pid` is stopped, as `ps` reports it on Linux and macOS alike: its state
+begins with `T`. -/
+def stopped (pid : UInt32) : IO Bool := do
+  let out ← IO.Process.output { cmd := "ps", args := #["-o", "stat=", "-p", toString pid] }
+  return out.stdout.trimAscii.toString.startsWith "T"
+
 /-- Accept one connection on a nonblocking listener within `ms`. -/
 def acceptWithin (lfd : UInt32) (ms : Nat) : IO (Option UInt32) := do
   let deadline := (← monotonicMs) + ms

@@ -24,8 +24,9 @@ one into a nonblocking pipe, which waits for its reader. Two premises are not op
   (check 1 fails, nothing was ever stopped) and a hardcoded `18` would then send
   SIGTSTP and wedge the rest of the suite. AGENTS.md's rule to avoid numeric errno
   values in Lean guards the same kind of platform split, so these numbers stay out
-  of Lean too: `kill -s STOP` / `kill -s CONT` through `/bin/sh`, the same "one
-  command, both platforms" move `Env.daemonPid` makes with `ps -o ppid=`.
+  of Lean too: `kill -s STOP` / `kill -s CONT` through `/bin/sh`
+  (`Verify.Harness.signalByName`), the same "one command, both platforms" move
+  `Env.daemonPid` makes with `ps -o ppid=`.
   `Env.crashDaemon`'s `kill dpid 9` needs no such care — 9 is fixed by POSIX;
 * **crash simulation leaves the socket behind.** A SIGKILLed daemon cannot
   unlink it; `Env.crashDaemon` preserves that premise so listing and ownership
@@ -63,14 +64,6 @@ def psTable : IO (List (Nat × Nat × String)) := do
         | some pid, some ppid => some (pid, ppid, l)
         | _, _ => none
       | _ => none
-
-/-- Send a signal by NAME. See the module docstring: the numbers for SIGSTOP and
-SIGCONT differ between Linux and macOS, so they never enter Lean. `kill` through
-`/bin/sh` rather than as a `cmd` because on a minimal system `kill` is only a
-shell builtin, and `SHELL=/bin/sh` is already this suite's premise. -/
-def signalByName (pid : UInt32) (sig : String) : IO Unit := do
-  let _ ← IO.Process.output { cmd := "/bin/sh", args := #["-c", s!"kill -s {sig} {pid}"] }
-  pure ()
 
 /-- The daemon's backpressure line, as a marker rather than a regex (Lean has no
 regex engine, and this needs none):

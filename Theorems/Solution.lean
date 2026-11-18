@@ -5,6 +5,7 @@ public import Linger.App.CoreCode.Capture
 public import Linger.App.CoreCode.Commands
 public import Linger.App.CoreCode.Entry
 public import Linger.App.CoreCode.Fields
+public import Linger.App.CoreCode.Kill
 public import Linger.App.CoreCode.Recovery
 public import Linger.App.CoreCode.Wait
 public import Linger.Display.CoreCode.Alert
@@ -40,6 +41,7 @@ import all Linger.App.Proofs.Api
 import all Linger.App.Proofs.Capture
 import all Linger.App.Proofs.Commands
 import all Linger.App.Proofs.Entry
+import all Linger.App.Proofs.Kill
 import all Linger.App.Proofs.Recovery
 import all Linger.App.Proofs.Wait
 import Linger.Display.Proofs.Clean
@@ -2523,6 +2525,40 @@ theorem wait_held_rejects_drain :
   -- a wait that fails once a drain has passed, while the ending's signals still wait
   have k := h none (some 0) Session.drainTimeoutMs .held
   exact k.2.2 rfl 0 rfl (by decide) (k.1.mpr (.inr (.inr ⟨rfl, 0, rfl, by simp⟩)))
+
+theorem kill_answers (taken now : Nat) (heard : App.Kill.Heard) :
+    (App.Kill.Next.told (App.Kill.decide taken now heard) = some .done ↔
+        heard = .free ∨ heard = .newer) ∧
+      (App.Kill.Next.told (App.Kill.decide taken now heard) = some .notDone ↔
+        heard = .asked ∧ taken + App.Wait.heldNameMs ≤ now) ∧
+      (App.Kill.Next.told (App.Kill.decide taken now heard) = some .failed ↔
+        heard = .held ∧ taken + App.Wait.heldNameMs ≤ now) ∧
+      (App.Kill.Next.told (App.Kill.decide taken now heard) = none ↔
+        (heard = .asked ∨ heard = .held) ∧ now < taken + App.Wait.heldNameMs) ∧
+      (now < taken + (Session.drainTimeoutMs + (Session.ending.map (·.wait)).sum) →
+        App.Kill.Next.told (App.Kill.decide taken now heard) = some .done ∨
+          App.Kill.Next.told (App.Kill.decide taken now heard) = none) :=
+  ⟨(App.Kill.kill_answers taken now heard).1, (App.Kill.kill_answers taken now heard).2.1,
+    (App.Kill.kill_answers taken now heard).2.2.1, (App.Kill.kill_answers taken now heard).2.2.2,
+    App.Kill.kill_patient taken now heard⟩
+
+theorem kill_answers_rejects_lock :
+    ¬∀ (taken now : Nat) (heard : App.Kill.Heard),
+        (App.Kill.Next.told (App.Kill.byLock App.Wait.heldNameMs taken now heard) = some .done ↔
+            heard = .free ∨ heard = .newer) ∧
+          (App.Kill.Next.told (App.Kill.byLock App.Wait.heldNameMs taken now heard) =
+              some .notDone ↔
+            heard = .asked ∧ taken + App.Wait.heldNameMs ≤ now) ∧
+          (App.Kill.Next.told (App.Kill.byLock App.Wait.heldNameMs taken now heard) = some .failed ↔
+            heard = .held ∧ taken + App.Wait.heldNameMs ≤ now) ∧
+          (App.Kill.Next.told (App.Kill.byLock App.Wait.heldNameMs taken now heard) = none ↔
+            (heard = .asked ∨ heard = .held) ∧ now < taken + App.Wait.heldNameMs) ∧
+          (now < taken + (Session.drainTimeoutMs + (Session.ending.map (·.wait)).sum) →
+            App.Kill.Next.told (App.Kill.byLock App.Wait.heldNameMs taken now heard) = some .done ∨
+              App.Kill.Next.told (App.Kill.byLock App.Wait.heldNameMs taken now heard) = none) := by
+  intro h
+  -- a name a newer session took, which the rule before this one never reads as an ending
+  exact App.Kill.byLock_newer 0 0 (((h 0 0 .newer).1).mpr (.inr rfl))
 
 theorem code_documented (status : UInt32) (signal : UInt8) :
     Os.Answer.code .done = 0 ∧

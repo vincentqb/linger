@@ -2,6 +2,8 @@ module
 
 public import Verify.Harness
 import Linger.Session.CoreCode.Checkpoint
+import Linger.Session.CoreCode.Wire
+import Linger.Session.WorldCode.Client
 import Linger.Session.WorldCode.Daemon
 import Linger.Target.CoreCode.Name
 import Linger.Os.CoreCode.Answer
@@ -29,6 +31,28 @@ private def locksGone (e : Env) (name : String) : IO Bool := do
   return !(← System.FilePath.pathExists s!"{e.dir}/{name}.lock") &&
       !(← System.FilePath.pathExists s!"{e.dir}/.locks/{name}.lock")
 
+/-- Take the name's two locks, the socket's and then the checkpoint's, as every owner takes them,
+and give back how to let them go: in reverse, deleting their files as a holder that no record
+names does, and only once, however often it runs. Throws, holding nothing, when either is held. -/
+private def holdLocks (e : Env) (name : String) : IO (IO Unit) := do
+  IO.FS.createDirAll s!"{e.dir}/.locks"
+  let paths := [s!"{e.dir}/{name}.lock", s!"{e.dir}/.locks/{name}.lock"]
+  let held ← paths.mapM flock
+  let released ← IO.mkRef false
+  let release : IO Unit := do
+    unless ← released.get do
+      released.set true
+      for (fd, path) in (held.zip paths).reverse do
+        if fd ≥ 0 then
+          try
+            unlinkHeld fd.toUInt64.toUInt32 path
+          finally
+            close fd.toUInt64.toUInt32
+  unless held.all (· ≥ 0) do
+    release
+    throw (IO.userError s!"fixture locks unavailable: {name}")
+  return release
+
 /-- One round of the start race on `name`, which no record names: this check holds the name's two
 locks, as an offline reader does, while four `start`s of it race reads and listings, which try its
 locks, and then deletes the lock files holding them, as a holder that no record names does, and
@@ -44,22 +68,8 @@ private def startRace (e : Env) (name : String) : IO (Nat × Nat × Nat) := do
   let before := ((← e.log name).splitOn logged).length - 1
   let waiting : IO Nat := do
     return ((← e.log name).splitOn logged).length - 1 - before
-  -- the socket's lock and then the checkpoint's, as every owner takes them, let go in reverse
-  let paths := [s!"{e.dir}/{name}.lock", s!"{e.dir}/.locks/{name}.lock"]
-  let held ← paths.mapM flock
-  let released ← IO.mkRef false
-  let release : IO Unit := do
-    unless ← released.get do
-      released.set true
-      for (fd, path) in (held.zip paths).reverse do
-        if fd ≥ 0 then
-          try
-            unlinkHeld fd.toUInt64.toUInt32 path
-          finally
-            close fd.toUInt64.toUInt32
+  let release ← holdLocks e name
   try
-    unless held.all (· ≥ 0) do
-      throw (IO.userError s!"fixture locks unavailable: {name}")
     let starters ← (List.range 4).mapM fun _ => spawn #["start", name, "/bin/sh"]
     let exits ← starters.mapM fun _ => IO.mkRef (none : Option UInt32)
     let taken : IO Nat := do
@@ -102,6 +112,184 @@ private def startRace (e : Env) (name : String) : IO (Nat × Nat × Nat) := do
     return (takenHeld, waited, started)
   finally
     release
+
+/-- What a session this check plays tells `info`: a start no real session has, a program whose
+pid is 1 that started at time 0. -/
+private def playedFields : String := "pid\t1\ncreated\t0\ncmd\tplayed\n"
+
+/-- Play, on the connection `fd`, the daemon of the session that holds a name, as `kill` meets
+it: answer each `info` with `playedFields`, until the request to end the session arrives, the
+connection closes or `ms` pass; whether the request arrived. -/
+private def playDaemon (fd : UInt32) (ms : Nat) : IO Bool := do
+  let send (m : Linger.Session.Wire.Msg) : IO Unit := do
+    -- a peer that has its answer may close before the last write
+    try
+      Linger.Session.Shell.Client.sendMsg fd m
+    catch _ =>
+      pure ()
+  let deadline := (← monotonicMs) + ms
+  let mut dec : Linger.Session.Wire.Decoder := {}
+  while (← monotonicMs) < deadline do
+    let revs ← poll #[fd] #[POLLIN] 100
+    if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) == 0 then
+      continue
+    let received ←
+      try
+        read fd 65536
+      catch _ =>
+        pure none
+    let some bytes := received | return false
+    let (next, msgs) := dec.feed bytes.toList
+    dec := next
+    for m in msgs do
+      match m with
+      | .info =>
+        send (.infoReply playedFields.toUTF8.toList)
+        send .done
+      | .kill =>
+        return true
+      | _ =>
+        pure ()
+  return false
+
+/-- A session this check plays: it holds the name's locks (`holdLocks`) and listens on its
+socket, as the daemon of a session that holds the name does, and `kill` of the name runs as a
+child of the check, its standard error piped. The played session ends as a daemon ends: it stops
+listening and removes its socket (`stopListening`), then lets the locks go (`release`), each at
+most once, however often it runs. -/
+private structure Played where
+  listener : UInt32
+  killer :
+    IO.Process.Child { stdin := .null, stdout := .null, stderr := .piped : IO.Process.StdioConfig }
+  socket : String
+  stopListening : IO Unit
+  release : IO Unit
+
+/-- Begin playing the session `name` and start `kill name` against it. -/
+private def play (e : Env) (name : String) : IO Played := do
+  let release ← holdLocks e name
+  let socket := s!"{e.dir}/{name}.sock"
+  try
+    let listener ← unixListen socket
+    setNonblock listener
+    let listening ← IO.mkRef true
+    let stopListening : IO Unit := do
+      if ← listening.get then
+        listening.set false
+        close listener
+        try
+          IO.FS.removeFile socket
+        catch _ =>
+          pure ()
+    let killer ←
+      IO.Process.spawn
+          { cmd := e.bin, args := #["kill", name], env := e.procEnv, stdin := .null,
+            stdout := .null, stderr := .piped }
+    return { listener, killer, socket, stopListening, release }
+  catch err =>
+    release
+    throw err
+
+/-- Accept `kill`'s connection to the played session and play its daemon until the request to end
+the session arrives, then run `taken`, and close the connection as a daemon that takes the request
+does: whether the request arrived. -/
+private def Played.serveKill (p : Played) (taken : IO Unit) : IO Bool := do
+  let some fd ← acceptWithin p.listener patienceMs | return false
+  try
+    let asked ← playDaemon fd patienceMs
+    if asked then
+      taken
+    return asked
+  finally
+    close fd
+
+/-- Retire a played session: reap `kill`, which SIGKILL ends even while it is stopped, and end
+the session. -/
+private def Played.retire (p : Played) : IO Unit := do
+  reapOrKill p.killer 0
+  p.stopListening
+  p.release
+
+/-- `kill` answers what happened to the session it asked to end, whoever holds the name after it.
+Each session here is one this check plays (`play`), so that the order is the check's to hold:
+
+* `kill-newer` ends once its daemon has the request to end it, and a real session then takes the
+  name while `kill`, stopped, cannot look: `kill` answers that it ended the session, saying that
+  the name now belongs to a newer session, and leaves that one running;
+* `kill-asked`'s daemon goes on answering as itself after it has the request, so `kill` answers
+  that the session has not ended, once its patience for an ending has passed;
+* `kill-held` stops listening once it has the request and keeps holding the name's locks, a
+  process no daemon answers for, so `kill` answers that it could not find out. -/
+private def killChecks (e : Env) : IO Unit := do
+  let newer ← play e "kill-newer"
+  try
+    let paused ← IO.mkRef false
+    let asked ←
+      newer.serveKill do
+          signalByName newer.killer.pid "STOP"
+          paused.set (← waitFor patienceMs (stopped newer.killer.pid))
+    newer.stopListening
+    newer.release
+    let (startRc, _, _) ← e.cli #["start", "kill-newer", "/bin/sh"]
+    let owner ← e.info "kill-newer" "pid"
+    signalByName newer.killer.pid "CONT"
+    let code ← waitOrKill newer.killer hangMs
+    let said ← newer.killer.stderr.readToEnd
+    let kept ← e.info "kill-newer" "pid"
+    expect
+        (asked && (← paused.get) && startRc == 0 && owner.isSome && kept == owner &&
+          code == some (Linger.Os.Answer.code .done) &&
+          has said "the name now belongs to a newer session")
+        s!"kill answers that it ended a session whose name a newer session took before it looked, \
+          and leaves that one running (exit {code}, said {repr said.trimAscii.toString})"
+  finally
+    newer.retire
+    let _ ← e.cli #["kill", "kill-newer"]
+  let held ← play e "kill-held"
+  try
+    let heldAsked ← held.serveKill held.stopListening
+    let asked ← play e "kill-asked"
+    try
+      let answered ← IO.mkRef 0
+      let askedKilled ← asked.serveKill (pure ())
+      -- the daemon goes on answering each look as itself, until `kill` gives up
+      let deadline := (← monotonicMs) + hangMs
+      let mut askedCode : Option UInt32 := none
+      repeat
+        askedCode ← asked.killer.tryWait
+        if askedCode.isSome || (← monotonicMs) ≥ deadline then
+          break
+        if let some fd← acceptWithin asked.listener 100 then
+          try
+            discard <| playDaemon fd patienceMs
+            answered.modify (· + 1)
+          finally
+            close fd
+      let askedSaid ←
+        if askedCode.isSome then
+          asked.killer.stderr.readToEnd
+        else
+          pure ""
+      expect
+          (askedKilled && (← answered.get) > 0 &&
+            askedCode == some (Linger.Os.Answer.code .notDone) &&
+            has askedSaid "session 'kill-asked' has not ended")
+          s!"kill answers that a session has not ended while its daemon goes on answering as \
+            itself, once its patience for an ending has passed (exit {askedCode}, looks answered \
+            {← answered.get}, said {repr askedSaid.trimAscii.toString})"
+    finally
+      asked.retire
+    let heldCode ← waitOrKill held.killer hangMs
+    let heldSaid ← held.killer.stderr.readToEnd
+    expect
+        (heldAsked && !(← System.FilePath.pathExists held.socket) &&
+          heldCode == some (Linger.Os.Answer.code .failed) &&
+          has heldSaid "could not find out whether session 'kill-held' ended")
+        s!"kill answers that it could not find out when, its patience for an ending passed, a \
+          process no daemon answers for holds the name (exit {heldCode}, said \
+          {repr heldSaid.trimAscii.toString})"
+  finally
+    held.retire
 
 /-- State is bounded by what it means: after any command, every lock file names a session or
 an ending. A command on a name no record names leaves no lock file of it, a kill that leaves its
@@ -201,6 +389,7 @@ def run : IO UInt32 :=
   Env.suite "identity" fun e => do
     try
       lockChecks e
+      killChecks e
       let _ ← e.typeIn "a_b" #["true"]
       let pid ← e.info "a_b" "pid"
       for name in ["", "   ", "a\tb", "a\u009bb", String.ofList (List.replicate 121 'a')] do

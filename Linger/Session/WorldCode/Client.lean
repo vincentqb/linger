@@ -162,6 +162,18 @@ def sendOnly (name : String) (ms : List Msg) : IO Bool := do
     finally
       close fd
 
+/-- Send `m` on the connection `fd` and read its replies, given up after `silenceMs` of silence,
+the output a reply carries going to `sink`: how the conversation ended. The caller keeps the
+connection and closes it. -/
+def oneShotOn (fd : UInt32) (m : Msg) (sink : ByteArray → IO Unit) (untilDone : Bool := true)
+    (silenceMs : Int32 := replySilenceMs) : IO Drained := do
+  -- a daemon that stopped accepting resets the connection, so the request cannot be sent
+  try
+    sendMsg fd m
+  catch _ =>
+    return .lost "connection lost"
+  drainReplies fd untilDone sink silenceMs
+
 /-- One-shot request/reply, given up after `silenceMs` of silence (`replySilenceMs` unless the
 caller passes a negative budget, as a wait for a program's end does), the output a reply carries
 going to `sink`. `none` means no live daemon; every connected conversation preserves its actual
@@ -173,12 +185,7 @@ def oneShot (name : String) (m : Msg) (sink : ByteArray → IO Unit) (untilDone 
     return none
   | some fd =>
     try
-      -- a daemon that stopped accepting resets the connection, so the request cannot be sent
-      try
-        sendMsg fd m
-      catch _ =>
-        return some (.lost "connection lost")
-      return some (← drainReplies fd untilDone sink silenceMs)
+      return some (← oneShotOn fd m sink untilDone silenceMs)
     finally
       close fd
 

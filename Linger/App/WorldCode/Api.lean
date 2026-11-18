@@ -18,6 +18,7 @@ public import Linger.App.CoreSpec
 public import Linger.App.CoreCode.Api
 import Linger.App.CoreCode.Recovery
 import Linger.App.CoreCode.Commands
+import Linger.App.CoreCode.Kill
 import Linger.App.CoreCode.Wait
 import Os.WorldCode.Command
 import Linger.Session.WorldCode.Resume
@@ -1291,34 +1292,99 @@ private def discardSaved (name : String) : IO (Except String Bool) := do
       return .error err.toString
   return .ok (← IO.ofExcept discarded)
 
-/-- `kill`: send `m` to the session's daemon, and return once the session has ended. Its daemon
-stops the program (SIGHUP to its terminal session, then SIGKILL after a second), tells whoever is
-attached or waiting how it ended, records that and gives the name up. With no daemon, a saved
-session is discarded instead, an ended one included, whose end record stays for `wait` and `ls`,
-and a name no record names whose pane the latest tmux-resurrect save has gets the end record a
-kill leaves, which hides the pane (`Source.dismiss`). No session is `missing`; a refusal, a name
-another process holds, or a session that has not ended within `Wait.heldNameMs`, says why and is
-`refused`. -/
+/-- What the daemon `kill` reached did with its request to end the session. -/
+private inductive Taken where
+  /-- It refused the request, saying why. -/
+  | refused (why : String)
+  /-- It took the request; `asked` is the start its `info` answer reported (`startOf`), or `none`
+  when it reported none `kill` can tell it by. -/
+  | took (asked : Option (String × String))
+
+/-- The start a daemon's `info` answer reports, its program's pid and when it started, which tell
+its session from every other session's, even one under the same name: `none` without a pid. -/
+private def startOf (info : List (String × String)) : Option (String × String) :=
+  (info.lookup "pid").map fun pid => (pid, (info.lookup "created").getD "")
+
+/-- What a conversation that asked a daemon to end its session found: a refusal, or, however else
+it ended, that the daemon took the request, which it answers by closing the connection. -/
+private def tookOf (asked : Option (String × String)) : Client.Drained → Taken
+  | .refused why => .refused why
+  | _ => .took asked
+
+/-- Ask the daemon of the session `id` which session it serves, `Wire.Msg.info`, and then to end
+it, `m`, on one connection, so that what `kill` learns is of the daemon that takes `m`; `none` when
+no daemon answers. A daemon that does not answer `info` within the one-shot reply budget is asked
+`m` on a connection of its own, and is then one `kill` cannot tell from another. -/
+private def askEnd (id : String) (m : Msg) : IO (Option Taken) := do
+  let some fd ← Client.connect id | return none
+  try
+    match
+      ← (readInfo fd (some ((← monotonicMs) + Client.replySilenceMs.toNatClampNeg))).toBaseIO with
+    | .ok info =>
+      return some (tookOf (startOf info) (← Client.oneShotOn fd m unshown))
+    | .error _ =>
+      pure ()
+  finally
+    close fd
+  return (← Client.oneShot id m unshown).map (tookOf none)
+
+/-- One look at the session `id`'s name for `kill`, once its daemon has taken the request to end
+the session (`Kill.Heard`), with why another process holds the name: no process holds it; the
+daemon `kill` asked, whose `info` reported the start `asked`, answers for it as itself; another
+daemon answers for it; or a process holds it that `kill` cannot tell from the one it asked. -/
+private def look (id : String) (asked : Option (String × String)) : IO (Kill.Heard × String) := do
+  let held ←
+    try
+      Paths.withSessionLock id (pure none)
+    catch err =>
+      pure (some err.toString)
+  let some why := held | return (.free, "")
+  let some start := asked | return (.held, why)
+  match
+    ←
+      queryInfo id (some ((← monotonicMs) + Client.replySilenceMs.toNatClampNeg))
+          (retainUnavailable := false) with
+  | some (.ok info) =>
+    return (if startOf info == some start then .asked else .newer, why)
+  | _ =>
+    return (.held, why)
+
+/-- `kill`: send `m` to the session's daemon, and find what `Kill.decide` does with what each look
+at the name hears once the daemon has taken it. Its daemon stops the program (SIGHUP to its
+terminal session, then SIGKILL after a second), tells whoever is attached or waiting how it ended,
+records that and gives the name up, so the session has ended once no process holds the name, or
+once a newer session does, which can take it only after that, and it says so. The daemon it asks
+is the one that answers its `info` on the same connection (`askEnd`), told by the start it reports
+(`startOf`): once that daemon has had `Wait.heldNameMs`, a session it still answers for as itself
+has not ended, `refused`, and one whose name a process holds that `kill` cannot tell from it is
+`unknown`, each said. With no daemon, a saved session is discarded instead, an ended one included,
+whose end record stays for `wait` and `ls`, and a name no record names whose pane the latest
+tmux-resurrect save has gets the end record a kill leaves, which hides the pane
+(`Source.dismiss`). No session is `missing`; a refusal, or a saved session's name another process
+holds, says why and is `refused`. -/
 private def cmdKill (env : Env) (m : Msg) (s : Names.Ref) : IO Found := do
-  match ← Client.oneShot s.id m unshown with
+  match ← askEnd s.id m with
   | some (.refused why) =>
     say env why
     return .refused
-  | some _ =>
-    -- the session has ended once its daemon gives the name up, which it does after recording
-    -- how the program ended and removing its socket
-    let deadline := (← monotonicMs) + Wait.heldNameMs
+  | some (.took asked) =>
+    let taken ← monotonicMs
     repeat
-      let released ←
-        try
-          Paths.withSessionLock s.id (pure true)
-        catch _ =>
-          pure false
-      if released then
-        return .done
-      unless ← nap deadline 20 do
-        say env s!"session '{s.name}' has not ended"
-        return .refused
+      let (heard, why) ← look s.id asked
+      match Kill.decide taken (← monotonicMs) heard with
+      | .answer found =>
+        match heard with
+        | .newer =>
+          say env s!"session '{s.name}' ended; the name now belongs to a newer session"
+        | .asked =>
+          say env s!"session '{s.name}' has not ended"
+        | .held =>
+          say env s!"could not find out whether session '{s.name}' ended: {why}"
+        | .free =>
+          pure ()
+        return found
+      | .again =>
+        discard <| nap (taken + Wait.heldNameMs) 20
   | none =>
     match ← discardSaved s.id with
     | .ok true =>

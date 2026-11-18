@@ -161,6 +161,8 @@ def Linger.App.Wait.heldNameMs : Nat := sorry
 
 def Linger.App.Wait.decide : Option Nat → Option Nat → Nat → App.Wait.Heard → App.Wait.Next := sorry
 
+def Linger.App.Kill.decide : Nat → Nat → App.Kill.Heard → App.Kill.Next := sorry
+
 def Linger.App.Recovery.decide : Bool → Option ByteArray → App.Recovery (Checkpoint.Ckpt Vt.Vt) :=
   sorry
 
@@ -1650,7 +1652,8 @@ an operation only through `Api.perform`, which takes the transition `plan` gives
 line renders the reply: what the command says to standard error, what it shows to standard output
 and its answer as the exit status; the API writes to neither (`scripts/gates.sh`), and what it
 says the command line writes as `linger: ` and the text, on a line of its own (`said_rendered`).
-Not claimed:
+What `wait` and `kill` find from what they hear on each look at a name is part 5's (`wait_held`,
+`kill_answers`). Not claimed:
 that what the IO code finds is what happened, which the suites check.
 
 A tmux-resurrect save is a source linger reads and never writes. A pane takes its name from its
@@ -2349,7 +2352,16 @@ record says, for a saved session `saved` with the signal that stopped its daemon
 its program, and that it could not find out only when that is so: the program's ending is unknown,
 or the name stays held, with no daemon answering, from the look that first found it so for longer
 than a daemon's ending lasts, and never while a daemon may still be ending, its drain and the
-waits of its signals (`wait_held`). Every command answers with one of the answers `Os.Answer`
+waits of its signals (`wait_held`). `kill` answers with what happened to the session it asked to
+end, whoever holds the name after it: once the session's daemon has taken the request, it answers
+that it ended the session exactly when a look finds that the session gave its name up, which a
+daemon does only once its session has ended: no process holds the name, or a newer session does,
+which can take it only after that, as `kill` then says; that the session has not ended only when
+the daemon it asked still answers for the name as itself; and that it could not find out only when
+a process it cannot tell from that daemon holds the name; each of the last two only once `wait`'s
+patience has passed since the daemon took the request, and so never while a daemon may still be
+ending (`kill_answers`, killed by the rule before it, which read a name a newer session took as
+the session not ended). Every command answers with one of the answers `Os.Answer`
 names, the operating system's vocabulary, the selector as the session commands do, and exits with
 its code: a signal's status says which signal, whatever it stopped: a program it killed, a
 command it stopped and a session whose daemon it stopped each answer 128 plus its number, as a
@@ -2369,7 +2381,10 @@ program that does not catch it ends, which the attach, manager and remote suites
 resume suite that a client attached when a signal saves its session answers `saved`; that a client
 the model counts as attached when the program ends still reads what it is told, and that an attach
 executes the steps `visit_result` names, discarding only the checkpoint it showed and keeping the
-session when a signal interrupts the view, which the attach and watch suites check; and that the
+session when a signal interrupts the view, which the attach and watch suites check; that a look
+of `kill` hears who holds the name, a daemon told by the start its `info` answer reports, its
+program's pid and when it started, which the identity suite checks against sessions it plays,
+one whose name a newer session takes before `kill` looks again among them; and that the
 process exits with the code of its command's answer, or for `stopped` ends by its signal, which the
 type of every executor's result, `main`'s one exit and a gate on the shells keep.
 
@@ -2673,6 +2688,35 @@ theorem wait_held_rejects_drain :
               heldSince = some since →
                 now < since + (Session.drainTimeoutMs + (Session.ending.map (·.wait)).sum) →
                 Wait.Next.told (Wait.decide deadline heldSince now heard) ≠ some .failed) := by
+  sorry
+
+theorem kill_answers (taken now : Nat) (heard : Kill.Heard) :
+    (Kill.Next.told (Kill.decide taken now heard) = some .done ↔ heard = .free ∨ heard = .newer) ∧
+      (Kill.Next.told (Kill.decide taken now heard) = some .notDone ↔
+        heard = .asked ∧ taken + Wait.heldNameMs ≤ now) ∧
+      (Kill.Next.told (Kill.decide taken now heard) = some .failed ↔
+        heard = .held ∧ taken + Wait.heldNameMs ≤ now) ∧
+      (Kill.Next.told (Kill.decide taken now heard) = none ↔
+        (heard = .asked ∨ heard = .held) ∧ now < taken + Wait.heldNameMs) ∧
+      (now < taken + (Session.drainTimeoutMs + (Session.ending.map (·.wait)).sum) →
+        Kill.Next.told (Kill.decide taken now heard) = some .done ∨
+          Kill.Next.told (Kill.decide taken now heard) = none) := by
+  sorry
+
+@[kills kill_answers]
+theorem kill_answers_rejects_lock :
+    ¬∀ (taken now : Nat) (heard : Kill.Heard),
+        (Kill.Next.told (Kill.byLock Wait.heldNameMs taken now heard) = some .done ↔
+            heard = .free ∨ heard = .newer) ∧
+          (Kill.Next.told (Kill.byLock Wait.heldNameMs taken now heard) = some .notDone ↔
+            heard = .asked ∧ taken + Wait.heldNameMs ≤ now) ∧
+          (Kill.Next.told (Kill.byLock Wait.heldNameMs taken now heard) = some .failed ↔
+            heard = .held ∧ taken + Wait.heldNameMs ≤ now) ∧
+          (Kill.Next.told (Kill.byLock Wait.heldNameMs taken now heard) = none ↔
+            (heard = .asked ∨ heard = .held) ∧ now < taken + Wait.heldNameMs) ∧
+          (now < taken + (Session.drainTimeoutMs + (Session.ending.map (·.wait)).sum) →
+            Kill.Next.told (Kill.byLock Wait.heldNameMs taken now heard) = some .done ∨
+              Kill.Next.told (Kill.byLock Wait.heldNameMs taken now heard) = none) := by
   sorry
 
 theorem code_documented (status : UInt32) (signal : UInt8) :
