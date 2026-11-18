@@ -201,7 +201,7 @@ say "2c. verifier regression tests (CI policy, caches and suite isolation)"
 # against a temporary project.
 # The same runner checks exit status, final verdict, every assertion and both
 # streams. Intentional failures inside these tests stay in their captured logs.
-./.lake/build/bin/suites --suites ci:59 hygiene:56 \
+./.lake/build/bin/suites --suites ci:62 hygiene:56 \
   || fail "verifier regression checks (see $logs/linger-ci.out and linger-hygiene.out)"
 
 say "2d. headline theorems (Challenge.lean against Theorems/Solution.lean)"
@@ -331,7 +331,10 @@ say "4. live suites (separate processes, at most four at once)"
 # suite's checks skip. A verdict here depends on the code, not on how fast the host is;
 # what the largest workloads cost is the opt-in `./.lake/build/bin/suites perf [strict]`.
 # Ordinary child spawning preserves SIGINT, unlike a shell's asynchronous list.
-# No suite shares an Env directory, and the runner waits for all of them on failure.
+# No suite shares an Env directory, and the runner waits for all of them on failure. Each suite
+# removes the scratch directories it creates and ends the sessions it starts, green or red, and
+# the runner fails a run that leaves one of those directories, or a daemon, behind: it compares
+# what is there before and after, as `Verify.Runner.Left` reads it.
 if [ -d /proc/self ]; then
   agent_skips=0 resume_skips=0 robust_skips=0 title_skips=0 quiet_skips=0 upgrade_skips=0
 else

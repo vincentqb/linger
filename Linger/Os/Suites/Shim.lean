@@ -81,32 +81,34 @@ def testPtyEnvAndInput : IO Unit := do
 
 def testUnixSocket : IO Unit := do
   let dir ← IO.FS.createTempDir
-  let path := s!"{dir}/t.sock"
-  let lfd ← unixListen path
-  setNonblock lfd
-  -- nothing pending yet
-  check "accept on idle socket returns -1" ((← accept lfd) == -1)
-  -- connect and pass bytes both ways
-  let cfd := (← unixConnect path).toUInt64.toUInt32
-  let revs ← poll #[lfd] #[POLLIN] 2000
-  check "listen fd readable after connect" (revs[0]! &&& POLLIN != 0)
-  let afd := (← accept lfd).toUInt64.toUInt32
-  let _ ← write cfd "ping".toUTF8 0
-  let revs2 ← poll #[afd] #[POLLIN] 2000
-  check "accepted fd readable" (revs2[0]! &&& POLLIN != 0)
-  let got := (← read afd 100).getD .empty
-  check "bytes cross the socket" (String.fromUTF8! got == "ping")
-  -- peer-gone detection: close client, write from server side
-  Os.Shell.close cfd
-  let w1 ← write afd "x".toUTF8 0
-  let w2 ← write afd "x".toUTF8 0
-  check "write to a dead peer reports it gone (not a crash)" (w1 == .gone || w2 == .gone)
-  Os.Shell.close afd
-  Os.Shell.close lfd
-  IO.FS.removeDirAll dir
-  -- connect to a nonexistent path: -ENOENT, not an exception
-  let r ← unixConnect s!"{dir}/absent.sock"
-  check "connect to absent socket is negative errno" (r < 0)
+  try
+    let path := s!"{dir}/t.sock"
+    let lfd ← unixListen path
+    setNonblock lfd
+    -- nothing pending yet
+    check "accept on idle socket returns -1" ((← accept lfd) == -1)
+    -- connect and pass bytes both ways
+    let cfd := (← unixConnect path).toUInt64.toUInt32
+    let revs ← poll #[lfd] #[POLLIN] 2000
+    check "listen fd readable after connect" (revs[0]! &&& POLLIN != 0)
+    let afd := (← accept lfd).toUInt64.toUInt32
+    let _ ← write cfd "ping".toUTF8 0
+    let revs2 ← poll #[afd] #[POLLIN] 2000
+    check "accepted fd readable" (revs2[0]! &&& POLLIN != 0)
+    let got := (← read afd 100).getD .empty
+    check "bytes cross the socket" (String.fromUTF8! got == "ping")
+    -- peer-gone detection: close client, write from server side
+    Os.Shell.close cfd
+    let w1 ← write afd "x".toUTF8 0
+    let w2 ← write afd "x".toUTF8 0
+    check "write to a dead peer reports it gone (not a crash)" (w1 == .gone || w2 == .gone)
+    Os.Shell.close afd
+    Os.Shell.close lfd
+    -- connect to a nonexistent path: -ENOENT, not an exception
+    let r ← unixConnect s!"{dir}/absent.sock"
+    check "connect to absent socket is negative errno" (r < 0)
+  finally
+    IO.FS.removeDirAll dir
 
 /-- A write to a nonblocking descriptor that takes no more reports it full, a value of its own:
 not as bytes written, nor as a reader that is gone, which `writeAll` would give up on. -/
@@ -315,29 +317,28 @@ def testSpawnFailures : IO Unit := do
       (← throws (spawnPty 80 24 "" "linger-no-such-program-42" #[] #[]))
   check "spawnPty rejects an environment entry that names no variable"
       (← throws (spawnPty 80 24 "" "sh" #["-c", "exit 0"] #["=value"]))
-  let dir ← IO.FS.createTempDir
-  check "spawnDetached reports a failed exec"
-      (← throws (spawnDetached "linger-no-such-program-42" #[] s!"{dir}/log"))
-  -- `execvp`'s ENOEXEC fallback: an executable file that is not an executable image
-  -- (no shebang) is handed to the shell. The rewrite from `execvp` to `execve` dropped
-  -- it, silently narrowing `linger attach <name> <cmd>` for exactly those files, and
-  -- nothing caught the narrowing — this is the check that would have.
-  --
-  -- Wrapped so a missing fallback is a named FAIL and later checks still run.
-  let script := s!"{dir}/noshebang"
-  IO.FS.writeFile script "echo shebangless-ran\n"
-  chmod script 0o755
-  let ran ←
-    try
-      let (pid, master) ← spawnPty 80 24 "" script #[] #[]
-      let out ← drain master ((← monotonicMs) + 5000) .empty
-      Os.Shell.close master
-      let _ ← reap pid
-      pure ((String.fromUTF8! out).contains "shebangless-ran")
-    catch _ =>
-      pure false
-  check "a shebang-less executable still runs (execvp's ENOEXEC fallback)" ran
-  IO.FS.removeDirAll dir
+  IO.FS.withTempDir fun dir => do
+      check "spawnDetached reports a failed exec"
+          (← throws (spawnDetached "linger-no-such-program-42" #[] s!"{dir}/log"))
+      -- `execvp`'s ENOEXEC fallback: an executable file that is not an executable image
+      -- (no shebang) is handed to the shell. The rewrite from `execvp` to `execve` dropped
+      -- it, silently narrowing `linger attach <name> <cmd>` for exactly those files, and
+      -- nothing caught the narrowing — this is the check that would have.
+      --
+      -- Wrapped so a missing fallback is a named FAIL and later checks still run.
+      let script := s!"{dir}/noshebang"
+      IO.FS.writeFile script "echo shebangless-ran\n"
+      chmod script 0o755
+      let ran ←
+        try
+          let (pid, master) ← spawnPty 80 24 "" script #[] #[]
+          let out ← drain master ((← monotonicMs) + 5000) .empty
+          Os.Shell.close master
+          let _ ← reap pid
+          pure ((String.fromUTF8! out).contains "shebangless-ran")
+        catch _ =>
+          pure false
+      check "a shebang-less executable still runs (execvp's ENOEXEC fallback)" ran
 
 /-- Capture an exited child or its spawn error, cleaning up even when a check fails. -/
 def ptyResult (cwd prog : String) (args extraEnv : Array String := #[]) (cols : UInt32 := 80)
@@ -666,24 +667,28 @@ path and reject it before the child reaches the length under test. -/
 def testDeepCwd : IO Unit := do
   let seg := String.ofList (List.replicate 49 'd')
   let dir ← IO.FS.createTempDir
-  let deep :=
-    s!"for i in $(seq 90); do mkdir -p {seg} && cd -P {seg} || exit 1; done; echo deep; cat"
-  let (pid, master) ← spawnPty 80 24 dir.toString "sh" #["-c", deep] #[]
-  let out ← drain master ((← monotonicMs) + 5000) .empty
-  let walked := (String.fromUTF8! out).contains "deep"
-  let cwd ← getcwdOf pid
-  -- Judged BEFORE the tree is removed. Evaluated after, `isDir` fails for *any*
-  -- non-empty answer — a correctly reported full path included — so the check
-  -- silently degraded to "the answer was empty" and could not distinguish a good
-  -- non-empty path from a truncated one. That matters on macOS, where the sibling
-  -- `#ifdef __APPLE__` branch NUL-terminates a libproc path rather than refusing it.
-  let usable ← orFalse (if cwd == "" then pure true else System.FilePath.isDir cwd)
-  kill pid 9
-  Os.Shell.close master
-  let _ ← reap pid
-  -- `removeDirAll` builds full paths, which this tree is too deep for; `rm -r`
-  -- walks it with directory-relative openat.
-  let _ ← IO.Process.run { cmd := "rm", args := #["-r", dir.toString] }
+  let (walked, usable) ←
+    try
+      let deep :=
+        s!"for i in $(seq 90); do mkdir -p {seg} && cd -P {seg} || exit 1; done; echo deep; cat"
+      let (pid, master) ← spawnPty 80 24 dir.toString "sh" #["-c", deep] #[]
+      let out ← drain master ((← monotonicMs) + 5000) .empty
+      let walked := (String.fromUTF8! out).contains "deep"
+      let cwd ← getcwdOf pid
+      -- Judged BEFORE the tree is removed. Evaluated after, `isDir` fails for *any*
+      -- non-empty answer — a correctly reported full path included — so the check
+      -- silently degraded to "the answer was empty" and could not distinguish a good
+      -- non-empty path from a truncated one. That matters on macOS, where the sibling
+      -- `#ifdef __APPLE__` branch NUL-terminates a libproc path rather than refusing it.
+      let usable ← orFalse (if cwd == "" then pure true else System.FilePath.isDir cwd)
+      kill pid 9
+      Os.Shell.close master
+      let _ ← reap pid
+      pure (walked, usable)
+    finally
+      -- `removeDirAll` builds full paths, which this tree is too deep for; `rm -r`
+      -- walks it with directory-relative openat.
+      discard <| IO.Process.output { cmd := "rm", args := #["-r", dir.toString] }
   check "child walked past PATH_MAX" walked
   check "getcwdOf reports a usable directory or nothing" usable
 

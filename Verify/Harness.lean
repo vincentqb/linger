@@ -716,66 +716,110 @@ def Env.killAll (e : Env) (names : Array String) : IO Unit := do
     let _ ← e.cli #["kill", n]
     pure ()
 
-/-- Print the verdict line through `finish`, and return the process code.
+/-- Every entry below `dir`, at any depth, each with its type, never through a symbolic link: a
+link is an entry of its own, and a directory it names is not entered, so the walk stays inside
+`dir` and ends. An entry that vanishes, or a directory that cannot be read, is left out. -/
+def entriesBelow (dir : System.FilePath) : IO (Array (System.FilePath × IO.FS.FileType)) := do
+  let mut pending := #[dir]
+  let mut found := #[]
+  repeat
+    let some next := pending.back? | break
+    pending := pending.pop
+    let entries ←
+      try
+        next.readDir
+      catch _ =>
+        pure #[]
+    for entry in entries do
+      if let .ok metadata← entry.path.symlinkMetadata.toBaseIO then
+        found := found.push (entry.path, metadata.type)
+        if metadata.type == .dir then
+          pending := pending.push entry.path
+  return found
 
-Takes the `Env` so the exit point the PTY suites already go through is also
-where their state directory is retired — a green run leaves nothing behind, a red one
-keeps its sockets, logs and checkpoints for the post-mortem. Ten suites × one dir
-per run had accumulated 538 of them in `/tmp` before this was here, and a cleanup a
-new suite must remember to call is a cleanup that will be forgotten. A dir supplied
-through `LINGER_TEST_DIR` is the caller's, so it is left alone either way.
+/-- The last `keep` lines of each daemon log below `dir`, a regular `*.log` file of a `logs`
+directory, printed as `  log <path>: <line>`, so that what a red run's daemons said outlives the
+directory the run removes. No such line begins a check's `PASS`, `FAIL` or `SKIP`. -/
+def printLogs (dir : System.FilePath) (keep : Nat := 20) : IO Unit := do
+  let logs :=
+    (← entriesBelow dir).filter fun (path, type) =>
+      type == .file && path.extension == some "log" && path.parent.bind (·.fileName) == some "logs"
+  for (path, _) in logs.qsort (·.1.toString < ·.1.toString) do
+    let text ←
+      try
+        IO.FS.readFile path
+      catch _ =>
+        pure ""
+    let shown := lines text
+    for line in shown.drop (shown.length - keep) do
+      IO.println s!"  log {path}: {line}"
+
+/-- `linger kill` every session whose socket is in this state dir or a directory below it, in the
+namespace of the directory its socket is in, by the name its ID shows there: an entry of that
+directory's `names/` that holds the ID, else the ID itself, which every session whose name is its
+ID has. Best effort: a session that is already gone, or a kill that fails, does not stop the
+others. -/
+def Env.endSessions (e : Env) : IO Unit := do
+  for (socket, _) in (← entriesBelow (System.FilePath.mk e.dir)).filter (·.2 == .other) do
+    let some id := (socket.fileName.bind (·.dropSuffix? ".sock")).map (·.toString) | continue
+    let dir := (socket.parent.getD (System.FilePath.mk e.dir)).toString
+    let entries ←
+      try
+        (← System.FilePath.readDir s!"{dir}/names").toList.filterMapM fun entry => do
+            if entry.fileName.startsWith "." then
+              return none
+            return some ((← IO.FS.readFile entry.path).trimAscii.toString, entry.fileName)
+      catch _ =>
+        pure []
+    try
+      let _ ← e.cliEnv #[("LINGER_DIR", some dir)] #["kill", (entries.lookup id).getD id]
+    catch _ =>
+      pure ()
+
+/-- Retire the suite's state directory, whatever the run found: end every session whose socket
+is in it (`endSessions`), print its daemons' logs when the run is `red` (`printLogs`), and remove
+it. A directory supplied through `LINGER_TEST_DIR` is the caller's, and is left as it is. -/
+def Env.retire (e : Env) (red : Bool) : IO Unit := do
+  if (← IO.getEnv "LINGER_TEST_DIR").isSome then
+    return
+  e.endSessions
+  if red then
+    printLogs (System.FilePath.mk e.dir)
+  try
+    IO.FS.removeDirAll (System.FilePath.mk e.dir)
+  catch err =>
+    IO.eprintln s!"could not remove {e.dir}: {err}"
+
+/-- Print the verdict line through `finish`, retire the suite's state directory (`Env.retire`),
+and return the process code.
+
+Takes the `Env` so the exit point the PTY suites already go through is also where their state
+directory is retired, green or red: a cleanup a new suite must remember to call is a cleanup that
+will be forgotten. A red run prints what its daemons logged first, and its check lines say what
+failed; keeping a red run's directory for the post-mortem instead had left 142 of the identity
+suite's alone in `/tmp`, as one directory per run of ten suites had left 538 before a green run
+removed its own.
 
 Suites without a state directory end with `finish` itself. The single exception is
 `Verify/Coverage.lean`, a meta command outside this harness that prints its own
 `FAILURES:` line, so it must be edited alongside `finish` if the contract changes. -/
 def verdict (e : Env) : IO UInt32 := do
   let code ← finish
-  if code == 0 && (← IO.getEnv "LINGER_TEST_DIR").isNone then
-    try
-      IO.FS.removeDirAll (System.FilePath.mk e.dir)
-    catch _ =>
-      pure ()
+  e.retire (code != 0)
   return code
-
-/-- `linger kill` every session whose socket is directly in this state dir, by the name its ID
-shows: an entry of `names/` that holds the ID, else the ID itself, which every session whose name
-is its ID has. Best effort: a session that is already gone, or a kill that fails, does not
-stop the others. -/
-def Env.endSessions (e : Env) : IO Unit := do
-  let sockets ←
-    try
-      e.dirNames ".sock"
-    catch _ =>
-      pure []
-  let entries ←
-    try
-      (← System.FilePath.readDir s!"{e.dir}/names").toList.filterMapM fun entry => do
-          if entry.fileName.startsWith "." then
-            return none
-          return some ((← IO.FS.readFile entry.path).trimAscii.toString, entry.fileName)
-    catch _ =>
-      pure []
-  for socket in sockets do
-    let id := (socket.dropEnd ".sock".length).toString
-    try
-      let _ ← e.cli #["kill", (entries.lookup id).getD id]
-    catch _ =>
-      pure ()
 
 /-- Run one suite in a fresh state dir and return its `verdict`.
 
-A body that throws aborts the suite, and its sessions are ended before the
-exception propagates, so an aborted run leaves no daemon behind (aborted Resume
-runs used to leave `linger __daemon geom` alive for minutes). A dir supplied
-through `LINGER_TEST_DIR` is the caller's, so its sessions are left alone. A run
-that completes reaches `verdict`, which keeps a red run's sockets and checkpoints. -/
+A body that throws aborts the suite, and its directory is retired before the exception
+propagates (`Env.retire`), so an aborted run leaves no daemon behind (aborted Resume runs used to
+leave `linger __daemon geom` alive for minutes) and no directory. A dir supplied through
+`LINGER_TEST_DIR` is the caller's, so its sessions are left alone. -/
 def Env.suite (slug : String) (body : Env → IO Unit) : IO UInt32 := do
   let e ← Env.make slug
   try
     body e
   catch err =>
-    if (← IO.getEnv "LINGER_TEST_DIR").isNone then
-      e.endSessions
+    e.retire true
     throw err
   verdict e
 

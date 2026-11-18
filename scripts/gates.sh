@@ -1679,7 +1679,7 @@ tmp_want="$(printf '%s\n' \
 # suite's state directory (`Env.make`), Interop's fixture root and the sentinel session's.
 code_grep '^[[:space:]]+[|] none => [(]socketRoot / s!"linger-[{]slug[}]-[{]pid[}]"[)][.]toString$' \
   Verify/Harness.lean >/dev/null || fail "Env.make no longer roots each suite's state directory at Verify.Harness.socketRoot"
-code_grep 'cmd := "mktemp", args := #[[]"-d", [(]socketRoot / "linger-i-XXXXXX"[)][.]toString[]]' \
+code_grep 'args := #[[]"-d", [(]socketRoot / s!"linger-i-[{]← Os[.]Shell[.]getpid[}]-XXXXXX"[)][.]toString[]]' \
   Linger/Import/Suites/Interop.lean >/dev/null || fail "Linger.Import.Suites.Interop no longer creates its fixture root under Verify.Harness.socketRoot"
 code_grep '^sentinel_dir="[$]socket_root/linger-verify-sentinel-[$][$]"$' scripts/verify.sh >/dev/null \
   || fail "the verifier's sentinel directory is no longer under scripts/verify.sh's socket_root"

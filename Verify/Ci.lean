@@ -57,30 +57,38 @@ take approxidate ("45 days ago" is rejected outright), so git converts it: commi
 with approxidate, read the ISO value back, then amend with both set to it. -/
 def repoWithCommit (daysAgo : Nat) : IO String := do
   let dir ← IO.FS.createTempDir
-  let git := "git -c user.email=t@t -c user.name=t -c commit.gpgsign=false"
-  let script :=
-    s!"set -e; git init -q .; \
-       {git} commit -q --allow-empty -m probe --date='{daysAgo} days ago'; \
-       iso=\"$(git log -1 --format=%aI)\"; \
-       GIT_COMMITTER_DATE=\"$iso\" {git} commit -q --amend --allow-empty --no-edit --date=\"$iso\""
-  let out ← IO.Process.output { cmd := "sh", args := #["-c", script], cwd := some dir.toString }
-  if out.exitCode != 0 then
-    throw (IO.userError s!"probe repo setup failed: {out.stderr}")
-  return dir.toString
+  try
+    let git := "git -c user.email=t@t -c user.name=t -c commit.gpgsign=false"
+    let script :=
+      s!"set -e; git init -q .; \
+         {git} commit -q --allow-empty -m probe --date='{daysAgo} days ago'; \
+         iso=\"$(git log -1 --format=%aI)\"; \
+         GIT_COMMITTER_DATE=\"$iso\" {git} commit -q --amend --allow-empty --no-edit --date=\"$iso\""
+    let out ← IO.Process.output { cmd := "sh", args := #["-c", script], cwd := some dir.toString }
+    if out.exitCode != 0 then
+      throw (IO.userError s!"probe repo setup failed: {out.stderr}")
+    return dir.toString
+  catch err =>
+    IO.FS.removeDirAll dir
+    throw err
 
 /-- A throwaway repository whose second commit adds `path`; returns it and the first
 commit, the base a push or pull request would report. -/
 def repoWithChange (path : String) : IO (String × String) := do
   let dir ← IO.FS.createTempDir
-  let git := "git -c user.email=t@t -c user.name=t -c commit.gpgsign=false"
-  let script :=
-    s!"set -e; git init -q .; {git} commit -q --allow-empty -m base; \
-       mkdir -p \"$(dirname '{path}')\"; : > '{path}'; git add -- '{path}'; \
-       {git} commit -q -m change; git rev-parse HEAD~1"
-  let out ← IO.Process.output { cmd := "sh", args := #["-c", script], cwd := some dir.toString }
-  if out.exitCode != 0 then
-    throw (IO.userError s!"probe repo setup failed: {out.stderr}")
-  return (dir.toString, out.stdout.trimAscii.toString)
+  try
+    let git := "git -c user.email=t@t -c user.name=t -c commit.gpgsign=false"
+    let script :=
+      s!"set -e; git init -q .; {git} commit -q --allow-empty -m base; \
+         mkdir -p \"$(dirname '{path}')\"; : > '{path}'; git add -- '{path}'; \
+         {git} commit -q -m change; git rev-parse HEAD~1"
+    let out ← IO.Process.output { cmd := "sh", args := #["-c", script], cwd := some dir.toString }
+    if out.exitCode != 0 then
+      throw (IO.userError s!"probe repo setup failed: {out.stderr}")
+    return (dir.toString, out.stdout.trimAscii.toString)
+  catch err =>
+    IO.FS.removeDirAll dir
+    throw err
 
 /-- The repo root, so the script under test is the tracked one. A failed lookup
 throws: an empty root would address `/scripts` instead. -/
@@ -113,6 +121,11 @@ def runnerProbe (dir name : String) : IO UInt32 := do
     -- More than a pipe buffer on each stream: redirection must not deadlock.
     IO.eprint (String.ofList (List.replicate 70000 'e') ++ "\n")
     IO.print (String.ofList (List.replicate 70000 'o') ++ "\n")
+  if name == "leaky" then
+    -- a scratch directory named as a suite names its own, which this suite never removes
+    let left := socketRoot / s!"linger-leaky-{← Os.Shell.getpid}"
+    IO.FS.createDirAll left
+    IO.FS.writeFile s!"{dir}/{name}.left" left.toString
   if name == "after-error" then
     IO.sleep 200
   if name == "reported-failure" then
@@ -164,6 +177,51 @@ def suiteRunner : IO Unit :=
         "suite runner rejects a reported failure despite a successful summary and keeps its log"
     expect ((← run [("same", 1, 0), ("same", 1, 0)]) == 2)
         "suite runner rejects duplicate log identities before starting children"
+    -- A suite that passes every check but leaves a scratch directory it created fails a run
+    -- that checks for what it leaves. The directory is removed here, whatever the run found.
+    let leaky ←
+      Verify.Runner.run binary #["--runner-probe", dir.toString] dir [("leaky", 1, 0)]
+          (checkLeaks := true)
+    let left ← IO.FS.readFile (dir / "leaky.left")
+    let wasLeft ← System.FilePath.isDir left
+    if wasLeft then
+      IO.FS.removeDirAll left
+    expect (leaky == 1 && wasLeft)
+        "suite runner fails a run whose suite leaves a scratch directory it created"
+
+/-- The runner's look at what a run left (`Verify.Runner.Left`) sees a scratch directory named
+with a suite's pid and a daemon started there, which runs this checkout's `linger`, and sees
+neither once the session has ended and the directory is gone. Other suites may start and end
+daemons meanwhile, so it looks for these ones alone. -/
+def leakLook : IO Unit := do
+  let linger := ((← IO.currentDir) / ".lake" / "build" / "bin" / "linger").toString
+  let ours := Verify.Runner.carries [← Os.Shell.getpid]
+  let before ← Verify.Runner.Left.look linger ours
+  let e : Env :=
+    { bin := linger, dir := (socketRoot / s!"linger-leaks-{← Os.Shell.getpid}").toString }
+  IO.FS.createDirAll e.dir
+  let seen ← IO.mkRef false
+  let gone ← IO.mkRef false
+  try
+    let (startRc, _, _) ← e.cli #["start", "leak", "sleep", "600"]
+    let left := before.since (← Verify.Runner.Left.look linger ours) ours
+    let daemons := (left.daemons.filter fun (_, line) => has line " leak ").map (·.1)
+    seen.set (startRc == 0 && left.dirs.contains e.dir && !daemons.isEmpty)
+    let _ ← e.cli #["kill", "leak"]
+    IO.FS.removeDirAll e.dir
+    gone.set
+        (←
+          waitFor patienceMs do
+              let after := before.since (← Verify.Runner.Left.look linger ours) ours
+              return !after.dirs.contains e.dir &&
+                  after.daemons.all fun (pid, _) => !daemons.contains pid)
+  finally
+    if ← System.FilePath.isDir e.dir then
+      let _ ← e.cli #["kill", "leak"]
+      IO.FS.removeDirAll e.dir
+  expect (← seen.get)
+      "the runner sees a scratch directory a suite created and a daemon started there"
+  expect (← gone.get) "the runner sees neither once the session has ended and the directory is gone"
 
 /-- Execute the workflow's actual dependency step with controlled package tools. -/
 def dependencyInstall (root : String) : IO Unit := do
@@ -418,10 +476,16 @@ def run : IO UInt32 := do
   let script := s!"{root}/scripts/ci-runners.sh"
   -- The per-push path: ubuntu alone unless the change touches the shim or the build
   -- wrapper. This is the one that costs money when wrong.
-  let (other, otherBase) ← repoWithChange "README.md"
-  let (shim, shimBase) ← repoWithChange "packages/os/c/shim.c"
-  let (wrapper, wrapperBase) ← repoWithChange "lake"
+  -- each repository made is removed, however a later one or a check ends
+  let made ← IO.mkRef ([] : List String)
+  let repo (path : String) : IO (String × String) := do
+    let (dir, base) ← repoWithChange path
+    made.modify (dir :: ·)
+    return (dir, base)
   try
+    let (other, otherBase) ← repo "README.md"
+    let (shim, shimBase) ← repo "packages/os/c/shim.c"
+    let (wrapper, wrapperBase) ← repo "lake"
     expect ((← runners script other "push" "refs/heads/main" otherBase) == ubuntuOnly)
         "a push to main asks for ubuntu alone"
     expect ((← runners script other "pull_request" "refs/pull/7/merge" otherBase) == ubuntuOnly)
@@ -460,7 +524,7 @@ def run : IO UInt32 := do
           has failedDiff.stderr "HEAD")
         "a failed diff fails without emitting a runner matrix"
   finally
-    for dir in [other, shim, wrapper] do
+    for dir in ← made.get do
       IO.FS.removeDirAll (System.FilePath.mk dir)
   -- …and the three paths that do want the expensive runner.
   expect ((← runners script root "push" "refs/tags/v1.2.3") == both)
@@ -473,10 +537,14 @@ def run : IO UInt32 := do
   --
   -- Drive the real script for both valid histories and an unreadable one.
   -- Failure to inspect history must fail the job, not silently skip a platform.
-  let fresh ← repoWithCommit 1
-  let boundary ← repoWithCommit 31
-  let stale ← repoWithCommit 45
+  let dated ← IO.mkRef ([] : List String)
   try
+    let fresh ← repoWithCommit 1
+    dated.modify (fresh :: ·)
+    let boundary ← repoWithCommit 31
+    dated.modify (boundary :: ·)
+    let stale ← repoWithCommit 45
+    dated.modify (stale :: ·)
     expect ((← runners script fresh "schedule" "refs/heads/main") == both)
         "a scheduled run with a recent commit asks for both platforms"
     expect ((← runners script boundary "schedule" "refs/heads/main") == both)
@@ -499,12 +567,12 @@ def run : IO UInt32 := do
           has failed.stderr "not a git repository")
         "unreadable history fails without emitting a runner matrix"
   finally
-    IO.FS.removeDirAll (System.FilePath.mk fresh)
-    IO.FS.removeDirAll (System.FilePath.mk boundary)
-    IO.FS.removeDirAll (System.FilePath.mk stale)
+    for dir in ← dated.get do
+      IO.FS.removeDirAll (System.FilePath.mk dir)
   lakeBuilds root
   lakeDrivers root
   suiteRunner
+  leakLook
   dependencyInstall root
   verificationInputs root
   finish

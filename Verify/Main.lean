@@ -38,7 +38,9 @@ lakefile stanza.
 Each suite prints `PASS <name>` / `FAIL <name>` / `SKIP <name>` per check and `FAILURES: <n>`
 last; `scripts/verify.sh` supplies the exact recorded check and skip counts to the batch runner
 as `<suite>:<checks>` or `<suite>:<checks>:<skips>`, whose logs go to `LINGER_LOG_DIR` (default
-`Verify.Harness.tempRoot`). An unknown name is an error, not a silent success. -/
+`Verify.Harness.tempRoot`), and which fails a run that leaves a scratch directory its suites
+created, or a daemon, running when it ends (`Verify.Runner.run`). An unknown name is an error, not
+a silent success. -/
 
 def suites : List (String × IO UInt32) :=
   [("watch", Linger.Session.Suites.Watch.run), ("status", Linger.Display.Suites.Status.run),
@@ -128,7 +130,7 @@ def main (args : List String) : IO UInt32 := do
     let logDir :=
       ((← IO.getEnv "LINGER_LOG_DIR").filter (!·.isEmpty)).getD (← Verify.Harness.tempRoot).toString
     IO.println s!"  suite logs: {logDir}/linger-<suite>.out"
-    Verify.Runner.run (← IO.appPath).toString #[] logDir specs
+    Verify.Runner.run (← IO.appPath).toString #[] logDir specs (checkLeaks := true)
   | ["delivery", check] =>
     Linger.Session.Suites.Delivery.run (some check)
   | ["title", binary] =>

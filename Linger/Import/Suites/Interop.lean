@@ -1177,8 +1177,12 @@ private def check (root : System.FilePath) (bin : String) (index : Nat) (label :
 /-- Exercise a selected build from an isolated probe runner. -/
 def runWith (binary : String) : IO UInt32 := do
   let bin ← IO.FS.realPath binary
+  -- named with this suite's pid, as `Env.make` names a state directory, so that a run's check
+  -- of what it leaves (`Verify.Runner.run`) knows it
   let (code, temp, err) ←
-    process { cmd := "mktemp", args := #["-d", (socketRoot / "linger-i-XXXXXX").toString] }
+    process
+        { cmd := "mktemp",
+          args := #["-d", (socketRoot / s!"linger-i-{← Os.Shell.getpid}-XXXXXX").toString] }
   unless code == 0 do
     throw (IO.userError s!"could not create fresh fixture root: {err}")
   let root ← IO.FS.realPath temp.trimAscii.toString
@@ -1306,12 +1310,15 @@ def runWith (binary : String) : IO UInt32 := do
       cases ++
         [(s!"ls discovers {label} using only the read-only current-server query", fun f =>
             discovery f config)]
-  -- This run created the fixture root with `mktemp`, so a green run removes it
-  -- whatever `LINGER_TEST_DIR` says.
+  -- This run created the fixture root with `mktemp`, so it removes it, green or red, whatever
+  -- `LINGER_TEST_DIR` says, a red run once it has printed what its daemons logged.
   let before ← failureCount
-  for ((label, body), index) in cases.zipIdx do
-    check root bin.toString index label body
-  if (← failureCount) == before then
+  try
+    for ((label, body), index) in cases.zipIdx do
+      check root bin.toString index label body
+  finally
+    if (← failureCount) != before then
+      printLogs root
     IO.FS.removeDirAll root
   finish
 
