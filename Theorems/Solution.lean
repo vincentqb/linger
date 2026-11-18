@@ -1382,6 +1382,32 @@ theorem picker_eof_empty_rejects_cancel :
   have typed := h { candidates := [], query := "a" }
   simp at typed
 
+theorem picker_moves_cycle (s : Selector.Picker.State) (n k : Nat)
+    (rows : ∀ i, (∃ next, Selector.Picker.step { s with cursor := i } .accept = .stay next) ↔ n ≤ i)
+    (row : s.cursor < n ∨ n = 0) :
+    Selector.Picker.press Selector.Picker.step s (List.replicate k .down) =
+        .stay (if n = 0 then s else { s with cursor := (s.cursor + k) % n }) ∧
+      Selector.Picker.press Selector.Picker.step s (List.replicate k .up) =
+        .stay (if n = 0 then s else { s with cursor := ((s.cursor - k : Int) % n).toNat }) :=
+  Selector.Picker.moves_cycle s n k rows row
+
+theorem picker_moves_cycle_rejects_clamped :
+    ¬∀ (s : Selector.Picker.State) (n k : Nat),
+        (∀ i,
+            (∃ next,
+                Selector.Picker.clamped Selector.Picker.step { s with cursor := i } .accept =
+                  .stay next) ↔
+              n ≤ i) →
+          s.cursor < n ∨ n = 0 →
+          Selector.Picker.press (Selector.Picker.clamped Selector.Picker.step) s
+                (List.replicate k .down) =
+              .stay (if n = 0 then s else { s with cursor := (s.cursor + k) % n }) ∧
+            Selector.Picker.press (Selector.Picker.clamped Selector.Picker.step) s
+                (List.replicate k .up) =
+              .stay (if n = 0 then s else { s with cursor := ((s.cursor - k : Int) % n).toNat }) :=
+  -- of two rows, the second selected, a clamped down stays there, where the cycle selects the first
+  Selector.Picker.clamped_not_cycle
+
 theorem route_exact (args : List String) :
     App.Entry.route args =
       if args.head? = some Remote.marker then

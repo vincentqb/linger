@@ -990,6 +990,24 @@ private def selectionChecks (e : Env) : IO Unit := do
     check e slug s!"picker probe navigation selects the expected row ({slug})" fun f =>
         withPrompt f.picker #[] fun s => do
           return (← acceptThenCancel s (keys ++ "\r")) && (← f.visits) == attachVisit [target]
+  -- the moves cycle, as fzf's do with `--cycle`, by every key bound to a move of one row: up from
+  -- the first row selects the last, here the creation row, and down from it the first
+  for (slug, up, down) in
+    [("cycle-arrows", "\x1b[A", "\x1b[B"), ("cycle-ctrl", "\x10", "\x0e"),
+      ("cycle-tab", "\x10", "\t")] do
+    check e slug
+        s!"picker probe up from the first row selects the last, and down from the last the first ({slug})"
+        fun f =>
+        withPrompt f.picker #[] fun s => do
+          let start ← s.mark
+          s.text up
+          unless ← s.selected "+ Create main" start do
+            return false
+          let next ← s.mark
+          s.text down
+          unless ← s.selected "Alpha" next do
+            return false
+          return (← acceptThenCancel s) && (← f.visits) == attachVisit ["Alpha"]
   check e "keystroke-rows"
       "picker probe repaints only the rows a move changes, in place, and clears nothing" fun f =>
       withPrompt f.picker #[] fun s => do

@@ -7,7 +7,8 @@ public section
 /-! # What selector headlines are stated in
 
 The actions the selector takes, the state of one selection visit, the listing it shows, what one
-action leads to, and the events its listings follow: which of them query remote hosts. -/
+action leads to and what keys pressed in order lead to, the moves a wrong transition clamps, and
+the events its listings follow: which of them query remote hosts. -/
 
 namespace Linger.Selector
 
@@ -19,9 +20,9 @@ inductive Key where
   | backspace
   /-- Empty the query. -/
   | clear
-  /-- Move the cursor up one row. -/
+  /-- Move the cursor up one row, and from the first row to the last. -/
   | up
-  /-- Move the cursor down one row. -/
+  /-- Move the cursor down one row, and from the last row to the first. -/
   | down
   /-- Move the cursor to the first row. -/
   | first
@@ -81,6 +82,28 @@ inductive Outcome where
   /-- Leave without a choice. -/
   | cancel
   deriving BEq, Repr
+
+/-- The outcome of pressing `keys` in order from `s`, each as `step` decides it in the state the
+key before it left: a key that ends the visit ends it, and the keys after it are not pressed. -/
+@[expose]
+def press (step : State → Key → Outcome) (s : State) : List Key → Outcome
+  | [] => .stay s
+  | key :: keys =>
+    match step s key with
+    | .stay next => press step next keys
+    | outcome => outcome
+
+/-- A wrong transition: `step` with its moves clamped, as the chooser's were before they cycled:
+up stops at the first row, and down moves only onto a row Enter acts on, so it stops at the last.
+The headline that the moves cycle is shown to reject it. -/
+@[expose]
+def clamped (step : State → Key → Outcome) (s : State) : Key → Outcome
+  | .up => .stay { s with cursor := s.cursor - 1 }
+  | .down =>
+    match step { s with cursor := s.cursor + 1 } .accept with
+    | .stay _ => .stay s
+    | _ => .stay { s with cursor := s.cursor + 1 }
+  | key => step s key
 
 /-- What a chooser's listings follow: a key it reads, or a listing it starts, each second or at
 once when remote rows are due. -/

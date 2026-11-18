@@ -379,17 +379,44 @@ def lineText (line : List (String × List (List Nat))) : String := String.join (
   step { candidates := [], query } (.text '界') ==
     .stay { candidates := [], query := query.push '界', cursor := 0 }
 
-#guard step (init ["a", "b"]) .up == .stay (init ["a", "b"])
+-- The moves cycle through every row, the creation row included: up from the first row selects
+-- the last, and down from the last selects the first.
+#guard step (init ["a", "b"]) .up == .stay { candidates := ["a", "b"], cursor := 2 }
 
 #guard
   step { candidates := ["a", "b"], cursor := 1 } .down ==
     .stay { candidates := ["a", "b"], cursor := 2 }
 
+#guard step { candidates := ["a", "b"], cursor := 2 } .down == .stay (init ["a", "b"])
+
 #guard
-  step { candidates := ["a", "b"], cursor := 2 } .down ==
-    .stay { candidates := ["a", "b"], cursor := 2 }
+  step { candidates := ["a", "b"], cursor := 2 } .up ==
+    .stay { candidates := ["a", "b"], cursor := 1 }
 
 #guard step (init ["a", "b"]) .down == .stay { candidates := ["a", "b"], cursor := 1 }
+
+-- `k` moves down from row `i` of `n` select row `(i + k) % n`, and up undoes down: three rows, a
+-- query's two matches and its creation row.
+#guard
+  let s : State := { candidates := ["work", "other", "web"], query := "w" }
+  press step s (List.replicate 3 .down) == .stay s &&
+    press step s (List.replicate 4 .down) == .stay { s with cursor := 1 } &&
+    press step s (List.replicate 4 .up) == .stay { s with cursor := 2 } &&
+    press step s (List.replicate 5 .down ++ List.replicate 5 .up) == .stay s
+
+-- With no row, a move changes nothing, even from a forged cursor.
+#guard
+  [Linger.Selector.Key.up, .down].all fun key =>
+    step (init [] false) key == .stay (init [] false) &&
+      step { candidates := [], allowCreate := false, cursor := 3 } key ==
+        .stay { candidates := [], allowCreate := false, cursor := 3 }
+
+-- A forged cursor past the last row moves onto a row.
+#guard
+  step { candidates := ["a", "b"], cursor := 7, allowCreate := false } .down ==
+      .stay { candidates := ["a", "b"], cursor := 0, allowCreate := false } &&
+    step { candidates := ["a", "b"], cursor := 7, allowCreate := false } .up ==
+      .stay { candidates := ["a", "b"], cursor := 0, allowCreate := false }
 
 #guard step { candidates := ["a", "b"], cursor := 1 } .first == .stay (init ["a", "b"])
 
@@ -440,6 +467,8 @@ def lineText (line : List (String × List (List Nat))) : String := String.join (
   step (init ["a", "b"] false) .last ==
       .stay { candidates := ["a", "b"], cursor := 1, allowCreate := false } &&
     step { candidates := ["a", "b"], cursor := 1, allowCreate := false } .down ==
+      .stay (init ["a", "b"] false) &&
+    step (init ["a", "b"] false) .up ==
       .stay { candidates := ["a", "b"], cursor := 1, allowCreate := false }
 
 #guard

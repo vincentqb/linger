@@ -759,7 +759,12 @@ after that, which the listing tests and the status suite check.
 In the chooser, a key does only what it does in a line editor: Enter attaches only to a listed
 target (`picker_attach_listed`) and creates only a new, valid one (`picker_create_new`), and
 Ctrl-D, which deletes the character under the cursor and on an empty line ends the input, ends the
-visit only on an empty query, since the cursor sits after the query (`picker_eof_empty`). The
+visit only on an empty query, since the cursor sits after the query (`picker_eof_empty`). Up and
+Down move around the rows as a cycle, as fzf's do with `--cycle`: of the `n` rows Enter acts on,
+the creation row among them when the chooser offers one, `k` moves down from row `i` select row
+`(i + k) mod n` and `k` moves up select row `(i − k) mod n`, the remainder in `[0, n)` that `%`
+gives on `Int`, so up from the first row selects the last, down from the last selects the first,
+and up undoes down; with no row, a move changes nothing (`picker_moves_cycle`). The
 chooser's view moves only when its person moves it: a listing keeps the rows it shows where they
 are, a vanished row closing up and a new one last, unless it sorts them again, as when the chooser
 opens and on Ctrl-L (`relist_keeps_rows`). Returning is the inverse of leaving: the view a visit
@@ -1601,6 +1606,33 @@ theorem picker_eof_empty_rejects_cancel :
         (fun (_ : Selector.Picker.State) (_ : Selector.Key) => Selector.Picker.Outcome.cancel) s
             .deleteCharEof =
           if s.query = "" then .cancel else .stay s := by
+  sorry
+
+theorem picker_moves_cycle (s : Selector.Picker.State) (n k : Nat)
+    (rows : ∀ i, (∃ next, Selector.Picker.step { s with cursor := i } .accept = .stay next) ↔ n ≤ i)
+    (row : s.cursor < n ∨ n = 0) :
+    Selector.Picker.press Selector.Picker.step s (List.replicate k .down) =
+        .stay (if n = 0 then s else { s with cursor := (s.cursor + k) % n }) ∧
+      Selector.Picker.press Selector.Picker.step s (List.replicate k .up) =
+        .stay (if n = 0 then s else { s with cursor := ((s.cursor - k : Int) % n).toNat }) := by
+  sorry
+
+@[kills picker_moves_cycle]
+theorem picker_moves_cycle_rejects_clamped :
+    ¬∀ (s : Selector.Picker.State) (n k : Nat),
+        (∀ i,
+            (∃ next,
+                Selector.Picker.clamped Selector.Picker.step { s with cursor := i } .accept =
+                  .stay next) ↔
+              n ≤ i) →
+          s.cursor < n ∨ n = 0 →
+          Selector.Picker.press (Selector.Picker.clamped Selector.Picker.step) s
+                (List.replicate k .down) =
+              .stay (if n = 0 then s else { s with cursor := (s.cursor + k) % n }) ∧
+            Selector.Picker.press (Selector.Picker.clamped Selector.Picker.step) s
+                (List.replicate k .up) =
+              .stay
+                (if n = 0 then s else { s with cursor := ((s.cursor - k : Int) % n).toNat }) := by
   sorry
 
 /-! ## 3. Exactness

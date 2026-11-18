@@ -261,11 +261,13 @@ def enter (s : State) (shown : List String) (focus : Option String) (ordered : L
         if s.query.isEmpty && candidates.contains target then candidates.idxOf target else 0
       | none => 0 }
 
-/-- Editing resets the cursor. Navigation clamps; acceptance acts on the selected
-row. No selectable row stays editable. Ctrl-D's `deleteCharEof` ends the visit on an empty query
-and otherwise leaves the state as it is: the cursor sits after the query, with no character under
-it. A refresh leaves the state as it is: what it fetches and repaints is the executor's
-(`fetch`). Effects remain the caller's job. -/
+/-- Editing resets the cursor. Up and down move around the rows as a cycle, as fzf's do with
+`--cycle`: up from the first row selects the last, the creation row when there is one, and down
+from the last selects the first; with no row they change nothing. First and last go to either end,
+and acceptance acts on the selected row. No selectable row stays editable. Ctrl-D's
+`deleteCharEof` ends the visit on an empty query and otherwise leaves the state as it is: the
+cursor sits after the query, with no character under it. A refresh leaves the state as it is: what
+it fetches and repaints is the executor's (`fetch`). Effects remain the caller's job. -/
 def step (s : State) (key : Linger.Selector.Key) : Outcome :=
   match key with
   | .text char =>
@@ -282,13 +284,12 @@ def step (s : State) (key : Linger.Selector.Key) : Outcome :=
     .stay
       { s with
         query := "", cursor := 0 }
-  | .up => .stay { s with cursor := s.cursor - 1 }
+  | .up =>
+    let count := (items s.candidates s.query s.allowCreate s.descriptions).length
+    .stay (if count = 0 then s else { s with cursor := (s.cursor + count - 1) % count })
   | .down =>
-    .stay
-      { s with
-        cursor :=
-          min (s.cursor + 1)
-            ((items s.candidates s.query s.allowCreate s.descriptions).length - 1) }
+    let count := (items s.candidates s.query s.allowCreate s.descriptions).length
+    .stay (if count = 0 then s else { s with cursor := (s.cursor + 1) % count })
   | .first => .stay { s with cursor := 0 }
   | .last =>
     .stay { s with cursor := (items s.candidates s.query s.allowCreate s.descriptions).length - 1 }

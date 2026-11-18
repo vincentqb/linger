@@ -857,10 +857,24 @@ theorem step_stay_valid (s next : State) (key : Linger.Selector.Key) (hs : s.Val
     exact ⟨Nat.zero_le _, Nat.zero_le _⟩
   | up =>
     cases h
-    exact ⟨Nat.le_trans (Nat.sub_le _ _) cursor, query⟩
+    split
+    · exact ⟨cursor, query⟩
+    · rename_i rows
+      have :=
+        Nat.mod_lt (s.cursor + (items s.candidates s.query s.allowCreate s.descriptions).length - 1)
+          (Nat.pos_of_ne_zero rows)
+      refine ⟨?_, query⟩
+      dsimp only
+      omega
   | down =>
     cases h
-    exact ⟨Nat.min_le_right _ _, query⟩
+    split
+    · exact ⟨cursor, query⟩
+    · rename_i rows
+      have := Nat.mod_lt (s.cursor + 1) (Nat.pos_of_ne_zero rows)
+      refine ⟨?_, query⟩
+      dsimp only
+      omega
   | first =>
     cases h
     exact ⟨Nat.zero_le _, query⟩
@@ -972,6 +986,178 @@ and any other leaves the state as it is. -/
 theorem step_deleteCharEof (s : State) :
     step s .deleteCharEof = if s.query = "" then .cancel else .stay s := by
   simp [step, String.isEmpty_iff]
+
+/-- The rows Enter acts on are the first cursor positions, as many as `items` lists: Enter keeps
+the chooser open exactly from the position after the last row on. -/
+theorem accept_stays_iff (s : State) (i : Nat) :
+    (∃ next, step { s with cursor := i } .accept = .stay next) ↔
+      (items s.candidates s.query s.allowCreate s.descriptions).length ≤ i := by
+  simp only [step, selected]
+  cases hi : (items s.candidates s.query s.allowCreate s.descriptions)[i]? with
+  | none => exact ⟨fun _ => List.getElem?_eq_none_iff.mp hi, fun _ => ⟨_, rfl⟩⟩
+  | some item =>
+    have bound := (List.getElem?_eq_some_iff.mp hi).1
+    constructor
+    · rintro ⟨next, h⟩
+      cases item <;> simp at h
+    · intro hle
+      omega
+
+/-- Only the number of rows is the `n` from which Enter keeps the chooser open. -/
+theorem rows_eq (s : State) (n : Nat)
+    (rows : ∀ i, (∃ next, step { s with cursor := i } .accept = .stay next) ↔ n ≤ i) :
+    n = (items s.candidates s.query s.allowCreate s.descriptions).length := by
+  have past := (accept_stays_iff s n).mp ((rows n).mpr (Nat.le_refl n))
+  have last := (rows _).mp ((accept_stays_iff s _).mpr (Nat.le_refl _))
+  omega
+
+/-- Down selects the next row, the first after the last, and with no row changes nothing. -/
+theorem step_down (s : State) (cursor : Nat) :
+    step { s with cursor } .down =
+      .stay
+        (if (items s.candidates s.query s.allowCreate s.descriptions).length = 0 then
+          { s with cursor }
+        else
+          { s with
+            cursor :=
+              (cursor + 1) % (items s.candidates s.query s.allowCreate s.descriptions).length }) :=
+  rfl
+
+/-- Up selects the row before, the last before the first, and with no row changes nothing. -/
+theorem step_up (s : State) (cursor : Nat) :
+    step { s with cursor } .up =
+      .stay
+        (if (items s.candidates s.query s.allowCreate s.descriptions).length = 0 then
+          { s with cursor }
+        else
+          { s with
+            cursor :=
+              (cursor + (items s.candidates s.query s.allowCreate s.descriptions).length - 1) %
+                (items s.candidates s.query s.allowCreate s.descriptions).length }) := rfl
+
+/-- `k` moves down from row `cursor` of the rows select row `(cursor + k) % n`; with no row,
+they change nothing. -/
+theorem press_down (s : State) (cursor k : Nat)
+    (row :
+      cursor < (items s.candidates s.query s.allowCreate s.descriptions).length ∨
+        (items s.candidates s.query s.allowCreate s.descriptions).length = 0) :
+    press step { s with cursor } (List.replicate k .down) =
+      .stay
+        (if (items s.candidates s.query s.allowCreate s.descriptions).length = 0 then
+          { s with cursor }
+        else
+          { s with
+            cursor :=
+              (cursor + k) %
+                (items s.candidates s.query s.allowCreate s.descriptions).length }) := by
+  induction k generalizing cursor with
+  | zero =>
+    simp only [List.replicate_zero, press, Nat.add_zero]
+    split
+    · rfl
+    · rename_i rows
+      rw [Nat.mod_eq_of_lt (row.resolve_right rows)]
+  | succ k ih =>
+    rw [List.replicate_succ, press, step_down]
+    by_cases rows : (items s.candidates s.query s.allowCreate s.descriptions).length = 0
+    · rw [ite_eq_left rows, ite_eq_left rows]
+      dsimp only
+      rw [ih cursor row, ite_eq_left rows]
+    · rw [ite_eq_right rows, ite_eq_right rows]
+      dsimp only
+      rw [ih _ (Or.inl (Nat.mod_lt _ (Nat.pos_of_ne_zero rows))), ite_eq_right rows,
+        Nat.mod_add_mod, show cursor + 1 + k = cursor + (k + 1) by omega]
+
+/-- `k` moves up from row `cursor` of the `n` rows select row `(cursor - k) % n`, the remainder
+`%` gives on `Int`; with no row, they change nothing. -/
+theorem press_up (s : State) (cursor k : Nat)
+    (row :
+      cursor < (items s.candidates s.query s.allowCreate s.descriptions).length ∨
+        (items s.candidates s.query s.allowCreate s.descriptions).length = 0) :
+    press step { s with cursor } (List.replicate k .up) =
+      .stay
+        (if (items s.candidates s.query s.allowCreate s.descriptions).length = 0 then
+          { s with cursor }
+        else
+          { s with
+            cursor :=
+              ((cursor - k : Int) %
+                  (items s.candidates s.query s.allowCreate s.descriptions).length).toNat }) := by
+  induction k generalizing cursor with
+  | zero =>
+    simp only [List.replicate_zero, press, Int.natCast_zero, Int.sub_zero]
+    split
+    · rfl
+    · rename_i rows
+      have bound := row.resolve_right rows
+      rw [Int.emod_eq_of_lt (by omega) (by omega), Int.toNat_natCast]
+  | succ k ih =>
+    rw [List.replicate_succ, press, step_up]
+    by_cases rows : (items s.candidates s.query s.allowCreate s.descriptions).length = 0
+    · rw [ite_eq_left rows, ite_eq_left rows]
+      dsimp only
+      rw [ih cursor row, ite_eq_left rows]
+    · rw [ite_eq_right rows, ite_eq_right rows]
+      dsimp only
+      have positive := Nat.pos_of_ne_zero rows
+      rw [ih _ (Or.inl (Nat.mod_lt _ positive)), ite_eq_right rows]
+      congr 3
+      rw [Int.natCast_emod, Int.sub_emod, Int.emod_emod, ← Int.sub_emod]
+      have shift :
+        ((cursor + (items s.candidates s.query s.allowCreate s.descriptions).length - 1 : Nat) :
+              Int) -
+            k =
+          (cursor - (k + 1 : Nat) : Int) +
+            (items s.candidates s.query s.allowCreate s.descriptions).length := by
+        omega
+      rw [shift, Int.add_emod_right]
+
+/-- **The moves cycle**, around the `n` rows Enter acts on, the creation row among them when the
+chooser offers one: `k` moves down from row `i` select row `(i + k) % n`, and `k` moves up select
+row `(i - k) % n`, so up undoes down; with no row, a move changes nothing. -/
+theorem moves_cycle (s : State) (n k : Nat)
+    (rows : ∀ i, (∃ next, step { s with cursor := i } .accept = .stay next) ↔ n ≤ i)
+    (row : s.cursor < n ∨ n = 0) :
+    press step s (List.replicate k .down) =
+        .stay (if n = 0 then s else { s with cursor := (s.cursor + k) % n }) ∧
+      press step s (List.replicate k .up) =
+        .stay (if n = 0 then s else { s with cursor := ((s.cursor - k : Int) % n).toNat }) := by
+  obtain rfl := rows_eq s n rows
+  exact ⟨press_down s s.cursor k row, press_up s s.cursor k row⟩
+
+/-- **Clamped moves are no cycle.** Of two rows, with the second selected, a clamped move down
+stays there, where the cycle selects the first row. -/
+theorem clamped_not_cycle :
+    ¬∀ (s : State) (n k : Nat),
+        (∀ i, (∃ next, clamped step { s with cursor := i } .accept = .stay next) ↔ n ≤ i) →
+          s.cursor < n ∨ n = 0 →
+          press (clamped step) s (List.replicate k .down) =
+              .stay (if n = 0 then s else { s with cursor := (s.cursor + k) % n }) ∧
+            press (clamped step) s (List.replicate k .up) =
+              .stay
+                (if n = 0 then s else { s with cursor := ((s.cursor - k : Int) % n).toNat }) := by
+  intro h
+  have two : (items ["a", "b"] "" false []).length = 2 := by
+    simp [items_disabled, visible_empty_query]
+  have rows (i : Nat) :
+    (∃ next,
+        clamped step
+            { ({ candidates := ["a", "b"], cursor := 1, allowCreate := false } : State) with
+              cursor := i }
+            .accept =
+          .stay next) ↔
+      2 ≤ i := by
+    rw [← two]
+    exact accept_stays_iff { candidates := ["a", "b"], cursor := 1, allowCreate := false } i
+  have down :=
+    (h { candidates := ["a", "b"], cursor := 1, allowCreate := false } 2 1 rows
+        (Or.inl (by decide))).1
+  obtain ⟨next, past⟩ :=
+    (accept_stays_iff { candidates := ["a", "b"], cursor := 1, allowCreate := false } 2).mpr
+      (Nat.le_of_eq two)
+  simp only [List.replicate, press, clamped] at down
+  rw [past] at down
+  simp at down
 
 theorem step_control_ignored (s : State) (char : Char)
     (h : char.toNat < 32 ∨ (127 ≤ char.toNat ∧ char.toNat < 160)) :
