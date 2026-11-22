@@ -657,15 +657,43 @@ def answerName : Os.Answer → String
   | .saved _ => "saved"
   | .program _ => "program"
 
-/-- The methods `serve` answers as operations, each with the operation whose request it is and the
-word of that operation's command: every one is an ask, a request answered once, by its id. -/
+/-- The shape of what a method answers, one of the four leanvim states its peers in (2026-11-22),
+each what a reader can rely on whatever else a peer sends; the fourth, a life, is what methods
+name: a session (`Life`). -/
+inductive Shape where
+  /-- An ask: one request, answered once, by its id. -/
+  | ask
+  /-- A table: a subscription, named by the id of the request that opened it, whose updates
+  replace the record at a key, so that only the latest counts and a reader that sees only the
+  last update loses nothing (`View.apply`). -/
+  | table
+  /-- A log: a subscription whose updates append, of which a reader keeps a bounded tail and a
+  count of what it dropped (`Log`). -/
+  | log
+  deriving Repr, DecidableEq
+
+/-- A life: a start, then an ending, after which asks of it fail and subscriptions to it close. A
+session is one: `session/start`, or `session/resume` of a saved one, starts it, and
+`session/wait` answers how it ended; after that `session/send`, `session/resize` and
+`session/detach` refuse it, and the sessions table keeps its record, which says how it ended,
+until `session/kill` discards it and its key goes. -/
+inductive Life (ε : Type) where
+  /-- Started, and not ended. -/
+  | live
+  /-- Ended, this way. -/
+  | ended (ending : ε)
+
+/-- The methods `serve` answers as operations, each with the operation whose request it is, the
+word of that operation's command and its shape: every one is an ask but `sessions/subscribe`, a
+table of the sessions' records, keyed by name. -/
 @[expose]
-def methods : List (String × Commands.Op × String) :=
-  [("sessions/list", .list, "ls"), ("session/start", .start, "start"),
-    ("session/resume", .resume, "resume"), ("session/send", .send, "send"),
-    ("session/detach", .detach, "detach"), ("session/kill", .kill, "kill"),
-    ("session/rename", .rename, "rename"), ("session/capture", .capture, "capture"),
-    ("session/resize", .resize, "resize"), ("session/wait", .wait, "wait")]
+def methods : List (String × Commands.Op × String × Shape) :=
+  [("sessions/list", .list, "ls", .ask), ("sessions/subscribe", .list, "ls", .table),
+    ("session/start", .start, "start", .ask), ("session/resume", .resume, "resume", .ask),
+    ("session/send", .send, "send", .ask), ("session/detach", .detach, "detach", .ask),
+    ("session/kill", .kill, "kill", .ask), ("session/rename", .rename, "rename", .ask),
+    ("session/capture", .capture, "capture", .ask), ("session/resize", .resize, "resize", .ask),
+    ("session/wait", .wait, "wait", .ask)]
 
 /-- The standard input a method's command line reads: the bytes `session/send`'s `data` encodes
 in base64 (`Base64.decode`), and none for any other method. -/
@@ -684,37 +712,39 @@ def operands (method : String) (params : Json) : Option (List String) :=
   if method = "sessions/list" then
     (params.opt "names" Json.texts? []).map fun names => ["--porcelain", "--"] ++ names
   else
-    if method = "session/start" then do
-      let name ← params.need "name" Json.text?
-      let program ← params.need "program" Json.text?
-      let args ← params.opt "args" Json.texts? []
-      pure ([name, program] ++ args)
+    if method = "sessions/subscribe" then some ["--porcelain"]
     else
-      if method = "session/rename" then do
+      if method = "session/start" then do
         let name ← params.need "name" Json.text?
-        let new ← params.need "new" Json.text?
-        pure [name, new]
+        let program ← params.need "program" Json.text?
+        let args ← params.opt "args" Json.texts? []
+        pure ([name, program] ++ args)
       else
-        if method = "session/capture" then do
+        if method = "session/rename" then do
           let name ← params.need "name" Json.text?
-          let history ← params.opt "history" Json.flag? false
-          pure ((if history then ["--history"] else []) ++ ["--", name])
+          let new ← params.need "new" Json.text?
+          pure [name, new]
         else
-          if method = "session/resize" then do
+          if method = "session/capture" then do
             let name ← params.need "name" Json.text?
-            let cols ← params.need "cols" Json.nat?
-            let rows ← params.need "rows" Json.nat?
-            pure [name, toString cols, toString rows]
+            let history ← params.opt "history" Json.flag? false
+            pure ((if history then ["--history"] else []) ++ ["--", name])
           else
-            if method = "session/send" then
-              (params.need "name" Json.text?).map fun name => [name, "-"]
-            else (params.need "name" Json.text?).map fun name => [name]
+            if method = "session/resize" then do
+              let name ← params.need "name" Json.text?
+              let cols ← params.need "cols" Json.nat?
+              let rows ← params.need "rows" Json.nat?
+              pure [name, toString cols, toString rows]
+            else
+              if method = "session/send" then
+                (params.need "name" Json.text?).map fun name => [name, "-"]
+              else (params.need "name" Json.text?).map fun name => [name]
 
 /-- **The command line a method and its params are**: its operation's command word (`methods`),
 then its `operands`; none for a method `methods` does not list or params it does not take. -/
 @[expose]
 def words (method : String) (params : Json) : Option (List String) :=
-  (methods.lookup method).bind fun (_, word) => (operands method params).map (word :: ·)
+  (methods.lookup method).bind fun (_, word, _) => (operands method params).map (word :: ·)
 
 /-- The protocol versions `serve` speaks. -/
 @[expose]
@@ -733,6 +763,61 @@ inductive Id where
 def Id.json : Id → Json
   | .number text => .number text
   | .str text => .str text
+
+/-- A JSON value as a request id: a number or a string. -/
+@[expose]
+def Id.of : Json → Option Id
+  | .number text => some (.number text)
+  | .str text => some (.str text)
+  | _ => none
+
+/-- A record of the sessions table: a session's fields, as `ls --porcelain` gives them. -/
+abbrev Record : Type := List (String × String)
+
+/-- The key a record is kept under: its session's name. -/
+@[expose]
+def Record.key (record : Record) : String := (record.lookup "name").getD ""
+
+/-- A record as an update reads it: without `idle`, the one field that reads the clock, which
+changes each second a session is quiet. -/
+@[expose]
+def Record.reading (record : Record) : Record := record.filter (·.1 != "idle")
+
+/-- A record as JSON: an object, a string member for each field. -/
+@[expose]
+def Record.json (record : Record) : Json := .obj (record.map fun (key, value) => (key, .str value))
+
+/-- The records of `latest` that `told` holds no record of under their key, or holds otherwise,
+read without the clock (`Record.reading`). -/
+@[expose]
+def changes (told latest : List Record) : List Record :=
+  latest.filter fun record =>
+    (told.find? (·.key == record.key)).map Record.reading != some record.reading
+
+/-- The keys of `told`'s records that `latest` holds no record under. -/
+@[expose]
+def removed (told latest : List Record) : List String :=
+  (told.map Record.key).filter fun key => !latest.any (·.key == key)
+
+/-- The params of `sessions/changed`: the subscription it updates, the request id that opened it,
+the records that replace those under their keys and the keys that go. -/
+@[expose]
+def update (id : Id) (records : List Record) (gone : List String) : Json :=
+  .obj
+    [("subscription", id.json), ("records", .arr (records.map Record.json)),
+      ("removed", .arr (gone.map .str))]
+
+/-- A table as a reader holds it, the record under each key: here the first of `records` under
+it. -/
+@[expose]
+def View.of (records : List Record) (key : String) : Option Record := records.find? (·.key == key)
+
+/-- A table after an update, as a reader applies one: none under a key it removes, and under any
+other key its record, or else the one held before. -/
+@[expose]
+def View.apply (view : String → Option Record) (records : List Record) (gone : List String)
+    (key : String) : Option Record :=
+  if gone.contains key then none else (records.find? (·.key == key)).or (view key)
 
 /-- What one line from the client is, as `serve` reads it. -/
 inductive Message where
@@ -769,6 +854,13 @@ inductive Phase where
 inductive Event where
   /-- A line from the client, as `serve` read it. -/
   | received (message : Message)
+  /-- The records the listing of the subscription the request with this id opened found, which
+  its result tells the subscriber: the table as the subscriber first holds it. -/
+  | opened (id : Id) (records : List Record)
+  /-- The records a later listing found. -/
+  | sampled (records : List Record)
+  /-- The writer wrote everything it took, and takes another message. -/
+  | writable
 
 /-- What a connection does. -/
 inductive Effect where
@@ -787,8 +879,9 @@ def welcome (version linger : String) : Json :=
       ("serverInfo", .obj [("name", .str "linger"), ("version", .str linger)]),
       ("capabilities",
         .obj
-          [("methods", .arr (("initialize" :: methods.map (·.1)).map .str)),
-            ("notifications", .arr [])])]
+          [("methods",
+              .arr (("initialize" :: methods.map (·.1) ++ ["sessions/unsubscribe"]).map .str)),
+            ("notifications", .arr [.str "sessions/changed"])])]
 
 /-- What a connection may write before it is ready: an error, or the result of `initialize`. -/
 @[expose]
@@ -811,6 +904,36 @@ its handshake says, and otherwise steps as `step` does. -/
 @[expose]
 def eager {σ : Type} (step : σ → Event → σ × List Effect) (s : σ) : Event → σ × List Effect
   | .received (.request id _ _) => (s, [.send (.result id .null)])
+  | ev => step s ev
+
+/-- A log as a reader keeps one: the last entries appended, at most its cap, and how many before
+them it dropped. -/
+structure Log (α : Type) where
+  /-- The last entries, oldest first. -/
+  tail : List α := []
+  /-- How many entries before them were dropped. -/
+  dropped : Nat := 0
+
+/-- A wrong part: a log that keeps every entry, whatever its cap. -/
+@[expose]
+def Log.keepAll {α : Type} (_ : Nat) (log : Log α) (entry : α) : Log α :=
+  { log with tail := log.tail ++ [entry] }
+
+/-- A wrong part: a connection that sends an update each time the writer is free, whether or not
+a subscription is open or anything changed, and otherwise steps as `step` does. -/
+@[expose]
+def chatty {σ : Type} (step : σ → Event → σ × List Effect) (s : σ) : Event → σ × List Effect
+  | .writable => ((step s .writable).1, [.send (.notify "sessions/changed" (.obj []))])
+  | ev => step s ev
+
+/-- A wrong part: a connection that queues each listing's records as an update when it comes,
+whether or not the writer is free, and otherwise steps as `step` does. -/
+@[expose]
+def queued {σ : Type} (step : σ → Event → σ × List Effect) (s : σ) : Event → σ × List Effect
+  | .sampled records =>
+    ((step s (.sampled records)).1,
+      (step s (.sampled records)).2 ++
+        [.send (.notify "sessions/changed" (.obj [("records", .arr (records.map Record.json))]))])
   | ev => step s ev
 
 end Linger.App.Serve

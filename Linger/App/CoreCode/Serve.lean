@@ -24,10 +24,17 @@ linger's answer, `usage`, in their `data`. -/
 
 namespace Linger.App.Serve
 
-/-- A connection's state: where it stands in its handshake. -/
+/-- A connection's state: where its handshake stands, the subscription open, by the id of the
+request that opened it, the records its subscriber was last told and the latest a listing found. -/
 structure StateRec where
   /-- Where the handshake stands. -/
   stage : Phase := .fresh
+  /-- The open subscription, by the id of the request that opened it. -/
+  open? : Option Id := none
+  /-- The records the subscriber was last told. -/
+  toldRecords : Option (List Record) := none
+  /-- The records the latest listing found. -/
+  latestRecords : Option (List Record) := none
 
 /-- A connection's state. -/
 abbrev State : Type := StateRec
@@ -37,6 +44,23 @@ def State.init : State := {}
 
 /-- Where a connection stands in its handshake. -/
 def State.phase (s : State) : Phase := s.stage
+
+/-- The open subscription, by the id of the request that opened it. -/
+def State.subscription (s : State) : Option Id := s.open?
+
+/-- The records the subscriber was last told. -/
+def State.told (s : State) : Option (List Record) := s.toldRecords
+
+/-- The records the latest listing found. -/
+def State.latest (s : State) : Option (List Record) := s.latestRecords
+
+/-- Whether the subscriber has an update due: the latest records differ from those it was last
+told, read without the clock (`changes`, `removed`). -/
+def State.due (s : State) : Bool :=
+  match s.phase, s.subscription, s.told, s.latest with
+  | .ready _, some _, some told, some latest =>
+    !(changes told latest).isEmpty || !(removed told latest).isEmpty
+  | _, _, _, _ => false
 
 /-- **A method's request is its command line's**: the request `Api.parse` reads from the words
 `Serve.words` gives the method and its params, with the standard input `Serve.input` gives them;
@@ -69,7 +93,8 @@ private def notInitialized (id : Id) : Outgoing :=
   .error (some id) (-32002) "not initialized" (refusal)
 
 /-- What a connection does with a request: `initialize` once, before anything else, then the
-methods `methods` lists, each performed as its command line's request (`parse`). -/
+methods `methods` lists, each performed as its command line's request (`parse`), a
+`sessions/subscribe` opening its subscription, and `sessions/unsubscribe` of the one open. -/
 private def request (s : State) (id : Id) (method : String) (params : Json) : State × List Effect :=
   if method = "initialize" then
     match s.phase with
@@ -87,15 +112,30 @@ private def request (s : State) (id : Id) (method : String) (params : Json) : St
   else
     match s.phase with
     | .ready _ =>
-      if (methods.lookup method).isSome then
-        match parse method params with
-        | some (req, bytes) => (s, [.perform id method req bytes])
-        | none => (s, [.send (.error (some id) (-32602) "invalid params" (refusal))])
-      else (s, [.send (.error (some id) (-32601) "method not found" (refusal))])
+      if method = "sessions/unsubscribe" then
+        if s.subscription.isSome ∧ (params.member? "subscription").bind Id.of = s.subscription then
+          ({ s with
+              open? := none, toldRecords := none, latestRecords := none },
+            [.send (.result id (result .done []))])
+        else (s, [.send (.error (some id) (-32602) "no such subscription" (refusal))])
+      else
+        if (methods.lookup method).isSome then
+          match parse method params with
+          | some (req, bytes) =>
+            (if method = "sessions/subscribe" then
+                { s with
+                  open? := some id, toldRecords := none, latestRecords := none }
+              else s,
+              [.perform id method req bytes])
+          | none => (s, [.send (.error (some id) (-32602) "invalid params" (refusal))])
+        else (s, [.send (.error (some id) (-32601) "method not found" (refusal))])
     | _ => (s, [.send (notInitialized id)])
 
 /-- **What a connection does with an event.** Before it is ready it writes nothing but errors and
-the result of `initialize`, and performs nothing (`serve_negotiated`). -/
+the result of `initialize`, and performs nothing, and it sends `sessions/changed` only to the open
+subscription (`serve_negotiated`): a listing's records replace the latest it holds and send nothing,
+and each time the writer is free it sends the records that differ from those it last told the
+subscriber, and the keys that went, when any do (`changed_exactly`, `table_converges`). -/
 def step (s : State) : Event → State × List Effect
   | .received (.invalid id unparsed) =>
     (s,
@@ -108,14 +148,32 @@ def step (s : State) : Event → State × List Effect
       if method = "initialized" then ({ s with stage := .ready version }, []) else (s, [])
     | _ => (s, [])
   | .received (.request id method params) => request s id method params
+  | .opened id records =>
+    match s.phase with
+    | .ready _ =>
+      if s.subscription = some id then
+        ({ s with
+            toldRecords := some records, latestRecords := some records },
+          [])
+      else (s, [])
+    | _ => (s, [])
+  | .sampled records =>
+    match s.phase with
+    | .ready _ =>
+      if s.subscription.isSome ∧ s.told.isSome then ({ s with latestRecords := some records }, [])
+      else (s, [])
+    | _ => (s, [])
+  | .writable =>
+    match s.phase, s.subscription, s.told, s.latest with
+    | .ready _, some id, some told, some latest =>
+      ({ s with toldRecords := some latest },
+        if changes told latest = [] ∧ removed told latest = [] then []
+        else
+          [.send
+              (.notify "sessions/changed" (update id (changes told latest) (removed told latest)))])
+    | _, _, _, _ => (s, [])
 
 /-! ## Messages as lines -/
-
-/-- A JSON value as a request id. -/
-def Id.of : Json → Option Id
-  | .number text => some (.number text)
-  | .str text => some (.str text)
-  | _ => none
 
 /-- What a line from the client is: a request, with an id, a notification, without one, or no
 message, a line that is not JSON or JSON that is no JSON-RPC 2.0 request object; none for a line of
@@ -161,16 +219,20 @@ def clean (text : String) : String := text.map Terminal.Render.textChar
 def records (rows : List (List (String × String))) : List (List (String × String)) :=
   rows.map fun row => row.map fun (key, value) => (clean key, clean value)
 
-/-- A record as a JSON object, a string member for each field. -/
-def Record.json (row : List (String × String)) : Json :=
-  .obj (row.map fun (key, value) => (key, .str value))
-
 /-- The members a request's result shows of how a session ended, when it found that it ended:
 `ending`, the record of it `ls` gives (`Session.endingFields`). -/
 def endingMembers : Api.Found → List (String × Json)
   | .ended ending =>
     [("ending", Record.json ((records [Linger.Session.endingFields ending]).headD []))]
   | _ => []
+
+/-! ## Logs -/
+
+/-- A log with `entry` appended: its last `cap` entries, and one more dropped when it held as many
+already. -/
+def Log.push {α : Type} (cap : Nat) (log : Log α) (entry : α) : Log α :=
+  if (log.tail ++ [entry]).length ≤ cap then { log with tail := log.tail ++ [entry] }
+  else { tail := (log.tail ++ [entry]).drop 1, dropped := log.dropped + 1 }
 
 /-! ## Lines -/
 
@@ -217,5 +279,11 @@ def Lines.feed (l : Lines) (bytes : List UInt8) : Lines × List Line :=
         | (next, none) => (next, acc.2))
       (l, [])
   (last, ended.reverse)
+
+/-- A line `serve` read as a message: none for a line of whitespace alone. -/
+def Line.message : Line → Option Message
+  | .text bytes =>
+    ((String.fromUTF8? (ByteArray.mk bytes.toArray)).map decode).getD (some (.invalid none true))
+  | .overlong => some (.invalid none false)
 
 end Linger.App.Serve

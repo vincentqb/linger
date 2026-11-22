@@ -1605,11 +1605,36 @@ theorem serve_negotiated (s : App.Serve.State) (ev : App.Serve.Event) :
                 params.member? "protocolVersion" = some (.str version)) ∧
       (∀ id method params,
         ev = .received (.request id method params) → ∃ e ∈ (App.Serve.step s ev).2, e.Answers id) ∧
-      ∀ e ∈ (App.Serve.step s ev).2, ∀ method params, e ≠ .send (.notify method params) :=
+      (∀ e ∈ (App.Serve.step s ev).2,
+        ∀ method params,
+          e = .send (.notify method params) →
+            method = "sessions/changed" ∧
+              ∃ id, s.subscription = some id ∧ params.member? "subscription" = some id.json) ∧
+      (∀ id,
+        (App.Serve.step s ev).1.subscription = some id →
+          s.subscription = some id ∨
+            ∃ params version,
+              s.phase = .ready version ∧ ev = .received (.request id "sessions/subscribe" params)) ∧
+      (∀ id params version,
+        s.phase = .ready version →
+          ev = .received (.request id "sessions/subscribe" params) →
+          (App.Serve.step s ev).1.subscription = some id) ∧
+      ∀ id request params version,
+        s.phase = .ready version →
+          s.subscription = some id →
+          ev = .received (.request request "sessions/unsubscribe" params) →
+          params.member? "subscription" = some id.json →
+          (App.Serve.step s ev).1.subscription = none :=
   ⟨App.Serve.init_phase, App.Serve.step_negotiating s ev, App.Serve.step_ready s ev,
     App.Serve.step_welcome s ev, fun id method params received => by
     subst received
-    exact App.Serve.step_answers s id method params, App.Serve.step_quiet s ev⟩
+    exact App.Serve.step_answers s id method params, App.Serve.step_notify_open s ev,
+    App.Serve.step_opens s ev, fun id params version ready received => by
+    subst received
+    exact App.Serve.subscribe_opens s id params version ready,
+    fun id asked params version ready subscribed received names => by
+    subst received
+    exact App.Serve.unsubscribe_closes s id asked params version ready subscribed names⟩
 
 theorem serve_negotiated_rejects_eager :
     ¬∀ (s : App.Serve.State) (ev : App.Serve.Event),
@@ -1631,14 +1656,108 @@ theorem serve_negotiated_rejects_eager :
           (∀ id method params,
             ev = .received (.request id method params) →
               ∃ e ∈ (App.Serve.eager App.Serve.step s ev).2, e.Answers id) ∧
-          ∀ e ∈ (App.Serve.eager App.Serve.step s ev).2,
-            ∀ method params, e ≠ .send (.notify method params) := by
+          (∀ e ∈ (App.Serve.eager App.Serve.step s ev).2,
+            ∀ method params,
+              e = .send (.notify method params) →
+                method = "sessions/changed" ∧
+                  ∃ id, s.subscription = some id ∧ params.member? "subscription" = some id.json) ∧
+          (∀ id,
+            (App.Serve.eager App.Serve.step s ev).1.subscription = some id →
+              s.subscription = some id ∨
+                ∃ params version,
+                  s.phase = .ready version ∧
+                    ev = .received (.request id "sessions/subscribe" params)) ∧
+          (∀ id params version,
+            s.phase = .ready version →
+              ev = .received (.request id "sessions/subscribe" params) →
+              (App.Serve.eager App.Serve.step s ev).1.subscription = some id) ∧
+          ∀ id request params version,
+            s.phase = .ready version →
+              s.subscription = some id →
+              ev = .received (.request request "sessions/unsubscribe" params) →
+              params.member? "subscription" = some id.json →
+              (App.Serve.eager App.Serve.step s ev).1.subscription = none := by
   intro h
   -- a fresh connection would answer `sessions/list` before its handshake
   have :=
     (h App.Serve.State.init (.received (.request (.number "1") "sessions/list" (.obj [])))).2.1
       (fun _ ready => by simp [App.Serve.State.init, App.Serve.State.phase] at ready)
   simp [App.Serve.eager, App.Serve.Effect.Negotiating, App.Serve.welcome] at this
+
+theorem serve_negotiated_rejects_chatty :
+    ¬∀ (s : App.Serve.State) (ev : App.Serve.Event),
+        App.Serve.State.init.phase = .fresh ∧
+          ((∀ version, s.phase ≠ .ready version) →
+            ∀ e ∈ (App.Serve.chatty App.Serve.step s ev).2, e.Negotiating) ∧
+          (∀ version,
+            (App.Serve.chatty App.Serve.step s ev).1.phase = .ready version →
+              s.phase = .ready version ∨
+                s.phase = .negotiated version ∧
+                  ∃ params, ev = .received (.notification "initialized" params)) ∧
+          (∀ id version linger,
+            App.Serve.Effect.send (.result id (App.Serve.welcome version linger)) ∈
+                (App.Serve.chatty App.Serve.step s ev).2 →
+              version ∈ App.Serve.versions ∧
+                ∃ params,
+                  ev = .received (.request id "initialize" params) ∧
+                    params.member? "protocolVersion" = some (.str version)) ∧
+          (∀ id method params,
+            ev = .received (.request id method params) →
+              ∃ e ∈ (App.Serve.chatty App.Serve.step s ev).2, e.Answers id) ∧
+          (∀ e ∈ (App.Serve.chatty App.Serve.step s ev).2,
+            ∀ method params,
+              e = .send (.notify method params) →
+                method = "sessions/changed" ∧
+                  ∃ id, s.subscription = some id ∧ params.member? "subscription" = some id.json) ∧
+          (∀ id,
+            (App.Serve.chatty App.Serve.step s ev).1.subscription = some id →
+              s.subscription = some id ∨
+                ∃ params version,
+                  s.phase = .ready version ∧
+                    ev = .received (.request id "sessions/subscribe" params)) ∧
+          (∀ id params version,
+            s.phase = .ready version →
+              ev = .received (.request id "sessions/subscribe" params) →
+              (App.Serve.chatty App.Serve.step s ev).1.subscription = some id) ∧
+          ∀ id request params version,
+            s.phase = .ready version →
+              s.subscription = some id →
+              ev = .received (.request request "sessions/unsubscribe" params) →
+              params.member? "subscription" = some id.json →
+              (App.Serve.chatty App.Serve.step s ev).1.subscription = none := by
+  intro h
+  -- a ready connection with no subscription open would notify each time its writer is free
+  have :=
+    (h ({ stage := .ready "1" } : App.Serve.StateRec) .writable).2.2.2.2.2.1
+      (.send (.notify "sessions/changed" (.obj []))) (by simp [App.Serve.chatty]) "sessions/changed"
+      (.obj []) rfl
+  obtain ⟨_, id, opened, _⟩ := this
+  simp [App.Serve.State.subscription] at opened
+
+theorem log_bounded {α : Type} (cap : Nat) (entries : List α) :
+    (entries.foldl (App.Serve.Log.push cap) {}).tail = entries.drop (entries.length - cap) ∧
+      (entries.foldl (App.Serve.Log.push cap) {}).dropped = entries.length - cap ∧
+      (entries.foldl (App.Serve.Log.push cap) {}).tail.length +
+          (entries.foldl (App.Serve.Log.push cap) {}).dropped =
+        entries.length := by
+  obtain ⟨tail, dropped⟩ := App.Serve.Log.fold_push cap entries {} (by simp)
+  simp only [List.nil_append] at tail dropped
+  refine ⟨tail, by simpa using dropped, ?_⟩
+  rw [tail, dropped, List.length_drop]
+  simp only [Nat.zero_add]
+  omega
+
+theorem log_bounded_rejects_keep_all :
+    ¬∀ {α : Type} (cap : Nat) (entries : List α),
+        (entries.foldl (App.Serve.Log.keepAll cap) {}).tail = entries.drop (entries.length - cap) ∧
+          (entries.foldl (App.Serve.Log.keepAll cap) {}).dropped = entries.length - cap ∧
+          (entries.foldl (App.Serve.Log.keepAll cap) {}).tail.length +
+              (entries.foldl (App.Serve.Log.keepAll cap) {}).dropped =
+            entries.length := by
+  intro h
+  -- a log that keeps every entry keeps one past a cap of none
+  have := (@h Unit 0 [()]).1
+  simp [App.Serve.Log.keepAll] at this
 
 theorem fields_owned :
     (App.Fields.table.map (·.key)).Nodup ∧
@@ -3680,6 +3799,115 @@ theorem withColor_iff_rejects_presence :
   have colors :=
     (h true (some "") (some "xterm")).mpr ⟨rfl, .inr rfl, "xterm", rfl, by simp, by simp⟩
   exact absurd colors (by decide)
+
+theorem changed_exactly (s : App.Serve.State) (version : String) (id : App.Serve.Id)
+    (told latest : List App.Serve.Record) (ready : s.phase = .ready version)
+    (subscribed : s.subscription = some id) (was : s.told = some told)
+    (now : s.latest = some latest) :
+    (App.Serve.step s .writable).2 =
+        (if App.Serve.changes told latest = [] ∧ App.Serve.removed told latest = [] then []
+        else
+          [.send
+              (.notify "sessions/changed"
+                (App.Serve.update id (App.Serve.changes told latest)
+                  (App.Serve.removed told latest)))]) ∧
+      (App.Serve.step s .writable).1.subscription = some id ∧
+      (App.Serve.step s .writable).1.told = some latest ∧
+      (App.Serve.step s .writable).1.latest = some latest :=
+  App.Serve.step_writable s version id told latest ready subscribed was now
+
+theorem changed_exactly_rejects_chatty :
+    ¬∀ (s : App.Serve.State) (version : String) (id : App.Serve.Id)
+        (told latest : List App.Serve.Record),
+        s.phase = .ready version →
+          s.subscription = some id →
+          s.told = some told →
+          s.latest = some latest →
+          (App.Serve.chatty App.Serve.step s .writable).2 =
+              (if App.Serve.changes told latest = [] ∧ App.Serve.removed told latest = [] then []
+              else
+                [.send
+                    (.notify "sessions/changed"
+                      (App.Serve.update id (App.Serve.changes told latest)
+                        (App.Serve.removed told latest)))]) ∧
+            (App.Serve.chatty App.Serve.step s .writable).1.subscription = some id ∧
+            (App.Serve.chatty App.Serve.step s .writable).1.told = some latest ∧
+            (App.Serve.chatty App.Serve.step s .writable).1.latest = some latest := by
+  intro h
+  -- with nothing changed, a free writer would still send an update
+  have :=
+    (h
+        { stage := .ready "1", open? := some (.number "1"), toldRecords := some [],
+          latestRecords := some [] }
+        "1" (.number "1") [] [] rfl rfl rfl rfl).1
+  simp [App.Serve.chatty, App.Serve.changes, App.Serve.removed] at this
+
+theorem table_converges (s : App.Serve.State) (version : String) (id : App.Serve.Id)
+    (told latest rows : List App.Serve.Record) (ready : s.phase = .ready version)
+    (subscribed : s.subscription = some id) (was : s.told = some told)
+    (now : s.latest = some latest) (keyed : (latest.map App.Serve.Record.key).Nodup) :
+    (App.Serve.step s (.opened id rows)).2 = [] ∧
+      (App.Serve.step s (.opened id rows)).1.told = some rows ∧
+      (App.Serve.step s (.opened id rows)).1.latest = some rows ∧
+      (App.Serve.step s (.sampled rows)).2 = [] ∧
+      (App.Serve.step s (.sampled rows)).1.subscription = some id ∧
+      (App.Serve.step s (.sampled rows)).1.told = some told ∧
+      (App.Serve.step s (.sampled rows)).1.latest = some rows ∧
+      ∀ params,
+        App.Serve.Effect.send (.notify "sessions/changed" params) ∈ (App.Serve.step s .writable).2 →
+          ∃ records gone,
+            params = App.Serve.update id records gone ∧
+              ∀ key,
+                (App.Serve.View.apply (App.Serve.View.of told) records gone key).map
+                    App.Serve.Record.reading =
+                  (App.Serve.View.of latest key).map App.Serve.Record.reading := by
+  obtain ⟨opened, toldFirst, latestFirst⟩ :=
+    App.Serve.step_opened s version id rows ready subscribed
+  obtain ⟨sampled, stillOpen, stillTold, nowLatest⟩ :=
+    App.Serve.step_sampled s version id told rows ready subscribed was
+  refine ⟨opened, toldFirst, latestFirst, sampled, stillOpen, stillTold, nowLatest, ?_⟩
+  intro params sent
+  obtain ⟨effects, -, -, -⟩ :=
+    App.Serve.step_writable s version id told latest ready subscribed was now
+  rw [effects] at sent
+  split at sent
+  · simp at sent
+  · simp only [List.mem_singleton, App.Serve.Effect.send.injEq, App.Serve.Outgoing.notify.injEq,
+      true_and] at sent
+    exact ⟨_, _, sent, App.Serve.View.converges told latest keyed⟩
+
+theorem table_converges_rejects_queued :
+    ¬∀ (s : App.Serve.State) (version : String) (id : App.Serve.Id)
+        (told latest rows : List App.Serve.Record),
+        s.phase = .ready version →
+          s.subscription = some id →
+          s.told = some told →
+          s.latest = some latest →
+          (latest.map App.Serve.Record.key).Nodup →
+          (App.Serve.queued App.Serve.step s (.opened id rows)).2 = [] ∧
+            (App.Serve.queued App.Serve.step s (.opened id rows)).1.told = some rows ∧
+            (App.Serve.queued App.Serve.step s (.opened id rows)).1.latest = some rows ∧
+            (App.Serve.queued App.Serve.step s (.sampled rows)).2 = [] ∧
+            (App.Serve.queued App.Serve.step s (.sampled rows)).1.subscription = some id ∧
+            (App.Serve.queued App.Serve.step s (.sampled rows)).1.told = some told ∧
+            (App.Serve.queued App.Serve.step s (.sampled rows)).1.latest = some rows ∧
+            ∀ params,
+              App.Serve.Effect.send (.notify "sessions/changed" params) ∈
+                  (App.Serve.queued App.Serve.step s .writable).2 →
+                ∃ records gone,
+                  params = App.Serve.update id records gone ∧
+                    ∀ key,
+                      (App.Serve.View.apply (App.Serve.View.of told) records gone key).map
+                          App.Serve.Record.reading =
+                        (App.Serve.View.of latest key).map App.Serve.Record.reading := by
+  intro h
+  -- a listing would be queued as an update as it comes
+  have :=
+    (h
+        { stage := .ready "1", open? := some (.number "1"), toldRecords := some [],
+          latestRecords := some [] }
+        "1" (.number "1") [] [] [] rfl rfl rfl rfl (by simp)).2.2.2.1
+  simp [App.Serve.queued] at this
 
 theorem ticks_settle (s : State) (now t₁ t₂ : Nat)
     (h₁ : (Session.trace Session.step s [.tick now]).1.nextTick = some t₁)

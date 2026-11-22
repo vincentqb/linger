@@ -60,9 +60,15 @@ error -32002. Each method is one command's request: `sessions/list` (optional `n
 `session/start` (`name`, `program`, optional `args`), `session/resume`, `session/send` (`name`,
 `data` in base64), `session/detach`, `session/kill`, `session/rename` (`name`, `new`),
 `session/capture` (`name`, optional `history`), `session/resize` (`name`, `cols`, `rows`) and
-`session/wait` (`name`). A result carries the answer the command would exit with, as
+`session/wait` (`name`). `sessions/subscribe` lists the sessions as `sessions/list` does and opens
+a subscription named by its request's id: from then on `serve` lists them one second after its
+last listing ended, and whenever its records differ from what the client was last told, read
+without `idle`, sends `sessions/changed` with that id, the records that differ and the names that
+went, the latest when the client reads late, never a backlog; `sessions/unsubscribe`
+(`subscription`) closes it. A result carries the answer the command would exit with, as
 `{"answer": "done", "code": 0}`, then what it shows: a listing's `records`, a capture's bytes in
-base64 as `data`, how a session ended as `ending`, and what the command said as `said`. A
+base64 as `data`, how a session ended as `ending`, and what the command said as `said`, its last
+32 lines, with `saidDropped` counting the rest. A
 malformed line, an unknown method and wrong params get JSON-RPC's errors, with linger's answer in
 their `data`. `serve` reaches no remote host. Once its standard input ends, it answers the
 requests it read and exits.

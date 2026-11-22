@@ -14,7 +14,8 @@ refused with -32002 and starts nothing, and an `initialize` that asks for a vers
 not speak is refused with the versions it speaks; `initialize` then answers with the version and
 the methods, and until `initialized` a request is still refused. After it, the client lists,
 starts a session, sends it input as base64, captures its screen and reads what it printed, waits
-for its program's ending and kills another: each result carries the answer the command line
+for its program's ending and kills another, and subscribes to the sessions' table, which sends
+`sessions/changed` when a record changes, but not for a quiet session, and nothing once closed: each result carries the answer the command line
 exits with, by name and code. A method `serve` does not answer, params it does not take and a line
 that is no JSON get JSON-RPC's errors. Once its standard input ends, `serve` exits 0. -/
 
@@ -191,9 +192,67 @@ private def captureUntil (p : Peer) (name text : String) (first : Nat) : IO (Opt
         return (screenOf captured).contains text
   last.get
 
+/-- The `sessions/changed` notifications the peer wrote so far. -/
+def Peer.changes (p : Peer) : IO (List Json) := do
+  return (← p.lines.get).toList.filterMap fun line =>
+      (Json.parse line).filter fun message => textAt? message ["method"] == some "sessions/changed"
+
+/-- The names of the records a notification carries. -/
+def recordsOf (message : Json) : List String :=
+  match at? message ["params", "records"] with
+  | some (.arr records) => records.filterMap (textAt? · ["name"])
+  | _ => []
+
+/-- The sessions table: a subscription's result lists the sessions; starting one sends a
+`sessions/changed` that names the subscription and carries its record; once its program has
+printed and gone quiet, the session sends none for three listings, though its record's `idle`
+ticks each second; and once `sessions/unsubscribe` closes the subscription, a session's ending
+sends none. -/
+private def table (p : Peer) : IO Unit := do
+  p.say (notification "initialized")
+  p.say (request 20 "sessions/subscribe" (.obj []))
+  let opened ← p.answer 20
+  expect (answerOf opened == some ("done", "0") && !(namesOf opened).contains "watched")
+      s!"sessions/subscribe answers done with the sessions' records ({answerOf opened})"
+  -- the program prints once, then waits for a line that never comes, so from then on only its
+  -- record's `idle` changes, each second
+  p.say
+      (request 21 "session/start"
+        (.obj
+          [("name", .str "watched"), ("program", .str "/bin/sh"),
+            ("args", .arr [.str "-c", .str "printf 'watched-ready'; read line"])]))
+  let started ← p.answer 21
+  let told ←
+    waitFor patienceMs do
+        return (← p.changes).any fun message =>
+            match at? message ["params", "records"] with
+            | some (.arr records) =>
+              records.any fun record =>
+                textAt? record ["name"] == some "watched" && (at? record ["idle"]).isSome
+            | _ => false
+  let allNamed :=
+    (← p.changes).all fun message => textAt? message ["params", "subscription"] == some "20"
+  expect (answerOf started == some ("done", "0") && told && allNamed)
+      s!"a started session's record comes in a sessions/changed that names subscription 20 ({answerOf started}, {told}, {allNamed})"
+  let before := (← p.changes).length
+  let restless ←
+    waitFor 3500 do
+        return (← p.changes).length != before
+  expect (!restless)
+      s!"a quiet session sends no sessions/changed in 3.5 s, three listings, though its idle ticks ({(← p.changes).length - before} more)"
+  p.say (request 22 "sessions/unsubscribe" (.obj [("subscription", .number "20")]))
+  let closed ← p.answer 22
+  let after := (← p.changes).length
+  p.say (request 23 "session/kill" (named "watched"))
+  let killed ← p.answer 23
+  let heard ←
+    waitFor 3500 do
+        return (← p.changes).length != after
+  expect (answerOf closed == some ("done", "0") && answerOf killed == some ("done", "0") && !heard)
+      s!"once sessions/unsubscribe closes it, a session's ending sends no sessions/changed ({answerOf closed}, {heard})"
+
 /-- The operations, each as a request, and the errors. -/
 private def operations (e : Env) (p : Peer) : IO Unit := do
-  p.say (notification "initialized")
   p.say (request 5 "sessions/list" (.obj []))
   let listed ← p.answer 5
   expect (answerOf listed == some ("done", "0") && !(namesOf listed).contains "early")
@@ -259,6 +318,7 @@ def run : IO UInt32 :=
     let p ← Peer.start e
     try
       handshake e p
+      table p
       operations e p
       let rc ← p.close
       expect (rc == some 0) s!"once its standard input ends, serve exits 0 ({rc})"
