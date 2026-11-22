@@ -16,6 +16,7 @@ import Linger.Import.Suites.Recipes
 import Linger.Import.Suites.Interop
 import Linger.App.Suites.Manager
 import Linger.App.Suites.Api
+import Linger.App.Suites.Serve
 import Linger.Target.Suites.RemoteLive
 import Linger.Target.Suites.Shells
 import Verify.Ci
@@ -61,7 +62,7 @@ def suites : List (String × IO UInt32) :=
     ("ci", Verify.Ci.run), ("hygiene", Verify.Hygiene.run),
     ("identity", Linger.Session.Suites.Identity.run), ("quiet", Linger.Session.Suites.Quiet.run),
     ("upgrade", Linger.Session.Suites.Upgrade.run), ("rename", Linger.Session.Suites.Rename.run),
-    ("api", Linger.App.Suites.Api.run)]
+    ("api", Linger.App.Suites.Api.run), ("serve", Linger.App.Suites.Serve.run)]
 
 def main (args : List String) : IO UInt32 := do
   match args with

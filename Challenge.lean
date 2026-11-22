@@ -172,6 +172,19 @@ def Linger.App.Capture.plan : List App.Capture.Step := sorry
 
 def Linger.App.Capture.phases : List App.Capture.Step → List App.Capture.Phase := sorry
 
+def Linger.App.Serve.parse : String → Serve.Json → Option (App.Api.Request × List UInt8) := sorry
+
+def Linger.App.Serve.result : App.Api.Found → List (String × Serve.Json) → Serve.Json := sorry
+
+def Linger.App.Serve.State : Type := sorry
+
+def Linger.App.Serve.State.init : App.Serve.State := sorry
+
+def Linger.App.Serve.State.phase : App.Serve.State → Serve.Phase := sorry
+
+def Linger.App.Serve.step :
+    App.Serve.State → Serve.Event → App.Serve.State × List Serve.Effect := sorry
+
 /-! ### Session targets -/
 
 def Linger.Target.Name.check : String → Option String := sorry
@@ -1667,11 +1680,13 @@ command, a word that names it, and exactly one: one word names each
 operation, so no command is another's alias or a second reader or writer of what another reads or
 writes, the table has one row for each operation, in `Op.all`'s order, each word names its own
 row, and help lists the rows, each line its command's word (`commands_minimal`). A command exists
-only for an `Op`, so adding one changes `Op`, and with it what linger claims. Every field a
-listing reports is human, shown in rows as clean text, or machine, exact and only in `--porcelain`;
-each has one owner, the user, through one command, the program or linger (`fields_owned`): the
-name is the one field the user owns, which `rename` writes, and says what the session is, and the
-program's fields are readings of what its session keeps of it alone, as part 2 says.
+only for an `Op`, so adding one changes `Op`, and with it what linger claims: `serve`, the last,
+answers the others' requests for a client that speaks JSON-RPC, and adds none of its own. Every
+field a listing reports is human, shown in rows as clean text, or machine, exact and only in
+`--porcelain`; each has one owner, the user, through one command, the program or linger
+(`fields_owned`): the name is the one field the user owns, which `rename` writes, and says what
+the session is, and the program's fields are readings of what its session keeps of it alone, as
+part 2 says.
 
 The model is the interface. A session command line that parses (`Api.parse`) is the typed
 request of its first word's operation, the row `lookup` finds, each of the operation's options and
@@ -1687,6 +1702,27 @@ says the command line writes as `linger: ` and the text, on a line of its own (`
 What `wait` and `kill` find from what they hear on each look at a name is part 5's (`wait_held`,
 `kill_answers`). Not claimed:
 that what the IO code finds is what happened, which the suites check.
+
+`linger serve` is the command line for a client that runs linger as a child with pipes: JSON-RPC
+2.0 on standard input and output, one JSON value a line, as MCP's stdio transport frames it,
+since a pipe needs no lengths and no line `serve` writes holds a newline or any other control
+character, which a string holds as an escape. A client first sends `initialize` with the
+`protocolVersion` it speaks: `serve` answers with that version when it speaks it
+(`Serve.versions`), with `serverInfo`, `linger` at its version, and `capabilities`, the methods it
+answers, or with an error that names the versions it speaks; then the client sends the
+`initialized` notification. Until then a connection writes nothing but errors and the result of
+`initialize` and performs nothing, and it answers or performs every request it hears
+(`serve_negotiated`). Its methods are operations (`Serve.methods`): a request that parses is
+exactly the request of its command line (`Serve.words`), `session/send`'s base64 `data` the
+standard input of `send NAME -`, and its result is the answer that command line exits with, by
+name and code, then what the request shows, a listing's records, a capture's bytes in base64 or how
+a session ended (`serve_renders_api`). A line that is no JSON, a method `serve` does not answer
+and params it does not take get JSON-RPC's errors -32700, -32600, -32601 and -32602, and a request
+before `initialized` gets -32002, each with linger's answer, `usage`, in its `data`. Not claimed:
+that the executor writes each message whole, on one line, reads each line as `Serve.decode` reads
+it and performs each request the step performs as the command line does, with its `data` as its
+standard input, which the serve suite checks; nor anything of a remote target, which `serve`
+reaches no transport for and refuses.
 
 A tmux-resurrect save is a source linger reads and never writes. A pane takes its name from its
 window, as a key, a later pane's name that an earlier one took made unique with a natural-order
@@ -1794,6 +1830,111 @@ theorem commands_minimal_rejects_aliased :
                 command.word =
               some command ∧
             ∃ rest, App.Commands.helpLine command = command.word ++ " " ++ rest) := by
+  sorry
+
+theorem serve_renders_api (method : String) (params : Serve.Json) (found : Api.Found)
+    (members : List (String × Serve.Json)) :
+    App.Serve.parse method params =
+        (Serve.words method params).bind
+          (fun argv =>
+            (App.Api.parse argv).bind fun request =>
+              (Serve.input method params).map fun bytes => (request, bytes)) ∧
+      (∀ request bytes,
+        App.Serve.parse method params = some (request, bytes) →
+          (Serve.methods.lookup method).map (·.1) = some request.op) ∧
+      App.Serve.result found members =
+        .obj
+          (("answer", .str (Serve.answerName (App.Api.answer found))) ::
+            ("code", .number (toString (App.Api.answer found).code)) :: members) := by
+  sorry
+
+@[kills serve_renders_api]
+theorem serve_renders_api_rejects_crossed :
+    ¬∀ (method : String) (params : Serve.Json) (found : Api.Found)
+        (members : List (String × Serve.Json)),
+        (fun (method : String) (params : Serve.Json) =>
+                App.Serve.parse (if method = "session/detach" then "session/kill" else method)
+                  params)
+              method params =
+            (Serve.words method params).bind
+              (fun argv =>
+                (App.Api.parse argv).bind fun request =>
+                  (Serve.input method params).map fun bytes => (request, bytes)) ∧
+          (∀ request bytes,
+            (fun (method : String) (params : Serve.Json) =>
+                    App.Serve.parse (if method = "session/detach" then "session/kill" else method)
+                      params)
+                  method params =
+                some (request, bytes) →
+              (Serve.methods.lookup method).map (·.1) = some request.op) ∧
+          App.Serve.result found members =
+            .obj
+              (("answer", .str (Serve.answerName (App.Api.answer found))) ::
+                ("code", .number (toString (App.Api.answer found).code)) :: members) := by
+  sorry
+
+@[kills serve_renders_api]
+theorem serve_renders_api_rejects_outside :
+    ¬∀ (method : String) (params : Serve.Json) (found : Api.Found)
+        (members : List (String × Serve.Json)),
+        App.Serve.parse method params =
+            (Serve.words method params).bind
+              (fun argv =>
+                (App.Api.parse argv).bind fun request =>
+                  (Serve.input method params).map fun bytes => (request, bytes)) ∧
+          (∀ request bytes,
+            App.Serve.parse method params = some (request, bytes) →
+              (Serve.methods.lookup method).map (·.1) = some request.op) ∧
+          (fun (_ : Api.Found) (members : List (String × Serve.Json)) =>
+                Serve.Json.obj (("answer", .str "done") :: ("code", .number "0") :: members))
+              found members =
+            .obj
+              (("answer", .str (Serve.answerName (App.Api.answer found))) ::
+                ("code", .number (toString (App.Api.answer found).code)) :: members) := by
+  sorry
+
+theorem serve_negotiated (s : App.Serve.State) (ev : Serve.Event) :
+    App.Serve.State.init.phase = .fresh ∧
+      ((∀ version, s.phase ≠ .ready version) → ∀ e ∈ (App.Serve.step s ev).2, e.Negotiating) ∧
+      (∀ version,
+        (App.Serve.step s ev).1.phase = .ready version →
+          s.phase = .ready version ∨
+            s.phase = .negotiated version ∧
+              ∃ params, ev = .received (.notification "initialized" params)) ∧
+      (∀ id version linger,
+        Serve.Effect.send (.result id (Serve.welcome version linger)) ∈ (App.Serve.step s ev).2 →
+          version ∈ Serve.versions ∧
+            ∃ params,
+              ev = .received (.request id "initialize" params) ∧
+                params.member? "protocolVersion" = some (.str version)) ∧
+      (∀ id method params,
+        ev = .received (.request id method params) → ∃ e ∈ (App.Serve.step s ev).2, e.Answers id) ∧
+      ∀ e ∈ (App.Serve.step s ev).2, ∀ method params, e ≠ .send (.notify method params) := by
+  sorry
+
+@[kills serve_negotiated]
+theorem serve_negotiated_rejects_eager :
+    ¬∀ (s : App.Serve.State) (ev : Serve.Event),
+        App.Serve.State.init.phase = .fresh ∧
+          ((∀ version, s.phase ≠ .ready version) →
+            ∀ e ∈ (Serve.eager App.Serve.step s ev).2, e.Negotiating) ∧
+          (∀ version,
+            (Serve.eager App.Serve.step s ev).1.phase = .ready version →
+              s.phase = .ready version ∨
+                s.phase = .negotiated version ∧
+                  ∃ params, ev = .received (.notification "initialized" params)) ∧
+          (∀ id version linger,
+            Serve.Effect.send (.result id (Serve.welcome version linger)) ∈
+                (Serve.eager App.Serve.step s ev).2 →
+              version ∈ Serve.versions ∧
+                ∃ params,
+                  ev = .received (.request id "initialize" params) ∧
+                    params.member? "protocolVersion" = some (.str version)) ∧
+          (∀ id method params,
+            ev = .received (.request id method params) →
+              ∃ e ∈ (Serve.eager App.Serve.step s ev).2, e.Answers id) ∧
+          ∀ e ∈ (Serve.eager App.Serve.step s ev).2,
+            ∀ method params, e ≠ .send (.notify method params) := by
   sorry
 
 theorem fields_owned :

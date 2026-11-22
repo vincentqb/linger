@@ -50,6 +50,23 @@ transport its caller passes. Its `wait` takes a deadline, since a Lean caller ca
 `timeout` around a call. The command line parses its words into such a request and renders the
 reply.
 
+## JSON-RPC
+
+`linger serve` speaks linger's operations as JSON-RPC 2.0 on its standard input and output, one
+JSON value a line, for a client that runs it as a child with pipes. The client sends `initialize`
+with the `protocolVersion` it speaks (`"1"`), gets the version, `serverInfo` and the methods in
+`capabilities`, and sends the `initialized` notification; before that every other request gets
+error -32002. Each method is one command's request: `sessions/list` (optional `names`),
+`session/start` (`name`, `program`, optional `args`), `session/resume`, `session/send` (`name`,
+`data` in base64), `session/detach`, `session/kill`, `session/rename` (`name`, `new`),
+`session/capture` (`name`, optional `history`), `session/resize` (`name`, `cols`, `rows`) and
+`session/wait` (`name`). A result carries the answer the command would exit with, as
+`{"answer": "done", "code": 0}`, then what it shows: a listing's `records`, a capture's bytes in
+base64 as `data`, how a session ended as `ending`, and what the command said as `said`. A
+malformed line, an unknown method and wrong params get JSON-RPC's errors, with linger's answer in
+their `data`. `serve` reaches no remote host. Once its standard input ends, it answers the
+requests it read and exits.
+
 ## Upgrades
 
 `linger upgrade [name...]`, run by a newer linger, moves each named live session, or every one,

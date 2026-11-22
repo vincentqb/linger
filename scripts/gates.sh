@@ -440,7 +440,7 @@ import_closure Linger/Import/WorldCode.lean 'public import Linger.Os.CoreSpec;pu
 import_closure Linger/Selector/WorldCode.lean \
   'public import Linger.Selector.CoreSpec;public import Linger.Os.CoreSpec;import Linger.Os.CoreCode.Answer;import Linger.Selector.CoreCode.Picker;import Os.WorldCode;import Linger.Target.CoreCode.Remote;import Terminal.CoreCode.Title;import Os.WorldCode.Command;import Linger.Display.CoreCode.View;import Std.Data.HashMap.Basic;import Linger.Display.CoreCode.Status;import Linger.Selector.CoreCode.Key;import Linger.Selector.CoreCode.Fetch;import Input.CoreCode;import Linger.Os.CoreCode.Env;'
 import_closure Linger/App/WorldCode/Main.lean \
-  'import Linger.Os.CoreCode.Answer;import Linger.App.WorldCode;import Linger.App.CoreCode.Entry;import Linger.Selector.WorldCode;import Linger.Import.WorldCode;import Linger.Session.WorldCode.Names;import Os.WorldCode;'
+  'import Linger.Os.CoreCode.Answer;import Linger.App.WorldCode;import Linger.App.WorldCode.Serve;import Linger.App.CoreCode.Entry;import Linger.Selector.WorldCode;import Linger.Import.WorldCode;import Linger.Session.WorldCode.Names;import Os.WorldCode;'
 # `lean_lib Linger` builds the umbrella's closure, so this list is what `./lake build`
 # checks of the session library.
 import_closure Linger.lean "$(printf 'public import %s;' Linger.Session.CoreCode.Buf \
@@ -523,7 +523,7 @@ entry_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/WorldCode/Main.lean
 for tie in \
   'def main [(]args : List String[)] : IO UInt32 := do let answer : Linger[.]Os[.]Answer ← try match Linger[.]App[.]Entry[.]route args with' \
   '[|] [.]selector readOnly => Linger[.]Selector[.]Shell[.]run [(]← IO[.]appPath[)][.]toString Linger[.]Session[.]Shell[.]Names[.]nameOf readOnly' \
-  '[|] [.]session argv => Linger[.]App[.]Shell[.]main source argv' \
+  '[|] [.]session argv => Linger[.]App[.]Shell[.]main source Linger[.]App[.]Serve[.]Shell[.]run argv' \
   '[|] [.]malformed => IO[.]eprintln "linger: malformed encoded command line" pure [.]usage' \
   'catch e => IO[.]eprintln s!"linger: [{]e[}]" pure [.]notDone if let [.]stopped signal := answer then try Os[.]Shell[.]raiseSignal signal catch _ => pure [(][)] return answer[.]code'; do
   printf '%s\n' "$entry_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
@@ -1936,6 +1936,7 @@ ed_n="$(code_count '(^|[^[:alnum:]_.])drain(Str)?[[:space:]]+[^[:space:]]+[[:spa
 #     found it so, as `Wait.decide` says, and `kill` at the name it asked to end as long from when
 #     its daemon took the request, as `Kill.decide` says, each look asking the daemon that answers
 #     for it no longer than replySilenceMs (10 s).
+#   App/WorldCode/Serve: standard input, with no timeout: `serve` wakes only for input.
 #   Import/WorldCode: tmux's configuration and a pane archive, every 10 ms for at most 1 s and 5 s.
 #   packages/os, Os/WorldCode: `nap` and `pause`, the only sleeps; a full write's wait for its
 #     descriptor to take more (`writeAll`), with no deadline, on its reader, as a blocking
@@ -1964,6 +1965,7 @@ Linger/App/WorldCode/Api.lean: unless ← nap deadline 5 do
 Linger/App/WorldCode/Api.lean: let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] (-1)
 Linger/App/WorldCode/Api.lean: discard <| nap (first + Wait.heldNameMs) 20
 Linger/App/WorldCode/Api.lean: discard <| nap (taken + Wait.heldNameMs) 20
+Linger/App/WorldCode/Serve.lean: let _ ← poll #[stdinFd] #[POLLIN] (-1)
 Linger/Import/WorldCode.lean: unless ← Os.Shell.nap deadline 10 do
 Linger/Import/WorldCode.lean: unless ← Os.Shell.nap deadline 10 do
 Linger/Selector/WorldCode.lean: let ready ← poll fds events 50
@@ -1995,6 +1997,8 @@ $timers"
 #     the terminal's width; the bytes of a `capture` the API returns: a live session's reply, the
 #     daemon's `screenText` or `history` in frames, or a saved session's, rendered at the plan's
 #     `render` step and kept at its `write` step (tied above), once the locks are let go.
+#   App/WorldCode/Serve: each JSON-RPC message, one line of JSON text (`Serve.line`), which holds no
+#     control character but its newline.
 #   Selector/WorldCode: taking the terminal (`enterAnsi`) and naming it, the window size, the frame
 #     (`frame`, the first, after a resize and on the refresh key, or the `update` between the
 #     `frameRows` of two frames of one size), giving the terminal back (`exitAnsi`) and clearing
@@ -2010,6 +2014,7 @@ expected_term_writes='Linger/App/WorldCode.lean: writeAll stdoutFd (ByteArray.mk
 Linger/App/WorldCode.lean: let (cols, _) ← winsizeGet stdoutFd
 Linger/App/WorldCode.lean: writeAll stdoutFd
 Linger/App/WorldCode.lean: | .bytes bytes => writeAll stdoutFd bytes
+Linger/App/WorldCode/Serve.lean: private def emit (out : Outgoing) : IO Unit := writeAll stdoutFd (Serve.line out).toUTF8
 Linger/Selector/WorldCode.lean: writeAll stdoutFd (ByteArray.mk Linger.Selector.Picker.enterAnsi.toArray)
 Linger/Selector/WorldCode.lean: writeAll stdoutFd (ByteArray.mk (Terminal.Title.ansi "linger").toArray)
 Linger/Selector/WorldCode.lean: let current ← winsizeGet stdoutFd

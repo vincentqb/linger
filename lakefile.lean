@@ -57,9 +57,9 @@ under a component's `Proofs/` is built. Lean erases proofs regardless of file pl
 built. -/
 lean_lib Tests where
   globs :=
-  #[.submodules `Linger.Display.Tests, .submodules `Linger.Import.Tests,
-    .submodules `Linger.Selector.Tests, .submodules `Linger.Session.Tests,
-    .submodules `Linger.Target.Tests]
+  #[.submodules `Linger.App.Tests, .submodules `Linger.Display.Tests,
+    .submodules `Linger.Import.Tests, .submodules `Linger.Selector.Tests,
+    .submodules `Linger.Session.Tests, .submodules `Linger.Target.Tests]
   leanOptions := implementationOptions
 
 /-- The checks of linger's world claims, which no program module imports: built by default, so

@@ -75,7 +75,8 @@ or `WorldCode`, as the Lean Software Challenge reads it, and any other module is
 - `Linger/App/`: the command line and the Lean API: the `Entry` route, and the typed requests
   `CoreCode/Api.lean` parses and plans; `WorldCode/Api.lean`, the Lean API, performs them and
   writes to no standard stream, and `WorldCode.lean`, the command line, renders their replies;
-  `WorldCode/Main.lean` holds `main`.
+  `WorldCode/Main.lean` holds `main`; `CoreCode/Serve.lean` and `CoreCode/Json.lean` hold
+  `linger serve`'s JSON-RPC connection and JSON text, and `WorldCode/Serve.lean` its executor.
 - `Challenge.lean`: the program parts headline theorems name, declared as holes, and the
   headline theorems and their kills, stated with `sorry`. It imports only `CoreSpec` and
   `WorldSpec` modules and the packages' modules, and the build writes `comparator.json` from it

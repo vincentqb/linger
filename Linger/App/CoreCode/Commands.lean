@@ -42,7 +42,9 @@ def table : List Command :=
       summary := "Resize a detached session" },
     { word := "wait", op := .wait, args := "<name>...", summary := "Wait for programs to end" },
     { word := "upgrade", op := .upgrade, args := "[name...]",
-      summary := "Move live sessions onto this linger; programs keep running" }]
+      summary := "Move live sessions onto this linger; programs keep running" },
+    { word := "serve", op := .serve, args := "",
+      summary := "Answer JSON-RPC 2.0 on stdin and stdout, a message a line" }]
 
 /-- The option that explains the command line. -/
 def helpOption : String := "--help"

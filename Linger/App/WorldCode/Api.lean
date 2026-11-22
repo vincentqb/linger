@@ -102,6 +102,12 @@ structure Env where
   remote : Option Remote := none
   /-- What a command says as it goes. -/
   say : Said → IO Unit := fun _ => pure ()
+  /-- The bytes a `send -` delivers as its standard input's, when the caller gives them, as
+  `serve` gives a request's `data`: none to read this process's standard input. -/
+  input : Option ByteArray := none
+  /-- The server that `serve` runs, which answers JSON-RPC on standard input and output: none
+  unless the caller passes one, since the API writes to no standard stream. -/
+  serve : Option (IO Found) := none
 
 /-- What a request shows besides what it found. -/
 inductive Shown where
@@ -1639,7 +1645,13 @@ def perform (env : Env) (request : Request) (deadline : Option Nat := none) : IO
             (withSession env "send" target words
               (requireLiveSend env · (Linger.Session.Wire.inputFrames bytes)))
       | .send target .stdin, .pipe =>
-        reply (withSession env "send" target ["-"] (cmdSendStdin env))
+        match env.input with
+        | some bytes =>
+          reply
+              (withSession env "send" target ["-"]
+                (requireLiveSend env · (Linger.Session.Wire.inputFrames bytes.toList)))
+        | none =>
+          reply (withSession env "send" target ["-"] (cmdSendStdin env))
       | .detach target, .ask m =>
         reply (withSession env "detach" target [] (requireLive env · m))
       | .kill target, .ask m =>
@@ -1664,6 +1676,13 @@ def perform (env : Env) (request : Request) (deadline : Option Nat := none) : IO
         reply (waitAll env m targets deadline)
       | .upgrade targets, .upgrade =>
         cmdUpgrade env targets
+      | .serve, .serve =>
+        match env.serve with
+        | some server =>
+          reply server
+        | none =>
+          say env "serve needs its caller's server, which the command line passes"
+          return { found := .refused }
       | _, _ =>
         -- `plan` gives each request its own operation's transition (`op_meaning`)
         return { found := .unknown }

@@ -169,13 +169,15 @@ options, `--help` and `--version`, stand alone; any other command line is a requ
 (`Api.parse`), which `Api.perform` performs in the namespace the environment names, rendering
 what it says, what it shows and, as the answer, what it found (`Api.answer`), or a usage error,
 quoting its command's usage line (`Commands.usageLine`) when its first word names one and the
-command table otherwise. `main` routes interactive selection and tmux interchange elsewhere;
-`__daemon` and its kin run a session's daemon in this process, in the namespace a leading
-`__dirs` names. -/
-def main (source : Linger.App.Api.Source) (args : List String) : IO Answer := do
+command table otherwise. `serve` performs its requests through `server`, which `main` passes,
+with this command line's namespace and no remote host. `main` routes interactive selection and
+tmux interchange elsewhere; `__daemon` and its kin run a session's daemon in this process, in the
+namespace a leading `__dirs` names. -/
+def main (source : Linger.App.Api.Source) (server : Linger.App.Api.Env → IO Linger.App.Api.Found)
+    (args : List String) : IO Answer := do
   match args with
   | "__dirs" :: sockets :: state :: rest =>
-    Paths.withDirs { sockets, state } (main source rest)
+    Paths.withDirs { sockets, state } (main source server rest)
   | "__daemon" :: id :: name :: cwd :: cmd =>
     Linger.App.Api.serveDaemon id name cwd cmd
     return .done
@@ -208,6 +210,9 @@ def main (source : Linger.App.Api.Source) (args : List String) : IO Answer := do
         { dirs := ← Paths.dirs, exe := (← IO.appPath).toString, source,
           remote := some { config := remoteConfig, run := runRemote },
           say := fun said => IO.eprint said.render }
+      -- `serve` performs requests in this namespace, as this command line would, and reaches no
+      -- remote host
+      let env := { env with serve := some (server { env with remote := none }) }
       let reply ← Linger.App.Api.perform env request
       render request reply.shown
       return Linger.App.Api.answer reply.found

@@ -7,6 +7,7 @@ public import Linger.App.CoreCode.Entry
 public import Linger.App.CoreCode.Fields
 public import Linger.App.CoreCode.Kill
 public import Linger.App.CoreCode.Recovery
+public import Linger.App.CoreCode.Serve
 public import Linger.App.CoreCode.Wait
 public import Linger.Display.CoreCode.Alert
 public import Linger.Display.CoreCode.Listing
@@ -43,6 +44,7 @@ import all Linger.App.Proofs.Commands
 import all Linger.App.Proofs.Entry
 import all Linger.App.Proofs.Kill
 import all Linger.App.Proofs.Recovery
+import all Linger.App.Proofs.Serve
 import all Linger.App.Proofs.Wait
 import Linger.Display.Proofs.Clean
 import all Linger.App.Proofs.Fields
@@ -1518,6 +1520,125 @@ theorem commands_minimal_rejects_aliased :
   have long : "attach" = word := unique "attach" (by decide)
   have short : "a" = word := unique "a" (by decide)
   exact absurd (long.trans short.symm) (by decide)
+
+theorem serve_renders_api (method : String) (params : App.Serve.Json) (found : App.Api.Found)
+    (members : List (String × App.Serve.Json)) :
+    App.Serve.parse method params =
+        (App.Serve.words method params).bind
+          (fun argv =>
+            (App.Api.parse argv).bind fun request =>
+              (App.Serve.input method params).map fun bytes => (request, bytes)) ∧
+      (∀ request bytes,
+        App.Serve.parse method params = some (request, bytes) →
+          (App.Serve.methods.lookup method).map (·.1) = some request.op) ∧
+      App.Serve.result found members =
+        .obj
+          (("answer", .str (App.Serve.answerName (App.Api.answer found))) ::
+            ("code", .number (toString (App.Api.answer found).code)) :: members) :=
+  ⟨App.Serve.parse_eq method params, fun _ _ parsed => App.Serve.parse_op parsed,
+    App.Serve.result_eq found members⟩
+
+theorem serve_renders_api_rejects_crossed :
+    ¬∀ (method : String) (params : App.Serve.Json) (found : App.Api.Found)
+        (members : List (String × App.Serve.Json)),
+        (fun (method : String) (params : App.Serve.Json) =>
+                App.Serve.parse (if method = "session/detach" then "session/kill" else method)
+                  params)
+              method params =
+            (App.Serve.words method params).bind
+              (fun argv =>
+                (App.Api.parse argv).bind fun request =>
+                  (App.Serve.input method params).map fun bytes => (request, bytes)) ∧
+          (∀ request bytes,
+            (fun (method : String) (params : App.Serve.Json) =>
+                    App.Serve.parse (if method = "session/detach" then "session/kill" else method)
+                      params)
+                  method params =
+                some (request, bytes) →
+              (App.Serve.methods.lookup method).map (·.1) = some request.op) ∧
+          App.Serve.result found members =
+            .obj
+              (("answer", .str (App.Serve.answerName (App.Api.answer found))) ::
+                ("code", .number (toString (App.Api.answer found).code)) :: members) := by
+  intro h
+  -- `session/detach x` would take `kill x`'s request
+  have := (h "session/detach" (.obj [("name", .str "x")]) .done []).1
+  revert this
+  decide
+
+theorem serve_renders_api_rejects_outside :
+    ¬∀ (method : String) (params : App.Serve.Json) (found : App.Api.Found)
+        (members : List (String × App.Serve.Json)),
+        App.Serve.parse method params =
+            (App.Serve.words method params).bind
+              (fun argv =>
+                (App.Api.parse argv).bind fun request =>
+                  (App.Serve.input method params).map fun bytes => (request, bytes)) ∧
+          (∀ request bytes,
+            App.Serve.parse method params = some (request, bytes) →
+              (App.Serve.methods.lookup method).map (·.1) = some request.op) ∧
+          (fun (_ : App.Api.Found) (members : List (String × App.Serve.Json)) =>
+                App.Serve.Json.obj (("answer", .str "done") :: ("code", .number "0") :: members))
+              found members =
+            .obj
+              (("answer", .str (App.Serve.answerName (App.Api.answer found))) ::
+                ("code", .number (toString (App.Api.answer found).code)) :: members) := by
+  intro h
+  -- a request that found no session would answer that it did what was asked
+  have := (h "" .null .missing []).2.2
+  simp [App.Serve.answerName, App.Api.answer, App.Api.Found.answer] at this
+
+theorem serve_negotiated (s : App.Serve.State) (ev : App.Serve.Event) :
+    App.Serve.State.init.phase = .fresh ∧
+      ((∀ version, s.phase ≠ .ready version) → ∀ e ∈ (App.Serve.step s ev).2, e.Negotiating) ∧
+      (∀ version,
+        (App.Serve.step s ev).1.phase = .ready version →
+          s.phase = .ready version ∨
+            s.phase = .negotiated version ∧
+              ∃ params, ev = .received (.notification "initialized" params)) ∧
+      (∀ id version linger,
+        App.Serve.Effect.send (.result id (App.Serve.welcome version linger)) ∈
+            (App.Serve.step s ev).2 →
+          version ∈ App.Serve.versions ∧
+            ∃ params,
+              ev = .received (.request id "initialize" params) ∧
+                params.member? "protocolVersion" = some (.str version)) ∧
+      (∀ id method params,
+        ev = .received (.request id method params) → ∃ e ∈ (App.Serve.step s ev).2, e.Answers id) ∧
+      ∀ e ∈ (App.Serve.step s ev).2, ∀ method params, e ≠ .send (.notify method params) :=
+  ⟨App.Serve.init_phase, App.Serve.step_negotiating s ev, App.Serve.step_ready s ev,
+    App.Serve.step_welcome s ev, fun id method params received => by
+    subst received
+    exact App.Serve.step_answers s id method params, App.Serve.step_quiet s ev⟩
+
+theorem serve_negotiated_rejects_eager :
+    ¬∀ (s : App.Serve.State) (ev : App.Serve.Event),
+        App.Serve.State.init.phase = .fresh ∧
+          ((∀ version, s.phase ≠ .ready version) →
+            ∀ e ∈ (App.Serve.eager App.Serve.step s ev).2, e.Negotiating) ∧
+          (∀ version,
+            (App.Serve.eager App.Serve.step s ev).1.phase = .ready version →
+              s.phase = .ready version ∨
+                s.phase = .negotiated version ∧
+                  ∃ params, ev = .received (.notification "initialized" params)) ∧
+          (∀ id version linger,
+            App.Serve.Effect.send (.result id (App.Serve.welcome version linger)) ∈
+                (App.Serve.eager App.Serve.step s ev).2 →
+              version ∈ App.Serve.versions ∧
+                ∃ params,
+                  ev = .received (.request id "initialize" params) ∧
+                    params.member? "protocolVersion" = some (.str version)) ∧
+          (∀ id method params,
+            ev = .received (.request id method params) →
+              ∃ e ∈ (App.Serve.eager App.Serve.step s ev).2, e.Answers id) ∧
+          ∀ e ∈ (App.Serve.eager App.Serve.step s ev).2,
+            ∀ method params, e ≠ .send (.notify method params) := by
+  intro h
+  -- a fresh connection would answer `sessions/list` before its handshake
+  have :=
+    (h App.Serve.State.init (.received (.request (.number "1") "sessions/list" (.obj [])))).2.1
+      (fun _ ready => by simp [App.Serve.State.init, App.Serve.State.phase] at ready)
+  simp [App.Serve.eager, App.Serve.Effect.Negotiating, App.Serve.welcome] at this
 
 theorem fields_owned :
     (App.Fields.table.map (·.key)).Nodup ∧

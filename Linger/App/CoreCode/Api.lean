@@ -99,6 +99,8 @@ def parseOp : Commands.Op → List String → Option Request
   | .wait, targets =>
     if targets = [] ∨ targets.any (·.startsWith "-") then none else some (.wait targets)
   | .upgrade, targets => some (.upgrade targets)
+  | .serve, [] => some .serve
+  | .serve, _ => none
 
 /-- The request a session command line makes: its first word's command (`Commands.lookup`), and
 the rest as that command's operation reads it (`parseOp`). -/

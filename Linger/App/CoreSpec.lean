@@ -75,13 +75,16 @@ inductive Op where
   | wait
   /-- Carry live sessions over to this linger's image, their programs running on. -/
   | upgrade
+  /-- Answer the operations above, one JSON-RPC 2.0 request each, on standard input and output,
+  for a client that runs linger as a child with pipes (`Serve.methods`). -/
+  | serve
   deriving Repr, DecidableEq
 
 /-- Every operation, once each, in the order of its constructors. -/
 @[expose]
 def Op.all : List Op :=
   [.attach, .list, .start, .resume, .send, .detach, .kill, .rename, .capture, .resize, .wait,
-    .upgrade]
+    .upgrade, .serve]
 
 /-- One row of the command table: the one command of an operation. -/
 structure Command where
@@ -250,6 +253,9 @@ inductive Request where
   /-- `upgrade`: carry the live sessions named, or every local one when none is, over to this
   linger's image. -/
   | upgrade (targets : List String)
+  /-- `serve`: answer the JSON-RPC requests standard input carries, one message a line, until it
+  ends. -/
+  | serve
   deriving Repr, DecidableEq
 
 /-- The operation a request performs. -/
@@ -267,6 +273,7 @@ def Request.op : Request → Commands.Op
   | .resize .. => .resize
   | .wait _ => .wait
   | .upgrade _ => .upgrade
+  | .serve => .serve
 
 /-- What a request does to the sessions it names, as the session model reads it: the message it
 sends each one's daemon, or the transition it takes. -/
@@ -292,6 +299,9 @@ inductive Act where
   /-- Ask each named session's daemon to replace its image with this linger's,
   `Wire.Msg.upgrade`. -/
   | upgrade
+  /-- Read JSON-RPC requests from standard input until it ends, and take each one's transition as
+  its method's command line would (`Serve.words`), answering on standard output. -/
+  | serve
   deriving Repr, DecidableEq
 
 /-- **What each request means**: the transition its operation takes. -/
@@ -310,6 +320,7 @@ def Request.act : Request → Act
   | .resize _ cols rows => .ask (.resize cols.toUInt32 rows.toUInt32)
   | .wait _ => .ask .wait
   | .upgrade _ => .upgrade
+  | .serve => .serve
 
 /-- A wrong part: a route on which `detach` takes `kill`'s transition, and every other request
 its own. -/
@@ -383,7 +394,7 @@ relayed a remote linger's status; each other finding belongs to the operations n
 @[expose]
 def Op.finds : Op → Api.Found → Bool
   | _, .done | _, .refused | _, .invalid | _, .unknown | _, .status _ => true
-  | op, .missing => op != .start
+  | op, .missing => op != .start && op != .serve
   | op, .late => op == .start || op == .resume || op == .wait
   | op, .unstarted _ => op == .attach || op == .start || op == .resume
   | op, .ended _ => op == .attach || op == .wait
@@ -530,3 +541,276 @@ def Phase.work : Phase → List (Step × Bool)
   | .unlocked step => [(step, false)]
 
 end Linger.App.Capture
+
+namespace Linger.App.Serve
+
+/-- A JSON value (RFC 8259), as `serve` reads and writes one. A number keeps the text it was
+written in, so that a request's id goes back exactly as it came. -/
+inductive Json where
+  /-- `null`. -/
+  | null
+  /-- `true` or `false`. -/
+  | bool (value : Bool)
+  /-- A number, as written. -/
+  | number (text : String)
+  /-- A string. -/
+  | str (value : String)
+  /-- An array. -/
+  | arr (items : List Json)
+  /-- An object, its members in order. -/
+  | obj (members : List (String × Json))
+  deriving Inhabited
+
+/-- The member of an object under `key`, the first one when it has several, and none of any other
+value. -/
+@[expose]
+def Json.member? (key : String) : Json → Option Json
+  | .obj members => members.lookup key
+  | _ => none
+
+/-- A string's text. -/
+@[expose]
+def Json.text? : Json → Option String
+  | .str value => some value
+  | _ => none
+
+/-- A number written as a natural number, in decimal digits alone. -/
+@[expose]
+def Json.nat? : Json → Option Nat
+  | .number text => if text.toList.all Char.isDigit then text.toNat? else none
+  | _ => none
+
+/-- A boolean. -/
+@[expose]
+def Json.flag? : Json → Option Bool
+  | .bool value => some value
+  | _ => none
+
+/-- An array of strings, their texts. -/
+@[expose]
+def Json.texts? : Json → Option (List String)
+  | .arr items => items.mapM Json.text?
+  | _ => none
+
+/-- The member `key` of `params`, as `read` takes it: none when it is missing, `null` or not
+what `read` takes. -/
+@[expose]
+def Json.need {α : Type} (params : Json) (key : String) (read : Json → Option α) : Option α :=
+  (params.member? key).bind read
+
+/-- The member `key` of `params`, as `read` takes it, or `default` when it is missing or `null`;
+none when it is something `read` does not take. -/
+@[expose]
+def Json.opt {α : Type} (params : Json) (key : String) (read : Json → Option α) (default : α) :
+    Option α :=
+  match params.member? key with
+  | none | some .null => some default
+  | some value => read value
+
+/-- The value of a base64 digit, in RFC 4648's alphabet: `A`–`Z`, `a`–`z`, `0`–`9`, `+` and `/`. -/
+@[expose]
+def Base64.digit (c : Char) : Option Nat :=
+  if 'A' ≤ c ∧ c ≤ 'Z' then some (c.toNat - 'A'.toNat)
+  else
+    if 'a' ≤ c ∧ c ≤ 'z' then some (c.toNat - 'a'.toNat + 26)
+    else
+      if '0' ≤ c ∧ c ≤ '9' then some (c.toNat - '0'.toNat + 52)
+      else if c = '+' then some 62 else if c = '/' then some 63 else none
+
+/-- The bytes padded base64 text encodes (RFC 4648, section 4): three bytes for each four digits,
+and two or one for a last group padded with one or two `=`; none for any other text. -/
+@[expose]
+def Base64.decode : List Char → Option (List UInt8)
+  | [] => some []
+  | [a, b, '=', '='] => do
+    let w ← digit a
+    let x ← digit b
+    pure [UInt8.ofNat (w * 4 + x / 16)]
+  | [a, b, c, '='] => do
+    let w ← digit a
+    let x ← digit b
+    let y ← digit c
+    pure [UInt8.ofNat (w * 4 + x / 16), UInt8.ofNat (x % 16 * 16 + y / 4)]
+  | a :: b :: c :: d :: rest => do
+    let w ← digit a
+    let x ← digit b
+    let y ← digit c
+    let z ← digit d
+    let tail ← decode rest
+    pure
+        (UInt8.ofNat (w * 4 + x / 16) ::
+          UInt8.ofNat (x % 16 * 16 + y / 4) :: UInt8.ofNat (y % 4 * 64 + z) :: tail)
+  | _ => none
+
+/-- The name an answer goes by, beside its code: its constructor's. -/
+@[expose]
+def answerName : Os.Answer → String
+  | .done => "done"
+  | .notDone => "notDone"
+  | .usage => "usage"
+  | .timedOut => "timedOut"
+  | .failed => "failed"
+  | .cannotRun => "cannotRun"
+  | .notFound => "notFound"
+  | .cancelled => "cancelled"
+  | .stopped _ => "stopped"
+  | .saved _ => "saved"
+  | .program _ => "program"
+
+/-- The methods `serve` answers as operations, each with the operation whose request it is and the
+word of that operation's command: every one is an ask, a request answered once, by its id. -/
+@[expose]
+def methods : List (String × Commands.Op × String) :=
+  [("sessions/list", .list, "ls"), ("session/start", .start, "start"),
+    ("session/resume", .resume, "resume"), ("session/send", .send, "send"),
+    ("session/detach", .detach, "detach"), ("session/kill", .kill, "kill"),
+    ("session/rename", .rename, "rename"), ("session/capture", .capture, "capture"),
+    ("session/resize", .resize, "resize"), ("session/wait", .wait, "wait")]
+
+/-- The standard input a method's command line reads: the bytes `session/send`'s `data` encodes
+in base64 (`Base64.decode`), and none for any other method. -/
+@[expose]
+def input (method : String) (params : Json) : Option (List UInt8) :=
+  if method = "session/send" then
+    (params.need "data" Json.text?).bind fun data => Base64.decode data.toList
+  else some []
+
+/-- The words of a method's command line after its command's: its options from the params'
+members and its target last, after `--` where the command reads one, so that a name that starts
+with `-` stays a name; none for params the method does not take. `session/send` is `send NAME -`,
+whose standard input is `input`'s. -/
+@[expose]
+def operands (method : String) (params : Json) : Option (List String) :=
+  if method = "sessions/list" then
+    (params.opt "names" Json.texts? []).map fun names => ["--porcelain", "--"] ++ names
+  else
+    if method = "session/start" then do
+      let name ← params.need "name" Json.text?
+      let program ← params.need "program" Json.text?
+      let args ← params.opt "args" Json.texts? []
+      pure ([name, program] ++ args)
+    else
+      if method = "session/rename" then do
+        let name ← params.need "name" Json.text?
+        let new ← params.need "new" Json.text?
+        pure [name, new]
+      else
+        if method = "session/capture" then do
+          let name ← params.need "name" Json.text?
+          let history ← params.opt "history" Json.flag? false
+          pure ((if history then ["--history"] else []) ++ ["--", name])
+        else
+          if method = "session/resize" then do
+            let name ← params.need "name" Json.text?
+            let cols ← params.need "cols" Json.nat?
+            let rows ← params.need "rows" Json.nat?
+            pure [name, toString cols, toString rows]
+          else
+            if method = "session/send" then
+              (params.need "name" Json.text?).map fun name => [name, "-"]
+            else (params.need "name" Json.text?).map fun name => [name]
+
+/-- **The command line a method and its params are**: its operation's command word (`methods`),
+then its `operands`; none for a method `methods` does not list or params it does not take. -/
+@[expose]
+def words (method : String) (params : Json) : Option (List String) :=
+  (methods.lookup method).bind fun (_, word) => (operands method params).map (word :: ·)
+
+/-- The protocol versions `serve` speaks. -/
+@[expose]
+def versions : List String := ["1"]
+
+/-- A request's id: a number, as written, or a string. -/
+inductive Id where
+  /-- A number, as written. -/
+  | number (text : String)
+  /-- A string. -/
+  | str (text : String)
+  deriving Repr, DecidableEq
+
+/-- An id as JSON. -/
+@[expose]
+def Id.json : Id → Json
+  | .number text => .number text
+  | .str text => .str text
+
+/-- What one line from the client is, as `serve` reads it. -/
+inductive Message where
+  /-- A request, which one response answers, by its id. -/
+  | request (id : Id) (method : String) (params : Json)
+  /-- A notification, which nothing answers. -/
+  | notification (method : String) (params : Json)
+  /-- No message: a line that is not JSON, when `unparsed`, or JSON that is no request, with the
+  id it carried, if any. -/
+  | invalid (id : Option Id) (unparsed : Bool)
+
+/-- What `serve` writes, one line each. -/
+inductive Outgoing where
+  /-- The result of the request with this id. -/
+  | result (id : Id) (value : Json)
+  /-- The error that answers the request with this id, or a line whose id it could not read, with
+  a JSON-RPC code, a message and linger's answer in `data`. -/
+  | error (id : Option Id) (code : Int) (message : String) (data : Json)
+  /-- A notification. -/
+  | notify (method : String) (params : Json)
+
+/-- Where a connection stands in its handshake: before `initialize`, answered with the version it
+chose and waiting for `initialized`, or ready. -/
+inductive Phase where
+  /-- No `initialize` answered yet. -/
+  | fresh
+  /-- `initialize` answered with this version; `initialized` not heard yet. -/
+  | negotiated (version : String)
+  /-- `initialized` heard: the connection speaks this version. -/
+  | ready (version : String)
+  deriving Repr, DecidableEq
+
+/-- What a connection hears. -/
+inductive Event where
+  /-- A line from the client, as `serve` read it. -/
+  | received (message : Message)
+
+/-- What a connection does. -/
+inductive Effect where
+  /-- Write this message. -/
+  | send (message : Outgoing)
+  /-- Perform this request, the command line's (`words`) with this standard input (`input`), as
+  the command line does, and answer the request with this id from its reply. -/
+  | perform (id : Id) (method : String) (request : Api.Request) (input : List UInt8)
+
+/-- The result of `initialize`: the protocol version chosen, the server, `linger` at its version,
+and its capabilities, the methods it answers and the notifications it may send. -/
+@[expose]
+def welcome (version linger : String) : Json :=
+  .obj
+    [("protocolVersion", .str version),
+      ("serverInfo", .obj [("name", .str "linger"), ("version", .str linger)]),
+      ("capabilities",
+        .obj
+          [("methods", .arr (("initialize" :: methods.map (·.1)).map .str)),
+            ("notifications", .arr [])])]
+
+/-- What a connection may write before it is ready: an error, or the result of `initialize`. -/
+@[expose]
+def Effect.Negotiating : Effect → Prop
+  | .send (.error ..) => True
+  | .send (.result _ value) => ∃ version linger, value = welcome version linger
+  | _ => False
+
+/-- Whether an effect answers the request with this id: a response to it, or performing it, whose
+reply the response gives. -/
+@[expose]
+def Effect.Answers (id : Id) : Effect → Prop
+  | .send (.result answered _) => answered = id
+  | .send (.error answered ..) => answered = some id
+  | .perform answered .. => answered = id
+  | .send (.notify ..) => False
+
+/-- A wrong part: a connection that answers every request at once with an empty result, whatever
+its handshake says, and otherwise steps as `step` does. -/
+@[expose]
+def eager {σ : Type} (step : σ → Event → σ × List Effect) (s : σ) : Event → σ × List Effect
+  | .received (.request id _ _) => (s, [.send (.result id .null)])
+  | ev => step s ev
+
+end Linger.App.Serve

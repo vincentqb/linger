@@ -2,6 +2,7 @@ module
 
 import Linger.Os.CoreCode.Answer
 import Linger.App.WorldCode
+import Linger.App.WorldCode.Serve
 import Linger.App.CoreCode.Entry
 import Linger.Selector.WorldCode
 import Linger.Import.WorldCode
@@ -37,7 +38,7 @@ def main (args : List String) : IO UInt32 := do
       | .selector readOnly =>
         Linger.Selector.Shell.run (← IO.appPath).toString Linger.Session.Shell.Names.nameOf readOnly
       | .session argv =>
-        Linger.App.Shell.main source argv
+        Linger.App.Shell.main source Linger.App.Serve.Shell.run argv
       | .malformed =>
         IO.eprintln "linger: malformed encoded command line"
         pure .usage
