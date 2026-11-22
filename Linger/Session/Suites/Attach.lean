@@ -604,15 +604,46 @@ def secretChecks (e : Env) : IO Unit := do
   let held ← filesHolding e.dir secret
   expect (ended && held.isEmpty) s!"nor does the end record a kill leaves: {held}"
 
+/-- A client's death costs its own client (`fault_contained`): a client killed with SIGKILL while
+its repaint streams, its terminal unread so that the repaint waits on it, leaves the roster alone,
+the session runs on, and a client attached alongside it keeps receiving the session's output. The
+history holds rows long enough that their repaint outgrows the buffers between the two. -/
+def deathChecks (e : Env) : IO Unit := do
+  let row := String.join (List.replicate 7 "0123456789")
+  let _ ← e.typeIn "dies" #["yes", row, "| head -n 20000; echo printed-$((6*7))"]
+  let printed ← waitFor patienceMs (return has (← e.out #["capture", "dies"]) "printed-42")
+  let keeper ← e.spawn #["attach", "dies"] 80 24
+  let shown ← keeper.awaitNeedle "printed-42"
+  let dying ← e.spawn #["attach", "dies"] 80 24
+  let joined ← waitFor patienceMs (return (← e.info "dies" "clients") == some "2")
+  Os.Shell.kill dying.pid 9
+  let killed ← dying.ending
+  dying.bye (sendDetach := false)
+  let left ← waitFor patienceMs (return (← e.info "dies" "clients") == some "1")
+  let running := (← e.info "dies" "pid").isSome
+  keeper.type "echo after-$((6*7))\r"
+  let heard ← keeper.awaitNeedle "after-42"
+  expect (printed && joined && killed.isSome && left && running)
+      "a client killed while its repaint streams leaves the roster alone, and its session runs on"
+  expect (shown && heard) "a client attached beside one that was killed keeps receiving output"
+  keeper.bye
+  e.killAll #["dies"]
+
+/-- A connection's end: through the daemon's own interpreter (`closeFeedback`), and a live client's
+death (`deathChecks`). -/
+def closeChecks (e : Env) : IO Unit := do
+  closeFeedback e
+  deathChecks e
+
 /-- The attach suite: attach, detach, reattach, mirroring, waiting, hand-back and
-scrollback, that input reaches no record, the alerts of another session's ask, the refusal of a daemon an older linger started, and that nothing of an ended
+scrollback, a client's death, that input reaches no record, the alerts of another session's ask, the refusal of a daemon an older linger started, and that nothing of an ended
 session's terminal session outlives it. -/
 def run : IO UInt32 :=
   Env.suite "attach" fun e => do
     secretChecks e
     alertChecks e
     sigkillChecks
-    closeFeedback e
+    closeChecks e
     focusChecks e
     unsizedChecks e
     olderDaemonChecks e

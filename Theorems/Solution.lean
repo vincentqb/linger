@@ -1685,18 +1685,6 @@ theorem log_bounded {α : Type} (cap : Nat) (entries : List α) :
   simp only [Nat.zero_add]
   omega
 
-theorem log_bounded_rejects_keep_all :
-    ¬∀ {α : Type} (cap : Nat) (entries : List α),
-        (entries.foldl (App.Serve.Log.keepAll cap) {}).tail = entries.drop (entries.length - cap) ∧
-          (entries.foldl (App.Serve.Log.keepAll cap) {}).dropped = entries.length - cap ∧
-          (entries.foldl (App.Serve.Log.keepAll cap) {}).tail.length +
-              (entries.foldl (App.Serve.Log.keepAll cap) {}).dropped =
-            entries.length := by
-  intro h
-  -- a log that keeps every entry keeps one past a cap of none
-  have := (@h Unit 0 [()]).1
-  simp [App.Serve.Log.keepAll] at this
-
 theorem one_renderer (v : Vt.Vt) (row : Vt.Row)
     (hv : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v) :
     ((App.Serve.Screen.render v).lines.map fun line => line.text ++ [0x0A]).flatten =
@@ -3178,19 +3166,6 @@ theorem reachableOut_bound {cap : Nat} {b : Buf.Buf}
     (h : Buf.OutputReach Buf.Buf.empty Buf.bufEnqueue Buf.bufAdvance cap b) :
     Buf.owedLen b ≤ cap := Buf.reachableOut_bound h
 
-theorem reachableOut_bound_rejects_uncut :
-    ¬∀ {cap : Nat} {b : Buf.Buf},
-        Buf.OutputReach Buf.Buf.empty (fun cap b more => ((Buf.bufEnqueue cap b more).1, false))
-            Buf.bufAdvance cap b →
-          Buf.owedLen b ≤ cap := by
-  intro h
-  have owed :=
-    @h 0 (Buf.bufEnqueue 0 Buf.Buf.empty (ByteArray.mk #[0])).1
-      (.enqueue Buf.Buf.empty (ByteArray.mk #[0]) .empty rfl)
-  obtain ⟨empty, -, -, -, appended, -⟩ := Buf.buf_observed 0 0 Buf.Buf.empty (ByteArray.mk #[0])
-  rw [appended, empty] at owed
-  exact absurd owed (by decide)
-
 theorem step_bytes_one_reply (s : State) (id : Nat) (chunk : List UInt8) :
     ((Session.step s (.bytes id chunk)).2.all (!·.rendered) ∨
         ∃ pre frames post,
@@ -3503,29 +3478,6 @@ theorem crash_resumes (afterCrash : Option ByteArray → ByteArray → Bool → 
     · exact ⟨_, by rw [found, resumes old hold], .inr ⟨rfl, rfl⟩⟩
     · exact ⟨_, by rw [found, resumes new hnew], .inl rfl⟩
 
-theorem crash_resumes_rejects_fresh :
-    ¬∀ (afterCrash : Option ByteArray → ByteArray → Bool → Option ByteArray),
-        Disk.Durable afterCrash →
-          ∀ (create synced : Bool) (old new : Checkpoint.Ckpt Vt.Vt),
-            Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
-                (Checkpoint.Decoded Checkpoint.loadBytes) old.vt →
-              Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
-                (Checkpoint.Decoded Checkpoint.loadBytes) new.vt →
-              ∃ c,
-                (fun (_ : Bool) (_ : Option ByteArray) =>
-                        (App.Recovery.fresh : App.Recovery (Checkpoint.Ckpt Vt.Vt)))
-                      create
-                      (afterCrash (some (Checkpoint.saveBytes old)) (Checkpoint.saveBytes new)
-                        synced) =
-                    .resume c ∧
-                  (c = { new with vt := new.vt.quiesce } ∨
-                    synced = false ∧ c = { old with vt := old.vt.quiesce }) := by
-  intro h
-  obtain ⟨_, fresh, -⟩ :=
-    h (fun _ new _ => some new) (fun _ _ => ⟨rfl, .inr rfl⟩) true true ⟨Vt.Vt.init 1 1, "", []⟩
-      ⟨Vt.Vt.init 1 1, "", []⟩ (.init 1 1) (.init 1 1)
-  cases fresh
-
 theorem unsaved_due (vt : Vt.Vt) (fields metaKv : List (String × String)) (pre post : List Event)
     (ev : Event) :
     (Session.step (Session.trace Session.step (State.boot vt fields metaKv) pre).1 ev).1.terminal ≠
@@ -3555,58 +3507,6 @@ theorem unsaved_due (vt : Vt.Vt) (fields metaKv : List (String × String)) (pre 
   intro changed unsaved
   exact
     Session.unsaved_due _ ev post (Session.boot_lastCkptMs_le vt fields metaKv pre) changed unsaved
-
-theorem unsaved_due_rejects_never :
-    ¬∀ (vt : Vt.Vt) (fields metaKv : List (String × String)) (pre post : List Event) (ev : Event),
-        (Session.step (Session.trace Session.step (State.boot vt fields metaKv) pre).1
-                  ev).1.terminal ≠
-              (Session.trace Session.step (State.boot vt fields metaKv) pre).1.terminal ∨
-            (Session.step (Session.trace Session.step (State.boot vt fields metaKv) pre).1
-                  ev).1.fieldList ≠
-              (Session.trace Session.step (State.boot vt fields metaKv) pre).1.fieldList →
-          Effect.checkpoint ∉
-            (Session.trace Session.step
-                (Session.trace Session.step (State.boot vt fields metaKv) pre).1 (ev :: post)).2 →
-          ∃ due,
-            due ≤ Session.clock pre + ckptIntervalMs ∧
-              (∃ wake,
-                (fun (_ : State) => (none : Option Nat))
-                      (Session.trace Session.step
-                          (Session.trace Session.step (State.boot vt fields metaKv) pre).1
-                          (ev :: post)).1 =
-                    some wake ∧
-                  wake ≤ due) ∧
-              ∀ now,
-                due ≤ now →
-                  Effect.checkpoint ∈
-                    (Session.step
-                        (Session.trace Session.step
-                            (Session.trace Session.step (State.boot vt fields metaKv) pre).1
-                            (ev :: post)).1
-                        (.tick now)).2 := by
-  intro h
-  have printed :
-    (Session.step (State.boot (Vt.Vt.init 2 1) [] []) (.ptyOut [0x41])).1.terminal =
-      (Vt.Vt.init 2 1).feed [0x41] :=
-    Session.step_ptyOut_vt _ _
-  have moved : ((Vt.Vt.init 2 1).feed [0x41]).cursorPos = (1, 0) := by decide +kernel
-  have home : (Vt.Vt.init 2 1).cursorPos = (0, 0) := by decide +kernel
-  have quiet :
-    Effect.checkpoint ∉ (Session.step (State.boot (Vt.Vt.init 2 1) [] []) (.ptyOut [0x41])).2 := by
-    rw [Session.step_ptyOut_effects]
-    simp [Session.broadcast, Session.State.boot]
-  obtain ⟨_, -, ⟨_, asleep, -⟩, -⟩ :=
-    h (Vt.Vt.init 2 1) [] [] [] [] (.ptyOut [0x41])
-      (.inl fun same => by
-        have := congrArg Vt.Vt.cursorPos same
-        change
-          ((Session.step (State.boot (Vt.Vt.init 2 1) [] [])
-                  (.ptyOut [0x41])).1.terminal).cursorPos =
-            (State.boot (Vt.Vt.init 2 1) [] []).terminal.cursorPos at this
-        rw [printed, moved] at this
-        exact absurd (this.trans home) (by decide))
-      (by simpa [Session.trace] using quiet)
-  cases asleep
 
 theorem checkpoint_metadata (pane : Import.Resurrect.Pane) (contents : Option String) :
     (Import.Resurrect.checkpoint pane contents).cwd = pane.dir ∧
@@ -3890,39 +3790,6 @@ theorem table_converges (s : App.Serve.State) (version : String) (id : App.Serve
       true_and] at sent
     exact ⟨_, _, sent, App.Serve.View.converges told latest keyed⟩
 
-theorem table_converges_rejects_queued :
-    ¬∀ (s : App.Serve.State) (version : String) (id : App.Serve.Id)
-        (told latest rows : List App.Serve.Record),
-        s.phase = .ready version →
-          s.subscription = some id →
-          s.told = some told →
-          s.latest = some latest →
-          (latest.map App.Serve.Record.key).Nodup →
-          (App.Serve.queued App.Serve.step s (.opened id rows)).2 = [] ∧
-            (App.Serve.queued App.Serve.step s (.opened id rows)).1.told = some rows ∧
-            (App.Serve.queued App.Serve.step s (.opened id rows)).1.latest = some rows ∧
-            (App.Serve.queued App.Serve.step s (.sampled rows)).2 = [] ∧
-            (App.Serve.queued App.Serve.step s (.sampled rows)).1.subscription = some id ∧
-            (App.Serve.queued App.Serve.step s (.sampled rows)).1.told = some told ∧
-            (App.Serve.queued App.Serve.step s (.sampled rows)).1.latest = some rows ∧
-            ∀ params,
-              App.Serve.Effect.send (.notify "sessions/changed" params) ∈
-                  (App.Serve.queued App.Serve.step s .writable).2 →
-                ∃ records gone,
-                  params = App.Serve.update id records gone ∧
-                    ∀ key,
-                      (App.Serve.View.apply (App.Serve.View.of told) records gone key).map
-                          App.Serve.Record.reading =
-                        (App.Serve.View.of latest key).map App.Serve.Record.reading := by
-  intro h
-  -- a listing would be queued as an update as it comes
-  have :=
-    (h
-        { stage := .ready "1", open? := some (.number "1"), toldRecords := some [],
-          latestRecords := some [] }
-        "1" (.number "1") [] [] [] rfl rfl rfl rfl (by simp)).2.2.2.1
-  simp [App.Serve.queued] at this
-
 theorem screen_table_exact (s : App.Serve.State) (version : String) (id : App.Serve.Id)
     (told latest screen : App.Serve.Screen) (left : App.Serve.Log App.Serve.Line)
     (ready : s.phase = .ready version) :
@@ -4191,23 +4058,6 @@ theorem offloop_coalesces {W : Type} (earlier : List (Offloop.Op W)) (w : W) (en
           (ops.filter Offloop.Op.isDone).length + 1 :=
   ⟨Session.Offloop.latest_started earlier w ends, Session.Offloop.started_bound⟩
 
-theorem offloop_coalesces_rejects_eager :
-    ¬∀ {W : Type} (earlier : List (Offloop.Op W)) (w : W) (ends : Nat),
-        (((earlier ++ (.ask w : Offloop.Op W) :: List.replicate ends .done).foldl
-                  (Offloop.cycle Offloop.eager Offloop.done) ({}, [])).2.getLast? =
-              some w ∨
-            ends = 0 ∧
-              ((earlier ++ (.ask w : Offloop.Op W) :: List.replicate ends .done).foldl
-                    (Offloop.cycle Offloop.eager Offloop.done) ({}, [])).1.waiting =
-                some w) ∧
-          ∀ ops : List (Offloop.Op W),
-            (ops.foldl (Offloop.cycle Offloop.eager Offloop.done) ({}, [])).2.length ≤
-              (ops.filter Offloop.Op.isDone).length + 1 := by
-  intro h
-  -- two writes asked for at once both start, neither waiting for the other
-  have twice := (h (W := Unit) [] () 0).2 [.ask (), .ask ()]
-  simp [Offloop.cycle, Offloop.eager, Offloop.Op.isDone] at twice
-
 theorem capture_waits_unlocked :
     (∀ steps,
         (App.Capture.phases steps).flatMap App.Capture.Phase.work = App.Capture.work steps false) ∧
@@ -4215,33 +4065,6 @@ theorem capture_waits_unlocked :
       (.load, true) ∈ App.Capture.work App.Capture.plan false ∧
       ∀ step, (step, true) ∈ App.Capture.work App.Capture.plan false → step.waitsOutside = false :=
   ⟨App.Capture.phases_work, App.Capture.waits_unlocked⟩
-
-theorem capture_waits_unlocked_rejects_inside :
-    ¬((∀ steps,
-          (App.Capture.phases steps).flatMap App.Capture.Phase.work =
-            App.Capture.work steps false) ∧
-        (App.Capture.work [.acquire, .load, .render, .write, .release] false).map Prod.fst =
-          [.load, .render, .write] ∧
-        (.load, true) ∈ App.Capture.work [.acquire, .load, .render, .write, .release] false ∧
-        ∀ step,
-          (step, true) ∈ App.Capture.work [.acquire, .load, .render, .write, .release] false →
-            step.waitsOutside = false) := by
-  -- the write runs holding the locks, and it waits on whoever reads it
-  rintro ⟨-, -, -, unheld⟩
-  exact absurd (unheld .write (by decide)) (by decide)
-
-theorem capture_waits_unlocked_rejects_held :
-    ¬((∀ steps,
-          ((fun (steps : List App.Capture.Step) => [App.Capture.Phase.locked steps]) steps).flatMap
-              App.Capture.Phase.work =
-            App.Capture.work steps false) ∧
-        (App.Capture.work App.Capture.plan false).map Prod.fst = [.load, .render, .write] ∧
-        (.load, true) ∈ App.Capture.work App.Capture.plan false ∧
-        ∀ step,
-          (step, true) ∈ App.Capture.work App.Capture.plan false → step.waitsOutside = false) := by
-  -- a shell that holds the locks through every step, the write included
-  rintro ⟨phased, -⟩
-  exact absurd (phased [.write]) (by decide)
 
 theorem classify_iff (o : Status.Obs) (s : Status.Status) : Status.classify o = s ↔ Status.Is s o :=
   Status.classify_iff o s
@@ -4252,6 +4075,214 @@ theorem classify_iff_rejects_idle :
           Status.Is s o := by
   intro h
   exact absurd ((h { known := false } ⟨.none, .unknown⟩).mpr ⟨⟨rfl, rfl⟩, rfl⟩) (by decide)
+
+/-- A disk that keeps every save whole, which `Disk.Durable` allows: a fault's kill needs one. -/
+private theorem keeps_new :
+    Disk.Durable (fun (_ : Option ByteArray) (new : ByteArray) (_ : Bool) => some new) := fun _ _ =>
+  ⟨rfl, .inr rfl⟩
+
+theorem fault_contained (f : App.Fault)
+    (afterCrash : Option ByteArray → ByteArray → Bool → Option ByteArray)
+    (durable : Disk.Durable afterCrash) :
+    App.Fault.Contained App.Recovery.decide Checkpoint.saveBytes Checkpoint.loadBytes Vt.Vt.init
+      Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Session.step State.boot State.terminal State.fieldList
+      State.nextTick State.roster Buf.Buf.empty Buf.bufOffer Buf.bufEnqueue Buf.bufAdvance
+      Buf.owedLen App.Serve.step App.Serve.State.phase App.Serve.State.subscription
+      App.Serve.State.told App.Serve.State.latest App.Serve.Log.push Listing.rowStatus
+      Status.classify App.Capture.phases App.Capture.plan Offloop.ask Offloop.done afterCrash f
+      f.cost := by
+  cases f
+  · exact ⟨crash_resumes afterCrash durable, unsaved_due⟩
+  · intro s id
+    obtain ⟨frame, -⟩ := Session.step_closed_frame s id
+    refine ⟨?_, ?_, ?_, Session.closed_effects s id⟩ <;> rw [frame] <;> rfl
+  · exact ⟨reachableIn_bound, reachableOut_bound, table_converges, log_bounded⟩
+  · exact (classify_iff _ _).mpr ⟨⟨rfl, rfl⟩, rfl⟩
+  · exact (classify_iff _ _).mpr ⟨⟨rfl, rfl⟩, rfl⟩
+  · exact ⟨capture_waits_unlocked, offloop_coalesces⟩
+
+theorem fault_contained_rejects_uncut :
+    ¬∀ f afterCrash,
+        Disk.Durable afterCrash →
+          App.Fault.Contained App.Recovery.decide Checkpoint.saveBytes Checkpoint.loadBytes
+            Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Session.step State.boot State.terminal
+            State.fieldList State.nextTick State.roster Buf.Buf.empty Buf.bufOffer
+            (fun cap b more => ((Buf.bufEnqueue cap b more).1, false)) Buf.bufAdvance Buf.owedLen
+            App.Serve.step App.Serve.State.phase App.Serve.State.subscription App.Serve.State.told
+            App.Serve.State.latest App.Serve.Log.push Listing.rowStatus Status.classify
+            App.Capture.phases App.Capture.plan Offloop.ask Offloop.done afterCrash f f.cost := by
+  intro h
+  obtain ⟨-, out, -⟩ := h .slowClient _ keeps_new
+  have owed :=
+    @out 0 (Buf.bufEnqueue 0 Buf.Buf.empty (ByteArray.mk #[0])).1
+      (.enqueue Buf.Buf.empty (ByteArray.mk #[0]) .empty rfl)
+  obtain ⟨empty, -, -, -, appended, -⟩ := Buf.buf_observed 0 0 Buf.Buf.empty (ByteArray.mk #[0])
+  rw [appended, empty] at owed
+  exact absurd owed (by decide)
+
+theorem fault_contained_rejects_fresh :
+    ¬∀ f afterCrash,
+        Disk.Durable afterCrash →
+          App.Fault.Contained (fun _ _ => .fresh) Checkpoint.saveBytes Checkpoint.loadBytes
+            Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Session.step State.boot State.terminal
+            State.fieldList State.nextTick State.roster Buf.Buf.empty Buf.bufOffer Buf.bufEnqueue
+            Buf.bufAdvance Buf.owedLen App.Serve.step App.Serve.State.phase
+            App.Serve.State.subscription App.Serve.State.told App.Serve.State.latest
+            App.Serve.Log.push Listing.rowStatus Status.classify App.Capture.phases App.Capture.plan
+            Offloop.ask Offloop.done afterCrash f f.cost := by
+  intro h
+  obtain ⟨crash, -⟩ := h .daemonCrash _ keeps_new
+  obtain ⟨_, fresh, -⟩ :=
+    crash true true ⟨Vt.Vt.init 1 1, "", []⟩ ⟨Vt.Vt.init 1 1, "", []⟩ (.init 1 1) (.init 1 1)
+  cases fresh
+
+theorem fault_contained_rejects_never :
+    ¬∀ f afterCrash,
+        Disk.Durable afterCrash →
+          App.Fault.Contained App.Recovery.decide Checkpoint.saveBytes Checkpoint.loadBytes
+            Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Session.step State.boot State.terminal
+            State.fieldList (fun _ => none) State.roster Buf.Buf.empty Buf.bufOffer Buf.bufEnqueue
+            Buf.bufAdvance Buf.owedLen App.Serve.step App.Serve.State.phase
+            App.Serve.State.subscription App.Serve.State.told App.Serve.State.latest
+            App.Serve.Log.push Listing.rowStatus Status.classify App.Capture.phases App.Capture.plan
+            Offloop.ask Offloop.done afterCrash f f.cost := by
+  intro h
+  obtain ⟨-, unsaved⟩ := h .daemonCrash _ keeps_new
+  have printed :
+    (Session.step (State.boot (Vt.Vt.init 2 1) [] []) (.ptyOut [0x41])).1.terminal =
+      (Vt.Vt.init 2 1).feed [0x41] :=
+    Session.step_ptyOut_vt _ _
+  have moved : ((Vt.Vt.init 2 1).feed [0x41]).cursorPos = (1, 0) := by decide +kernel
+  have home : (Vt.Vt.init 2 1).cursorPos = (0, 0) := by decide +kernel
+  have quiet :
+    Effect.checkpoint ∉ (Session.step (State.boot (Vt.Vt.init 2 1) [] []) (.ptyOut [0x41])).2 := by
+    rw [Session.step_ptyOut_effects]
+    simp [Session.broadcast, Session.State.boot]
+  obtain ⟨_, -, ⟨_, asleep, -⟩, -⟩ :=
+    unsaved (Vt.Vt.init 2 1) [] [] [] [] (.ptyOut [0x41])
+      (.inl fun same => by
+        have := congrArg Vt.Vt.cursorPos same
+        change
+          ((Session.step (State.boot (Vt.Vt.init 2 1) [] [])
+                  (.ptyOut [0x41])).1.terminal).cursorPos =
+            (State.boot (Vt.Vt.init 2 1) [] []).terminal.cursorPos at this
+        rw [printed, moved] at this
+        exact absurd (this.trans home) (by decide))
+      (by simpa [Session.trace] using quiet)
+  cases asleep
+
+theorem fault_contained_rejects_exits :
+    ¬∀ f afterCrash,
+        Disk.Durable afterCrash →
+          App.Fault.Contained App.Recovery.decide Checkpoint.saveBytes Checkpoint.loadBytes
+            Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce (App.Fault.exitsOnClose Session.step)
+            State.boot State.terminal State.fieldList State.nextTick State.roster Buf.Buf.empty
+            Buf.bufOffer Buf.bufEnqueue Buf.bufAdvance Buf.owedLen App.Serve.step
+            App.Serve.State.phase App.Serve.State.subscription App.Serve.State.told
+            App.Serve.State.latest App.Serve.Log.push Listing.rowStatus Status.classify
+            App.Capture.phases App.Capture.plan Offloop.ask Offloop.done afterCrash f f.cost := by
+  intro h
+  -- the daemon stops as the client leaves
+  obtain ⟨-, -, -, effects⟩ := h .clientDeath _ keeps_new (State.boot (Vt.Vt.init 1 1) [] []) 0
+  rcases effects .exit (by simp [App.Fault.exitsOnClose]) with stops | stops <;> cases stops
+
+theorem fault_contained_rejects_queued :
+    ¬∀ f afterCrash,
+        Disk.Durable afterCrash →
+          App.Fault.Contained App.Recovery.decide Checkpoint.saveBytes Checkpoint.loadBytes
+            Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Session.step State.boot State.terminal
+            State.fieldList State.nextTick State.roster Buf.Buf.empty Buf.bufOffer Buf.bufEnqueue
+            Buf.bufAdvance Buf.owedLen (App.Serve.queued App.Serve.step) App.Serve.State.phase
+            App.Serve.State.subscription App.Serve.State.told App.Serve.State.latest
+            App.Serve.Log.push Listing.rowStatus Status.classify App.Capture.phases App.Capture.plan
+            Offloop.ask Offloop.done afterCrash f f.cost := by
+  intro h
+  obtain ⟨-, -, table, -⟩ := h .slowClient _ keeps_new
+  -- a listing would be queued as an update as it comes
+  have :=
+    (table
+        { stage := .ready "1", open? := some (.number "1"), toldRecords := some [],
+          latestRecords := some [] }
+        "1" (.number "1") [] [] [] rfl rfl rfl rfl (by simp)).2.2.2.1
+  simp [App.Serve.queued] at this
+
+theorem fault_contained_rejects_keep_all :
+    ¬∀ f afterCrash,
+        Disk.Durable afterCrash →
+          App.Fault.Contained App.Recovery.decide Checkpoint.saveBytes Checkpoint.loadBytes
+            Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Session.step State.boot State.terminal
+            State.fieldList State.nextTick State.roster Buf.Buf.empty Buf.bufOffer Buf.bufEnqueue
+            Buf.bufAdvance Buf.owedLen App.Serve.step App.Serve.State.phase
+            App.Serve.State.subscription App.Serve.State.told App.Serve.State.latest
+            App.Serve.Log.keepAll Listing.rowStatus Status.classify App.Capture.phases
+            App.Capture.plan Offloop.ask Offloop.done afterCrash f f.cost := by
+  intro h
+  obtain ⟨-, -, -, log⟩ := h .slowClient _ keeps_new
+  -- a log that keeps every entry keeps one past a cap of none
+  have := (@log Unit 0 [()]).1
+  simp [App.Serve.Log.keepAll] at this
+
+theorem fault_contained_rejects_idle :
+    ¬∀ f afterCrash,
+        Disk.Durable afterCrash →
+          App.Fault.Contained App.Recovery.decide Checkpoint.saveBytes Checkpoint.loadBytes
+            Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Session.step State.boot State.terminal
+            State.fieldList State.nextTick State.roster Buf.Buf.empty Buf.bufOffer Buf.bufEnqueue
+            Buf.bufAdvance Buf.owedLen App.Serve.step App.Serve.State.phase
+            App.Serve.State.subscription App.Serve.State.told App.Serve.State.latest
+            App.Serve.Log.push (fun _ => ⟨.none, .idle⟩) Status.classify App.Capture.phases
+            App.Capture.plan Offloop.ask Offloop.done afterCrash f f.cost := by
+  intro h
+  -- a daemon that sent nothing would read as idle
+  have := h .stuckDaemon _ keeps_new
+  simp [App.Fault.Contained, App.Fault.cost] at this
+
+theorem fault_contained_rejects_inside :
+    ¬∀ f afterCrash,
+        Disk.Durable afterCrash →
+          App.Fault.Contained App.Recovery.decide Checkpoint.saveBytes Checkpoint.loadBytes
+            Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Session.step State.boot State.terminal
+            State.fieldList State.nextTick State.roster Buf.Buf.empty Buf.bufOffer Buf.bufEnqueue
+            Buf.bufAdvance Buf.owedLen App.Serve.step App.Serve.State.phase
+            App.Serve.State.subscription App.Serve.State.told App.Serve.State.latest
+            App.Serve.Log.push Listing.rowStatus Status.classify App.Capture.phases
+            [.acquire, .load, .render, .write, .release] Offloop.ask Offloop.done afterCrash f
+            f.cost := by
+  intro h
+  -- the write runs holding the locks, and it waits on whoever reads it
+  obtain ⟨⟨-, -, -, unheld⟩, -⟩ := h .optionalWork _ keeps_new
+  exact absurd (unheld .write (by decide)) (by decide)
+
+theorem fault_contained_rejects_held :
+    ¬∀ f afterCrash,
+        Disk.Durable afterCrash →
+          App.Fault.Contained App.Recovery.decide Checkpoint.saveBytes Checkpoint.loadBytes
+            Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Session.step State.boot State.terminal
+            State.fieldList State.nextTick State.roster Buf.Buf.empty Buf.bufOffer Buf.bufEnqueue
+            Buf.bufAdvance Buf.owedLen App.Serve.step App.Serve.State.phase
+            App.Serve.State.subscription App.Serve.State.told App.Serve.State.latest
+            App.Serve.Log.push Listing.rowStatus Status.classify (fun steps => [.locked steps])
+            App.Capture.plan Offloop.ask Offloop.done afterCrash f f.cost := by
+  intro h
+  -- a shell that holds the locks through every step, the write included
+  obtain ⟨⟨phased, -⟩, -⟩ := h .optionalWork _ keeps_new
+  exact absurd (phased [.write]) (by decide)
+
+theorem fault_contained_rejects_eager :
+    ¬∀ f afterCrash,
+        Disk.Durable afterCrash →
+          App.Fault.Contained App.Recovery.decide Checkpoint.saveBytes Checkpoint.loadBytes
+            Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Session.step State.boot State.terminal
+            State.fieldList State.nextTick State.roster Buf.Buf.empty Buf.bufOffer Buf.bufEnqueue
+            Buf.bufAdvance Buf.owedLen App.Serve.step App.Serve.State.phase
+            App.Serve.State.subscription App.Serve.State.told App.Serve.State.latest
+            App.Serve.Log.push Listing.rowStatus Status.classify App.Capture.phases App.Capture.plan
+            Offloop.eager Offloop.done afterCrash f f.cost := by
+  intro h
+  obtain ⟨-, offloop⟩ := h .optionalWork _ keeps_new
+  -- two writes asked for at once both start, neither waiting for the other
+  have twice := (offloop (W := Unit) [] () 0).2 [.ask (), .ask ()]
+  simp [Offloop.cycle, Offloop.eager, Offloop.Op.isDone] at twice
 
 theorem working_declared (s : State) :
     s.seen.progress = s.owned.progress ∧

@@ -1030,7 +1030,11 @@ private def cmdList (env : Env) (porcelain : Bool)
   for ((host, _), output) in remotes.zip remote.toList do
     match output with
     | none =>
-      rows := rows ++ [("host", host) :: Linger.Display.Listing.statusFields default]
+      rows :=
+        rows ++
+          [("host", host) ::
+              Linger.Display.Listing.statusFields
+                (Linger.Display.Status.classify { known := false })]
     | some output =>
       for row in Linger.Target.Remote.parse output do
         -- a remote row is built from what the peer's porcelain says about identity

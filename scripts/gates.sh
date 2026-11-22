@@ -413,7 +413,7 @@ import_closure packages/input/Input/Proofs.lean 'public import Input.CoreCode;im
 import_closure packages/os/Os/CoreSpec.lean ''
 import_closure packages/os/Os/CoreCode/Wait.lean ''
 import_closure Linger/App/CoreCode/Entry.lean 'public import Linger.App.CoreSpec;import Linger.Target.CoreSpec;import Linger.Target.CoreCode.Remote;'
-import_closure Linger/App/CoreSpec.lean 'public import Linger.Os.CoreSpec;public import Linger.Session.CoreSpec;'
+import_closure Linger/App/CoreSpec.lean 'public import Linger.Os.CoreSpec;public import Linger.Session.CoreSpec;public import Linger.Display.CoreSpec;'
 import_closure Linger/Target/CoreCode/Name.lean 'import Linger.Target.CoreSpec;'
 import_closure Linger/Target/CoreCode/Remote.lean 'import Linger.Target.CoreCode.Name;public import Linger.Target.CoreSpec;'
 import_closure Linger/Display/CoreCode/Title.lean 'import Linger.Target.CoreCode.Name;'
@@ -734,7 +734,7 @@ done
 cli_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/WorldCode.lean Linger/App/WorldCode/Api.lean Linger/App/CoreCode/Api.lean)"
 for tie in \
   'match Linger[.]Target[.]Remote[.]checkHosts hosts with [|] [.]ok l => return some [(]l[.]map fun host => [(]host, Linger[.]Target[.]Remote[.]transportFor config host[)][)] [|] [.]error e => throw [(]IO[.]userError e[)]' \
-  'for [(][(]host, _[)], output[)] in remotes[.]zip remote[.]toList do match output with [|] none => rows := rows [+][+] [[][(]"host", host[)] :: Linger[.]Display[.]Listing[.]statusFields default[]] [|] some output => for row in Linger[.]Target[.]Remote[.]parse output do' \
+  'for [(][(]host, _[)], output[)] in remotes[.]zip remote[.]toList do match output with [|] none => rows := rows [+][+] [[][(]"host", host[)] :: Linger[.]Display[.]Listing[.]statusFields [(]Linger[.]Display[.]Status[.]classify [{] known := false [}][)][]] [|] some output => for row in Linger[.]Target[.]Remote[.]parse output do' \
   '[|] some [(]porcelain, hosts, [[][]][)] => some [(][.]every porcelain hosts[)]' \
   '[|] [.]every porcelain hosts => do match ← resolveRemotes env hosts with [|] some remotes => cmdList env porcelain remotes' \
   'let withColor := Linger[.]Os[.]Env[.]withColor [(]← [(]← IO[.]getStdout[)][.]isTty[)] [(]← IO[.]getEnv "NO_COLOR"[)] [(]← IO[.]getEnv "TERM"[)] let named := rows[.]map fun info => [(]match info[.]lookup "name", info[.]lookup "host" with [|] none, some host => [(]"name", "@" [+][+] host[)] :: info [|] _, _ => info[)][.]filter fun kv => [(]Linger[.]App[.]Fields[.]table[.]map Linger[.]App[.]Fields[.]Field[.]key[)][.]contains kv[.]1 let ordered := Linger[.]Display[.]View[.]sort Linger[.]Display[.]Listing[.]statusOf named let width ← humanWidth let home ← accountHome writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor width [(]ordered[.]map [(]Linger[.]Display[.]Listing[.]atHome home[)][)][)][.]toArray[)]' \
@@ -1181,7 +1181,7 @@ for tie in \
     || fail "a stop signal ends a daemon other than as the session's event, or its end record is not the session's: $tie"
 done
 # A daemon's checkpoint saves and record writes start on a thread of their own, as
-# `Session.Offloop.ask` decides (`offloop_coalesces`): while one runs, a later one waits in place
+# `Session.Offloop.ask` decides (`fault_contained`): while one runs, a later one waits in place
 # of any that waited, so a slow disk holds up no answer and writes never queue.
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def Offloop[.]ask [(]w : Offloop[)] [(]write : IO Unit[)] : IO Offloop := do match Linger[.]Session[.]Offloop[.]ask w write with [|] [(]w, none[)] => return w [|] [(]w, some write[)] => return [{] w with running := some [(]← IO[.]asTask write Task[.]Priority[.]dedicated[)] [}]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "an off-loop write starts other than as Session.Offloop.ask decides, on a thread of its own"
@@ -1464,7 +1464,7 @@ done
 # A name's end record and a session's checkpoint, a daemon's or an imported one, are replaced
 # whole and durably (`Os.Shell.replaceFile`): a temporary sibling made private, written and
 # flushed, renamed over the file, and the directory flushed, the protocol the world claims
-# `Record.Kept` (`record_answer`) and `Disk.Durable` (`crash_resumes`) take the file system to
+# `Record.Kept` (`record_answer`) and `Disk.Durable` (`fault_contained`) take the file system to
 # honor. The agent suite reads records after their sessions end, the resume suite reads both
 # after a daemon killed while it saves, and the interop suite reads an imported checkpoint.
 record_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/WorldCode/Record.lean)"
@@ -1479,7 +1479,7 @@ printf '%s\n' "$os_shell_code" | CG_RE='(^|[[:space:]])def replaceFile [(]path :
   || fail "Os.Shell.replaceFile no longer makes its temporary file private and flushes it before its rename and the directory after it"
 [ "$(code_count 'IO[.]FS[.]rename' 'Linger/Session/WorldCode/*')" -eq 0 ] \
   || fail "a session file is renamed into place outside Os.Shell.replaceFile, which flushes it"
-# `capture` of a saved session takes the steps of `Capture.plan` (`capture_waits_unlocked`) in
+# `capture` of a saved session takes the steps of `Capture.plan` (`fault_contained`) in
 # the phases `Capture.phases` cuts them into, each locked one inside one `withSessionLock`, which
 # hold the locks where `Capture.work` reads them held: it loads and renders holding both locks
 # and writes once it has let them go. The robust suite resumes a session while a capture of it

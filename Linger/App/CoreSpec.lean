@@ -2,6 +2,7 @@ module
 
 public import Linger.Os.CoreSpec
 public import Linger.Session.CoreSpec
+public import Linger.Display.CoreSpec
 
 public section
 
@@ -1321,3 +1322,184 @@ def HistoryLog {σ : Type} (watching : σ → Id → Option Watch) (step : σ �
         watching (step s (.flush id)).1 id = some (.history {}))
 
 end Linger.App.Serve
+
+namespace Linger.App
+
+/-! ## Faults and what they may cost -/
+
+/-- A fault linger contains: one of its own processes fails, or a party it talks to stops
+answering or reading. -/
+inductive Fault where
+  /-- A daemon crashes: its process ends without its session's ending, as a crash, SIGKILL or a
+  power loss ends it. -/
+  | daemonCrash
+  /-- A client dies: its connection ends at any point of what it was doing. -/
+  | clientDeath
+  /-- A client sends more than its session's program reads, or stops reading what it is sent. -/
+  | slowClient
+  /-- A daemon does not answer, before its reply or part way through it. -/
+  | stuckDaemon
+  /-- A remote host does not answer. -/
+  | remoteHost
+  /-- Optional work is slow: a disk that saves slowly, or a reader that does not read what a
+  capture writes. -/
+  | optionalWork
+  deriving DecidableEq, Repr
+
+/-- What a fault may cost. -/
+inductive Fault.Cost where
+  /-- Its own session and no other, since a daemon holds its own session alone. -/
+  | session
+  /-- Its own client, and of the daemon and `serve` no more than the caps of what they keep for
+  it. -/
+  | client
+  /-- No session and no client: the work that needs none of it waits on it no longer than a
+  declared bound. -/
+  | bound
+  deriving DecidableEq, Repr
+
+/-- What each fault may cost: a daemon that crashes or does not answer, and a remote host that
+does not answer, their own sessions; a client that dies or reads slowly its own client; and
+optional work a declared bound. -/
+@[expose]
+def Fault.cost : Fault → Fault.Cost
+  | .daemonCrash | .stuckDaemon | .remoteHost => .session
+  | .clientDeath | .slowClient => .client
+  | .optionalWork => .bound
+
+/-- A wrong transition: `step`, which also stops the daemon when a client's connection ends, so
+that a client's death costs its whole session. The headline that a fault costs at most its own
+session or client is shown to reject it. -/
+@[expose]
+def Fault.exitsOnClose {S P : Type} (step : S → Session.Event → S × List (Session.Effect P))
+    (s : S) : Session.Event → S × List (Session.Effect P)
+  | .closed id => ((step s (.closed id)).1, (step s (.closed id)).2 ++ [.exit])
+  | ev => step s ev
+
+/-- **A fault costs at most its own session or client, plus a declared bound elsewhere**, of the
+program whose parts these are, where `afterCrash` is what a crash leaves at a checkpoint's path, as
+`Session.Disk.Durable` speaks of it: a fault at its own cost (`Fault.cost`) is contained when the
+claims that bound it hold, and a fault at another cost is not, so the claim fixes each cost. A
+daemon that crashes costs its own session back to its last save: resuming gives back the last save
+whose flushes returned, or the one then running, never a fresh session, and a session asks for a
+save within `ckptIntervalMs` of every change no save holds, by the clock its ticks give it. A client
+that dies costs its own client: its connection's end drops it alone from the roster, keeps the
+terminal and the record, and asks for no more than a save and the report that the program lost
+focus. A client that floods its session or stops reading costs its own client: the pty's input queue
+and every client's output queue the daemon keeps owe at most their caps; `serve` holds what it last
+told a subscriber and the latest records, never a queue, and its free writer brings the subscriber's
+view to the latest; and a log keeps its last entries, at most its cap, and counts the ones it
+dropped. A daemon that does not answer costs its own row, a live socket that sent nothing, which
+reads `?` with no attention, and a remote host that does not answer its own record, an observation
+with no answer, which reads the same. Optional work costs no session or client: a capture holds the
+name's locks only while it loads and renders, and the writes a daemon does off its loop coalesce,
+the last asked for the last to start. -/
+@[expose]
+def Fault.Contained {V S P B σ : Type}
+    (decide : Bool → Option ByteArray → Recovery (Session.Checkpoint.Ckpt V))
+    (saveBytes : Session.Checkpoint.Ckpt V → ByteArray)
+    (loadBytes : ByteArray → Option (Session.Checkpoint.Ckpt V)) (init : Nat → Nat → V)
+    (feed : V → List UInt8 → V) (resize : V → Nat → Nat → V) (quiesce : V → V)
+    (step : S → Session.Event → S × List (Session.Effect P))
+    (boot : V → List (String × String) → List (String × String) → S) (terminal : S → V)
+    (fieldList : S → List (String × String)) (nextTick : S → Option Nat)
+    (roster : S → List Session.Client) (empty : B) (offer enqueue : Nat → B → ByteArray → B × Bool)
+    (advance : B → Nat → B) (owedLen : B → Nat) (serve : σ → Serve.Event → σ × List Serve.Effect)
+    (phase : σ → Serve.Phase) (subscription : σ → Option Serve.Id)
+    (told latest : σ → Option (List Serve.Record))
+    (push : {α : Type} → Nat → Serve.Log α → α → Serve.Log α)
+    (rowStatus : Display.Listing.Row → Display.Status.Status)
+    (classify : Display.Status.Obs → Display.Status.Status)
+    (phases : List Capture.Step → List Capture.Phase) (plan : List Capture.Step)
+    (ask : {R W : Type} → Session.Offloop R W → W → Session.Offloop R W × Option W)
+    (done : {R W : Type} → Session.Offloop R W → Session.Offloop R W × Option W)
+    (afterCrash : Option ByteArray → ByteArray → Bool → Option ByteArray) :
+    Fault → Fault.Cost → Prop
+  | .daemonCrash, .session =>
+    (∀ (create synced : Bool) (old new : Session.Checkpoint.Ckpt V),
+        Terminal.Vt.Live init feed resize quiesce (Session.Checkpoint.Decoded loadBytes) old.vt →
+          Terminal.Vt.Live init feed resize quiesce (Session.Checkpoint.Decoded loadBytes) new.vt →
+          ∃ c,
+            decide create (afterCrash (some (saveBytes old)) (saveBytes new) synced) = .resume c ∧
+              (c = { new with vt := quiesce new.vt } ∨
+                synced = false ∧ c = { old with vt := quiesce old.vt })) ∧
+      ∀ (vt : V) (fields metaKv : List (String × String)) (pre post : List Session.Event)
+        (ev : Session.Event),
+        terminal (step (Session.trace step (boot vt fields metaKv) pre).1 ev).1 ≠
+              terminal (Session.trace step (boot vt fields metaKv) pre).1 ∨
+            fieldList (step (Session.trace step (boot vt fields metaKv) pre).1 ev).1 ≠
+              fieldList (Session.trace step (boot vt fields metaKv) pre).1 →
+          Session.Effect.checkpoint ∉
+            (Session.trace step (Session.trace step (boot vt fields metaKv) pre).1 (ev :: post)).2 →
+          ∃ due,
+            due ≤ Session.clock pre + Session.ckptIntervalMs ∧
+              (∃ wake,
+                nextTick
+                      (Session.trace step (Session.trace step (boot vt fields metaKv) pre).1
+                          (ev :: post)).1 =
+                    some wake ∧
+                  wake ≤ due) ∧
+              ∀ now,
+                due ≤ now →
+                  Session.Effect.checkpoint ∈
+                    (step
+                        (Session.trace step (Session.trace step (boot vt fields metaKv) pre).1
+                            (ev :: post)).1
+                        (.tick now)).2
+  | .clientDeath, .client =>
+    ∀ (s : S) (id : Nat),
+      roster (step s (.closed id)).1 = (roster s).filter (·.id != id) ∧
+        terminal (step s (.closed id)).1 = terminal s ∧
+        fieldList (step s (.closed id)).1 = fieldList s ∧
+        ∀ eff ∈ (step s (.closed id)).2, eff = .checkpoint ∨ eff = .writePty [0x1B, 0x5B, 0x4F]
+  | .slowClient, .client =>
+    (∀ {cap : Nat} {b : B}, Session.Buf.InputReach empty offer advance cap b → owedLen b ≤ cap) ∧
+      (∀ {cap : Nat} {b : B},
+        Session.Buf.OutputReach empty enqueue advance cap b → owedLen b ≤ cap) ∧
+      (∀ (s : σ) (version : String) (id : Serve.Id) (was now rows : List Serve.Record),
+        phase s = .ready version →
+          subscription s = some id →
+          told s = some was →
+          latest s = some now →
+          (now.map Serve.Record.key).Nodup →
+          (serve s (.opened id rows)).2 = [] ∧
+            told (serve s (.opened id rows)).1 = some rows ∧
+            latest (serve s (.opened id rows)).1 = some rows ∧
+            (serve s (.sampled rows)).2 = [] ∧
+            subscription (serve s (.sampled rows)).1 = some id ∧
+            told (serve s (.sampled rows)).1 = some was ∧
+            latest (serve s (.sampled rows)).1 = some rows ∧
+            ∀ params,
+              Serve.Effect.send (.notify "sessions/changed" params) ∈ (serve s .writable).2 →
+                ∃ records gone,
+                  params = Serve.update id records gone ∧
+                    ∀ key,
+                      (Serve.View.apply (Serve.View.of was) records gone key).map
+                          Serve.Record.reading =
+                        (Serve.View.of now key).map Serve.Record.reading) ∧
+      ∀ {α : Type} (cap : Nat) (entries : List α),
+        (entries.foldl (push cap) {}).tail = entries.drop (entries.length - cap) ∧
+          (entries.foldl (push cap) {}).dropped = entries.length - cap ∧
+          (entries.foldl (push cap) {}).tail.length + (entries.foldl (push cap) {}).dropped =
+            entries.length
+  | .stuckDaemon, .session => rowStatus (.live []) = ⟨.none, .unknown⟩
+  | .remoteHost, .session => classify { known := false } = ⟨.none, .unknown⟩
+  | .optionalWork, .bound =>
+    ((∀ steps, (phases steps).flatMap Capture.Phase.work = Capture.work steps false) ∧
+        (Capture.work plan false).map Prod.fst = [.load, .render, .write] ∧
+        (.load, true) ∈ Capture.work plan false ∧
+        ∀ step, (step, true) ∈ Capture.work plan false → step.waitsOutside = false) ∧
+      ∀ {W : Type} (earlier : List (Session.Offloop.Op W)) (w : W) (ends : Nat),
+        (((earlier ++ (.ask w : Session.Offloop.Op W) :: List.replicate ends .done).foldl
+                  (Session.Offloop.cycle ask done) ({}, [])).2.getLast? =
+              some w ∨
+            ends = 0 ∧
+              ((earlier ++ (.ask w : Session.Offloop.Op W) :: List.replicate ends .done).foldl
+                    (Session.Offloop.cycle ask done) ({}, [])).1.waiting =
+                some w) ∧
+          ∀ ops : List (Session.Offloop.Op W),
+            (ops.foldl (Session.Offloop.cycle ask done) ({}, [])).2.length ≤
+              (ops.filter Session.Offloop.Op.isDone).length + 1
+  | _, _ => False
+
+end Linger.App

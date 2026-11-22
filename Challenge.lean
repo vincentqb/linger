@@ -52,9 +52,10 @@ each with a kill, and says what it does not claim yet:
    sessions exist, so every linger process goes quiet after the last event. Parts 1 to 8 decide
    what linger does and this one how cheaply: work no event pays for is allowed only where it is
    named, with its bound.
-10. Graceful under load: work a request needs never waits on optional work or on another
-   session, every wait is bounded and says what it missed, and optional work is skipped or
-   coalesced, never queued.
+10. Graceful under load and faults: a fault in a daemon, a client or a peer costs at most its
+   own session or client, plus a declared bound elsewhere; work a request needs never waits on
+   optional work or on another session, every wait is bounded and says what it missed, and
+   optional work is skipped or coalesced, never queued.
 
 The status rule: a session's row shows two facts, each in its own column and each a signal's,
 none a guess from timing. Its attention says whether there is something for you since you looked:
@@ -1752,7 +1753,7 @@ answered once by its id, or a table, `sessions/subscribe`, whose result lists th
 records and opens a subscription, named by the id of its request, which every `sessions/changed`
 names; `sessions/unsubscribe` closes it, and a connection sends a notification to no subscription
 that is not open (`serve_negotiated`). A log keeps the last entries it was given, at most its cap,
-and counts the ones it dropped, the two adding up to every entry (`log_bounded`), as a result's
+and counts the ones it dropped, the two adding up to every entry (`fault_contained`), as a result's
 `said` keeps what its request said; and a session is a life (`Serve.Life`). Not claimed:
 that the executor writes each message whole, on one line, reads each line as `Serve.decode` reads
 it and performs each request the step performs as the command line does, with its `data` as its
@@ -2007,24 +2008,6 @@ theorem serve_negotiated_rejects_chatty :
     ¬∀ (s : App.Serve.State) (ev : Serve.Event),
         Serve.Negotiated App.Serve.State.init App.Serve.State.phase App.Serve.State.subscription
           App.Serve.State.watching (Serve.chatty App.Serve.step) s ev := by
-  sorry
-
-theorem log_bounded {α : Type} (cap : Nat) (entries : List α) :
-    (entries.foldl (App.Serve.Log.push cap) {}).tail = entries.drop (entries.length - cap) ∧
-      (entries.foldl (App.Serve.Log.push cap) {}).dropped = entries.length - cap ∧
-      (entries.foldl (App.Serve.Log.push cap) {}).tail.length +
-          (entries.foldl (App.Serve.Log.push cap) {}).dropped =
-        entries.length := by
-  sorry
-
-@[kills log_bounded]
-theorem log_bounded_rejects_keep_all :
-    ¬∀ {α : Type} (cap : Nat) (entries : List α),
-        (entries.foldl (Serve.Log.keepAll cap) {}).tail = entries.drop (entries.length - cap) ∧
-          (entries.foldl (Serve.Log.keepAll cap) {}).dropped = entries.length - cap ∧
-          (entries.foldl (Serve.Log.keepAll cap) {}).tail.length +
-              (entries.foldl (Serve.Log.keepAll cap) {}).dropped =
-            entries.length := by
   sorry
 
 theorem one_renderer (v : Vt.Vt) (row : Vt.Row)
@@ -3265,7 +3248,7 @@ After every batch of events, the driver leaves the session's clients, record fie
 scanner within their caps, whatever its effects reply, when its executor answers every effect
 (`run_total_safe`, in part 5); when every effect succeeds, the states it leaves are those of the
 session's trace (`run_refines`, in part 5). The pty's input queue never owes more than its cap, nor
-does a client's output queue the daemon keeps (`reachableIn_bound`, `reachableOut_bound`); a read
+does a client's output queue the daemon keeps (`reachableIn_bound`, `fault_contained`); a read
 gets at most one rendered reply, its frames followed by `done`, and when it leaves its sender
 unattached at most one pty resize (`step_bytes_one_reply`); every frame of program output carries at
 most 64 KiB (`step_output_delivered`, in part 1); and a tmux capture's bytes are at most twice its
@@ -3345,18 +3328,6 @@ theorem reachableIn_bound_rejects_append :
         Buf.InputReach Buf.Buf.empty Buf.bufEnqueue Buf.bufAdvance cap b → Buf.owedLen b ≤ cap := by
   sorry
 
-theorem reachableOut_bound {cap : Nat} {b : Buf.Buf}
-    (h : Buf.OutputReach Buf.Buf.empty Buf.bufEnqueue Buf.bufAdvance cap b) :
-    Buf.owedLen b ≤ cap := by sorry
-
-@[kills reachableOut_bound]
-theorem reachableOut_bound_rejects_uncut :
-    ¬∀ {cap : Nat} {b : Buf.Buf},
-        Buf.OutputReach Buf.Buf.empty (fun cap b more => ((Buf.bufEnqueue cap b more).1, false))
-            Buf.bufAdvance cap b →
-          Buf.owedLen b ≤ cap := by
-  sorry
-
 theorem step_bytes_one_reply (s : State) (id : Nat) (chunk : List UInt8) :
     ((Session.step s (.bytes id chunk)).2.all (!·.rendered) ∨
         ∃ pre frames post,
@@ -3430,13 +3401,8 @@ refused, and a command never takes bytes that do not decode for no checkpoint: i
 over them and leaves them as they are, for `kill` to discard (`recovery_exact`). A resume gives
 back the saved terminal and the saved record's own fields, its description and an import's
 provenance, but no label an older linger saved (`resume_restores`). A crash costs at most the
-changes of the last interval. A session asks for a save within `ckptIntervalMs` of every
-change no save holds, by the clock its ticks give it (`unsaved_due`); its daemon saves off its loop
-and replaces the checkpoint whole and durably, so that after a crash
-the file at the path is the last save whose flushes returned, or the one then running, whole
-(`Disk.Durable`, which the resume suite tests by killing a daemon while it saves, and its check once
-both flushes returned); and resuming then gives back that save, never a fresh session
-(`crash_resumes`). A record an older linger wrote reads as it meant then: a record of format 3,
+changes of the last interval, never the session, as part 10 says (`fault_contained`). A record an
+older linger wrote reads as it meant then: a record of format 3,
 its tag then today's layout, that holds no description reads with the description a tmux import
 gives its labels, the window's name, as an import from before a row had a description recorded
 the pane's provenance and none (`older_record_described`); a record of today's
@@ -3621,101 +3587,6 @@ theorem recovery_exact_rejects_missing :
           (file.map fun bytes =>
                 ((Checkpoint.loadBytes bytes).map App.Recovery.resume).getD (.refuse .notDone)).getD
             (if create then .fresh else .refuse .notFound) := by
-  sorry
-
-theorem crash_resumes (afterCrash : Option ByteArray → ByteArray → Bool → Option ByteArray)
-    (durable : Disk.Durable afterCrash) (create synced : Bool) (old new : Checkpoint.Ckpt Vt.Vt)
-    (hold :
-      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
-        (Checkpoint.Decoded Checkpoint.loadBytes) old.vt)
-    (hnew :
-      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
-        (Checkpoint.Decoded Checkpoint.loadBytes) new.vt) :
-    ∃ c,
-      App.Recovery.decide create
-            (afterCrash (some (Checkpoint.saveBytes old)) (Checkpoint.saveBytes new) synced) =
-          .resume c ∧
-        (c = { new with vt := new.vt.quiesce } ∨
-          synced = false ∧ c = { old with vt := old.vt.quiesce }) := by
-  sorry
-
-@[kills crash_resumes]
-theorem crash_resumes_rejects_fresh :
-    ¬∀ (afterCrash : Option ByteArray → ByteArray → Bool → Option ByteArray),
-        Disk.Durable afterCrash →
-          ∀ (create synced : Bool) (old new : Checkpoint.Ckpt Vt.Vt),
-            Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
-                (Checkpoint.Decoded Checkpoint.loadBytes) old.vt →
-              Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
-                (Checkpoint.Decoded Checkpoint.loadBytes) new.vt →
-              ∃ c,
-                (fun (_ : Bool) (_ : Option ByteArray) =>
-                        (App.Recovery.fresh : App.Recovery (Checkpoint.Ckpt Vt.Vt)))
-                      create
-                      (afterCrash (some (Checkpoint.saveBytes old)) (Checkpoint.saveBytes new)
-                        synced) =
-                    .resume c ∧
-                  (c = { new with vt := new.vt.quiesce } ∨
-                    synced = false ∧ c = { old with vt := old.vt.quiesce }) := by
-  sorry
-
-theorem unsaved_due (vt : Vt.Vt) (fields metaKv : List (String × String)) (pre post : List Event)
-    (ev : Event) :
-    (Session.step (Session.trace Session.step (State.boot vt fields metaKv) pre).1 ev).1.terminal ≠
-          (Session.trace Session.step (State.boot vt fields metaKv) pre).1.terminal ∨
-        (Session.step (Session.trace Session.step (State.boot vt fields metaKv) pre).1
-              ev).1.fieldList ≠
-          (Session.trace Session.step (State.boot vt fields metaKv) pre).1.fieldList →
-      Effect.checkpoint ∉
-        (Session.trace Session.step (Session.trace Session.step (State.boot vt fields metaKv) pre).1
-            (ev :: post)).2 →
-      ∃ due,
-        due ≤ Session.clock pre + ckptIntervalMs ∧
-          (∃ wake,
-            (Session.trace Session.step
-                    (Session.trace Session.step (State.boot vt fields metaKv) pre).1
-                    (ev :: post)).1.nextTick =
-                some wake ∧
-              wake ≤ due) ∧
-          ∀ now,
-            due ≤ now →
-              Effect.checkpoint ∈
-                (Session.step
-                    (Session.trace Session.step
-                        (Session.trace Session.step (State.boot vt fields metaKv) pre).1
-                        (ev :: post)).1
-                    (.tick now)).2 := by
-  sorry
-
-@[kills unsaved_due]
-theorem unsaved_due_rejects_never :
-    ¬∀ (vt : Vt.Vt) (fields metaKv : List (String × String)) (pre post : List Event) (ev : Event),
-        (Session.step (Session.trace Session.step (State.boot vt fields metaKv) pre).1
-                  ev).1.terminal ≠
-              (Session.trace Session.step (State.boot vt fields metaKv) pre).1.terminal ∨
-            (Session.step (Session.trace Session.step (State.boot vt fields metaKv) pre).1
-                  ev).1.fieldList ≠
-              (Session.trace Session.step (State.boot vt fields metaKv) pre).1.fieldList →
-          Effect.checkpoint ∉
-            (Session.trace Session.step
-                (Session.trace Session.step (State.boot vt fields metaKv) pre).1 (ev :: post)).2 →
-          ∃ due,
-            due ≤ Session.clock pre + ckptIntervalMs ∧
-              (∃ wake,
-                (fun (_ : State) => (none : Option Nat))
-                      (Session.trace Session.step
-                          (Session.trace Session.step (State.boot vt fields metaKv) pre).1
-                          (ev :: post)).1 =
-                    some wake ∧
-                  wake ≤ due) ∧
-              ∀ now,
-                due ≤ now →
-                  Effect.checkpoint ∈
-                    (Session.step
-                        (Session.trace Session.step
-                            (Session.trace Session.step (State.boot vt fields metaKv) pre).1
-                            (ev :: post)).1
-                        (.tick now)).2 := by
   sorry
 
 theorem checkpoint_metadata (pane : Import.Resurrect.Pane) (contents : Option String) :
@@ -3935,7 +3806,7 @@ writer is free, having written what came before, it sends `sessions/changed` exa
 latest records differ from what it last told the subscriber, read without `idle` and `lastout`,
 the clock's readings, which change while nothing happens: the records that differ and the keys
 that went (`changed_exactly`), which bring the subscriber's view, the record it holds under each
-key, to the latest records (`table_converges`). So a quiet session sends nothing, a session that
+key, to the latest records (`fault_contained`). So a quiet session sends nothing, a session that
 prints sends at most one update a second, and a subscriber that reads late gets the latest
 record under each key, never every one between. A watch follows its session's output, not a
 clock: after a read that brought output, it asks for the daemon's `info` on the same connection,
@@ -3988,53 +3859,6 @@ theorem changed_exactly_rejects_chatty :
             (Serve.chatty App.Serve.step s .writable).1.subscription = some id ∧
             (Serve.chatty App.Serve.step s .writable).1.told = some latest ∧
             (Serve.chatty App.Serve.step s .writable).1.latest = some latest := by
-  sorry
-
-theorem table_converges (s : App.Serve.State) (version : String) (id : Serve.Id)
-    (told latest rows : List Serve.Record) (ready : s.phase = .ready version)
-    (subscribed : s.subscription = some id) (was : s.told = some told)
-    (now : s.latest = some latest) (keyed : (latest.map Serve.Record.key).Nodup) :
-    (App.Serve.step s (.opened id rows)).2 = [] ∧
-      (App.Serve.step s (.opened id rows)).1.told = some rows ∧
-      (App.Serve.step s (.opened id rows)).1.latest = some rows ∧
-      (App.Serve.step s (.sampled rows)).2 = [] ∧
-      (App.Serve.step s (.sampled rows)).1.subscription = some id ∧
-      (App.Serve.step s (.sampled rows)).1.told = some told ∧
-      (App.Serve.step s (.sampled rows)).1.latest = some rows ∧
-      ∀ params,
-        Serve.Effect.send (.notify "sessions/changed" params) ∈ (App.Serve.step s .writable).2 →
-          ∃ records gone,
-            params = Serve.update id records gone ∧
-              ∀ key,
-                (Serve.View.apply (Serve.View.of told) records gone key).map Serve.Record.reading =
-                  (Serve.View.of latest key).map Serve.Record.reading := by
-  sorry
-
-@[kills table_converges]
-theorem table_converges_rejects_queued :
-    ¬∀ (s : App.Serve.State) (version : String) (id : Serve.Id)
-        (told latest rows : List Serve.Record),
-        s.phase = .ready version →
-          s.subscription = some id →
-          s.told = some told →
-          s.latest = some latest →
-          (latest.map Serve.Record.key).Nodup →
-          (Serve.queued App.Serve.step s (.opened id rows)).2 = [] ∧
-            (Serve.queued App.Serve.step s (.opened id rows)).1.told = some rows ∧
-            (Serve.queued App.Serve.step s (.opened id rows)).1.latest = some rows ∧
-            (Serve.queued App.Serve.step s (.sampled rows)).2 = [] ∧
-            (Serve.queued App.Serve.step s (.sampled rows)).1.subscription = some id ∧
-            (Serve.queued App.Serve.step s (.sampled rows)).1.told = some told ∧
-            (Serve.queued App.Serve.step s (.sampled rows)).1.latest = some rows ∧
-            ∀ params,
-              Serve.Effect.send (.notify "sessions/changed" params) ∈
-                  (Serve.queued App.Serve.step s .writable).2 →
-                ∃ records gone,
-                  params = Serve.update id records gone ∧
-                    ∀ key,
-                      (Serve.View.apply (Serve.View.of told) records gone key).map
-                          Serve.Record.reading =
-                        (Serve.View.of latest key).map Serve.Record.reading := by
   sorry
 
 theorem screen_table_exact (s : App.Serve.State) (version : String) (id : Serve.Id)
@@ -4208,31 +4032,57 @@ theorem fetch_follows_events_rejects_polling :
               events.reverse.takeWhile Selector.Picker.Event.isKey := by
   sorry
 
-/-! ## 10. Graceful under load
+/-! ## 10. Graceful under load and faults
+
+A fault in a daemon, a client or a peer costs at most its own session or client, plus a declared
+bound elsewhere: each fault has its cost (`Fault.cost`), and the claims that bound it at that cost
+are its case (`fault_contained`, killed by an output queue that never cuts a client that stops
+reading, which grows the daemon without bound, and by the wrong parts that kill the claims it
+gathers). A daemon that crashes costs its own session, which it holds alone, back to its last save:
+a session asks for a save within `ckptIntervalMs` of every change no save holds, by the clock its
+ticks give it; its daemon saves off its loop and replaces the checkpoint whole and durably, so that
+after a crash the file at the path is the last save whose flushes returned, or the one then running,
+whole (`Disk.Durable`, which the resume suite tests by killing a daemon while it saves, and its
+check once both flushes returned); and resuming then gives back that save, never a fresh session. A
+client that dies costs its own client: its connection's end drops it alone from the roster, keeps
+the terminal and the record, and asks for no more than a save and the report that the program lost
+focus. A client that floods its session or stops reading costs its own client: a frame the program's
+full input queue cannot take is refused and a client whose output queue would pass its cap is cut,
+so the queues owe at most their caps (`reachableIn_bound`); `serve` holds two listings for a
+subscriber, never a queue, as part 9 says; and a log keeps its last entries, at most its cap, and
+counts the ones it dropped. A daemon that does not answer costs its own row: a listing asks its
+daemons at once, under one deadline, and lists one whose reply did not come as a live socket that
+sent nothing, which reads `?` with no attention; a remote host that does not answer costs its own
+record, an observation with no answer, which reads the same (`classify_iff`). Optional work costs no
+session or client, only a declared bound of the work that needs it. A daemon saves its checkpoint
+and writes its end record, their flushes included, off its loop, on a thread of its own
+(`scripts/gates.sh`), so a slow disk holds up no answer and no output: a write starts only when none
+of its kind runs, one asked for meanwhile waits in place of any that waited, and the last one asked
+for is the last to start, at once or as soon as the running one ends. A `capture` of a saved session
+loads and renders it holding the name's locks and lets them go before it writes, so no step it takes
+holding them waits on a party outside linger, and an attach or a resume that starts the session
+while a pager or a pipe nobody reads holds up the capture's write waits for the locks only as long
+as the load and the render take: the shell runs these steps in the phases `Capture.phases` cuts them
+into, which hold the locks exactly where `Capture.work` says, whatever the plan, and runs them for
+every capture of a saved session (`scripts/gates.sh`). Not claimed: shared host resources, CPU, disk
+bandwidth and memory; a full state directory; a daemon's program, which dies with its daemon;
+`serve`'s cost, which grows with its subscribed clients; and the IO of three cases, which suites
+test: that a client's death leaves its daemon serving the rest (the attach suite), that a daemon
+that does not answer by the listing's deadline lists as `?` while the rest list (the status and
+robust suites), and that a remote host that does not answer within its wait lists as `?` (the remote
+suite).
 
 A command waits for its daemon's answer a bounded time, and what it answers when that time runs
-out is still true. A daemon saves its checkpoint and writes its end record, their flushes
-included, off its loop, on a thread of its own (`scripts/gates.sh`), so a slow disk holds up no
-answer and no output: a write starts only when none of its kind runs, one asked for meanwhile
-waits in place of any that waited, and the last one asked for is the last to start, at once or as
-soon as the running one ends (`offloop_coalesces`). Every wait sleeps as `Os.Wait.next`
-decides (`scripts/gates.sh`), so it gives up once its deadline has passed, which the os package
-claims (`packages/os`), and then reports what
-it missed: `start` that its daemon did not answer and `ls` a remote host as `?`. A `capture` of
-a saved session loads and renders it holding the name's locks and lets them go before it writes, so no step it takes holding them waits on a party outside linger, and an
-attach or a resume that starts the session while a pager or a pipe nobody reads holds up the
-capture's write waits for the locks only as long as the load and the render take
-(`capture_waits_unlocked`): the shell runs these steps in the phases `Capture.phases` cuts them
-into, which hold the locks exactly where `Capture.work` says, whatever the plan, and runs them
-for every capture of a saved session (`scripts/gates.sh`). A write that
-finds its descriptor full, as one another program left nonblocking is, waits for the reader and
-goes on, never taken for a reader that is gone, which the os package claims. Not claimed: the
-waits with no deadline, each on something that ends without waiting itself, or on purpose:
-`wait`, which takes no time limit of its own, since `timeout(1)` composes with it, an idle
-daemon's poll, `start` or `resume` once their daemon took the
-request's ticket, a daemon's last disk write, which it reports after a second, and a command's
-write to a reader that does not read, as a blocking write waits too. How long a wait takes under
-load the robust, resume and status suites measure. -/
+out is still true. Every wait sleeps as `Os.Wait.next` decides (`scripts/gates.sh`), so it gives up
+once its deadline has passed, which the os package claims (`packages/os`), and then reports what it
+missed: `start` that its daemon did not answer and `ls` a remote host as `?`. A write that finds
+its descriptor full, as one another program left nonblocking is, waits for the reader and goes on,
+never taken for a reader that is gone, which the os package claims. Not claimed: the waits with no
+deadline, each on something that ends without waiting itself, or on purpose: `wait`, which takes
+no time limit of its own, since `timeout(1)` composes with it, an idle daemon's poll, `start` or
+`resume` once their daemon took the request's ticket, a daemon's last disk write, which it reports
+after a second, and a command's write to a reader that does not read, as a blocking write waits
+too. How long a wait takes under load the robust, resume and status suites measure. -/
 
 theorem start_answer_true (r : Start.Request) (h : Start.Reachable Start.proceeds Start.answer r) :
     (r.answer = some .started → r.runs = true) ∧
@@ -4255,66 +4105,141 @@ theorem start_answer_true_rejects_proceed :
             (r.answer = some .notStarted → r.runs = false) := by
   sorry
 
-theorem offloop_coalesces {W : Type} (earlier : List (Offloop.Op W)) (w : W) (ends : Nat) :
-    (((earlier ++ (.ask w : Offloop.Op W) :: List.replicate ends .done).foldl
-              (Offloop.cycle Offloop.ask Offloop.done) ({}, [])).2.getLast? =
-          some w ∨
-        ends = 0 ∧
-          ((earlier ++ (.ask w : Offloop.Op W) :: List.replicate ends .done).foldl
-                (Offloop.cycle Offloop.ask Offloop.done) ({}, [])).1.waiting =
-            some w) ∧
-      ∀ ops : List (Offloop.Op W),
-        (ops.foldl (Offloop.cycle Offloop.ask Offloop.done) ({}, [])).2.length ≤
-          (ops.filter Offloop.Op.isDone).length + 1 := by
+theorem fault_contained (f : Fault)
+    (afterCrash : Option ByteArray → ByteArray → Bool → Option ByteArray)
+    (durable : Disk.Durable afterCrash) :
+    Fault.Contained Recovery.decide Checkpoint.saveBytes Checkpoint.loadBytes Vt.Vt.init Vt.Vt.feed
+      Vt.Vt.resize Vt.Vt.quiesce Session.step State.boot State.terminal State.fieldList
+      State.nextTick State.roster Buf.Buf.empty Buf.bufOffer Buf.bufEnqueue Buf.bufAdvance
+      Buf.owedLen Serve.step Serve.State.phase Serve.State.subscription Serve.State.told
+      Serve.State.latest Serve.Log.push Listing.rowStatus Status.classify Capture.phases
+      Capture.plan Offloop.ask Offloop.done afterCrash f f.cost := by
   sorry
 
-@[kills offloop_coalesces]
-theorem offloop_coalesces_rejects_eager :
-    ¬∀ {W : Type} (earlier : List (Offloop.Op W)) (w : W) (ends : Nat),
-        (((earlier ++ (.ask w : Offloop.Op W) :: List.replicate ends .done).foldl
-                  (Offloop.cycle Offloop.eager Offloop.done) ({}, [])).2.getLast? =
-              some w ∨
-            ends = 0 ∧
-              ((earlier ++ (.ask w : Offloop.Op W) :: List.replicate ends .done).foldl
-                    (Offloop.cycle Offloop.eager Offloop.done) ({}, [])).1.waiting =
-                some w) ∧
-          ∀ ops : List (Offloop.Op W),
-            (ops.foldl (Offloop.cycle Offloop.eager Offloop.done) ({}, [])).2.length ≤
-              (ops.filter Offloop.Op.isDone).length + 1 := by
+@[kills fault_contained]
+theorem fault_contained_rejects_uncut :
+    ¬∀ f afterCrash,
+        Disk.Durable afterCrash →
+          Fault.Contained Recovery.decide Checkpoint.saveBytes Checkpoint.loadBytes Vt.Vt.init
+            Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Session.step State.boot State.terminal
+            State.fieldList State.nextTick State.roster Buf.Buf.empty Buf.bufOffer
+            (fun cap b more => ((Buf.bufEnqueue cap b more).1, false)) Buf.bufAdvance Buf.owedLen
+            Serve.step Serve.State.phase Serve.State.subscription Serve.State.told
+            Serve.State.latest Serve.Log.push Listing.rowStatus Status.classify Capture.phases
+            Capture.plan Offloop.ask Offloop.done afterCrash f f.cost := by
   sorry
 
-theorem capture_waits_unlocked :
-    (∀ steps,
-        (App.Capture.phases steps).flatMap App.Capture.Phase.work = App.Capture.work steps false) ∧
-      (App.Capture.work App.Capture.plan false).map Prod.fst = [.load, .render, .write] ∧
-      (.load, true) ∈ App.Capture.work App.Capture.plan false ∧
-      ∀ step,
-        (step, true) ∈ App.Capture.work App.Capture.plan false → step.waitsOutside = false := by
+@[kills fault_contained]
+theorem fault_contained_rejects_fresh :
+    ¬∀ f afterCrash,
+        Disk.Durable afterCrash →
+          Fault.Contained (fun _ _ => .fresh) Checkpoint.saveBytes Checkpoint.loadBytes Vt.Vt.init
+            Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Session.step State.boot State.terminal
+            State.fieldList State.nextTick State.roster Buf.Buf.empty Buf.bufOffer Buf.bufEnqueue
+            Buf.bufAdvance Buf.owedLen Serve.step Serve.State.phase Serve.State.subscription
+            Serve.State.told Serve.State.latest Serve.Log.push Listing.rowStatus Status.classify
+            Capture.phases Capture.plan Offloop.ask Offloop.done afterCrash f f.cost := by
   sorry
 
-@[kills capture_waits_unlocked]
-theorem capture_waits_unlocked_rejects_inside :
-    ¬((∀ steps,
-          (App.Capture.phases steps).flatMap App.Capture.Phase.work =
-            App.Capture.work steps false) ∧
-        (App.Capture.work [.acquire, .load, .render, .write, .release] false).map Prod.fst =
-          [.load, .render, .write] ∧
-        (.load, true) ∈ App.Capture.work [.acquire, .load, .render, .write, .release] false ∧
-        ∀ step,
-          (step, true) ∈ App.Capture.work [.acquire, .load, .render, .write, .release] false →
-            step.waitsOutside = false) := by
+@[kills fault_contained]
+theorem fault_contained_rejects_never :
+    ¬∀ f afterCrash,
+        Disk.Durable afterCrash →
+          Fault.Contained Recovery.decide Checkpoint.saveBytes Checkpoint.loadBytes Vt.Vt.init
+            Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Session.step State.boot State.terminal
+            State.fieldList (fun _ => none) State.roster Buf.Buf.empty Buf.bufOffer Buf.bufEnqueue
+            Buf.bufAdvance Buf.owedLen Serve.step Serve.State.phase Serve.State.subscription
+            Serve.State.told Serve.State.latest Serve.Log.push Listing.rowStatus Status.classify
+            Capture.phases Capture.plan Offloop.ask Offloop.done afterCrash f f.cost := by
   sorry
 
-@[kills capture_waits_unlocked]
-theorem capture_waits_unlocked_rejects_held :
-    ¬((∀ steps,
-          ((fun (steps : List App.Capture.Step) => [App.Capture.Phase.locked steps]) steps).flatMap
-              App.Capture.Phase.work =
-            App.Capture.work steps false) ∧
-        (App.Capture.work App.Capture.plan false).map Prod.fst = [.load, .render, .write] ∧
-        (.load, true) ∈ App.Capture.work App.Capture.plan false ∧
-        ∀ step,
-          (step, true) ∈ App.Capture.work App.Capture.plan false → step.waitsOutside = false) := by
+@[kills fault_contained]
+theorem fault_contained_rejects_exits :
+    ¬∀ f afterCrash,
+        Disk.Durable afterCrash →
+          Fault.Contained Recovery.decide Checkpoint.saveBytes Checkpoint.loadBytes Vt.Vt.init
+            Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce (Fault.exitsOnClose Session.step) State.boot
+            State.terminal State.fieldList State.nextTick State.roster Buf.Buf.empty Buf.bufOffer
+            Buf.bufEnqueue Buf.bufAdvance Buf.owedLen Serve.step Serve.State.phase
+            Serve.State.subscription Serve.State.told Serve.State.latest Serve.Log.push
+            Listing.rowStatus Status.classify Capture.phases Capture.plan Offloop.ask Offloop.done
+            afterCrash f f.cost := by
+  sorry
+
+@[kills fault_contained]
+theorem fault_contained_rejects_queued :
+    ¬∀ f afterCrash,
+        Disk.Durable afterCrash →
+          Fault.Contained Recovery.decide Checkpoint.saveBytes Checkpoint.loadBytes Vt.Vt.init
+            Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Session.step State.boot State.terminal
+            State.fieldList State.nextTick State.roster Buf.Buf.empty Buf.bufOffer Buf.bufEnqueue
+            Buf.bufAdvance Buf.owedLen (Serve.queued Serve.step) Serve.State.phase
+            Serve.State.subscription Serve.State.told Serve.State.latest Serve.Log.push
+            Listing.rowStatus Status.classify Capture.phases Capture.plan Offloop.ask Offloop.done
+            afterCrash f f.cost := by
+  sorry
+
+@[kills fault_contained]
+theorem fault_contained_rejects_keep_all :
+    ¬∀ f afterCrash,
+        Disk.Durable afterCrash →
+          Fault.Contained Recovery.decide Checkpoint.saveBytes Checkpoint.loadBytes Vt.Vt.init
+            Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Session.step State.boot State.terminal
+            State.fieldList State.nextTick State.roster Buf.Buf.empty Buf.bufOffer Buf.bufEnqueue
+            Buf.bufAdvance Buf.owedLen Serve.step Serve.State.phase Serve.State.subscription
+            Serve.State.told Serve.State.latest Serve.Log.keepAll Listing.rowStatus Status.classify
+            Capture.phases Capture.plan Offloop.ask Offloop.done afterCrash f f.cost := by
+  sorry
+
+@[kills fault_contained]
+theorem fault_contained_rejects_idle :
+    ¬∀ f afterCrash,
+        Disk.Durable afterCrash →
+          Fault.Contained Recovery.decide Checkpoint.saveBytes Checkpoint.loadBytes Vt.Vt.init
+            Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Session.step State.boot State.terminal
+            State.fieldList State.nextTick State.roster Buf.Buf.empty Buf.bufOffer Buf.bufEnqueue
+            Buf.bufAdvance Buf.owedLen Serve.step Serve.State.phase Serve.State.subscription
+            Serve.State.told Serve.State.latest Serve.Log.push (fun _ => ⟨.none, .idle⟩)
+            Status.classify Capture.phases Capture.plan Offloop.ask Offloop.done afterCrash f
+            f.cost := by
+  sorry
+
+@[kills fault_contained]
+theorem fault_contained_rejects_inside :
+    ¬∀ f afterCrash,
+        Disk.Durable afterCrash →
+          Fault.Contained Recovery.decide Checkpoint.saveBytes Checkpoint.loadBytes Vt.Vt.init
+            Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Session.step State.boot State.terminal
+            State.fieldList State.nextTick State.roster Buf.Buf.empty Buf.bufOffer Buf.bufEnqueue
+            Buf.bufAdvance Buf.owedLen Serve.step Serve.State.phase Serve.State.subscription
+            Serve.State.told Serve.State.latest Serve.Log.push Listing.rowStatus Status.classify
+            Capture.phases [.acquire, .load, .render, .write, .release] Offloop.ask Offloop.done
+            afterCrash f f.cost := by
+  sorry
+
+@[kills fault_contained]
+theorem fault_contained_rejects_held :
+    ¬∀ f afterCrash,
+        Disk.Durable afterCrash →
+          Fault.Contained Recovery.decide Checkpoint.saveBytes Checkpoint.loadBytes Vt.Vt.init
+            Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Session.step State.boot State.terminal
+            State.fieldList State.nextTick State.roster Buf.Buf.empty Buf.bufOffer Buf.bufEnqueue
+            Buf.bufAdvance Buf.owedLen Serve.step Serve.State.phase Serve.State.subscription
+            Serve.State.told Serve.State.latest Serve.Log.push Listing.rowStatus Status.classify
+            (fun steps => [.locked steps]) Capture.plan Offloop.ask Offloop.done afterCrash f
+            f.cost := by
+  sorry
+
+@[kills fault_contained]
+theorem fault_contained_rejects_eager :
+    ¬∀ f afterCrash,
+        Disk.Durable afterCrash →
+          Fault.Contained Recovery.decide Checkpoint.saveBytes Checkpoint.loadBytes Vt.Vt.init
+            Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Session.step State.boot State.terminal
+            State.fieldList State.nextTick State.roster Buf.Buf.empty Buf.bufOffer Buf.bufEnqueue
+            Buf.bufAdvance Buf.owedLen Serve.step Serve.State.phase Serve.State.subscription
+            Serve.State.told Serve.State.latest Serve.Log.push Listing.rowStatus Status.classify
+            Capture.phases Capture.plan Offloop.eager Offloop.done afterCrash f f.cost := by
   sorry
 
 /-! ## The status rule

@@ -9,7 +9,8 @@ public section
 The daemon's socket output buffers and pty input backlog share this value type.
 It carries the cap, the policy when it is reached, and the discipline that keeps
 the stored byte sequence equal to the unwritten debt. The queues' bounds are
-`reachableIn_bound` and `reachableOut_bound` (`Challenge.lean`, part 6).
+`reachableIn_bound` (`Challenge.lean`, part 6) and `reachableOut_bound`, which `fault_contained`
+(part 10) gathers.
 
 This module is the value; `Linger/Session/Proofs/Buf.lean` is the proof; the daemon is the
 interpreter. That is the same split `Session.step` already uses one layer up (the

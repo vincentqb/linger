@@ -10,8 +10,8 @@ is what lets these statements and proofs see a representation that is sealed to
 every plain importer (`Buf.bytes` is `private`; the runtime cannot read, write,
 or forge it). There is deliberately no blanket
 `public section` here: these theorems are leaves — `Theorems/Solution.lean` proves headlines
-from them (`input_exact`, Challenge.lean part 1, and `reachableIn_bound` and
-`reachableOut_bound`, part 6), and nothing else uses them as lemmas — and being CHECKED at
+from them (`input_exact`, Challenge.lean part 1, `reachableIn_bound`, part 6, and
+`fault_contained`, part 10), and nothing else uses them as lemmas — and being CHECKED at
 build is their whole job, so module-private is their honest visibility. It also lets the `rfl`
 proofs elaborate where the sealed definitions still reduce.
 

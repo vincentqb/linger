@@ -546,7 +546,7 @@ def heldClaim (e : Env) : IO Unit := do
   finally
     e.killAll #[name]
 
-/-- Work a request needs never waits on optional work (theorem 10, `capture_waits_unlocked`):
+/-- Work a request needs never waits on optional work (theorem 10, `fault_contained`):
 `capture --history` of a saved session into a pipe nobody reads waits on its write for as long
 as nobody reads, and it lets the name's locks go before it writes, so a resume meanwhile comes
 up instead of giving up on the locks after its claim wait. The capture's first byte means it has
