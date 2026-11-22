@@ -3,6 +3,7 @@ module
 public import Verify.Harness
 public import Linger.App.CoreSpec
 public import Linger.App.CoreCode.Json
+import Linger.Selector.CoreCode.Picker
 
 public section
 
@@ -312,6 +313,38 @@ private def operations (e : Env) (p : Peer) : IO Unit := do
   expect ((← unparsed.get).bind (at? · ["id"]) matches some .null)
       "a line that is no JSON gets -32700, with no id"
 
+/-- The chooser and a client read the same list: the records `sessions/list` sends are, under each
+name and in order, what the chooser reads from `ls --porcelain`, as it reads the listing it runs,
+read without `idle`, which a second listing may read a second later. -/
+private def sameList (e : Env) (p : Peer) : IO Unit := do
+  p.say
+      (request 29 "session/start"
+        (.obj
+          [("name", .str "steady"), ("program", .str "/bin/sleep"), ("args", .arr [.str "300"])]))
+  let _ ← p.answer 29
+  p.say (request 30 "sessions/list" (.obj []))
+  let listed ← p.answer 30
+  let (rc, printed, _) ← e.cli #["ls", "--porcelain"]
+  let served : List (List (String × String)) :=
+    match listed.bind (at? · ["result", "records"]) with
+    | some (.arr records) =>
+      records.filterMap fun record =>
+        match record with
+        | .obj members => members.mapM fun (key, value) => value.text?.map ((key, ·))
+        | _ => none
+    | _ => []
+  let unticked (record : List (String × String)) := record.filter (·.1 != "idle")
+  let name (record : List (String × String)) := (record.lookup "name").getD ""
+  let read := Linger.Selector.Picker.parseSnapshot printed
+  let same :=
+    match read with
+    | .ok snapshot =>
+      rc == 0 && !served.isEmpty && snapshot.candidates == served.map name &&
+        served.all fun record => unticked (snapshot.row (name record)) == unticked record
+    | .error _ => false
+  expect same
+      s!"the chooser reads from ls --porcelain, under each name and in order, the records sessions/list sends ({served.map name})"
+
 /-- The suite. -/
 def run : IO UInt32 :=
   Env.suite "serve" fun e => do
@@ -320,6 +353,7 @@ def run : IO UInt32 :=
       handshake e p
       table p
       operations e p
+      sameList e p
       let rc ← p.close
       expect (rc == some 0) s!"once its standard input ends, serve exits 0 ({rc})"
     finally

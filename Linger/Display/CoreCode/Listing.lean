@@ -375,4 +375,23 @@ def terminalListing (withColor : Bool) (width : Option Nat) (rows : List (List (
         else utf8s (rowText width (layoutOf rows width.isSome) r)) ++
         [0x0A]
 
+/-! ## Records -/
+
+/-- Text as a listing record holds it: each control character, C0, DEL and C1, as U+FFFD
+(`Render.textChar`), so that no key or value holds the tab or the newline that frame records. -/
+def clean (text : String) : String := text.map Terminal.Render.textChar
+
+/-- Listing rows as records: each key and value clean text (`clean`). -/
+def records (rows : List (List (String × String))) : List (List (String × String)) :=
+  rows.map fun row => row.map fun (key, value) => (clean key, clean value)
+
+/-- A field's line of a listing: its key, a tab, its value. -/
+def fieldLine (field : String × String) : List Char := field.1.toList ++ '\t' :: field.2.toList
+
+/-- **What `ls --porcelain` prints for listing rows**: each of their records (`records`), a line
+for each field, then a blank line. -/
+def porcelain (rows : List (List (String × String))) : String :=
+  String.ofList
+    (((records rows).flatMap fun record => record.map fieldLine ++ [[]]).flatMap (· ++ ['\n']))
+
 end Linger.Display.Listing

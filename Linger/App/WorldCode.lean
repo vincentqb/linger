@@ -108,10 +108,7 @@ private def humanWidth : IO (Option Nat) := do
 the terminal listing. -/
 private def printRows (porcelain : Bool) (rows : List (List (String × String))) : IO Unit := do
   if porcelain then
-    for info in rows do
-      for (k, v) in info do
-        IO.println s!"{k}\t{v}"
-      IO.println ""
+    IO.print (Linger.Display.Listing.porcelain rows)
   else
     -- The selector consumes these same row pieces. Only the status badge has
     -- a palette style, and only where `Env.withColor` allows color. What asks for

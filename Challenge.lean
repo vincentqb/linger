@@ -176,6 +176,9 @@ def Linger.App.Serve.parse : String → Serve.Json → Option (App.Api.Request �
 
 def Linger.App.Serve.result : App.Api.Found → List (String × Serve.Json) → Serve.Json := sorry
 
+def Linger.App.Serve.records : List (List (String × String)) → List (List (String × String)) :=
+  sorry
+
 def Linger.App.Serve.State : Type := sorry
 
 def Linger.App.Serve.State.init : App.Serve.State := sorry
@@ -211,6 +214,8 @@ def Linger.Target.Remote.targetArgv :
     Remote.Transport → String → List String → String → List String → List String := sorry
 
 def Linger.Target.Remote.checkHosts : List String → Except String (List String) := sorry
+
+def Linger.Target.Remote.targetValid : String → Bool := sorry
 
 /-! ### Environment -/
 
@@ -263,6 +268,8 @@ def Linger.Display.Listing.cells : List (String × String) → List String := so
 def Linger.Display.Listing.caption : List (String × String) → String := sorry
 
 def Linger.Display.Listing.program : List (String × String) → String := sorry
+
+def Linger.Display.Listing.porcelain : List (List (String × String)) → String := sorry
 
 def Linger.Display.View.sort {α : Type} : (α → Status.Status) → List α → List α := sorry
 
@@ -441,6 +448,11 @@ def Linger.Selector.Picker.fetch : Bool → Selector.Picker.Event → Bool := so
 def Linger.Selector.Picker.enterAnsi : List UInt8 := sorry
 
 def Linger.Selector.Picker.exitAnsi : List UInt8 := sorry
+
+def Linger.Selector.Picker.parseSnapshot : String → Except String Selector.Picker.Snapshot := sorry
+
+def Linger.Selector.Picker.Snapshot.row :
+    Selector.Picker.Snapshot → String → List (String × String) := sorry
 
 def Linger.Import.Resurrect.listed :
     Session.Records → List Import.Resurrect.Pane → List Import.Resurrect.Pane := sorry
@@ -1739,6 +1751,16 @@ it and performs each request the step performs as the command line does, with it
 standard input, which the serve suite checks; nor anything of a remote target, which `serve`
 reaches no transport for and refuses.
 
+linger's own chooser and every `serve` client read the same list. `sessions/list` sends the
+records of `Api.perform`'s listing, each key and value clean text (`Serve.records`); `ls
+--porcelain` prints the same records, a `key<TAB>value` line for each field and a blank line after
+each record (`Listing.porcelain`), and the chooser runs it and reads what it prints
+(`parseSnapshot`, `Snapshot.row`): the names in their order and, under each, exactly the record
+`sessions/list` sends, when each record begins with its name, a valid target no other record has,
+and holds no other `name` field, as a listing's records do (`chooser_same_list`, killed by a
+chooser that reads a list of its own). Not claimed: that the chooser's listing and a client's are
+taken at the same moment, and the remote rows of `ls -r`, which `serve` does not list.
+
 A tmux-resurrect save is a source linger reads and never writes. A pane takes its name from its
 window, as a key, a later pane's name that an earlier one took made unique with a natural-order
 suffix, `-2`, `-3`, and keeps the window's own text as its description. Its panes are rows of `ls`
@@ -1906,6 +1928,36 @@ theorem serve_renders_api_rejects_outside :
             .obj
               (("answer", .str (Serve.answerName (App.Api.answer found))) ::
                 ("code", .number (toString (App.Api.answer found).code)) :: members) := by
+  sorry
+
+theorem chooser_same_list (rows : List (List (String × String)))
+    (named :
+      ∀ record ∈ App.Serve.records rows,
+        ∃ rest,
+          record = ("name", Serve.Record.key record) :: rest ∧
+            Remote.targetValid (Serve.Record.key record) = true ∧ ∀ field ∈ rest, field.1 ≠ "name")
+    (distinct : ((App.Serve.records rows).map Serve.Record.key).Nodup) :
+    ∃ snapshot,
+      Selector.Picker.parseSnapshot (Listing.porcelain rows) = .ok snapshot ∧
+        snapshot.candidates = (App.Serve.records rows).map Serve.Record.key ∧
+        ∀ record ∈ App.Serve.records rows,
+          Selector.Picker.Snapshot.row snapshot (Serve.Record.key record) = record := by
+  sorry
+
+@[kills chooser_same_list]
+theorem chooser_same_list_rejects_own :
+    ¬∀ (rows : List (List (String × String))),
+        (∀ record ∈ App.Serve.records rows,
+            ∃ rest,
+              record = ("name", Serve.Record.key record) :: rest ∧
+                Remote.targetValid (Serve.Record.key record) = true ∧
+                ∀ field ∈ rest, field.1 ≠ "name") →
+          ((App.Serve.records rows).map Serve.Record.key).Nodup →
+          ∃ snapshot,
+            Selector.Picker.ownList (Listing.porcelain rows) = .ok snapshot ∧
+              snapshot.candidates = (App.Serve.records rows).map Serve.Record.key ∧
+              ∀ record ∈ App.Serve.records rows,
+                Selector.Picker.Snapshot.row snapshot (Serve.Record.key record) = record := by
   sorry
 
 theorem serve_negotiated (s : App.Serve.State) (ev : Serve.Event) :

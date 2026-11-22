@@ -38,11 +38,17 @@ private def parseRow (fields : List String) : Except String (Option String) :=
       else .error "invalid session target in listing"
     | _ => .error "malformed name record in listing"
 
+/-- A listing line's fields: its text between tabs. -/
+def lineFields (line : String) : List String := (line.toList.splitOn '\t').map String.ofList
+
+/-- A listing's lines: its text between newlines. -/
+def listingLines (text : String) : List String := (text.toList.splitOn '\n').map String.ofList
+
 private def parseRows (seen rows : List String) : Except String (List String) :=
   match rows with
   | [] => .ok []
   | row :: rows =>
-    match parseRow (row.splitOn "\t") with
+    match parseRow (lineFields row) with
     | .error error => .error error
     | .ok none => parseRows seen rows
     | .ok (some target) =>
@@ -52,13 +58,18 @@ private def parseRows (seen rows : List String) : Except String (List String) :=
 /-- Validate the complete successful command output before presenting any target.
 Metadata is ignored; malformed name records or duplicates reject the whole snapshot. -/
 private def parseListing (text : String) : Except String (List String) :=
-  parseRows [] (text.splitOn "\n")
+  parseRows [] (listingLines text)
 
 /-- The target parser validates the whole output before metadata is published.
 Consecutive name records and blank-separated records both delimit sessions. -/
 def parseSnapshot (text : String) : Except String Snapshot :=
   (parseListing text).map fun candidates =>
-    { candidates, records := (text.splitOn "\n").map (·.splitOn "\t") }
+    { candidates, records := (listingLines text).map lineFields }
+
+/-- A listing line's fields as a field of a row: a key and a value, or none. -/
+def fieldPair : List String → Option (String × String)
+  | [key, value] => some (key, value)
+  | _ => none
 
 /-- Locate one validated identity without reinterpreting or normalizing its host.
 The next name or blank record ends its metadata; missing status remains unknown. -/
@@ -66,10 +77,7 @@ def Snapshot.row (snapshot : Snapshot) (target : String) : List (String × Strin
   let records := snapshot.records.dropWhile (· != ["name", target])
   ("name", target) ::
     (records.tail.takeWhile fun fields => fields != [""] && fields.head? != some "name").filterMap
-      fun fields =>
-      match fields with
-      | [key, value] => some (key, value)
-      | _ => none
+      fieldPair
 
 /-- The columns of a view of the snapshot's rows (`Listing.layoutOf`). -/
 def Snapshot.laidOut (snapshot : Snapshot) : Linger.Display.Listing.Layout :=

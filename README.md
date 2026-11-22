@@ -70,7 +70,8 @@ went, the latest when the client reads late, never a backlog; `sessions/unsubscr
 base64 as `data`, how a session ended as `ending`, and what the command said as `said`, its last
 32 lines, with `saidDropped` counting the rest. A
 malformed line, an unknown method and wrong params get JSON-RPC's errors, with linger's answer in
-their `data`. `serve` reaches no remote host. Once its standard input ends, it answers the
+their `data`. linger's own chooser reads the same records: it runs `ls --porcelain`, which prints
+the listing `sessions/list` sends, each key and value clean text. `serve` reaches no remote host. Once its standard input ends, it answers the
 requests it read and exits.
 
 ## Upgrades

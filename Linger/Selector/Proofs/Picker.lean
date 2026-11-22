@@ -62,7 +62,7 @@ theorem parseRows_sound (seen rows targets : List String) (h : parseRows seen ro
       targets.Nodup ∧
       (∀ target ∈ targets, target ∉ seen) ∧
       targets.map (fun target => ["name", target]) =
-        (rows.map (·.splitOn "\t")).filter (fun fields => fields.head? == some "name") := by
+        (rows.map lineFields).filter (fun fields => fields.head? == some "name") := by
   induction rows generalizing seen targets with
   | nil =>
     simp only [parseRows, Except.ok.injEq] at h
@@ -70,7 +70,7 @@ theorem parseRows_sound (seen rows targets : List String) (h : parseRows seen ro
     simp
   | cons row rows ih =>
     simp only [parseRows] at h
-    cases hrow : parseRow (row.splitOn "\t") with
+    cases hrow : parseRow (lineFields row) with
     | error error => simp [hrow] at h
     | ok result =>
       cases result with
@@ -113,7 +113,7 @@ theorem parseRows_error (seen rows : List String) (error : String)
   | nil => simp [parseRows] at h
   | cons row rows ih =>
     simp only [parseRows] at h
-    cases hrow : parseRow (row.splitOn "\t") with
+    cases hrow : parseRow (lineFields row) with
     | error reason =>
       simp only [hrow, Except.error.injEq] at h
       subst reason
@@ -142,7 +142,7 @@ The equality also excludes silently dropping valid records or accepting partial 
 theorem parseListing_records (text : String) (targets : List String)
     (h : parseListing text = .ok targets) :
     targets.map (fun target => ["name", target]) =
-      ((text.splitOn "\n").map (·.splitOn "\t")).filter
+      ((listingLines text).map lineFields).filter
         (fun fields => fields.head? == some "name") := (parseRows_sound [] _ targets h).2.2.2
 
 /-- Parsing supplies unique identities, canonical local names, and printable exact
@@ -165,7 +165,7 @@ theorem parseListing_valid (text : String) (targets : List String)
 
 theorem parseListing_provenance (text : String) (targets : List String)
     (h : parseListing text = .ok targets) (target : String) (ht : target ∈ targets) :
-    ∃ row ∈ text.splitOn "\n", row.splitOn "\t" = ["name", target] := by
+    ∃ row ∈ listingLines text, lineFields row = ["name", target] := by
   have hm : ["name", target] ∈ targets.map (fun target => ["name", target]) :=
     List.mem_map.mpr ⟨target, ht, rfl⟩
   rw [parseListing_records text targets h] at hm
@@ -181,7 +181,7 @@ retains every original record rather than synthesizing missing observations. -/
 theorem parseSnapshot_complete (text : String) (snapshot : Snapshot)
     (h : Linger.Selector.Picker.parseSnapshot text = .ok snapshot) :
     parseListing text = .ok snapshot.candidates ∧
-      snapshot.records = (text.splitOn "\n").map (·.splitOn "\t") := by
+      snapshot.records = (listingLines text).map lineFields := by
   unfold parseSnapshot at h
   cases hp : parseListing text with
   | error error => simp [hp, Except.map] at h

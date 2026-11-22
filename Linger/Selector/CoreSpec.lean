@@ -126,4 +126,10 @@ chooser opens. -/
 @[expose]
 def due (next : Bool → Event → Bool) (events : List Event) : Bool := events.foldl next true
 
+/-- A wrong part: a chooser that reads a list of its own, one session `mine`, whatever the listing
+it runs prints. -/
+@[expose]
+def ownList (_ : String) : Except String Snapshot :=
+  .ok { candidates := ["mine"], records := [["name", "mine"]] }
+
 end Linger.Selector.Picker

@@ -5,7 +5,7 @@ public import Linger.App.CoreCode.Json
 import Linger.App.CoreCode.Api
 import Linger.Os.CoreCode.Answer
 import Linger.Session.CoreCode
-import Terminal.CoreCode.Render
+import Linger.Display.CoreCode.Listing
 import Terminal.CoreCode.Mediation
 
 public section
@@ -213,11 +213,11 @@ def line (out : Outgoing) : String := (Json.render out.json).push '\n'
 
 /-- Text as `serve` sends it: every control character, C0, DEL and C1, as U+FFFD, as listings and
 `info` records give it (`Render.textChar`). -/
-def clean (text : String) : String := text.map Terminal.Render.textChar
+def clean (text : String) : String := Linger.Display.Listing.clean text
 
 /-- Listing records as `serve` sends them: each key and value clean text (`clean`). -/
 def records (rows : List (List (String × String))) : List (List (String × String)) :=
-  rows.map fun row => row.map fun (key, value) => (clean key, clean value)
+  Linger.Display.Listing.records rows
 
 /-- The members a request's result shows of how a session ended, when it found that it ended:
 `ending`, the record of it `ls` gives (`Session.endingFields`). -/

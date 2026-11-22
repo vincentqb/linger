@@ -742,9 +742,20 @@ for tie in \
   '[|] [.]summary => do return [{] found := [.]done, shown := [.]text [(]← summaryText[)] [}]' \
   '[|] [.]list [.]summary => unless text[.]isEmpty do IO[.]println text' \
   'match ← connectUpsert env s cmd with [|] [.]ok fd => attachSpoken env s[.]name fd mode' \
-  'if args = [[]"--summary"[]] then some [.]summary'; do
+  'if args = [[]"--summary"[]] then some [.]summary' \
+  'if porcelain then IO[.]print [(]Linger[.]Display[.]Listing[.]porcelain rows[)] else'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "listing or prompt bypassed its shared policy: $tie"
+done
+# `serve` sends a listing's records as `Serve.records` gives them, the records `ls --porcelain`
+# prints and the chooser reads back (`chooser_same_list`), in a result and in every sample.
+serve_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/WorldCode/Serve.lean)"
+for tie in \
+  '[|] [.]rows _ rows => [[][(]"records", [.]arr [(][(]Serve[.]records rows[)][.]map Record[.]json[)][)][]]' \
+  'discard <[|] stepShared [(][.]opened id [(]Serve[.]records rows[)][)]' \
+  'discard <[|] conn[.]atomically [(]stepShared [(][.]sampled [(]Serve[.]records rows[)][)][)]'; do
+  printf '%s\n' "$serve_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "serve sends a listing's records other than as Serve.records gives them: $tie"
 done
 # An attach, writable or watching, goes only to a daemon that says in an info answer on the
 # attach's own connection, within the one-shot reply budget, that it speaks this version's

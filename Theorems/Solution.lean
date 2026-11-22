@@ -58,6 +58,7 @@ import Linger.Selector.Proofs.Frame
 import Linger.Selector.Proofs.Repaint
 import all Linger.Selector.Proofs.Picker
 import all Linger.Selector.Proofs.Fetch
+import Linger.Selector.Proofs.Porcelain
 import all Linger.Display.Proofs.Title
 import all Linger.Os.Proofs.Answer
 import all Linger.Os.Proofs.Env
@@ -1587,6 +1588,43 @@ theorem serve_renders_api_rejects_outside :
   -- a request that found no session would answer that it did what was asked
   have := (h "" .null .missing []).2.2
   simp [App.Serve.answerName, App.Api.answer, App.Api.Found.answer] at this
+
+theorem chooser_same_list (rows : List (List (String × String)))
+    (named :
+      ∀ record ∈ App.Serve.records rows,
+        ∃ rest,
+          record = ("name", App.Serve.Record.key record) :: rest ∧
+            Remote.targetValid (App.Serve.Record.key record) = true ∧
+            ∀ field ∈ rest, field.1 ≠ "name")
+    (distinct : ((App.Serve.records rows).map App.Serve.Record.key).Nodup) :
+    ∃ snapshot,
+      Selector.Picker.parseSnapshot (Listing.porcelain rows) = .ok snapshot ∧
+        snapshot.candidates = (App.Serve.records rows).map App.Serve.Record.key ∧
+        ∀ record ∈ App.Serve.records rows,
+          Selector.Picker.Snapshot.row snapshot (App.Serve.Record.key record) = record :=
+  Selector.Picker.porcelain_read rows named distinct
+
+theorem chooser_same_list_rejects_own :
+    ¬∀ (rows : List (List (String × String))),
+        (∀ record ∈ App.Serve.records rows,
+            ∃ rest,
+              record = ("name", App.Serve.Record.key record) :: rest ∧
+                Remote.targetValid (App.Serve.Record.key record) = true ∧
+                ∀ field ∈ rest, field.1 ≠ "name") →
+          ((App.Serve.records rows).map App.Serve.Record.key).Nodup →
+          ∃ snapshot,
+            Selector.Picker.ownList (Listing.porcelain rows) = .ok snapshot ∧
+              snapshot.candidates = (App.Serve.records rows).map App.Serve.Record.key ∧
+              ∀ record ∈ App.Serve.records rows,
+                Selector.Picker.Snapshot.row snapshot (App.Serve.Record.key record) = record := by
+  intro h
+  -- a chooser that read a list of its own would show a session `mine` where the listing shows none
+  obtain ⟨snapshot, read, names, -⟩ :=
+    h [] (by simp [App.Serve.records, Linger.Display.Listing.records])
+      (by simp [App.Serve.records, Linger.Display.Listing.records])
+  simp only [Selector.Picker.ownList, Except.ok.injEq] at read
+  subst read
+  simp [App.Serve.records, Linger.Display.Listing.records] at names
 
 theorem serve_negotiated (s : App.Serve.State) (ev : App.Serve.Event) :
     App.Serve.State.init.phase = .fresh ∧
