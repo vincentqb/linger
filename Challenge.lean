@@ -196,6 +196,14 @@ def Linger.App.Serve.State.latest : App.Serve.State → Option (List Serve.Recor
 
 def Linger.App.Serve.Log.push {α : Type} : Nat → Serve.Log α → α → Serve.Log α := sorry
 
+def Linger.App.Serve.State.watching : App.Serve.State → Serve.Id → Option Serve.Watch := sorry
+
+def Linger.App.Serve.Line.of : Vt.Row → Serve.Line := sorry
+
+def Linger.App.Serve.Screen.render : Vt.Vt → Serve.Screen := sorry
+
+def Linger.App.Serve.Screen.changes : Serve.Screen → Serve.Screen → Serve.Screen.Update := sorry
+
 /-! ### Session targets -/
 
 def Linger.Target.Name.check : String → Option String := sorry
@@ -1751,6 +1759,28 @@ it and performs each request the step performs as the command line does, with it
 standard input, which the serve suite checks; nor anything of a remote target, which `serve`
 reaches no transport for and refuses.
 
+A client with no terminal of its own follows a session's terminal as rows. `session/screen` and
+`session/history` are `attach --read-only`'s request in the table and log shapes: a watch, which
+attaches read-only once the session's daemon has said on that connection that it speaks this
+version's protocol, and renders what a watcher is shown through linger's own terminal
+(`packages/terminal`), which stands in for every receiver, as part 1 says, by the one renderer
+`capture` uses: a screen's lines, each with a line feed, are what `capture` prints, a line's text
+is its row's `Render.rowText`, and its spans, maximal runs of one pen, cover the pens of its
+characters up to the last that is not a blank of the default pen, so a coloured bar that ends in
+blanks keeps its colour; the cursor and the title are the terminal's (`one_renderer`, killed by a
+second renderer that keeps trailing blanks). A pen is JSON with `fg` and `bg`, a palette index or
+`#rrggbb`, when not the default, and each attribute set as `true`; a span is `[length, pen]`, in
+characters. A watch keeps the lines that left between two looks as a log keeps them, at most
+`Serve.historyCap` and a count of the rest, and a history's log likewise between two updates: what
+its reader reads, a gap for each line dropped, then each line kept, masks what it read before
+followed by what each look's log reads, so no line is dropped uncounted (`history_log_exact`,
+killed by a connection that forgets how many a look dropped). A connection holds at most 16 watches. Not claimed: a mirror
+across a change of the terminal's size: the watch asks for the daemon's `info` on its connection
+after the output it read and attaches again where that gives another size, so a resize shows at
+the next look, but two between looks that leave the size as it was do not, nor do the lines a
+resize pushes into the history or that leave around it; nor a terminal repainted inside a control
+sequence, as part 1 says.
+
 linger's own chooser and every `serve` client read the same list. `sessions/list` sends the
 records of `Api.perform`'s listing, each key and value clean text (`Serve.records`); `ls
 --porcelain` prints the same records, a `key<TAB>value` line for each field and a blank line after
@@ -1961,129 +1991,22 @@ theorem chooser_same_list_rejects_own :
   sorry
 
 theorem serve_negotiated (s : App.Serve.State) (ev : Serve.Event) :
-    App.Serve.State.init.phase = .fresh ∧
-      ((∀ version, s.phase ≠ .ready version) → ∀ e ∈ (App.Serve.step s ev).2, e.Negotiating) ∧
-      (∀ version,
-        (App.Serve.step s ev).1.phase = .ready version →
-          s.phase = .ready version ∨
-            s.phase = .negotiated version ∧
-              ∃ params, ev = .received (.notification "initialized" params)) ∧
-      (∀ id version linger,
-        Serve.Effect.send (.result id (Serve.welcome version linger)) ∈ (App.Serve.step s ev).2 →
-          version ∈ Serve.versions ∧
-            ∃ params,
-              ev = .received (.request id "initialize" params) ∧
-                params.member? "protocolVersion" = some (.str version)) ∧
-      (∀ id method params,
-        ev = .received (.request id method params) → ∃ e ∈ (App.Serve.step s ev).2, e.Answers id) ∧
-      (∀ e ∈ (App.Serve.step s ev).2,
-        ∀ method params,
-          e = .send (.notify method params) →
-            method = "sessions/changed" ∧
-              ∃ id, s.subscription = some id ∧ params.member? "subscription" = some id.json) ∧
-      (∀ id,
-        (App.Serve.step s ev).1.subscription = some id →
-          s.subscription = some id ∨
-            ∃ params version,
-              s.phase = .ready version ∧ ev = .received (.request id "sessions/subscribe" params)) ∧
-      (∀ id params version,
-        s.phase = .ready version →
-          ev = .received (.request id "sessions/subscribe" params) →
-          (App.Serve.step s ev).1.subscription = some id) ∧
-      ∀ id request params version,
-        s.phase = .ready version →
-          s.subscription = some id →
-          ev = .received (.request request "sessions/unsubscribe" params) →
-          params.member? "subscription" = some id.json →
-          (App.Serve.step s ev).1.subscription = none := by
+    Serve.Negotiated App.Serve.State.init App.Serve.State.phase App.Serve.State.subscription
+      App.Serve.State.watching App.Serve.step s ev := by
   sorry
 
 @[kills serve_negotiated]
 theorem serve_negotiated_rejects_eager :
     ¬∀ (s : App.Serve.State) (ev : Serve.Event),
-        App.Serve.State.init.phase = .fresh ∧
-          ((∀ version, s.phase ≠ .ready version) →
-            ∀ e ∈ (Serve.eager App.Serve.step s ev).2, e.Negotiating) ∧
-          (∀ version,
-            (Serve.eager App.Serve.step s ev).1.phase = .ready version →
-              s.phase = .ready version ∨
-                s.phase = .negotiated version ∧
-                  ∃ params, ev = .received (.notification "initialized" params)) ∧
-          (∀ id version linger,
-            Serve.Effect.send (.result id (Serve.welcome version linger)) ∈
-                (Serve.eager App.Serve.step s ev).2 →
-              version ∈ Serve.versions ∧
-                ∃ params,
-                  ev = .received (.request id "initialize" params) ∧
-                    params.member? "protocolVersion" = some (.str version)) ∧
-          (∀ id method params,
-            ev = .received (.request id method params) →
-              ∃ e ∈ (Serve.eager App.Serve.step s ev).2, e.Answers id) ∧
-          (∀ e ∈ (Serve.eager App.Serve.step s ev).2,
-            ∀ method params,
-              e = .send (.notify method params) →
-                method = "sessions/changed" ∧
-                  ∃ id, s.subscription = some id ∧ params.member? "subscription" = some id.json) ∧
-          (∀ id,
-            (Serve.eager App.Serve.step s ev).1.subscription = some id →
-              s.subscription = some id ∨
-                ∃ params version,
-                  s.phase = .ready version ∧
-                    ev = .received (.request id "sessions/subscribe" params)) ∧
-          (∀ id params version,
-            s.phase = .ready version →
-              ev = .received (.request id "sessions/subscribe" params) →
-              (Serve.eager App.Serve.step s ev).1.subscription = some id) ∧
-          ∀ id request params version,
-            s.phase = .ready version →
-              s.subscription = some id →
-              ev = .received (.request request "sessions/unsubscribe" params) →
-              params.member? "subscription" = some id.json →
-              (Serve.eager App.Serve.step s ev).1.subscription = none := by
+        Serve.Negotiated App.Serve.State.init App.Serve.State.phase App.Serve.State.subscription
+          App.Serve.State.watching (Serve.eager App.Serve.step) s ev := by
   sorry
 
 @[kills serve_negotiated]
 theorem serve_negotiated_rejects_chatty :
     ¬∀ (s : App.Serve.State) (ev : Serve.Event),
-        App.Serve.State.init.phase = .fresh ∧
-          ((∀ version, s.phase ≠ .ready version) →
-            ∀ e ∈ (Serve.chatty App.Serve.step s ev).2, e.Negotiating) ∧
-          (∀ version,
-            (Serve.chatty App.Serve.step s ev).1.phase = .ready version →
-              s.phase = .ready version ∨
-                s.phase = .negotiated version ∧
-                  ∃ params, ev = .received (.notification "initialized" params)) ∧
-          (∀ id version linger,
-            Serve.Effect.send (.result id (Serve.welcome version linger)) ∈
-                (Serve.chatty App.Serve.step s ev).2 →
-              version ∈ Serve.versions ∧
-                ∃ params,
-                  ev = .received (.request id "initialize" params) ∧
-                    params.member? "protocolVersion" = some (.str version)) ∧
-          (∀ id method params,
-            ev = .received (.request id method params) →
-              ∃ e ∈ (Serve.chatty App.Serve.step s ev).2, e.Answers id) ∧
-          (∀ e ∈ (Serve.chatty App.Serve.step s ev).2,
-            ∀ method params,
-              e = .send (.notify method params) →
-                method = "sessions/changed" ∧
-                  ∃ id, s.subscription = some id ∧ params.member? "subscription" = some id.json) ∧
-          (∀ id,
-            (Serve.chatty App.Serve.step s ev).1.subscription = some id →
-              s.subscription = some id ∨
-                ∃ params version,
-                  s.phase = .ready version ∧
-                    ev = .received (.request id "sessions/subscribe" params)) ∧
-          (∀ id params version,
-            s.phase = .ready version →
-              ev = .received (.request id "sessions/subscribe" params) →
-              (Serve.chatty App.Serve.step s ev).1.subscription = some id) ∧
-          ∀ id request params version,
-            s.phase = .ready version →
-              s.subscription = some id →
-              ev = .received (.request request "sessions/unsubscribe" params) →
-              params.member? "subscription" = some id.json →
-              (Serve.chatty App.Serve.step s ev).1.subscription = none := by
+        Serve.Negotiated App.Serve.State.init App.Serve.State.phase App.Serve.State.subscription
+          App.Serve.State.watching (Serve.chatty App.Serve.step) s ev := by
   sorry
 
 theorem log_bounded {α : Type} (cap : Nat) (entries : List α) :
@@ -2102,6 +2025,58 @@ theorem log_bounded_rejects_keep_all :
           (entries.foldl (Serve.Log.keepAll cap) {}).tail.length +
               (entries.foldl (Serve.Log.keepAll cap) {}).dropped =
             entries.length := by
+  sorry
+
+theorem one_renderer (v : Vt.Vt) (row : Vt.Row)
+    (hv : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v) :
+    ((App.Serve.Screen.render v).lines.map fun line => line.text ++ [0x0A]).flatten =
+        Render.screenText v ∧
+      (App.Serve.Screen.render v).lines =
+        (List.range v.rowCount).map (fun y => App.Serve.Line.of (v.getRow y)) ∧
+      (App.Serve.Line.of row).text = Render.rowText row ∧
+      Serve.Span.expand (App.Serve.Line.of row).spans = Serve.Line.pens row ∧
+      Serve.Span.Compact (App.Serve.Line.of row).spans ∧
+      (App.Serve.Screen.render v).cursor =
+        { x := v.cursorPos.1, y := v.cursorPos.2, visible := v.getModes.cursorVisible } ∧
+      (App.Serve.Screen.render v).title = v.windowTitle.map Render.textChar := by
+  sorry
+
+@[kills one_renderer]
+theorem one_renderer_rejects_untrimmed :
+    ¬∀ (v : Vt.Vt) (row : Vt.Row),
+        Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v →
+          ((Serve.Screen.untrimmed (fun (v : Vt.Vt) => (List.range v.rowCount).map v.getRow)
+                      v).lines.map
+                  fun line => line.text ++ [0x0A]).flatten =
+              Render.screenText v ∧
+            (Serve.Screen.untrimmed (fun (v : Vt.Vt) => (List.range v.rowCount).map v.getRow)
+                  v).lines =
+              (List.range v.rowCount).map (fun y => App.Serve.Line.of (v.getRow y)) ∧
+            (App.Serve.Line.of row).text = Render.rowText row ∧
+            Serve.Span.expand (App.Serve.Line.of row).spans = Serve.Line.pens row ∧
+            Serve.Span.Compact (App.Serve.Line.of row).spans ∧
+            (Serve.Screen.untrimmed (fun (v : Vt.Vt) => (List.range v.rowCount).map v.getRow)
+                  v).cursor =
+              { x := v.cursorPos.1, y := v.cursorPos.2, visible := v.getModes.cursorVisible } ∧
+            (Serve.Screen.untrimmed (fun (v : Vt.Vt) => (List.range v.rowCount).map v.getRow)
+                  v).title =
+              v.windowTitle.map Render.textChar := by
+  sorry
+
+theorem history_log_exact (s : App.Serve.State) (version : String) (id : Serve.Id)
+    (pending left : Serve.Log Serve.Line) (screen : Serve.Screen)
+    (ready : s.phase = .ready version) :
+    Serve.HistoryLog App.Serve.State.watching App.Serve.step App.Serve.result s id pending screen
+      left := by
+  sorry
+
+@[kills history_log_exact]
+theorem history_log_exact_rejects_uncounted :
+    ¬∀ (s : App.Serve.State) (version : String) (id : Serve.Id)
+        (pending left : Serve.Log Serve.Line) (screen : Serve.Screen),
+        s.phase = .ready version →
+          Serve.HistoryLog App.Serve.State.watching (Serve.uncounted App.Serve.step)
+            App.Serve.result s id pending screen left := by
   sorry
 
 theorem fields_owned :
@@ -3962,7 +3937,21 @@ the clock's readings, which change while nothing happens: the records that diffe
 that went (`changed_exactly`), which bring the subscriber's view, the record it holds under each
 key, to the latest records (`table_converges`). So a quiet session sends nothing, a session that
 prints sends at most one update a second, and a subscriber that reads late gets the latest
-record under each key, never every one between. At most 64 requests are performed, and messages
+record under each key, never every one between. A watch follows its session's output, not a
+clock: after a read that brought output, it asks for the daemon's `info` on the same connection,
+whose answer, coming after that output, confirms the terminal's size, and there it takes a look,
+the screen its mirror renders and the lines that left since, so a quiet session costs a watch
+nothing. A screen's first look answers its request with the whole screen, which its subscriber
+then holds; a later look sends nothing and replaces the latest screen, so the connection holds
+what it told and the latest, never a queue; and each time the writer is free it sends
+`session/screen/changed` exactly when the two differ, with exactly the lines that changed, under
+their numbers, the numbers of those that went, and the cursor and title when they changed, which
+bring the subscriber's copy to the latest look (`screen_table_exact`, killed by an update that
+carries every line and by one that carries only the first that changed), as the chooser's repaint
+writes only the rows that differ (`picker_repaints_changes`). A history's looks add the lines that
+left to its log and send nothing, and a free writer sends the log, its lines and its count of
+drops, when it holds any (`history_log_exact`). A watch's last update, when its session ends or
+its connection is lost, carries `closed`, with the answer the command line exits with for that. At most 64 requests are performed, and messages
 wait to be written, at once, past which `serve` reads no more input until one has answered or been
 written, and a line is at most 1 MiB, so a client that sends much and reads nothing holds `serve`
 at a bounded size. Not claimed: that a listing's records are the sessions' as they stand, which
@@ -4046,6 +4035,31 @@ theorem table_converges_rejects_queued :
                       (Serve.View.apply (Serve.View.of told) records gone key).map
                           Serve.Record.reading =
                         (Serve.View.of latest key).map Serve.Record.reading := by
+  sorry
+
+theorem screen_table_exact (s : App.Serve.State) (version : String) (id : Serve.Id)
+    (told latest screen : Serve.Screen) (left : Serve.Log Serve.Line)
+    (ready : s.phase = .ready version) :
+    Serve.ScreenTable App.Serve.State.watching App.Serve.step App.Serve.result
+      App.Serve.Screen.changes s id told latest screen left := by
+  sorry
+
+@[kills screen_table_exact]
+theorem screen_table_exact_rejects_every_line :
+    ¬∀ (s : App.Serve.State) (version : String) (id : Serve.Id) (told latest screen : Serve.Screen)
+        (left : Serve.Log Serve.Line),
+        s.phase = .ready version →
+          Serve.ScreenTable App.Serve.State.watching App.Serve.step App.Serve.result
+            Serve.Screen.everyLine s id told latest screen left := by
+  sorry
+
+@[kills screen_table_exact]
+theorem screen_table_exact_rejects_first_change :
+    ¬∀ (s : App.Serve.State) (version : String) (id : Serve.Id) (told latest screen : Serve.Screen)
+        (left : Serve.Log Serve.Line),
+        s.phase = .ready version →
+          Serve.ScreenTable App.Serve.State.watching App.Serve.step App.Serve.result
+            Serve.Screen.firstChange s id told latest screen left := by
   sorry
 
 theorem ticks_settle (s : State) (now t₁ t₂ : Nat)

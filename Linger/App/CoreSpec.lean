@@ -685,10 +685,14 @@ inductive Life (ε : Type) where
 
 /-- The methods `serve` answers as operations, each with the operation whose request it is, the
 word of that operation's command and its shape: every one is an ask but `sessions/subscribe`, a
-table of the sessions' records, keyed by name. -/
+table of the sessions' records, keyed by name, and the watches of a session's terminal, which
+attach to it read-only as `attach --read-only` does: `session/screen`, a table of its screen's
+lines, keyed by number, with its cursor and title, and `session/history`, a log of the lines that
+leave the top of its screen. -/
 @[expose]
 def methods : List (String × Commands.Op × String × Shape) :=
   [("sessions/list", .list, "ls", .ask), ("sessions/subscribe", .list, "ls", .table),
+    ("session/screen", .attach, "attach", .table), ("session/history", .attach, "attach", .log),
     ("session/start", .start, "start", .ask), ("session/resume", .resume, "resume", .ask),
     ("session/send", .send, "send", .ask), ("session/detach", .detach, "detach", .ask),
     ("session/kill", .kill, "kill", .ask), ("session/rename", .rename, "rename", .ask),
@@ -706,7 +710,7 @@ def input (method : String) (params : Json) : Option (List UInt8) :=
 /-- The words of a method's command line after its command's: its options from the params'
 members and its target last, after `--` where the command reads one, so that a name that starts
 with `-` stays a name; none for params the method does not take. `session/send` is `send NAME -`,
-whose standard input is `input`'s. -/
+whose standard input is `input`'s, and a watch is `attach --read-only -- NAME`. -/
 @[expose]
 def operands (method : String) (params : Json) : Option (List String) :=
   if method = "sessions/list" then
@@ -714,31 +718,34 @@ def operands (method : String) (params : Json) : Option (List String) :=
   else
     if method = "sessions/subscribe" then some ["--porcelain"]
     else
-      if method = "session/start" then do
-        let name ← params.need "name" Json.text?
-        let program ← params.need "program" Json.text?
-        let args ← params.opt "args" Json.texts? []
-        pure ([name, program] ++ args)
+      if method = "session/screen" ∨ method = "session/history" then
+        (params.need "name" Json.text?).map fun name => ["--read-only", "--", name]
       else
-        if method = "session/rename" then do
+        if method = "session/start" then do
           let name ← params.need "name" Json.text?
-          let new ← params.need "new" Json.text?
-          pure [name, new]
+          let program ← params.need "program" Json.text?
+          let args ← params.opt "args" Json.texts? []
+          pure ([name, program] ++ args)
         else
-          if method = "session/capture" then do
+          if method = "session/rename" then do
             let name ← params.need "name" Json.text?
-            let history ← params.opt "history" Json.flag? false
-            pure ((if history then ["--history"] else []) ++ ["--", name])
+            let new ← params.need "new" Json.text?
+            pure [name, new]
           else
-            if method = "session/resize" then do
+            if method = "session/capture" then do
               let name ← params.need "name" Json.text?
-              let cols ← params.need "cols" Json.nat?
-              let rows ← params.need "rows" Json.nat?
-              pure [name, toString cols, toString rows]
+              let history ← params.opt "history" Json.flag? false
+              pure ((if history then ["--history"] else []) ++ ["--", name])
             else
-              if method = "session/send" then
-                (params.need "name" Json.text?).map fun name => [name, "-"]
-              else (params.need "name" Json.text?).map fun name => [name]
+              if method = "session/resize" then do
+                let name ← params.need "name" Json.text?
+                let cols ← params.need "cols" Json.nat?
+                let rows ← params.need "rows" Json.nat?
+                pure [name, toString cols, toString rows]
+              else
+                if method = "session/send" then
+                  (params.need "name" Json.text?).map fun name => [name, "-"]
+                else (params.need "name" Json.text?).map fun name => [name]
 
 /-- **The command line a method and its params are**: its operation's command word (`methods`),
 then its `operands`; none for a method `methods` does not list or params it does not take. -/
@@ -821,6 +828,257 @@ def View.apply (view : String → Option Record) (records : List Record) (gone :
     (key : String) : Option Record :=
   if gone.contains key then none else (records.find? (·.key == key)).or (view key)
 
+/-- A log as a reader keeps one: the last entries appended, at most its cap, and how many before
+them it dropped. -/
+structure Log (α : Type) where
+  /-- The last entries, oldest first. -/
+  tail : List α := []
+  /-- How many entries before them were dropped. -/
+  dropped : Nat := 0
+
+/-- A wrong part: a log that keeps every entry, whatever its cap. -/
+@[expose]
+def Log.keepAll {α : Type} (_ : Nat) (log : Log α) (entry : α) : Log α :=
+  { log with tail := log.tail ++ [entry] }
+
+/-! ## A session's terminal as rows
+
+A client with no terminal of its own follows a session's terminal as rows: the screen as a table
+keyed by line number, with the cursor and the window title under keys of their own, and the lines
+that leave the top of the screen as a log. A line is its text, exactly as `capture` prints the row,
+and the runs of the pens its characters are drawn with, which run on past the text over blanks
+drawn with a pen other than the default, so that a reader can draw a coloured bar that ends in
+blanks. -/
+
+/-- A run of a line's characters drawn with one pen: how many characters, and the pen. -/
+structure Span where
+  /-- How many characters the run covers. -/
+  length : Nat
+  /-- The pen they are drawn with. -/
+  pen : Terminal.Vt.Pen
+  deriving DecidableEq
+
+/-- A line of a terminal as a reader holds it: its text, in UTF-8, and the runs of the pens its
+characters are drawn with, in order. -/
+structure Line where
+  /-- The text, as `capture` prints the row: its characters, trailing blanks trimmed. -/
+  text : List UInt8
+  /-- The runs of its characters' pens (`Line.pens`). -/
+  spans : List Span
+  deriving DecidableEq
+
+/-- The cursor as a reader holds it: its column and row, from 0, and whether it shows. -/
+structure Cursor where
+  /-- The column, from 0. -/
+  x : Nat
+  /-- The row, from 0. -/
+  y : Nat
+  /-- Whether it shows (DECTCEM). -/
+  visible : Bool
+  deriving DecidableEq
+
+/-- A screen as a reader holds it: its lines, top first, keyed by their number, the cursor and the
+window title. -/
+structure Screen where
+  /-- The lines, top first. -/
+  lines : List Line
+  /-- The cursor. -/
+  cursor : Cursor
+  /-- The window title, as clean text. -/
+  title : String
+  deriving DecidableEq
+
+/-- A cell's characters, each with whether it is a blank and with the cell's pen: the character
+it draws and each combining mark after it, and none for the shadow of a wide character, as
+`capture` reads them. -/
+@[expose]
+def cellPens (c : Terminal.Vt.Cell) : List (Bool × Terminal.Vt.Pen) :=
+  if c.width = 0 then []
+  else (decide (c.base = ' '), c.pen) :: c.marks.map fun m => (decide (m = ' '), c.pen)
+
+/-- **The pens a line's spans cover**: the pens of the row's characters, in order, up to the last
+that is not a blank drawn with the default pen. -/
+@[expose]
+def Line.pens (row : Terminal.Vt.Row) : List Terminal.Vt.Pen :=
+  ((row.toList.flatMap cellPens).reverse.dropWhile fun c => c.1 && c.2 == {}).reverse.map (·.2)
+
+/-- The pens of runs, one per character, in order. -/
+@[expose]
+def Span.expand (spans : List Span) : List Terminal.Vt.Pen :=
+  spans.flatMap fun s => List.replicate s.length s.pen
+
+/-- Runs that are maximal: each covers a character, and no two in turn share a pen. -/
+@[expose]
+def Span.Compact (spans : List Span) : Prop :=
+  (∀ s ∈ spans, 0 < s.length) ∧ ∀ pair ∈ spans.zip spans.tail, pair.1.pen ≠ pair.2.pen
+
+/-- An update of a screen table: the lines that changed, each with its number, the numbers of the
+lines that went, and the cursor and the title when they changed. -/
+structure Screen.Update where
+  /-- The lines that changed, each with its number. -/
+  lines : List (Nat × Line)
+  /-- The numbers of the lines that went. -/
+  removed : List Nat
+  /-- The cursor, when it changed. -/
+  cursor : Option Cursor
+  /-- The window title, when it changed. -/
+  title : Option String
+  deriving DecidableEq
+
+/-- A screen's line under a number as a reader holds it after an update: none where the update
+removes it, else the line the update carries under it, else the one held before. -/
+@[expose]
+def Screen.View.line (told : Screen) (u : Screen.Update) (y : Nat) : Option Line :=
+  if y ∈ u.removed then none else (u.lines.lookup y).or told.lines[y]?
+
+/-- **An update that is exact from `told` to `latest`**: it brings a reader holding `told` to
+`latest`, under every line number and in its cursor and title, and carries exactly what changed:
+each line whose number `told` holds otherwise or not at all, once, the numbers of the lines that
+went, once each, and the cursor and the title only when they changed. -/
+@[expose]
+def Screen.Exact (told latest : Screen) (u : Screen.Update) : Prop :=
+  (∀ y, Screen.View.line told u y = latest.lines[y]?) ∧
+    u.cursor.getD told.cursor = latest.cursor ∧
+    u.title.getD told.title = latest.title ∧
+    (∀ y line, (y, line) ∈ u.lines ↔ latest.lines[y]? = some line ∧ told.lines[y]? ≠ some line) ∧
+    (u.lines.map (·.1)).Nodup ∧
+    (∀ y, y ∈ u.removed ↔ told.lines[y]?.isSome ∧ latest.lines[y]? = none) ∧
+    u.removed.Nodup ∧
+    u.cursor = (if told.cursor = latest.cursor then none else some latest.cursor) ∧
+    u.title = (if told.title = latest.title then none else some latest.title)
+
+/-- A wrong part: an update that carries every line of the latest screen, changed or not, and its
+cursor and title. -/
+@[expose]
+def Screen.everyLine (_ latest : Screen) : Screen.Update :=
+  { lines := latest.lines.zipIdx.map fun (line, y) => (y, line), removed := [],
+    cursor := some latest.cursor, title := some latest.title }
+
+/-- A wrong part: an update that carries only the first line that changed. -/
+@[expose]
+def Screen.firstChange (told latest : Screen) : Screen.Update :=
+  {
+    lines :=
+      ((latest.lines.zipIdx.filter fun (line, y) => told.lines[y]? != some line).map
+            fun (line, y) => (y, line)).take
+        1,
+    removed := [], cursor := if told.cursor = latest.cursor then none else some latest.cursor,
+    title := if told.title = latest.title then none else some latest.title }
+
+/-- A wrong part: a second renderer of a terminal's screen, of the rows `rows` reads from it, which
+writes each cell's character as it is, keeping trailing blanks, and draws no pens. -/
+@[expose]
+def Screen.untrimmed {V : Type} (rows : V → List Terminal.Vt.Row) (v : V) : Screen :=
+  {
+    lines :=
+      (rows v).map fun row =>
+        { text := row.toList.flatMap fun c => String.utf8EncodeChar c.base, spans := [] },
+    cursor := { x := 0, y := 0, visible := true }, title := "" }
+
+/-- The size of the log a watch of a session's history keeps between two updates: the last this
+many lines that left the screen, and a count of those before them. -/
+@[expose]
+def historyCap : Nat := 1000
+
+/-- A log as a reader reads it: a gap for each entry dropped, then each entry kept, in order. -/
+@[expose]
+def Log.reads {α : Type} (log : Log α) : List (Option α) :=
+  List.replicate log.dropped none ++ log.tail.map some
+
+/-- **What a reader reads shows exactly the entries**, in order: one place for each, which holds
+the entry or a gap where it was dropped. -/
+@[expose]
+def Log.Masks {α : Type} : List (Option α) → List (Option α) → Prop
+  | [], [] => True
+  | shown :: rest, entry :: entries => (shown = entry ∨ shown = none) ∧ Log.Masks rest entries
+  | _, _ => False
+
+/-- What a connection holds for a watch, a subscription to a session's terminal: asked for and not
+answered yet, a screen's or a history's; open on a screen, which its subscriber was last told and
+the latest look found; or open on a history, with the lines that left the screen since the last
+update, a bounded tail and a count of those it dropped. -/
+inductive Watch where
+  /-- Asked for, of a history or else of a screen, and not answered yet. -/
+  | asked (history : Bool)
+  /-- Open on a screen: what its subscriber was last told, and what the latest look found. -/
+  | screen (told latest : Screen)
+  /-- Open on a history: the lines that left since the last update. -/
+  | history (pending : Log Line)
+
+/-- The two lowercase hexadecimal digits of a byte. -/
+@[expose]
+def hexByte (b : UInt8) : String :=
+  let digit (n : Nat) : Char := if n < 10 then Char.ofNat (48 + n) else Char.ofNat (87 + n)
+  String.ofList [digit (b.toNat / 16), digit (b.toNat % 16)]
+
+/-- A colour as JSON: a palette index as a number, a 24-bit colour as `#rrggbb`, and the default
+as `null`. -/
+@[expose]
+def colorJson : Terminal.Vt.Color → Json
+  | .default => .null
+  | .idx i => .number (toString i.toNat)
+  | .rgb r g b => .str ("#" ++ hexByte r ++ hexByte g ++ hexByte b)
+
+/-- **A pen as JSON**, compactly: an object with `fg` and `bg` when they are not the default, and
+each of `bold`, `dim`, `italic`, `underline`, `blink`, `reverse` and `strike` that is set, as
+`true`; the default pen is `{}`. -/
+@[expose]
+def penJson (p : Terminal.Vt.Pen) : Json :=
+  .obj
+    ((if p.fg = .default then [] else [("fg", colorJson p.fg)]) ++
+      (if p.bg = .default then [] else [("bg", colorJson p.bg)]) ++
+      ([("bold", p.bold), ("dim", p.dim), ("italic", p.italic), ("underline", p.underline),
+                ("blink", p.blink), ("reverse", p.reverse), ("strike", p.strike)].filter
+            (·.2)).map
+        fun (key, _) => (key, .bool true))
+
+/-- A run as JSON: `[length, pen]`. -/
+@[expose]
+def Span.json (s : Span) : Json := .arr [.number (toString s.length), penJson s.pen]
+
+/-- A line's members: its `text`, a string, and its `spans`. -/
+@[expose]
+def Line.members (line : Line) : List (String × Json) :=
+  [("text", .str ((String.fromUTF8? (ByteArray.mk line.text.toArray)).getD "")),
+    ("spans", .arr (line.spans.map Span.json))]
+
+/-- A line under its number as JSON: `{line, text, spans}`. -/
+@[expose]
+def Line.numbered (y : Nat) (line : Line) : Json :=
+  .obj (("line", .number (toString y)) :: line.members)
+
+/-- The cursor as JSON: `{x, y, visible}`. -/
+@[expose]
+def Cursor.json (c : Cursor) : Json :=
+  .obj [("x", .number (toString c.x)), ("y", .number (toString c.y)), ("visible", .bool c.visible)]
+
+/-- **A screen as the result of `session/screen` shows it**: its `rows`, each line under its
+number, top first, its `cursor` and its `title`. -/
+@[expose]
+def Screen.members (screen : Screen) : List (String × Json) :=
+  [("rows", .arr (screen.lines.zipIdx.map fun (line, y) => Line.numbered y line)),
+    ("cursor", screen.cursor.json), ("title", .str screen.title)]
+
+/-- **The params of `session/screen/changed`**: the subscription it updates, the id of the request
+that opened it, the `rows` that changed, each under its number, the numbers of the lines that
+went, `removed`, and the `cursor` and the `title` when they changed. -/
+@[expose]
+def Screen.update (id : Id) (u : Screen.Update) : Json :=
+  .obj
+    ([("subscription", id.json), ("rows", .arr (u.lines.map fun (y, line) => Line.numbered y line)),
+        ("removed", .arr (u.removed.map fun y => .number (toString y)))] ++
+      (u.cursor.map fun c => ("cursor", c.json)).toList ++
+      (u.title.map fun t => ("title", .str t)).toList)
+
+/-- **The params of `session/history/changed`**: the subscription it updates, the id of the request
+that opened it, the `lines` that left the screen since the last update, oldest first, and how many
+before them it `dropped`. -/
+@[expose]
+def Log.update (id : Id) (log : Log Line) : Json :=
+  .obj
+    [("subscription", id.json), ("lines", .arr (log.tail.map fun line => .obj line.members)),
+      ("dropped", .number (toString log.dropped))]
+
 /-- What one line from the client is, as `serve` reads it. -/
 inductive Message where
   /-- A request, which one response answers, by its id. -/
@@ -863,6 +1121,18 @@ inductive Event where
   | sampled (records : List Record)
   /-- The writer wrote everything it took, and takes another message. -/
   | writable
+  /-- A watch's look at its session's terminal, where the session's daemon confirmed the
+  terminal's size: the screen it renders there (`Screen.render`) and the lines that left its top
+  since the watch's last look (`Line.of`), as a log keeps them: the last at most `historyCap`, and a
+  count of those it dropped before them. The first look answers the request that asked for the
+  watch. -/
+  | watched (id : Id) (screen : Screen) (left : Log Line)
+  /-- The writer wrote everything it took, and takes the update of the watch with this id. -/
+  | flush (id : Id)
+  /-- The watch with this id ended: its session ended, its connection was lost, or it never
+  opened, as `found` says, with what it said, which answers the request that asked for it when it
+  never opened. -/
+  | unwatched (id : Id) (found : Api.Found) (said : Log String)
 
 /-- What a connection does. -/
 inductive Effect where
@@ -883,7 +1153,10 @@ def welcome (version linger : String) : Json :=
         .obj
           [("methods",
               .arr (("initialize" :: methods.map (·.1) ++ ["sessions/unsubscribe"]).map .str)),
-            ("notifications", .arr [.str "sessions/changed"])])]
+            ("notifications",
+              .arr
+                [.str "sessions/changed", .str "session/screen/changed",
+                  .str "session/history/changed"])])]
 
 /-- What a connection may write before it is ready: an error, or the result of `initialize`. -/
 @[expose]
@@ -908,19 +1181,6 @@ def eager {σ : Type} (step : σ → Event → σ × List Effect) (s : σ) : Eve
   | .received (.request id _ _) => (s, [.send (.result id .null)])
   | ev => step s ev
 
-/-- A log as a reader keeps one: the last entries appended, at most its cap, and how many before
-them it dropped. -/
-structure Log (α : Type) where
-  /-- The last entries, oldest first. -/
-  tail : List α := []
-  /-- How many entries before them were dropped. -/
-  dropped : Nat := 0
-
-/-- A wrong part: a log that keeps every entry, whatever its cap. -/
-@[expose]
-def Log.keepAll {α : Type} (_ : Nat) (log : Log α) (entry : α) : Log α :=
-  { log with tail := log.tail ++ [entry] }
-
 /-- A wrong part: a connection that sends an update each time the writer is free, whether or not
 a subscription is open or anything changed, and otherwise steps as `step` does. -/
 @[expose]
@@ -937,5 +1197,127 @@ def queued {σ : Type} (step : σ → Event → σ × List Effect) (s : σ) : Ev
       (step s (.sampled records)).2 ++
         [.send (.notify "sessions/changed" (.obj [("records", .arr (records.map Record.json))]))])
   | ev => step s ev
+
+/-- **A connection negotiates before it acts, and notifies only subscriptions open**, of the
+connection whose first state is `init`, whose states read as `phase`, `subscription` and
+`watching` and whose transition is `step`, at `s` hearing `ev`: it starts before its handshake;
+until it is ready it writes nothing but errors and the result of `initialize`, and performs
+nothing; it is ready only once the client said `initialized` after `initialize` was answered;
+`initialize`'s result goes only to `initialize`, with the version the client asked for, one it
+speaks; it answers or performs every request; each notification names a subscription open, of its
+kind; the sessions table opens only by its `sessions/subscribe`, which opens it in a ready
+connection, and a watch only by its request; and `sessions/unsubscribe` closes the subscription it
+names. -/
+@[expose]
+def Negotiated {σ : Type} (init : σ) (phase : σ → Phase) (subscription : σ → Option Id)
+    (watching : σ → Id → Option Watch) (step : σ → Event → σ × List Effect) (s : σ) (ev : Event) :
+    Prop :=
+  phase init = .fresh ∧
+    ((∀ version, phase s ≠ .ready version) → ∀ e ∈ (step s ev).2, e.Negotiating) ∧
+    (∀ version,
+      phase (step s ev).1 = .ready version →
+        phase s = .ready version ∨
+          phase s = .negotiated version ∧
+            ∃ params, ev = .received (.notification "initialized" params)) ∧
+    (∀ id version linger,
+      Effect.send (.result id (welcome version linger)) ∈ (step s ev).2 →
+        version ∈ versions ∧
+          ∃ params,
+            ev = .received (.request id "initialize" params) ∧
+              params.member? "protocolVersion" = some (.str version)) ∧
+    (∀ id method params,
+      ev = .received (.request id method params) → ∃ e ∈ (step s ev).2, e.Answers id) ∧
+    (∀ e ∈ (step s ev).2,
+      ∀ method params,
+        e = .send (.notify method params) →
+          ∃ id,
+            params.member? "subscription" = some id.json ∧
+              (method = "sessions/changed" ∧ subscription s = some id ∨
+                method = "session/screen/changed" ∧
+                  (∃ told latest, watching s id = some (.screen told latest)) ∨
+                method = "session/history/changed" ∧
+                  (∃ pending, watching s id = some (.history pending)))) ∧
+    (∀ id,
+      subscription (step s ev).1 = some id →
+        subscription s = some id ∨
+          ∃ params version,
+            phase s = .ready version ∧ ev = .received (.request id "sessions/subscribe" params)) ∧
+    (∀ id params version,
+      phase s = .ready version →
+        ev = .received (.request id "sessions/subscribe" params) →
+        subscription (step s ev).1 = some id) ∧
+    (∀ id request params version,
+      phase s = .ready version →
+        subscription s = some id →
+        ev = .received (.request request "sessions/unsubscribe" params) →
+        params.member? "subscription" = some id.json → subscription (step s ev).1 = none) ∧
+    (∀ id,
+      (watching (step s ev).1 id).isSome →
+        (watching s id).isSome ∨
+          ∃ params version,
+            phase s = .ready version ∧
+              (ev = .received (.request id "session/screen" params) ∨
+                ev = .received (.request id "session/history" params))) ∧
+    ∀ id request params version,
+      phase s = .ready version →
+        (watching s id).isSome →
+        ev = .received (.request request "sessions/unsubscribe" params) →
+        params.member? "subscription" = some id.json → watching (step s ev).1 id = none
+
+/-- **A screen's table is exact**, of the connection whose states read as `watching`, whose
+transition is `step`, whose results are `result` and whose updates are `changes`, at `s` for the
+watch `id`: a screen's first look answers its request with the whole screen, which its subscriber
+then holds; a later look sends nothing and replaces the latest screen, keeping what the subscriber
+was told; a free writer sends exactly the changes, when the latest screen differs from what the
+subscriber was told, and has then told it; and the changes from `told` to `latest` are exact
+(`Screen.Exact`). -/
+@[expose]
+def ScreenTable {σ : Type} (watching : σ → Id → Option Watch) (step : σ → Event → σ × List Effect)
+    (result : Api.Found → List (String × Json) → Json) (changes : Screen → Screen → Screen.Update)
+    (s : σ) (id : Id) (told latest screen : Screen) (left : Log Line) : Prop :=
+  (watching s id = some (.asked false) →
+      (step s (.watched id screen left)).2 = [.send (.result id (result .done screen.members))] ∧
+        watching (step s (.watched id screen left)).1 id = some (.screen screen screen)) ∧
+    (watching s id = some (.screen told latest) →
+      (step s (.watched id screen left)).2 = [] ∧
+        watching (step s (.watched id screen left)).1 id = some (.screen told screen) ∧
+        (step s (.flush id)).2 =
+          (if told = latest then []
+          else
+            [.send (.notify "session/screen/changed" (Screen.update id (changes told latest)))]) ∧
+        watching (step s (.flush id)).1 id = some (.screen latest latest)) ∧
+    Screen.Exact told latest (changes told latest)
+
+/-- A wrong part: a connection that forgets how many lines a watch's look dropped, and otherwise
+steps as `step` does. -/
+@[expose]
+def uncounted {σ : Type} (step : σ → Event → σ × List Effect) (s : σ) : Event → σ × List Effect
+  | .watched id screen left => step s (.watched id screen { left with dropped := 0 })
+  | ev => step s ev
+
+/-- **A history's log counts what it drops**, of the connection whose states read as `watching`,
+whose transition is `step` and whose results are `result`, at `s` for the watch `id`: a history's
+first look answers its request, and it and each later look, which sends nothing, leave a log whose
+reading masks what the log read before, then what the look's log of the lines that left reads
+(`Log.Masks`), so every line dropped on the way is a counted gap; and a free writer sends the log
+when it holds a line or a drop, and then holds none. -/
+@[expose]
+def HistoryLog {σ : Type} (watching : σ → Id → Option Watch) (step : σ → Event → σ × List Effect)
+    (result : Api.Found → List (String × Json) → Json) (s : σ) (id : Id) (pending : Log Line)
+    (screen : Screen) (left : Log Line) : Prop :=
+  (watching s id = some (.asked true) →
+      (step s (.watched id screen left)).2 = [.send (.result id (result .done []))] ∧
+        ∃ kept,
+          watching (step s (.watched id screen left)).1 id = some (.history kept) ∧
+            Log.Masks kept.reads left.reads) ∧
+    (watching s id = some (.history pending) →
+      (step s (.watched id screen left)).2 = [] ∧
+        (∃ kept,
+          watching (step s (.watched id screen left)).1 id = some (.history kept) ∧
+            Log.Masks kept.reads (pending.reads ++ left.reads)) ∧
+        (step s (.flush id)).2 =
+          (if pending.tail = [] ∧ pending.dropped = 0 then []
+          else [.send (.notify "session/history/changed" (Log.update id pending))]) ∧
+        watching (step s (.flush id)).1 id = some (.history {}))
 
 end Linger.App.Serve

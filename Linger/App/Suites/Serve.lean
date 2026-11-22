@@ -17,7 +17,11 @@ the methods, and until `initialized` a request is still refused. After it, the c
 starts a session, sends it input as base64, captures its screen and reads what it printed, waits
 for its program's ending and kills another, and subscribes to the sessions' table, which sends
 `sessions/changed` when a record changes, but not for a quiet session, and nothing once closed: each result carries the answer the command line
-exits with, by name and code. A method `serve` does not answer, params it does not take and a line
+exits with, by name and code. It watches a session's terminal as rows: the screen's table, whose
+lines it keeps in a grid of its own and finds, after each step of the session's program, what
+`capture` prints, with the cursor `info` reports, each update carrying only lines that changed and
+the last one how the session ended; and the history's log, whose lines and drops are the lines that
+scrolled off, as `capture --history` prints them. A method `serve` does not answer, params it does not take and a line
 that is no JSON get JSON-RPC's errors. Once its standard input ends, `serve` exits 0. -/
 
 namespace Linger.App.Suites.Serve
@@ -346,6 +350,240 @@ private def sameList (e : Env) (p : Peer) : IO Unit := do
   expect same
       s!"the chooser reads from ls --porcelain, under each name and in order, the records sessions/list sends ({served.map name})"
 
+/-- The notifications of `method` the peer wrote so far. -/
+def Peer.notes (p : Peer) (method : String) : IO (List Json) := do
+  return (← p.lines.get).toList.filterMap fun line =>
+      (Json.parse line).filter fun message => textAt? message ["method"] == some method
+
+/-- A screen as a client with no terminal keeps one: each line's row object under its number, the
+cursor, and how many updates it applied, of which how many carried a line it held already. -/
+structure Grid where
+  /-- Each line's row object, under its number. -/
+  rows : List (Nat × Json) := []
+  /-- The cursor object. -/
+  cursor : Json := .null
+  /-- How many updates it applied. -/
+  applied : Nat := 0
+  /-- How many lines the updates carried that it held already, as they were. -/
+  unchanged : Nat := 0
+
+/-- The line number of a row object. -/
+def lineOf (row : Json) : Option Nat := (textAt? row ["line"]).bind String.toNat?
+
+/-- A grid with the rows of `rows` set under their numbers, counting each it held already. -/
+def Grid.set (g : Grid) (rows : List Json) : Grid :=
+  rows.foldl
+    (fun g row =>
+      match lineOf row with
+      | some y =>
+        { g with
+          rows := (g.rows.filter (·.1 != y)) ++ [(y, row)]
+          unchanged :=
+            g.unchanged +
+              if (g.rows.lookup y).map Json.render == some (Json.render row) then 1 else 0 }
+      | none => g)
+    g
+
+/-- A grid after a `session/screen/changed`: its rows set, the lines it removes gone and its
+cursor, when it carries one. -/
+def Grid.apply (g : Grid) (note : Json) : Grid :=
+  let rows :=
+    match at? note ["params", "rows"] with
+    | some (.arr rows) => rows
+    | _ => []
+  let gone :=
+    match at? note ["params", "removed"] with
+    | some (.arr items) => items.filterMap fun item => (textAt? item []).bind String.toNat?
+    | _ => []
+  let g := g.set rows
+  { g with
+    rows := g.rows.filter fun (y, _) => !gone.contains y
+    cursor := (at? note ["params", "cursor"]).getD g.cursor
+    applied := g.applied + 1 }
+
+/-- A grid's lines as `capture` prints a screen: each line's text, top first, each with a line
+feed. -/
+def Grid.text (g : Grid) : String :=
+  let ordered := (g.rows.map (·.1)).mergeSort (· ≤ ·)
+  String.join (ordered.map fun y => (((g.rows.lookup y).bind (textAt? · ["text"])).getD "") ++ "\n")
+
+/-- The cursor `info` reports for the session `name`, through `sessions/list`, request `id`. -/
+private def infoCursor (p : Peer) (name : String) (id : Nat) : IO (Option (String × String)) := do
+  p.say (request id "sessions/list" (.obj [("names", .arr [.str name])]))
+  let listed ← p.answer id
+  match listed.bind (at? · ["result", "records"]) with
+  | some (.arr (record :: _)) =>
+    return do
+      let x ← textAt? record ["cursorx"]
+      let y ← textAt? record ["cursory"]
+      pure (x, y)
+  | _ =>
+    return none
+
+/-- The screen's table: a client that keeps the screen as rows, with no terminal of its own, holds
+after each step of the session's program the screen `capture` prints and the cursor `info`
+reports; every update carries only lines that changed, a line printed in red carries a span of
+foreground colour 1, and the last update closes the watch with how the session ended. -/
+private def screenTable (p : Peer) : IO Unit := do
+  let program :=
+    "printf 'one\\ntwo\\n'; read a; printf '\\033[1;4H!\\033[2;5Hmid'; read b; " ++
+      "printf '\\033[31mred\\033[0m\\n'; read c; exit 3"
+  p.say
+      (request 40 "session/start"
+        (.obj
+          [("name", .str "rows"), ("program", .str "/bin/sh"),
+            ("args", .arr [.str "-c", .str program])]))
+  let _ ← p.answer 40
+  let _ ← captureUntil p "rows" "two" 30000
+  p.say (request 41 "session/screen" (named "rows"))
+  let opened ← p.answer 41
+  let first :=
+    match opened.bind (at? · ["result", "rows"]) with
+    | some (.arr rows) => rows
+    | _ => []
+  let grid ←
+    IO.mkRef
+        (({ cursor := (opened.bind (at? · ["result", "cursor"])).getD .null } : Grid).set first)
+  let seen ← IO.mkRef 0
+  let next ← IO.mkRef 10000
+  -- apply the updates that came since the last look, then compare the grid with a capture and
+  -- the cursor with `info`, until they agree
+  let agrees : IO Bool := do
+    let notes ← p.notes "session/screen/changed"
+    for note in notes.drop (← seen.get) do
+      grid.modify (·.apply note)
+    seen.set notes.length
+    let id ← next.modifyGet fun id => (id, id + 2)
+    p.say (request id "session/capture" (named "rows"))
+    let captured ← p.answer id
+    let cursor ← infoCursor p "rows" (id + 1)
+    let g ← grid.get
+    return screenOf captured == g.text && cursor.isSome &&
+        cursor ==
+          (do
+            let x ← textAt? g.cursor ["x"]
+            let y ← textAt? g.cursor ["y"]
+            pure (x, y))
+  let held ← waitFor patienceMs agrees
+  expect (answerOf opened == some ("done", "0") && held)
+      s!"session/screen answers with the screen, the grid capture prints and the cursor info reports ({answerOf opened}, {(← grid.get).text.length})"
+  let enter := Base64.encode "\r".toUTF8.toList
+  p.say (request 42 "session/send" (named "rows" [("data", .str enter)]))
+  let _ ← p.answer 42
+  let moved ←
+    waitFor patienceMs do
+        let lines := (← grid.get).text.splitOn "\n"
+        return (← agrees) && lines.take 2 == ["one!", "two mid"]
+  expect moved
+      s!"after the program rewrites two rows at once, moving the cursor, the grid is what capture prints and its cursor info's ({(← grid.get).text.take 40})"
+  p.say (request 43 "session/send" (named "rows" [("data", .str enter)]))
+  let _ ← p.answer 43
+  let red ←
+    waitFor patienceMs do
+        let agreed ← agrees
+        let g ← grid.get
+        return agreed &&
+            g.rows.any fun (_, row) =>
+              textAt? row ["text"] == some "red" &&
+                (match at? row ["spans"] with
+                | some (.arr [.arr [length, pen]]) =>
+                  textAt? length [] == some "3" && textAt? pen ["fg"] == some "1"
+                | _ => false)
+  expect red
+      s!"a line printed in red is what capture prints, its one span three characters of foreground colour 1 ({(← grid.get).rows.length} lines)"
+  let g ← grid.get
+  expect (g.applied ≥ 2 && g.unchanged == 0)
+      s!"every update carried only lines that changed ({g.applied} updates, {g.unchanged} unchanged lines)"
+  p.say (request 44 "session/send" (named "rows" [("data", .str enter)]))
+  let _ ← p.answer 44
+  let closed ←
+    waitFor patienceMs do
+        return (← p.notes "session/screen/changed").any fun note =>
+            textAt? note ["params", "subscription"] == some "41" &&
+              textAt? note ["params", "closed", "answer"] == some "program" &&
+              textAt? note ["params", "closed", "code"] == some "3"
+  expect closed "the watch's last update closes it with how the session ended, program 3"
+
+/-- The history's log: the lines a client of `session/history` receives, with the count of those
+it dropped, are exactly the lines that scrolled off the screen, as `capture --history` prints
+them before the screen. -/
+private def historyLog (p : Peer) : IO Unit := do
+  let program :=
+    "read a; i=1; while [ $i -le 40 ]; do printf 'scrolled %d\\n' $i; i=$((i+1)); done; read b"
+  p.say
+      (request 60 "session/start"
+        (.obj
+          [("name", .str "scroll"), ("program", .str "/bin/sh"),
+            ("args", .arr [.str "-c", .str program])]))
+  let _ ← p.answer 60
+  p.say (request 61 "session/history" (named "scroll"))
+  let opened ← p.answer 61
+  p.say
+      (request 62 "session/send"
+        (named "scroll" [("data", .str (Base64.encode "\r".toUTF8.toList))]))
+  let _ ← p.answer 62
+  let got ← IO.mkRef (([] : List String), 0)
+  let wanted ← IO.mkRef ([] : List String)
+  let next ← IO.mkRef 20000
+  let found ←
+    waitFor patienceMs do
+        let notes ← p.notes "session/history/changed"
+        let lines :=
+          notes.flatMap fun note =>
+            match at? note ["params", "lines"] with
+            | some (.arr lines) => lines.filterMap (textAt? · ["text"])
+            | _ => []
+        let dropped :=
+          notes.foldl
+            (fun n note => n + ((textAt? note ["params", "dropped"]).bind String.toNat?).getD 0) 0
+        got.set (lines, dropped)
+        let id ← next.modifyGet fun id => (id, id + 1)
+        p.say (request id "session/capture" (named "scroll" [("history", .bool true)]))
+        let captured := (screenOf (← p.answer id)).splitOn "\n"
+        -- the history is what `capture --history` prints before the screen's 24 rows
+        let history := captured.take (captured.length - 25)
+        wanted.set history
+        return history.any (· == "scrolled 17") && lines == history && dropped == 0
+  let (lines, dropped) ← got.get
+  expect (answerOf opened == some ("done", "0") && found)
+      s!"session/history's lines and drops are the lines that scrolled off, as capture --history prints them ({lines.length} lines, {dropped} dropped, {(← wanted.get).length} wanted)"
+  -- a burst far past what the log keeps between two looks: its lines and its counted gaps, in
+  -- order, are each line that scrolled off, every line kept in its own place
+  let count := 20000
+  p.say
+      (request 70 "session/start"
+        (.obj
+          [("name", .str "burst"), ("program", .str "/bin/sh"),
+            ("args", .arr [.str "-c", .str s!"read a; seq 1 {count}; read b"])]))
+  let _ ← p.answer 70
+  p.say (request 71 "session/history" (named "burst"))
+  let _ ← p.answer 71
+  p.say
+      (request 72 "session/send"
+        (named "burst" [("data", .str (Base64.encode "\r".toUTF8.toList))]))
+  let _ ← p.answer 72
+  -- the echo's empty line, then each number but the last 23, which the 24-row screen still shows
+  let expected := "" :: (List.range (count - 23)).map fun n => toString (n + 1)
+  let places ← IO.mkRef ([] : List (Option String))
+  let exact ←
+    waitFor (2 * patienceMs) do
+        let read :=
+          ((← p.notes "session/history/changed").filter fun note =>
+                textAt? note ["params", "subscription"] == some "71").flatMap
+            fun note =>
+            let gaps := ((textAt? note ["params", "dropped"]).bind String.toNat?).getD 0
+            let kept :=
+              match at? note ["params", "lines"] with
+              | some (.arr lines) => lines.map (textAt? · ["text"])
+              | _ => []
+            List.replicate gaps none ++ kept
+        places.set read
+        return read.length == expected.length &&
+            (read.zip expected).all fun (place, line) => place.all (· == line)
+  let read ← places.get
+  expect exact
+      s!"a burst's history, its lines and its counted drops in order, is each line that scrolled off, every line kept in its own place ({read.length} places of {expected.length}, {(read.filter (·.isNone)).length} dropped)"
+
 /-- The suite. -/
 def run : IO UInt32 :=
   Env.suite "serve" fun e => do
@@ -355,6 +593,8 @@ def run : IO UInt32 :=
       table p
       operations e p
       sameList e p
+      screenTable p
+      historyLog p
       let rc ← p.close
       expect (rc == some 0) s!"once its standard input ends, serve exits 0 ({rc})"
     finally

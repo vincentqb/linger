@@ -75,6 +75,22 @@ their `data`. linger's own chooser reads the same records: it runs `ls --porcela
 the listing `sessions/list` sends, each key and value clean text. `serve` reaches no remote host. Once its standard input ends, it answers the
 requests it read and exits.
 
+A client with no terminal of its own follows a session's terminal as rows. `session/screen`
+(`name`) attaches to the session read-only, as `attach --read-only` does, and answers with its
+screen: `rows`, each `{"line": 3, "text": "...", "spans": [[5, {"fg": 1, "bold": true}], ...]}`,
+whose text is what `capture` prints for that row and whose spans are runs of `[length, pen]`
+over its characters, a pen giving `fg` and `bg` (a palette index or `"#rrggbb"`) when not the
+default and each of `bold`, `dim`, `italic`, `underline`, `blink`, `reverse` and `strike` that is
+set; the `cursor`, `{"x", "y", "visible"}`; and the window `title`. From then on, after the session
+writes, `session/screen/changed` brings the client's copy to the screen: the `rows` that changed,
+the numbers of the lines `removed` when the screen shrinks, and the `cursor` and `title` when they
+changed, the latest when the client reads late, never a backlog. `session/history` (`name`) sends
+`session/history/changed` with the `lines` that scrolled off the top of the screen since its last
+update, in the same form, and how many it `dropped` before them, at most 1000 between two
+updates. Each update names its subscription, the id of the request that opened it, and the last,
+when the session ends, carries `closed` with the answer its ending gives; `sessions/unsubscribe`
+closes either, and a connection holds at most 16.
+
 ## Upgrades
 
 `linger upgrade [name...]`, run by a newer linger, moves each named live session, or every one,

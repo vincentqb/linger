@@ -45,6 +45,7 @@ import all Linger.App.Proofs.Entry
 import all Linger.App.Proofs.Kill
 import all Linger.App.Proofs.Recovery
 import all Linger.App.Proofs.Serve
+import all Linger.App.Proofs.Screen
 import all Linger.App.Proofs.Wait
 import Linger.Display.Proofs.Clean
 import all Linger.App.Proofs.Fields
@@ -1627,150 +1628,49 @@ theorem chooser_same_list_rejects_own :
   simp [App.Serve.records, Linger.Display.Listing.records] at names
 
 theorem serve_negotiated (s : App.Serve.State) (ev : App.Serve.Event) :
-    App.Serve.State.init.phase = .fresh ∧
-      ((∀ version, s.phase ≠ .ready version) → ∀ e ∈ (App.Serve.step s ev).2, e.Negotiating) ∧
-      (∀ version,
-        (App.Serve.step s ev).1.phase = .ready version →
-          s.phase = .ready version ∨
-            s.phase = .negotiated version ∧
-              ∃ params, ev = .received (.notification "initialized" params)) ∧
-      (∀ id version linger,
-        App.Serve.Effect.send (.result id (App.Serve.welcome version linger)) ∈
-            (App.Serve.step s ev).2 →
-          version ∈ App.Serve.versions ∧
-            ∃ params,
-              ev = .received (.request id "initialize" params) ∧
-                params.member? "protocolVersion" = some (.str version)) ∧
-      (∀ id method params,
-        ev = .received (.request id method params) → ∃ e ∈ (App.Serve.step s ev).2, e.Answers id) ∧
-      (∀ e ∈ (App.Serve.step s ev).2,
-        ∀ method params,
-          e = .send (.notify method params) →
-            method = "sessions/changed" ∧
-              ∃ id, s.subscription = some id ∧ params.member? "subscription" = some id.json) ∧
-      (∀ id,
-        (App.Serve.step s ev).1.subscription = some id →
-          s.subscription = some id ∨
-            ∃ params version,
-              s.phase = .ready version ∧ ev = .received (.request id "sessions/subscribe" params)) ∧
-      (∀ id params version,
-        s.phase = .ready version →
-          ev = .received (.request id "sessions/subscribe" params) →
-          (App.Serve.step s ev).1.subscription = some id) ∧
-      ∀ id request params version,
-        s.phase = .ready version →
-          s.subscription = some id →
-          ev = .received (.request request "sessions/unsubscribe" params) →
-          params.member? "subscription" = some id.json →
-          (App.Serve.step s ev).1.subscription = none :=
-  ⟨App.Serve.init_phase, App.Serve.step_negotiating s ev, App.Serve.step_ready s ev,
-    App.Serve.step_welcome s ev, fun id method params received => by
-    subst received
-    exact App.Serve.step_answers s id method params, App.Serve.step_notify_open s ev,
-    App.Serve.step_opens s ev, fun id params version ready received => by
-    subst received
-    exact App.Serve.subscribe_opens s id params version ready,
-    fun id asked params version ready subscribed received names => by
-    subst received
-    exact App.Serve.unsubscribe_closes s id asked params version ready subscribed names⟩
+    App.Serve.Negotiated App.Serve.State.init App.Serve.State.phase App.Serve.State.subscription
+      App.Serve.State.watching App.Serve.step s ev := by
+  unfold App.Serve.Negotiated
+  exact
+    ⟨App.Serve.init_phase, App.Serve.step_negotiating s ev, App.Serve.step_ready s ev,
+      App.Serve.step_welcome s ev, fun id method params received => by
+      subst received
+      exact App.Serve.step_answers s id method params, App.Serve.step_notify_open s ev,
+      App.Serve.step_opens s ev, fun id params version ready received => by
+      subst received
+      exact App.Serve.subscribe_opens s id params version ready,
+      fun id asked params version ready subscribed received names => by
+      subst received
+      exact App.Serve.unsubscribe_closes s id asked params version ready subscribed names,
+      App.Serve.step_watch_opens s ev, fun id asked params version ready held received names => by
+      subst received
+      exact App.Serve.unsubscribe_closes_watch s id asked params version ready held names⟩
 
 theorem serve_negotiated_rejects_eager :
     ¬∀ (s : App.Serve.State) (ev : App.Serve.Event),
-        App.Serve.State.init.phase = .fresh ∧
-          ((∀ version, s.phase ≠ .ready version) →
-            ∀ e ∈ (App.Serve.eager App.Serve.step s ev).2, e.Negotiating) ∧
-          (∀ version,
-            (App.Serve.eager App.Serve.step s ev).1.phase = .ready version →
-              s.phase = .ready version ∨
-                s.phase = .negotiated version ∧
-                  ∃ params, ev = .received (.notification "initialized" params)) ∧
-          (∀ id version linger,
-            App.Serve.Effect.send (.result id (App.Serve.welcome version linger)) ∈
-                (App.Serve.eager App.Serve.step s ev).2 →
-              version ∈ App.Serve.versions ∧
-                ∃ params,
-                  ev = .received (.request id "initialize" params) ∧
-                    params.member? "protocolVersion" = some (.str version)) ∧
-          (∀ id method params,
-            ev = .received (.request id method params) →
-              ∃ e ∈ (App.Serve.eager App.Serve.step s ev).2, e.Answers id) ∧
-          (∀ e ∈ (App.Serve.eager App.Serve.step s ev).2,
-            ∀ method params,
-              e = .send (.notify method params) →
-                method = "sessions/changed" ∧
-                  ∃ id, s.subscription = some id ∧ params.member? "subscription" = some id.json) ∧
-          (∀ id,
-            (App.Serve.eager App.Serve.step s ev).1.subscription = some id →
-              s.subscription = some id ∨
-                ∃ params version,
-                  s.phase = .ready version ∧
-                    ev = .received (.request id "sessions/subscribe" params)) ∧
-          (∀ id params version,
-            s.phase = .ready version →
-              ev = .received (.request id "sessions/subscribe" params) →
-              (App.Serve.eager App.Serve.step s ev).1.subscription = some id) ∧
-          ∀ id request params version,
-            s.phase = .ready version →
-              s.subscription = some id →
-              ev = .received (.request request "sessions/unsubscribe" params) →
-              params.member? "subscription" = some id.json →
-              (App.Serve.eager App.Serve.step s ev).1.subscription = none := by
+        App.Serve.Negotiated App.Serve.State.init App.Serve.State.phase App.Serve.State.subscription
+          App.Serve.State.watching (App.Serve.eager App.Serve.step) s ev := by
   intro h
   -- a fresh connection would answer `sessions/list` before its handshake
-  have :=
-    (h App.Serve.State.init (.received (.request (.number "1") "sessions/list" (.obj [])))).2.1
-      (fun _ ready => by simp [App.Serve.State.init, App.Serve.State.phase] at ready)
+  have heard :=
+    h App.Serve.State.init (.received (.request (.number "1") "sessions/list" (.obj [])))
+  unfold App.Serve.Negotiated at heard
+  have := heard.2.1 (fun _ ready => by simp [App.Serve.State.init, App.Serve.State.phase] at ready)
   simp [App.Serve.eager, App.Serve.Effect.Negotiating, App.Serve.welcome] at this
 
 theorem serve_negotiated_rejects_chatty :
     ¬∀ (s : App.Serve.State) (ev : App.Serve.Event),
-        App.Serve.State.init.phase = .fresh ∧
-          ((∀ version, s.phase ≠ .ready version) →
-            ∀ e ∈ (App.Serve.chatty App.Serve.step s ev).2, e.Negotiating) ∧
-          (∀ version,
-            (App.Serve.chatty App.Serve.step s ev).1.phase = .ready version →
-              s.phase = .ready version ∨
-                s.phase = .negotiated version ∧
-                  ∃ params, ev = .received (.notification "initialized" params)) ∧
-          (∀ id version linger,
-            App.Serve.Effect.send (.result id (App.Serve.welcome version linger)) ∈
-                (App.Serve.chatty App.Serve.step s ev).2 →
-              version ∈ App.Serve.versions ∧
-                ∃ params,
-                  ev = .received (.request id "initialize" params) ∧
-                    params.member? "protocolVersion" = some (.str version)) ∧
-          (∀ id method params,
-            ev = .received (.request id method params) →
-              ∃ e ∈ (App.Serve.chatty App.Serve.step s ev).2, e.Answers id) ∧
-          (∀ e ∈ (App.Serve.chatty App.Serve.step s ev).2,
-            ∀ method params,
-              e = .send (.notify method params) →
-                method = "sessions/changed" ∧
-                  ∃ id, s.subscription = some id ∧ params.member? "subscription" = some id.json) ∧
-          (∀ id,
-            (App.Serve.chatty App.Serve.step s ev).1.subscription = some id →
-              s.subscription = some id ∨
-                ∃ params version,
-                  s.phase = .ready version ∧
-                    ev = .received (.request id "sessions/subscribe" params)) ∧
-          (∀ id params version,
-            s.phase = .ready version →
-              ev = .received (.request id "sessions/subscribe" params) →
-              (App.Serve.chatty App.Serve.step s ev).1.subscription = some id) ∧
-          ∀ id request params version,
-            s.phase = .ready version →
-              s.subscription = some id →
-              ev = .received (.request request "sessions/unsubscribe" params) →
-              params.member? "subscription" = some id.json →
-              (App.Serve.chatty App.Serve.step s ev).1.subscription = none := by
+        App.Serve.Negotiated App.Serve.State.init App.Serve.State.phase App.Serve.State.subscription
+          App.Serve.State.watching (App.Serve.chatty App.Serve.step) s ev := by
   intro h
   -- a ready connection with no subscription open would notify each time its writer is free
+  have heard := h ({ stage := .ready "1" } : App.Serve.StateRec) .writable
+  unfold App.Serve.Negotiated at heard
   have :=
-    (h ({ stage := .ready "1" } : App.Serve.StateRec) .writable).2.2.2.2.2.1
-      (.send (.notify "sessions/changed" (.obj []))) (by simp [App.Serve.chatty]) "sessions/changed"
-      (.obj []) rfl
-  obtain ⟨_, id, opened, _⟩ := this
-  simp [App.Serve.State.subscription] at opened
+    heard.2.2.2.2.2.1 (.send (.notify "sessions/changed" (.obj []))) (by simp [App.Serve.chatty])
+      "sessions/changed" (.obj []) rfl
+  obtain ⟨id, names, -⟩ := this
+  simp [App.Serve.Json.member?] at names
 
 theorem log_bounded {α : Type} (cap : Nat) (entries : List α) :
     (entries.foldl (App.Serve.Log.push cap) {}).tail = entries.drop (entries.length - cap) ∧
@@ -1796,6 +1696,82 @@ theorem log_bounded_rejects_keep_all :
   -- a log that keeps every entry keeps one past a cap of none
   have := (@h Unit 0 [()]).1
   simp [App.Serve.Log.keepAll] at this
+
+theorem one_renderer (v : Vt.Vt) (row : Vt.Row)
+    (hv : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v) :
+    ((App.Serve.Screen.render v).lines.map fun line => line.text ++ [0x0A]).flatten =
+        Render.screenText v ∧
+      (App.Serve.Screen.render v).lines =
+        (List.range v.rowCount).map (fun y => App.Serve.Line.of (v.getRow y)) ∧
+      (App.Serve.Line.of row).text = Render.rowText row ∧
+      App.Serve.Span.expand (App.Serve.Line.of row).spans = App.Serve.Line.pens row ∧
+      App.Serve.Span.Compact (App.Serve.Line.of row).spans ∧
+      (App.Serve.Screen.render v).cursor =
+        { x := v.cursorPos.1, y := v.cursorPos.2, visible := v.getModes.cursorVisible } ∧
+      (App.Serve.Screen.render v).title = v.windowTitle.map Render.textChar :=
+  ⟨App.Serve.Screen.render_capture v hv, App.Serve.Screen.render_lines v,
+    App.Serve.Line.of_text row, App.Serve.Line.of_spans row, App.Serve.Line.of_compact row,
+    App.Serve.Screen.render_cursor v, App.Serve.Screen.render_title v⟩
+
+theorem one_renderer_rejects_untrimmed :
+    ¬∀ (v : Vt.Vt) (row : Vt.Row),
+        Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v →
+          ((App.Serve.Screen.untrimmed (fun (v : Vt.Vt) => (List.range v.rowCount).map v.getRow)
+                      v).lines.map
+                  fun line => line.text ++ [0x0A]).flatten =
+              Render.screenText v ∧
+            (App.Serve.Screen.untrimmed (fun (v : Vt.Vt) => (List.range v.rowCount).map v.getRow)
+                  v).lines =
+              (List.range v.rowCount).map (fun y => App.Serve.Line.of (v.getRow y)) ∧
+            (App.Serve.Line.of row).text = Render.rowText row ∧
+            App.Serve.Span.expand (App.Serve.Line.of row).spans = App.Serve.Line.pens row ∧
+            App.Serve.Span.Compact (App.Serve.Line.of row).spans ∧
+            (App.Serve.Screen.untrimmed (fun (v : Vt.Vt) => (List.range v.rowCount).map v.getRow)
+                  v).cursor =
+              { x := v.cursorPos.1, y := v.cursorPos.2, visible := v.getModes.cursorVisible } ∧
+            (App.Serve.Screen.untrimmed (fun (v : Vt.Vt) => (List.range v.rowCount).map v.getRow)
+                  v).title =
+              v.windowTitle.map Render.textChar := by
+  intro h
+  -- a renderer that keeps a fresh cell's trailing blank prints it, where `capture` prints nothing
+  have := (h (Vt.Vt.init 1 1) #[] (.init 1 1)).1
+  rw [App.Serve.untrimmed_init_one, App.Serve.screenText_init_one] at this
+  simp at this
+
+theorem history_log_exact (s : App.Serve.State) (version : String) (id : App.Serve.Id)
+    (pending left : App.Serve.Log App.Serve.Line) (screen : App.Serve.Screen)
+    (ready : s.phase = .ready version) :
+    App.Serve.HistoryLog App.Serve.State.watching App.Serve.step App.Serve.result s id pending
+      screen left :=
+  ⟨fun asked =>
+    ⟨(App.Serve.watched_history_opens s version id screen left ready asked).1, _,
+      (App.Serve.watched_history_opens s version id screen left ready asked).2, by
+      simpa [App.Serve.Log.reads] using App.Serve.Log.append_masks App.Serve.historyCap {} left⟩,
+    fun holds =>
+    ⟨(App.Serve.watched_history s version id pending screen left ready holds).1,
+      ⟨_, (App.Serve.watched_history s version id pending screen left ready holds).2,
+        App.Serve.Log.append_masks _ pending left⟩,
+      (App.Serve.flush_history s version id pending ready holds).1,
+      (App.Serve.flush_history s version id pending ready holds).2⟩⟩
+
+theorem history_log_exact_rejects_uncounted :
+    ¬∀ (s : App.Serve.State) (version : String) (id : App.Serve.Id)
+        (pending left : App.Serve.Log App.Serve.Line) (screen : App.Serve.Screen),
+        s.phase = .ready version →
+          App.Serve.HistoryLog App.Serve.State.watching (App.Serve.uncounted App.Serve.step)
+            App.Serve.result s id pending screen left := by
+  intro h
+  -- a connection that forgets a look's count of drops reads no gap where the look dropped a line
+  let screen : App.Serve.Screen := { lines := [], cursor := ⟨0, 0, true⟩, title := "" }
+  have held :=
+    (h ({ stage := .ready "1", watches := [(.number "1", .history {})] } : App.Serve.StateRec) "1"
+          (.number "1") {} { tail := [], dropped := 1 } screen rfl).2
+      (by simp [App.Serve.State.watching])
+  obtain ⟨kept, holds, masks⟩ := held.2.1
+  simp [App.Serve.uncounted, App.Serve.step, App.Serve.watched, App.Serve.State.phase,
+    App.Serve.State.watching, App.Serve.State.setWatch, App.Serve.Log.append] at holds
+  subst holds
+  simp [App.Serve.Log.reads, App.Serve.Log.Masks] at masks
 
 theorem fields_owned :
     (App.Fields.table.map (·.key)).Nodup ∧
@@ -3946,6 +3922,53 @@ theorem table_converges_rejects_queued :
           latestRecords := some [] }
         "1" (.number "1") [] [] [] rfl rfl rfl rfl (by simp)).2.2.2.1
   simp [App.Serve.queued] at this
+
+theorem screen_table_exact (s : App.Serve.State) (version : String) (id : App.Serve.Id)
+    (told latest screen : App.Serve.Screen) (left : App.Serve.Log App.Serve.Line)
+    (ready : s.phase = .ready version) :
+    App.Serve.ScreenTable App.Serve.State.watching App.Serve.step App.Serve.result
+      App.Serve.Screen.changes s id told latest screen left :=
+  ⟨fun asked => App.Serve.watched_screen_opens s version id screen left ready asked, fun holds =>
+    ⟨(App.Serve.watched_screen s version id told latest screen left ready holds).1,
+      (App.Serve.watched_screen s version id told latest screen left ready holds).2,
+      (App.Serve.flush_screen s version id told latest ready holds).1,
+      (App.Serve.flush_screen s version id told latest ready holds).2⟩,
+    App.Serve.changes_exact told latest⟩
+
+theorem screen_table_exact_rejects_every_line :
+    ¬∀ (s : App.Serve.State) (version : String) (id : App.Serve.Id)
+        (told latest screen : App.Serve.Screen) (left : App.Serve.Log App.Serve.Line),
+        s.phase = .ready version →
+          App.Serve.ScreenTable App.Serve.State.watching App.Serve.step App.Serve.result
+            App.Serve.Screen.everyLine s id told latest screen left := by
+  intro h
+  -- an update of every line sends a line the subscriber holds already
+  let line : App.Serve.Line := { text := [], spans := [] }
+  let screen : App.Serve.Screen := { lines := [line], cursor := ⟨0, 0, true⟩, title := "" }
+  have exact :=
+    (h ({ stage := .ready "1" } : App.Serve.StateRec) "1" (.number "1") screen screen screen {}
+        rfl).2.2
+  have := (exact.2.2.2.1 0 line).mp (by simp [App.Serve.Screen.everyLine, screen])
+  simp [screen] at this
+
+theorem screen_table_exact_rejects_first_change :
+    ¬∀ (s : App.Serve.State) (version : String) (id : App.Serve.Id)
+        (told latest screen : App.Serve.Screen) (left : App.Serve.Log App.Serve.Line),
+        s.phase = .ready version →
+          App.Serve.ScreenTable App.Serve.State.watching App.Serve.step App.Serve.result
+            App.Serve.Screen.firstChange s id told latest screen left := by
+  intro h
+  -- an update of the first changed line alone leaves the second as the subscriber held it
+  let before : App.Serve.Line := { text := [], spans := [] }
+  let after : App.Serve.Line := { text := [0x41], spans := [] }
+  let told : App.Serve.Screen := { lines := [before, before], cursor := ⟨0, 0, true⟩, title := "" }
+  let latest : App.Serve.Screen := { lines := [after, after], cursor := ⟨0, 0, true⟩, title := "" }
+  have exact :=
+    (h ({ stage := .ready "1" } : App.Serve.StateRec) "1" (.number "1") told latest latest {}
+        rfl).2.2
+  have := exact.1 1
+  simp [App.Serve.Screen.View.line, App.Serve.Screen.firstChange, told, latest, before, after,
+    List.lookup] at this
 
 theorem ticks_settle (s : State) (now t₁ t₂ : Nat)
     (h₁ : (Session.trace Session.step s [.tick now]).1.nextTick = some t₁)

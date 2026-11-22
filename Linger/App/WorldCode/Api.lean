@@ -805,6 +805,57 @@ private def attachSpoken (env : Env) (name : String) (fd : UInt32) (mode : Linge
           attach with that linger"
   return .error .refused
 
+/-- A connection a watch attaches over, to the daemon of the session `s` names: open once its
+daemon has said, in an `info` answer on it within `Client.replySilenceMs`, that it speaks this
+version's protocol (`Wire.admits`), as `attachSpoken` asks before an attach; with that answer's
+fields, which give the terminal's size. None, saying why, when no daemon answers for the session or
+it speaks another level. -/
+private def watchConnect (env : Env) (s : Names.Ref) :
+    IO (Option (UInt32 × List (String × String))) := do
+  let some fd ← Client.connect s.id |
+    do
+      say env s!"session '{s.name}' has no running daemon to watch"
+      return none
+  let heard ←
+    (Inventory.readInfo fd (some ((← monotonicMs) + Client.replySilenceMs.toNatClampNeg))).toBaseIO
+  let level := (heard.toOption.bind (·.lookup "protocol")).bind String.toNat?
+  if Linger.Session.Wire.admits level then
+    if let .ok fields := heard then
+      return some (fd, fields)
+  close fd
+  say env s!"session '{s.name}' does not speak this linger's protocol, so it cannot be watched"
+  return none
+
+/-- A session a watch follows: its name, and the way to a connection to its daemon a watch attaches
+over (`watchConnect`), which leads to the session the name led to when the watch began, whatever
+renames follow. -/
+structure Watched where
+  /-- The session's name, as the watch was given it. -/
+  name : String
+  /-- Open a connection to the session's daemon a watch attaches over, with the fields of the
+  `info` answer that admitted it; none, saying why, when there is none. -/
+  connect : IO (Option (UInt32 × List (String × String)))
+
+/-- **Watch the session `target`**, as `attach --read-only` connects to it: `follow` gets the
+session the name leads to (`Names.find`), and its finding is the watch's. A malformed target is
+`invalid`, a name that leads to no session's ID `missing`, and a remote target `refused`, since no
+transport carries a watch. -/
+def watch (env : Env) (target : String) (follow : Watched → IO Found) : IO Found := do
+  match Linger.Target.Remote.parseTarget target with
+  | none =>
+    invalidTarget env
+  | some parsed =>
+    match parsed.host with
+    | some host =>
+      say env s!"no transport carries a watch of '{Linger.Target.Remote.scrub host}'"
+      return .refused
+    | none =>
+      match ← Names.find parsed.name with
+      | some s =>
+        follow { name := s.name, connect := watchConnect env s }
+      | none =>
+        noSession env parsed.name
+
 /-- Discard the saved session `name` once a viewer has seen it, as `kill` discards one: delete its
 checkpoint while holding the name, when it still holds `shown`, the bytes the viewer was shown, so
 that a session resumed or replaced since is never lost. Its end record stays, for `wait` and

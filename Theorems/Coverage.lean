@@ -103,21 +103,22 @@ public meta def sourceDefNames (stx : Syntax) : Except String (Array Lean.Name) 
     if node.isOfKind ``Parser.Command.namespace then
       -- Lean opens one scope per component, even in `namespace A.B`.
       let scopes :=
-        node[1].getId.components.foldl (fun scopes part => (scopes.head! ++ part) :: scopes) scopes
+        (node.getArg 1).getId.components.foldl (fun scopes part => (scopes.head! ++ part) :: scopes)
+          scopes
       set (scopes, names)
     else if node.isOfKind ``Parser.Command.section then
-      set (List.replicate (max 1 node[2][0].getId.getNumParts) ns ++ scopes, names)
+      set (List.replicate (max 1 ((node.getArg 2).getArg 0).getId.getNumParts) ns ++ scopes, names)
     else if node.isOfKind ``Parser.Command.end then
-      let count := max 1 node[1][0].getId.getNumParts
+      let count := max 1 ((node.getArg 1).getArg 0).getId.getNumParts
       if count ≥ scopes.length then
         throw "unmatched end in the definition inventory"
       set (scopes.drop count, names)
     else if node.isOfKind ``Parser.Command.withWeakNamespace then
       throw "with_weak_namespace needs an explicit inventory scope rule"
     else if node.isOfKind ``Parser.Command.declaration then
-      let decl := node[1]
+      let decl := node.getArg 1
       if decl.isOfKind ``Parser.Command.definition || decl.isOfKind ``Parser.Command.abbrev then
-        let id := decl[1][0].getId
+        let id := ((decl.getArg 1).getArg 0).getId
         if id.isAnonymous then
           throw "unrecognized definition name"
         let name :=

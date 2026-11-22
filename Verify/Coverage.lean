@@ -49,7 +49,8 @@ def emitters : List (String × String) :=
     ("Render.textChar", "textChar_safe / Title.payload_safe / Listing.rowPieces_printable"),
     ("Render.utf8s", "utf8s_no_frame / Replay.text_uncons / utf8s_length_le"),
     ("Render.history", "history_framing / history_lines / history_records"),
-    ("Render.screenText", "screenText_framing / screenText_lines / screenText_records")]
+    ("Render.screenText", "screenText_framing / screenText_lines / screenText_records"),
+    ("Render.rowText", "one_renderer / rowText_scrubbed / screenText_records")]
 
 run_cmd
   let defs ← checkPureCode
