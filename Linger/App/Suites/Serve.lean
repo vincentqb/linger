@@ -207,8 +207,8 @@ def recordsOf (message : Json) : List String :=
 /-- The sessions table: a subscription's result lists the sessions; starting one sends a
 `sessions/changed` that names the subscription and carries its record; once its program has
 printed and gone quiet, the session sends none for three listings, though its record's `idle`
-ticks each second; and once `sessions/unsubscribe` closes the subscription, a session's ending
-sends none. -/
+ticks each second and its `lastout` may read a second apart; and once `sessions/unsubscribe`
+closes the subscription, a session's ending sends none. -/
 private def table (p : Peer) : IO Unit := do
   p.say (notification "initialized")
   p.say (request 20 "sessions/subscribe" (.obj []))
@@ -315,7 +315,7 @@ private def operations (e : Env) (p : Peer) : IO Unit := do
 
 /-- The chooser and a client read the same list: the records `sessions/list` sends are, under each
 name and in order, what the chooser reads from `ls --porcelain`, as it reads the listing it runs,
-read without `idle`, which a second listing may read a second later. -/
+read without `idle` and `lastout`, which a second listing may read a second later. -/
 private def sameList (e : Env) (p : Peer) : IO Unit := do
   p.say
       (request 29 "session/start"
@@ -333,7 +333,8 @@ private def sameList (e : Env) (p : Peer) : IO Unit := do
         | .obj members => members.mapM fun (key, value) => value.text?.map ((key, ·))
         | _ => none
     | _ => []
-  let unticked (record : List (String × String)) := record.filter (·.1 != "idle")
+  let unticked (record : List (String × String)) :=
+    record.filter fun field => field.1 != "idle" && field.1 != "lastout"
   let name (record : List (String × String)) := (record.lookup "name").getD ""
   let read := Linger.Selector.Picker.parseSnapshot printed
   let same :=

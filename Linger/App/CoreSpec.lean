@@ -778,10 +778,12 @@ abbrev Record : Type := List (String × String)
 @[expose]
 def Record.key (record : Record) : String := (record.lookup "name").getD ""
 
-/-- A record as an update reads it: without `idle`, the one field that reads the clock, which
-changes each second a session is quiet. -/
+/-- A record as an update reads it: without the two fields that read the clock, `idle`, which
+changes each second a session is quiet, and `lastout`, the wall clock less `idle`, which two
+listings of a quiet session may read a second apart, since the two clocks tick apart. -/
 @[expose]
-def Record.reading (record : Record) : Record := record.filter (·.1 != "idle")
+def Record.reading (record : Record) : Record :=
+  record.filter fun field => field.1 != "idle" && field.1 != "lastout"
 
 /-- A record as JSON: an object, a string member for each field. -/
 @[expose]

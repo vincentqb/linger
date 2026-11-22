@@ -63,7 +63,8 @@ error -32002. Each method is one command's request: `sessions/list` (optional `n
 `session/wait` (`name`). `sessions/subscribe` lists the sessions as `sessions/list` does and opens
 a subscription named by its request's id: from then on `serve` lists them one second after its
 last listing ended, and whenever its records differ from what the client was last told, read
-without `idle`, sends `sessions/changed` with that id, the records that differ and the names that
+without `idle` and `lastout`, the clock's readings, sends `sessions/changed` with that id, the
+records that differ and the names that
 went, the latest when the client reads late, never a backlog; `sessions/unsubscribe`
 (`subscription`) closes it. A result carries the answer the command would exit with, as
 `{"answer": "done", "code": 0}`, then what it shows: a listing's `records`, a capture's bytes in

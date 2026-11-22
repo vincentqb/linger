@@ -3957,8 +3957,8 @@ while none is open. The subscription's own listing is the table its subscriber f
 later listing sends nothing and replaces the latest records the connection holds, so it holds two
 listings, what it last told the subscriber and the latest, never a queue; and each time its
 writer is free, having written what came before, it sends `sessions/changed` exactly when the
-latest records differ from what it last told the subscriber, read without `idle`, the clock's
-reading, the one field that changes while nothing happens: the records that differ and the keys
+latest records differ from what it last told the subscriber, read without `idle` and `lastout`,
+the clock's readings, which change while nothing happens: the records that differ and the keys
 that went (`changed_exactly`), which bring the subscriber's view, the record it holds under each
 key, to the latest records (`table_converges`). So a quiet session sends nothing, a session that
 prints sends at most one update a second, and a subscriber that reads late gets the latest
