@@ -94,6 +94,10 @@ def Linger.App.Serve.Screen.render : Vt.Vt → Serve.Screen := sorry
 
 def Linger.App.Serve.Screen.changes : Serve.Screen → Serve.Screen → Serve.Screen.Update := sorry
 
+def Linger.App.Serve.Remote.heard : List Serve.Json → UInt32 → Serve.Remote.Heard := sorry
+
+def Linger.App.Serve.Remote.rows : String → List Serve.Record → List Serve.Record := sorry
+
 def Linger.Target.Name.check : String → Option String := sorry
 
 def Linger.Target.Name.accept : String → Option String := sorry
@@ -1680,6 +1684,19 @@ theorem serve_attach_exact_rejects_unpainted :
           Serve.AttachStream App.Serve.State.watching
             (Serve.unpainted App.Serve.State.watching App.Serve.step) App.Serve.result
             Wire.Decoder.feed s id dec pending bytes := by
+  sorry
+
+theorem remote_rows_exact (host : String) (messages : List Serve.Json) (status : UInt32)
+    (records : List Serve.Record) :
+    Serve.Remote.Exact App.Serve.Remote.heard App.Serve.Remote.rows Name.accept host messages status
+      records := by
+  sorry
+
+@[kills remote_rows_exact]
+theorem remote_rows_exact_rejects_unshaken :
+    ¬∀ (host : String) (messages : List Serve.Json) (status : UInt32) (records : List Serve.Record),
+        Serve.Remote.Exact Serve.Remote.unshaken App.Serve.Remote.rows Name.accept host messages
+          status records := by
   sorry
 
 theorem fields_owned :

@@ -151,6 +151,10 @@ far   ssh -T -- far | mosh far --
 ```
 
 Blanks separate words, which are never quoted or expanded. A line whose first word starts with
-`#` is a comment. A host that does not answer within 3 s lists as `?`. The chooser lists remote
+`#` is a comment. `ls -r` runs `linger serve` on each host through its command, shakes hands with
+it and calls `sessions/list`, as any client of `serve` does, and lists the records it returns, each
+named `name@host`; a host whose linger is older than `serve`, and so answers it as a usage error,
+is asked with `ls --porcelain` instead. An attach stays a terminal's byte stream through the attach
+command. A host that does not answer within 3 s lists as `?`. The chooser lists remote
 hosts when it opens and when you press Ctrl-L, which also redraws the screen, and its header says
 how long ago it listed them, as `remote 12s`.

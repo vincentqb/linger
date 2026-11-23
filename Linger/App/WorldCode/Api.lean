@@ -16,6 +16,8 @@ public import Linger.Os.CoreSpec
 public import Linger.Session.CoreSpec
 public import Linger.App.CoreSpec
 import Linger.App.CoreCode.Api
+import Linger.App.CoreCode.Json
+import Linger.App.CoreCode.Serve
 import Linger.App.CoreCode.Handover
 import Linger.App.CoreCode.Recovery
 import Linger.App.CoreCode.Kill
@@ -694,15 +696,27 @@ private def resolveRemotes (env : Env) (flag : Option (List String)) :
     | .error e =>
       throw (IO.userError e)
 
+/-- What a host answered `ls -r`: the records its `serve` listed (`Serve.Remote.heard`), or, from
+an older linger, what its `ls --porcelain` printed. -/
+private inductive Listed where
+  /-- The records the host's `sessions/list` returned. -/
+  | records (records : List (List (String × String)))
+  /-- What an older linger's `ls --porcelain` printed. -/
+  | porcelain (text : String)
+
 /-- Four transport commands at most share a three-second command deadline, the bounded wait
 linger keeps whatever the transport: a transport's own keepalives alone cannot bound a remote
-command that never exits. Each host's answer, in host order, is the complete output of a command
-that succeeded, or `none`; stop and join every remaining group. Signal waiters let a cancelled
-chooser's listing retire the transports' isolated groups: a watched signal that comes before the
-waiters stop, even while the groups are retired, ends the listing, which answers with the first
-that came (`Watched.came`). -/
+command that never exits. Each host's command runs its `serve`, which takes the lines
+`Serve.Remote.requests` holds and ends with them: what it wrote is read as
+`Serve.Remote.heard` reads it, the records its `sessions/list` returned, or an older linger, which
+answered the handshake with a usage answer and is asked again, within the same deadline, with the
+words of `ls --porcelain`. Each host's answer, in host order, is the records, the complete output
+of the porcelain command when it succeeded, or `none`; stop and join every remaining group. Signal
+waiters let a cancelled chooser's listing retire the transports' isolated groups: a watched signal
+that comes before the waiters stop, even while the groups are retired, ends the listing, which
+answers with the first that came (`Watched.came`). -/
 private def listRemotes (hosts : Array (String × Linger.Target.Remote.Transport)) :
-    IO (Except UInt8 (Array (Option String))) := do
+    IO (Except UInt8 (Array (Option Listed))) := do
   let signals ← IO.mkRef (#[] : Array (Std.Async.Signal.Waiter × Std.Async.AsyncTask Int))
   let jobs ← IO.mkRef (#[] : Array (Nat × IO.Ref (Option Command.Job)))
   let listed ←
@@ -716,7 +730,9 @@ private def listRemotes (hosts : Array (String × Linger.Target.Remote.Transport
           waiter.stop
           throw e
       let deadline := (← monotonicMs) + remoteQueryTimeoutMs
-      let mut outputs := Array.replicate hosts.size none
+      let mut outputs : Array (Option Listed) := Array.replicate hosts.size none
+      -- the hosts asked with the words of `ls --porcelain`, as older lingers
+      let mut older := Array.replicate hosts.size false
       let mut next := 0
       while next < hosts.size || !(← jobs.get).isEmpty do
         if let some signal← ({ waiters := ← signals.get } : Watched).came then
@@ -730,17 +746,30 @@ private def listRemotes (hosts : Array (String × Linger.Target.Remote.Transport
           let pending ← IO.mkRef none
           jobs.modify (·.push (index, pending))
           try
-            if let cmd :: args :=
-                Linger.Target.Remote.argv hosts[index]!.2 "ls" ["--porcelain"] then
-              pending.set (some (← Command.start cmd args.toArray))
+            if let cmd :: args := Linger.Target.Remote.argv hosts[index]!.2 "serve" [] then
+              pending.set
+                  (some (← Command.startFeeding cmd args.toArray Serve.Remote.requests.toUTF8))
           catch _ =>
             pure ()
         let mut running := #[]
         for (index, pending) in ← jobs.get do
           try
             if let some output← Command.poll pending then
-              if output.exitCode == 0 then
-                outputs := outputs.set! index (some output.stdout)
+              if older[index]! then
+                if output.exitCode == 0 then
+                  outputs := outputs.set! index (some (.porcelain output.stdout))
+              else
+                let messages := (output.stdout.splitOn "\n").filterMap Serve.Json.parse
+                match Serve.Remote.heard messages output.exitCode with
+                | .listed records =>
+                  outputs := outputs.set! index (some (.records records))
+                | .older =>
+                  older := older.set! index true
+                  if let cmd :: args :=
+                      Linger.Target.Remote.argv hosts[index]!.2 "ls" ["--porcelain"] then
+                    pending.set (some (← Command.start cmd args.toArray))
+                | .silent =>
+                  pure ()
           catch _ =>
             pure ()
           if (← pending.get).isSome then
@@ -1087,8 +1116,9 @@ private def cmdAttach (env : Env) (s : Names.Ref) (mode : Linger.Session.Mode) (
     return .refused
 
 /-- The rows of `ls`: local rows, then each remote host's rows named `name@host`, then the rows of
-the latest tmux-resurrect save's panes no record names (`Source.rows`). Remote rows keep only
-name, command, state and status, as the host's linger reports them; a host that does not answer
+the latest tmux-resurrect save's panes no record names (`Source.rows`). A host's rows are the records
+its `sessions/list` returned (`Serve.Remote.rows`), or, from an older linger, its porcelain's; they
+keep only name, command, state and status, as the host's linger reports them; a host that does not answer
 within the bounded wait is one record, its `host` with the status `?` no answer gives, which the
 terminal listing names `@host`. Finds `stopped`, with the signal, when a signal stops it while it
 queries remote hosts. -/
@@ -1096,7 +1126,7 @@ private def cmdList (env : Env) (porcelain : Bool)
     (remotes : List (String × Linger.Target.Remote.Transport)) : IO Reply := do
   let (locals, remote) ←
     if remotes.isEmpty then
-      pure (← localRows, (.ok #[] : Except UInt8 (Array (Option String))))
+      pure (← localRows, (.ok #[] : Except UInt8 (Array (Option Listed))))
     else
       do
         let task ← IO.asTask localRows Task.Priority.dedicated
@@ -1113,6 +1143,8 @@ private def cmdList (env : Env) (porcelain : Bool)
     | .error signal =>
       return { found := .stopped signal }
   let mut rows := locals
+  -- a host's rows: the records its `sessions/list` returned, each named `name@host`, as a row
+  -- from an older host's porcelain is (`remote_rows_exact`)
   for ((host, _), output) in remotes.zip remote.toList do
     match output with
     | none =>
@@ -1121,7 +1153,9 @@ private def cmdList (env : Env) (porcelain : Bool)
           [("host", host) ::
               Linger.Display.Listing.statusFields
                 (Linger.Display.Status.classify { known := false })]
-    | some output =>
+    | some (.records records) =>
+      rows := rows ++ Serve.Remote.rows host records
+    | some (.porcelain output) =>
       for row in Linger.Target.Remote.parse output do
         -- a remote row is built from what the peer's porcelain says about identity
         -- and liveness. It also emits `clients` and its record fields; those are dropped

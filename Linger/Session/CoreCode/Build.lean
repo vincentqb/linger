@@ -16,7 +16,7 @@ namespace Linger.Session.Build
 these bytes when the program runs, so the upgrade suite makes a binary of another build by
 rewriting the digits in a copy of this one. -/
 @[noinline]
-def stamp : String := "linger-build:235"
+def stamp : String := "linger-build:236"
 
 /-- This binary's build number, the digits of `stamp`. -/
 def number : Nat := ((stamp.drop "linger-build:".length).toString.toNat?).getD 0

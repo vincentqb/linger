@@ -459,7 +459,7 @@ module_imports ':(glob)Linger/Session/*.lean' 'Linger/Session/CoreCode/*' 'Linge
     packages/terminal/Terminal/CoreCode/Replay.lean Linger.lean \
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
-    if (mod !~ /^(Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](WorldCode([.]Api)?|CoreSpec|CoreCode[.](Commands|Fields|Wait|Kill|Recovery|Capture|Api|Handover))|Std[.]Async[.](System|Signal))$/ \
+    if (mod !~ /^(Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](WorldCode([.]Api)?|CoreSpec|CoreCode[.](Commands|Fields|Wait|Kill|Recovery|Capture|Api|Handover|Serve|Json))|Std[.]Async[.](System|Signal))$/ \
         && mod != "SoftwareChallenge.Commands") {
       print "  " $0; bad = 1
     }
@@ -716,12 +716,13 @@ done
 command_code="$(awk '{ $1 = $1; printf "%s ", $0 }' packages/os/Os/WorldCode/Command.lean)"
 for tie in \
   'IO[.]Process[.]spawn [{] cmd := executable, args, stdin := [.]null, stdout := [.]piped, stderr := [.]piped, setsid := true [}] let stdout ← IO[.]asTask child[.]stdout[.]readToEnd Task[.]Priority[.]dedicated let stderr ← IO[.]asTask child[.]stderr[.]readToEnd Task[.]Priority[.]dedicated return [{] child, stdout, stderr [}]' \
+  'IO[.]Process[.]spawn [{] cmd := executable, args, stdin := [.]piped, stdout := [.]piped, stderr := [.]piped, setsid := true [}] let [(]stdin, child[)] ← spawned[.]takeStdin let stdout ← IO[.]asTask child[.]stdout[.]readToEnd Task[.]Priority[.]dedicated let stderr ← IO[.]asTask child[.]stderr[.]readToEnd Task[.]Priority[.]dedicated' \
   'IO[.]Process[.]spawn [{] cmd := executable, args, stdin := [.]null, stdout := [.]piped, stderr := [.]piped, setsid := true [}] let stdout ← IO[.]asTask [(]readLimited child[.]stdout limit[)] Task[.]Priority[.]dedicated let stderr ← IO[.]asTask [(]readLimited child[.]stderr [(]64 [*] 1024[)][)] Task[.]Priority[.]dedicated return [{] child, stdout, stderr [}]' \
   'let chunk ← handle[.]read 4096 if chunk[.]isEmpty then break if !exceeded && bytes[.]size [+] chunk[.]size ≤ limit then bytes := bytes [+][+] chunk else exceeded := true' \
   'if exceeded then throw [(]IO[.]userError s!"command output exceeds [{]limit[}] bytes"[)] let some text := String[.]fromUTF8[?] bytes [|] throw [(]IO[.]userError "command output is not UTF-8"[)] return text' \
   'def poll [(]pending : IO[.]Ref [(]Option Job[)][)] : IO [(]Option IO[.]Process[.]Output[)] := do if let some job[[:space:]]*← pending[.]get then if [(]← IO[.]hasFinished job[.]stdout[)] && [(]← IO[.]hasFinished job[.]stderr[)] then if let some exitCode[[:space:]]*← job[.]child[.]tryWait then pending[.]set none let stdout ← IO[.]ofExcept [(]← IO[.]wait job[.]stdout[)] let stderr ← IO[.]ofExcept [(]← IO[.]wait job[.]stderr[)] return some [{] exitCode, stdout, stderr [}] return none' \
   'if let some job[[:space:]]*← pending[.]get then pending[.]set none try try try if graceMs > 0 then Os[.]Shell[.]kill job[.]child[.]pid 15 let deadline := [(]← Os[.]Shell[.]monotonicMs[)] [+] graceMs repeat if [(]← IO[.]hasFinished job[.]stdout[)] && [(]← IO[.]hasFinished job[.]stderr[)] then break unless ← Os[.]Shell[.]nap deadline 5 do break finally retireGroup job finally discard job[.]child[.]wait finally discard <[|] IO[.]wait job[.]stdout discard <[|] IO[.]wait job[.]stderr' \
-  'private def retireGroup [(]job : Job[)] : IO Unit := do try job[.]child[.]kill catch err => match err with [|] [.]permissionDenied [.][.] [|] [.]noSuchThing [.][.] => Os[.]Shell[.]kill job[.]child[.]pid 9 [|] _ => throw err'; do
+  'private def retireGroup [(]job : Job[)] : IO Unit := do try job[.]child[.]kill catch err => match err with [|] [.]permissionDenied [.][.] [|] [.]noSuchThing [.][.] => Os[.]Shell[.]kill job[.]child[.]pid 9 [|] _ => throw err try discard <[|] Os[.]Shell[.]signalGroup job[.]child[.]pid 9 catch _ => pure [(][)]'; do
   printf '%s\n' "$command_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "owned command lost its process or pipe lifetime contract: $tie"
 done
@@ -734,7 +735,7 @@ done
 cli_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/WorldCode.lean Linger/App/WorldCode/Api.lean Linger/App/CoreCode/Api.lean)"
 for tie in \
   'match Linger[.]Target[.]Remote[.]checkHosts hosts with [|] [.]ok l => return some [(]l[.]map fun host => [(]host, Linger[.]Target[.]Remote[.]transportFor config host[)][)] [|] [.]error e => throw [(]IO[.]userError e[)]' \
-  'for [(][(]host, _[)], output[)] in remotes[.]zip remote[.]toList do match output with [|] none => rows := rows [+][+] [[][(]"host", host[)] :: Linger[.]Display[.]Listing[.]statusFields [(]Linger[.]Display[.]Status[.]classify [{] known := false [}][)][]] [|] some output => for row in Linger[.]Target[.]Remote[.]parse output do' \
+  'for [(][(]host, _[)], output[)] in remotes[.]zip remote[.]toList do match output with [|] none => rows := rows [+][+] [[][(]"host", host[)] :: Linger[.]Display[.]Listing[.]statusFields [(]Linger[.]Display[.]Status[.]classify [{] known := false [}][)][]] [|] some [(][.]records records[)] => rows := rows [+][+] Serve[.]Remote[.]rows host records [|] some [(][.]porcelain output[)] => for row in Linger[.]Target[.]Remote[.]parse output do' \
   '[|] some [(]porcelain, hosts, [[][]][)] => some [(][.]every porcelain hosts[)]' \
   '[|] [.]every porcelain hosts => do match ← resolveRemotes env hosts with [|] some remotes => cmdList env porcelain remotes' \
   'let withColor := Linger[.]Os[.]Env[.]withColor [(]← [(]← IO[.]getStdout[)][.]isTty[)] [(]← IO[.]getEnv "NO_COLOR"[)] [(]← IO[.]getEnv "TERM"[)] let named := rows[.]map fun info => [(]match info[.]lookup "name", info[.]lookup "host" with [|] none, some host => [(]"name", "@" [+][+] host[)] :: info [|] _, _ => info[)][.]filter fun kv => [(]Linger[.]App[.]Fields[.]table[.]map Linger[.]App[.]Fields[.]Field[.]key[)][.]contains kv[.]1 let ordered := Linger[.]Display[.]View[.]sort Linger[.]Display[.]Listing[.]statusOf named let width ← humanWidth let home ← accountHome writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor width [(]ordered[.]map [(]Linger[.]Display[.]Listing[.]atHome home[)][)][)][.]toArray[)]' \
@@ -842,14 +843,17 @@ done
 # are installed before spawning the transports' isolated groups, so cancelling the chooser
 # reaches those groups through its listing helper, and a signal that came before they stop, even
 # while the groups are retired, ends the listing with that signal's answer. Each host's listing
-# runs through its query command, then the encoded words of `ls --porcelain` (`Remote.argv`).
+# runs through its query command `serve`, which takes `Serve.Remote.requests` and whose answer
+# `Serve.Remote.heard` reads (`remote_rows_exact`), and an older linger's, which answered the
+# handshake with a usage answer, then the encoded words of `ls --porcelain` (`Remote.argv`).
 # Linger.Target.Suites.Remote checks overlap, output order, slot reuse, shared deadlines,
 # descendant cleanup and the signal's ending.
 for tie in \
   'for signal in [[]Std[.]Async[.]Signal[.]sigterm, [.]sigint, [.]sighup[]] do let waiter ← Std[.]Async[.]Signal[.]Waiter[.]mk signal true try let task ← waiter[.]wait signals[.]modify [(]·[.]push [(]waiter, task[)][)] catch e => waiter[.]stop throw e let deadline := [(]← monotonicMs[)] [+] remoteQueryTimeoutMs' \
   'while next < hosts[.]size [|][|] ![(]← jobs[.]get[)][.]isEmpty do if let some signal[[:space:]]*← [(][{] waiters := ← signals[.]get [}] : Watched[)][.]came then return [.]error signal if [(]← monotonicMs[)] ≥ deadline then break' \
   'while next < hosts[.]size && [(]← jobs[.]get[)][.]size < remoteQueryLimit && [(]← monotonicMs[)] < deadline do' \
-  'if let cmd :: args := Linger[.]Target[.]Remote[.]argv hosts[[]index[]]![.]2 "ls" [[]"--porcelain"[]] then pending[.]set [(]some [(]← Command[.]start cmd args[.]toArray[)][)]' \
+  'if let cmd :: args := Linger[.]Target[.]Remote[.]argv hosts[[]index[]]![.]2 "serve" [[][]] then pending[.]set [(]some [(]← Command[.]startFeeding cmd args[.]toArray Serve[.]Remote[.]requests[.]toUTF8[)][)]' \
+  'Serve[.]Json[.]parse match Serve[.]Remote[.]heard messages output[.]exitCode with [|] [.]listed records => outputs := outputs[.]set! index [(]some [(][.]records records[)][)] [|] [.]older => older := older[.]set! index true if let cmd :: args := Linger[.]Target[.]Remote[.]argv hosts[[]index[]]![.]2 "ls" [[]"--porcelain"[]] then pending[.]set [(]some [(]← Command[.]start cmd args[.]toArray[)][)]' \
   'finally for [(]_, pending[)] in ← jobs[.]get do try Command[.]stop pending catch _ => pure [(][)] for [(]waiter, _[)] in ← signals[.]get do waiter[.]stop if let some signal[[:space:]]*← [(][{] waiters := ← signals[.]get [}] : Watched[)][.]came then return [.]error signal return [.]ok listed' \
   'let task ← IO[.]asTask localRows Task[.]Priority[.]dedicated try let remote ← listRemotes remotes[.]toArray let locals ← IO[.]ofExcept [(]← IO[.]wait task[)] pure [(]locals, remote[)] finally discard <[|] IO[.]wait task'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \

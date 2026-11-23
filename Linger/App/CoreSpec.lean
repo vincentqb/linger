@@ -1440,6 +1440,95 @@ def unpainted {σ : Type} (watching : σ → Id → Option Watch) (step : σ →
     | _ => step s (.read id bytes)
   | ev => step s ev
 
+/-! ## Remote hosts through `serve`
+
+`ls -r` reaches a remote host as any client reaches linger: it runs `serve` there, through the
+host's transport, shakes hands with it and calls `sessions/list`, so a remote session is a session,
+and its record is what the host's linger answers for it (`op_meaning`). A host whose linger answers
+the handshake with a usage answer, as one from before `serve` answers a command line it does not
+take, is asked with the words `ls --porcelain`, as `ls -r` asked every host before. -/
+
+/-- The member `key` of the first message among `messages` whose `id` is the number `n`, and that
+has one. -/
+@[expose]
+def Remote.answerOf (messages : List Json) (n key : String) : Option Json :=
+  (messages.find? fun message =>
+        (message.member? "id").bind Id.of == some (.number n) && (message.member? key).isSome).bind
+    (·.member? key)
+
+/-- **A host's `serve` shook hands**: it answered `initialize`, request 1, with a version this
+linger speaks. -/
+@[expose]
+def Remote.Shook (messages : List Json) : Prop :=
+  ∃ result version,
+    Remote.answerOf messages "1" "result" = some result ∧
+      result.member? "protocolVersion" = some (.str version) ∧ version ∈ versions
+
+/-- A record as a host's `sessions/list` gives one: an object each of whose members is a string. -/
+@[expose]
+def Record.of : Json → Option Record
+  | .obj members => members.mapM fun (key, value) => value.text?.map ((key, ·))
+  | _ => none
+
+/-- **The records a host's `sessions/list` returned**: its result for request 2, `done`, with
+these records. -/
+@[expose]
+def Remote.Lists (messages : List Json) (records : List Record) : Prop :=
+  ∃ result items,
+    Remote.answerOf messages "2" "result" = some result ∧
+      result.member? "answer" = some (.str "done") ∧
+      result.member? "records" = some (.arr items) ∧ items.mapM Record.of = some records
+
+/-- **A host answered the handshake with a usage answer**: it did not shake hands, and its command
+exited with the usage answer's status, 2, as the command line of a linger from before `serve`
+answers a word it does not take, or its `serve` answered `initialize` with an error whose `data` is
+the usage answer, as one that speaks no version this linger does. -/
+@[expose]
+def Remote.Usage (messages : List Json) (status : UInt32) : Prop :=
+  ¬Remote.Shook messages ∧
+    (status = 2 ∨
+      ∃ error data,
+        Remote.answerOf messages "1" "error" = some error ∧
+          error.member? "data" = some data ∧ data.member? "answer" = some (.str "usage"))
+
+/-- What a host's `serve` told `ls -r`. -/
+inductive Remote.Heard where
+  /-- It shook hands, and its `sessions/list` returned these records. -/
+  | listed (records : List Record)
+  /-- It answered the handshake with a usage answer: an older linger, asked with the words of
+  `ls --porcelain`. -/
+  | older
+  /-- It answered nothing `ls -r` reads: the host lists as one that does not answer, `?`. -/
+  | silent
+
+/-- **A remote host's rows are exactly what its `sessions/list` returns, named `name@host`**, of
+how `heard` reads the messages a host's `serve` wrote and its command's exit status, how `rows`
+makes a host's rows of the records it listed and which names `accept` takes: it reads records
+exactly when the host shook hands and its `sessions/list` returned them, and an older linger
+exactly when the host answered the handshake with a usage answer; and the host's rows are its
+records whose names `accept` takes, in order, each named `name@host`. -/
+@[expose]
+def Remote.Exact (heard : List Json → UInt32 → Remote.Heard)
+    (rows : String → List Record → List Record) (accept : String → Option String) (host : String)
+    (messages : List Json) (status : UInt32) (records : List Record) : Prop :=
+  (heard messages status = .listed records ↔
+      Remote.Shook messages ∧ Remote.Lists messages records) ∧
+    (heard messages status = .older ↔ Remote.Usage messages status) ∧
+    (rows host records).map Record.key =
+      (records.filter fun record => accept record.key == some record.key).map fun record =>
+        record.key ++ "@" ++ host
+
+/-- A wrong part: a reading that takes the records of request 2's result, whatever request 1 got,
+and reads any other answer as silent. -/
+@[expose]
+def Remote.unshaken (messages : List Json) (_ : UInt32) : Remote.Heard :=
+  match (Remote.answerOf messages "2" "result").bind (·.member? "records") with
+  | some (.arr items) =>
+    match items.mapM Record.of with
+    | some records => .listed records
+    | none => .silent
+  | _ => .silent
+
 end Linger.App.Serve
 
 namespace Linger.App

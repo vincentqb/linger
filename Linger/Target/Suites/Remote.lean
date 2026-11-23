@@ -17,7 +17,9 @@ sshd hands it to a login shell; a fake remote linger records the words it receiv
 checks read as the remote entry routes them (`Entry.route`). The shells suite runs the same
 command lines through every login shell this host has. The remotes file's commands reach a far
 linger, this checkout's binary under a state directory of its own, through scripts that stand
-for a transport such as `docker exec`; every check runs under a `HOME` of the suite's own. -/
+for a transport such as `docker exec`, whose `serve` lists its sessions for `ls -r`; the fake
+remote linger answers `serve` as an older linger does, with usage, and is asked with the words of
+`ls --porcelain`; every check runs under a `HOME` of the suite's own. -/
 
 namespace Linger.Target.Suites.Remote
 
@@ -68,6 +70,10 @@ private def fakeLinger : String :=
     s!"  {Linger.Target.Remote.marker})\n" ++
     "    case \"$2\" in\n" ++
     s!"      {encodeWord "ls"}) rows ;;\n" ++
+    -- an older linger, whose command line takes no `serve`, answers it as any word it does not
+    -- take: usage, exit 2
+    s!"      {encodeWord "serve"}) printf '%s\\000' \"$@\" > \"$LINGER_REMOTE_ARGS.serve\"; " ++
+    "echo 'usage: linger <command>' >&2; exit 2 ;;\n" ++
     s!"      {encodeWord "attach"}) printf '\\033]2;remote-editor\\007{attachMark}\\n' ;;\n" ++
     s!"      {encodeWord "send"}) if [ \"$4\" = {encodeWord "-"} ]; then cat > \"$LINGER_REMOTE_STDIN\"; fi ;;\n" ++
     "    esac ;;\n" ++
@@ -110,16 +116,25 @@ def discoveryLeaf (root host : String) : IO UInt32 := do
   IO.sleep (2 * hangMs).toUInt32
   return 0
 
+/-- What a host's `serve` writes for `ls -r` when it lists one session, `name`, running `cmd`: its
+`initialize` result, then its `sessions/list` result, one JSON-RPC message a line. -/
+def servedRows (name cmd : String) : String :=
+  "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"1\"}}\n" ++
+    "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"answer\":\"done\",\"code\":\"0\",\"records\":" ++
+    s!"[\{\"name\":\"{name}\",\"state\":\"live\",\"cmd\":\"{cmd}\"}]}}\n"
+
 /-- Re-entered through a minimal fake SSH executable. The first host waits for
 the second and a local info request, so serial discovery cannot pass. Stalled
-hosts emit plausible rows but never complete before their group is cancelled. -/
+hosts emit plausible rows but never complete before their group is cancelled. A host asked for
+`serve` answers as a `serve` does, and one asked for `ls` with its porcelain. -/
 def discoverySsh (root : String) (args : List String) : IO UInt32 := do
   let some host := ((args.dropWhile (· != "--")).drop 1).head? | return 2
+  let served := args.contains (encodeWord "serve")
   IO.FS.writeFile s!"{root}/{host}.started" ""
   if host.startsWith "stall-" then
     let child ←
       IO.Process.spawn { cmd := (← IO.appPath).toString, args := #["--discovery-leaf", root, host] }
-    IO.println s!"name\t{host}\nstate\tlive\n"
+    IO.print (if served then servedRows host "stalled" else s!"name\t{host}\nstate\tlive\n\n")
     (← IO.getStdout).flush
     return ← child.wait
   if host == "first" then
@@ -130,7 +145,9 @@ def discoverySsh (root : String) (args : List String) : IO UInt32 := do
     unless started do
       return 1
     IO.sleep 100
-  IO.println s!"name\t{goodName}\nstate\tlive\ncmd\t{host}\n"
+  IO.print
+      (if served then servedRows goodName host
+      else s!"name\t{goodName}\nstate\tlive\ncmd\t{host}\n\n")
   return 0
 
 /-- The local peer answers only after remote discovery has started. -/
@@ -366,9 +383,15 @@ private def transportChecks (e : Env) (procPath : Array (String × Option String
     let status ← far.field "alpha" "status"
     expect
         (startRc == 0 && rc == 0 && status.isSome && rowField recs "alpha@far" "status" == status &&
-          (← readArgs queryLog) == sent "ls" ["--porcelain"] &&
+          (← readArgs queryLog) == sent "serve" [] &&
           (← readArgs attachLog).isEmpty)
         "a host's line names the command that lists its sessions, each as name@host with the status its linger reports"
+    let farCmd ← far.field "alpha" "cmd"
+    expect
+        ((← readArgs queryLog) == sent "serve" [] && farCmd.isSome &&
+          rowField recs "alpha@far" "cmd" == farCmd &&
+          rowField recs "alpha@far" "state" == some "live")
+        s!"ls -r gets a host's rows through its serve, one command, as its sessions/list returns them ({farCmd})"
     expect
         (recs.contains ("name", s!"{goodName}@{devHost}") &&
           (← readArgs sshLog) == ["-T", "--", devHost] ++ sent "ls" ["--porcelain"])
@@ -482,6 +505,12 @@ def run : IO UInt32 :=
       expect (has out "localsess") "local session listed alongside remotes"
       expect (has out tag && recs.contains ("name", tag))
           "remote session listed with its exact target"
+      expect
+          ((← readArgs (remoteArgs.toString ++ ".serve")) ==
+              [Linger.Target.Remote.marker, encodeWord "serve"] &&
+            (← remoteRoute remoteArgs) == .session ["ls", "--porcelain"] &&
+            recs.contains ("name", tag))
+          "a host whose linger answers serve with usage, as an older linger does, is listed with the words of ls --porcelain"
       expect
           (!has out "/etc/passwd" &&
             recs.filter (·.1 == "name") == [("name", "localsess"), ("name", tag)])

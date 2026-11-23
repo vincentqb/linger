@@ -7,6 +7,8 @@ import Linger.Os.CoreCode.Answer
 import Linger.Session.CoreCode
 import Linger.Session.CoreCode.Wire
 import Linger.Display.CoreCode.Listing
+import Linger.Target.CoreCode.Remote
+import Linger.Target.CoreCode.Name
 import Terminal.CoreCode.Mediation
 public import Terminal.CoreCode.Vt
 import Terminal.CoreCode.Render
@@ -613,5 +615,79 @@ def Received.message : Received → Option Message
   | .text bytes =>
     ((String.fromUTF8? (ByteArray.mk bytes.toArray)).map decode).getD (some (.invalid none true))
   | .overlong => some (.invalid none false)
+
+/-! ## Remote hosts through `serve` -/
+
+/-- The lines `ls -r` writes a host's `serve`, one JSON-RPC message a line: `initialize`, request
+1, asking for the version this linger speaks, `initialized`, and `sessions/list`, request 2; then
+its standard input ends, and `serve` answers what it read and ends. -/
+def Remote.requests : String :=
+  let message (members : List (String × Json)) : String :=
+    (Json.render (.obj (("jsonrpc", .str "2.0") :: members))).push '\n'
+  message
+      [("id", .number "1"), ("method", .str "initialize"),
+        ("params",
+          .obj
+            [("protocolVersion", .str "1"), ("clientInfo", .obj [("name", .str "linger")]),
+              ("capabilities", .obj [])])] ++
+    message [("method", .str "initialized"), ("params", .obj [])] ++
+    message [("id", .number "2"), ("method", .str "sessions/list"), ("params", .obj [])]
+
+/-- Whether a host's `serve` shook hands (`Remote.Shook`). -/
+def Remote.shook (messages : List Json) : Bool :=
+  match
+    ((Remote.answerOf messages "1" "result").bind (·.member? "protocolVersion")).bind
+      Json.text? with
+  | some version => versions.contains version
+  | none => false
+
+/-- The records a host's `sessions/list` returned (`Remote.Lists`). -/
+def Remote.listed (messages : List Json) : Option (List Record) :=
+  match Remote.answerOf messages "2" "result" with
+  | some result =>
+    if (result.member? "answer").bind Json.text? == some "done" then
+      match result.member? "records" with
+      | some (.arr items) => items.mapM Record.of
+      | _ => none
+    else none
+  | none => none
+
+/-- Whether `initialize`'s error, in a host's messages, is the usage answer. -/
+def Remote.refusedUsage (messages : List Json) : Bool :=
+  (((Remote.answerOf messages "1" "error").bind (·.member? "data")).bind (·.member? "answer")).bind
+      Json.text? ==
+    some "usage"
+
+/-- Whether a host answered the handshake with a usage answer (`Remote.Usage`). -/
+def Remote.usage (messages : List Json) (status : UInt32) : Bool :=
+  !Remote.shook messages && (status == 2 || Remote.refusedUsage messages)
+
+/-- **What a host's `serve` told `ls -r`**, of the messages it wrote and its command's exit
+status: the records its `sessions/list` returned once it shook hands, an older linger when it
+answered the handshake with a usage answer, and otherwise nothing `ls -r` reads. -/
+def Remote.heard (messages : List Json) (status : UInt32) : Remote.Heard :=
+  if Remote.shook messages then
+    match Remote.listed messages with
+    | some records => .listed records
+    | none => .silent
+  else if Remote.usage messages status then .older else .silent
+
+/-- A host's row of a record its `sessions/list` returned: `name@host`, its command as clean text,
+its state, and the status and attention its record gives, as a row from an older host's porcelain
+is (`Listing.rowStatus`). -/
+def Remote.row (host : String) (record : Record) : List (String × String) :=
+  let live := (record.lookup "state").getD "live" == "live"
+  [("name", record.key ++ "@" ++ host),
+      ("cmd", Linger.Target.Remote.scrub ((record.lookup "cmd").getD "")),
+      ("state", if live then "live" else "resumable")] ++
+    Linger.Display.Listing.statusFields
+      (Linger.Display.Listing.rowStatus
+        (.remote live ((record.lookup "attention").getD "") ((record.lookup "status").getD "")))
+
+/-- **A host's rows**: one for each record its `sessions/list` returned whose name a target takes
+(`Name.accept`), in order, named `name@host`. -/
+def Remote.rows (host : String) (records : List Record) : List Record :=
+  (records.filter fun record => Linger.Target.Name.accept record.key == some record.key).map
+    (Remote.row host)
 
 end Linger.App.Serve

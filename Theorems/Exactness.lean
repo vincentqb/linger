@@ -30,6 +30,7 @@ import all Linger.App.Proofs.Kill
 import all Linger.App.Proofs.Recovery
 import all Linger.App.Proofs.Serve
 import all Linger.App.Proofs.Stream
+import all Linger.App.Proofs.Hosts
 import all Linger.App.Proofs.Screen
 import all Linger.App.Proofs.Wait
 import Linger.Display.Proofs.Clean
@@ -456,6 +457,34 @@ theorem serve_attach_exact_rejects_unpainted :
     App.Serve.State.phase, App.Serve.streamed, quiet, App.Serve.State.setWatch] at sent streamed
   subst sent
   simp [App.Serve.Streamed, painted, Wire.shown, Wire.Msg.ends] at streamed
+
+theorem remote_rows_exact (host : String) (messages : List App.Serve.Json) (status : UInt32)
+    (records : List App.Serve.Record) :
+    App.Serve.Remote.Exact App.Serve.Remote.heard App.Serve.Remote.rows Name.accept host messages
+      status records :=
+  ⟨App.Serve.Remote.heard_listed messages status records,
+    App.Serve.Remote.heard_older messages status, App.Serve.Remote.rows_keys host records⟩
+
+theorem remote_rows_exact_rejects_unshaken :
+    ¬∀ (host : String) (messages : List App.Serve.Json) (status : UInt32)
+        (records : List App.Serve.Record),
+        App.Serve.Remote.Exact App.Serve.Remote.unshaken App.Serve.Remote.rows Name.accept host
+          messages status records := by
+  intro h
+  -- a reading that takes request 2's records whatever request 1 got lists a host that never
+  -- shook hands
+  have listed :=
+    (h "far"
+        [.obj
+            [("id", .number "2"), ("result", .obj [("answer", .str "done"), ("records", .arr [])])]]
+        0 []).1
+  have shook :=
+    (listed.mp
+        (by
+          simp [App.Serve.Remote.unshaken, App.Serve.Remote.answerOf, App.Serve.Json.member?,
+            App.Serve.Id.of, List.lookup])).1
+  obtain ⟨result, version, found, -⟩ := shook
+  simp [App.Serve.Remote.answerOf, App.Serve.Json.member?, App.Serve.Id.of, List.lookup] at found
 
 theorem fields_owned :
     (App.Fields.table.map (·.key)).Nodup ∧

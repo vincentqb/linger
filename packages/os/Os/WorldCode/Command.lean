@@ -30,6 +30,25 @@ def start (executable : String) (args : Array String) : IO Job := do
   let stderr ← IO.asTask child.stderr.readToEnd Task.Priority.dedicated
   return { child, stdout, stderr }
 
+/-- `start`, with `input` the command's standard input: written whole once its pipes are being
+read, then closed, so that the command reads it and then its end. For an input a pipe holds at
+once, as a few lines of requests are: a longer one waits for the command to read it. -/
+def startFeeding (executable : String) (args : Array String) (input : ByteArray) : IO Job := do
+  let spawned ←
+    IO.Process.spawn
+        { cmd := executable, args, stdin := .piped, stdout := .piped, stderr := .piped,
+          setsid := true }
+  let (stdin, child) ← spawned.takeStdin
+  let stdout ← IO.asTask child.stdout.readToEnd Task.Priority.dedicated
+  let stderr ← IO.asTask child.stderr.readToEnd Task.Priority.dedicated
+  -- a command that ends without reading closes its end first: what it did not take is lost
+  try
+    stdin.write input
+    stdin.flush
+  catch _ =>
+    pure ()
+  return { child, stdout, stderr }
+
 /-- Drain the whole pipe while retaining at most `limit` bytes. After overflow,
 keep draining so the child cannot block on a full pipe; refuse the result at EOF. -/
 private def readLimited (handle : IO.FS.Handle) (limit : Nat) : IO String := do
@@ -74,7 +93,9 @@ def poll (pending : IO.Ref (Option Job)) : IO (Option IO.Process.Output) := do
 
 /-- Force-retire the job's process group. Darwin's `killpg` refuses a group whose only
 member is the exited, unreaped leader (EPERM), so that refusal, or ESRCH, signals the
-reserved leader PID itself. -/
+reserved leader PID itself. A child whose standard input was taken (`startFeeding`) is killed
+alone, as Lean's runtime kills it, so the rest of its group, whose id the unreaped leader keeps, is
+signalled too; a group with no process left has nothing to retire. -/
 private def retireGroup (job : Job) : IO Unit := do
   try
     job.child.kill
@@ -84,6 +105,10 @@ private def retireGroup (job : Job) : IO Unit := do
       Os.Shell.kill job.child.pid 9
     | _ =>
       throw err
+  try
+    discard <| Os.Shell.signalGroup job.child.pid 9
+  catch _ =>
+    pure ()
 
 /-- Optionally give the leader time to retire separately isolated children.
 Then retire its group before reaping the leader, whose reserved PID identifies
