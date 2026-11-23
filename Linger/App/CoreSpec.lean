@@ -8,8 +8,8 @@ public section
 
 /-! # What command-line headlines are stated in
 
-The executor a command line reaches, where a command line of plain words goes, the operations of
-the session model and one row of the command table, an operation's one command, what a command
+The executor a command line reaches and where each command line goes, the operations of the
+session model and one row of the command table, an operation's one command, what a command
 does with a name's saved session and what an attach to it does, what `wait` hears on each look
 at a name and does next, what `kill` hears on each look at a name once a daemon has taken its
 request and does next, and the steps of `capture` of a saved session, which of them hold the
@@ -20,20 +20,17 @@ too. -/
 
 namespace Linger.App.Entry
 
-/-- The executor that receives a command line: the interactive selector or the session CLI, or a
-usage error for an encoded command line that does not decode. -/
+/-- The executor that receives a command line: the interactive selector or the session CLI. -/
 inductive Route where
   /-- `attach` without a target: open the selector, read-only on request. -/
   | selector (readOnly : Bool)
   /-- Every other command line, with its exact arguments; an empty one becomes `--help`. -/
   | session (args : List String)
-  /-- An encoded command line whose words do not decode: a usage error, exit status 2. -/
-  | malformed
   deriving BEq, Repr
 
-/-- Where a command line goes, once its words are the ones its sender meant: bare invocation
-explains the CLI, as `--help` does, `attach` alone opens the selector, read-only on request, and
-every other command line reaches the session CLI with its exact words. -/
+/-- Where a command line goes: bare invocation explains the CLI, as `--help` does, `attach` alone
+opens the selector, read-only on request, and every other command line reaches the session CLI
+with its exact words. -/
 @[expose]
 def Route.of (args : List String) : Route :=
   if args = [] then .session ["--help"]
@@ -356,9 +353,11 @@ inductive Found where
   | unstarted (status : UInt8)
   /-- The session it attached to or waited for ended this way. -/
   | ended (ending : Session.Ending)
-  /-- What it ran exited with this status, as a shell reports it: a remote linger, through its
-  host's transport, or the program of a session whose daemon, an older linger's, told no more. -/
+  /-- What it ran exited with this status, as a shell reports it: the program of a session whose
+  daemon, an older linger's, told no more. -/
   | status (status : UInt32)
+  /-- What a remote linger answered, through its host's `serve`: its answer, as it gave it. -/
+  | heard (answer : Os.Answer)
   /-- A signal stopped it, once it had handed its terminal back. -/
   | stopped (signal : UInt8)
   deriving Repr, DecidableEq
@@ -375,6 +374,7 @@ def Found.answer : Found → Os.Answer
   | .unstarted code => if code = 126 then .cannotRun else if code = 127 then .notFound else .failed
   | .ended ending => ending.answer
   | .status code => .program code
+  | .heard answer => answer
   | .stopped signal => .stopped signal
 
 /-- One thing a command says about its request as it goes, which the command line writes to
@@ -392,11 +392,12 @@ end Linger.App.Api
 namespace Linger.App.Commands
 
 /-- **What each operation can find**, and so the answers it gives: every operation can find
-that it did what was asked, refused, met an operand linger does not take, could not find out, or
-relayed a remote linger's status; each other finding belongs to the operations named. -/
+that it did what was asked, refused, met an operand linger does not take, could not find out,
+relayed the status an older daemon told, or heard what a remote linger answered; each other
+finding belongs to the operations named. -/
 @[expose]
 def Op.finds : Op → Api.Found → Bool
-  | _, .done | _, .refused | _, .invalid | _, .unknown | _, .status _ => true
+  | _, .done | _, .refused | _, .invalid | _, .unknown | _, .status _ | _, .heard _ => true
   | op, .missing => op != .start && op != .serve
   | op, .late => op == .start || op == .resume || op == .wait
   | op, .unstarted _ => op == .attach || op == .start || op == .resume
@@ -701,7 +702,8 @@ def methods : List (String × Commands.Op × String × Shape) :=
     ("session/resume", .resume, "resume", .ask), ("session/send", .send, "send", .ask),
     ("session/detach", .detach, "detach", .ask), ("session/kill", .kill, "kill", .ask),
     ("session/rename", .rename, "rename", .ask), ("session/capture", .capture, "capture", .ask),
-    ("session/resize", .resize, "resize", .ask), ("session/wait", .wait, "wait", .ask)]
+    ("session/resize", .resize, "resize", .ask), ("session/wait", .wait, "wait", .ask),
+    ("session/upgrade", .upgrade, "upgrade", .ask)]
 
 /-- The standard input a method's command line reads: the bytes `session/send`'s `data` encodes
 in base64 (`Base64.decode`), and none for any other method. -/
@@ -715,7 +717,7 @@ def input (method : String) (params : Json) : Option (List UInt8) :=
 members and its target last, after `--` where the command reads one, so that a name that starts
 with `-` stays a name; none for params the method does not take. `session/send` is `send NAME -`,
 whose standard input is `input`'s, a watch is `attach --read-only -- NAME` and an attach
-`attach -- NAME`. -/
+`attach -- NAME`, read-only on request (`readOnly`), its `command` after the name. -/
 @[expose]
 def operands (method : String) (params : Json) : Option (List String) :=
   if method = "sessions/list" then
@@ -726,8 +728,11 @@ def operands (method : String) (params : Json) : Option (List String) :=
       if method = "session/screen" ∨ method = "session/history" then
         (params.need "name" Json.text?).map fun name => ["--read-only", "--", name]
       else
-        if method = "session/attach" then
-          (params.need "name" Json.text?).map fun name => ["--", name]
+        if method = "session/attach" then do
+          let name ← params.need "name" Json.text?
+          let readOnly ← params.opt "readOnly" Json.flag? false
+          let command ← params.opt "command" Json.texts? []
+          pure ((if readOnly then ["--read-only"] else []) ++ ["--", name] ++ command)
         else
           if method = "session/start" then do
             let name ← params.need "name" Json.text?
@@ -1442,11 +1447,46 @@ def unpainted {σ : Type} (watching : σ → Id → Option Watch) (step : σ →
 
 /-! ## Remote hosts through `serve`
 
-`ls -r` reaches a remote host as any client reaches linger: it runs `serve` there, through the
-host's transport, shakes hands with it and calls `sessions/list`, so a remote session is a session,
-and its record is what the host's linger answers for it (`op_meaning`). A host whose linger answers
-the handshake with a usage answer, as one from before `serve` answers a command line it does not
-take, is asked with the words `ls --porcelain`, as `ls -r` asked every host before. -/
+A command reaches a remote session as any client reaches linger: it runs `serve` on the session's
+host, through the host's transport, shakes hands with it, and calls the method of the request the
+host performs there (`Remote.asked`), so a remote session is a session, the host's linger doing what
+the command line does there, and the command finds what the host answered (`Remote.Answered`), and
+says what the host said as its host's. A host whose `serve` does not shake hands, as a linger from
+before `serve` answers a command line it does not take, with a usage answer (`Remote.Usage`), is
+refused, saying so, and `ls -r`, which calls `sessions/list` of each host, lists it as a host that
+does not answer, saying why. A remote attach is an attach client's conversation with the host's
+`session/attach`: linger relays each update of its stream to the client as the frames of the bytes
+it carries (`Remote.Shows`), and each key the client types as one `session/input`. -/
+
+/-- **The request a host performs for one of a request's targets**, the session `name` there, with
+the standard input the command line has, `input`: the same request, its target `name` alone, a
+listing's as records (`--porcelain`), and `send`'s input as the bytes it delivers, which
+`session/send` carries; none for a request no method performs on one session, `ls` of every
+session, its counts or a save, and `serve`, and for one no command line is: a read-only attach with
+a command, a size `resize` does not take and a `wait` of a name that starts with `-`. -/
+@[expose]
+def Remote.asked (request : Api.Request) (name : String) (input : List UInt8) :
+    Option (Api.Request × List UInt8) :=
+  match request with
+  | .attach readOnly _ command =>
+    if readOnly = true ∧ command ≠ [] then none else some (.attach readOnly name command, [])
+  | .list (.named _ _) => some (.list (.named true [name]), [])
+  | .list _ => none
+  | .start _ program args => some (.start name program args, [])
+  | .resume _ => some (.resume name, [])
+  | .send _ (.text words) => some (.send name .stdin, (String.intercalate " " words).toUTF8.toList)
+  | .send _ .stdin => some (.send name .stdin, input)
+  | .detach _ => some (.detach name, [])
+  | .kill _ => some (.kill name, [])
+  | .rename _ new => some (.rename name new, [])
+  | .capture history _ => some (.capture history name, [])
+  | .resize _ cols rows =>
+    if Terminal.Vt.clampDim cols = cols ∧ Terminal.Vt.clampDim rows = rows then
+      some (.resize name cols rows, [])
+    else none
+  | .wait _ => if name.startsWith "-" = true then none else some (.wait [name], [])
+  | .upgrade _ => some (.upgrade [name], [])
+  | .serve => none
 
 /-- The member `key` of the first message among `messages` whose `id` is the number `n`, and that
 has one. -/
@@ -1464,25 +1504,39 @@ def Remote.Shook (messages : List Json) : Prop :=
     Remote.answerOf messages "1" "result" = some result ∧
       result.member? "protocolVersion" = some (.str version) ∧ version ∈ versions
 
+/-- **What a host answered the call**, request 2, of the answers whose codes `code` gives: its
+result, `answer` by name and code, then the result's other members; or, where no result answered
+it, the `data` of the error that did, in the same form, as a method a `serve` does not answer or
+params it does not take get. -/
+@[expose]
+def Remote.Answered (code : Os.Answer → UInt32) (messages : List Json) (answer : Os.Answer)
+    (members : List (String × Json)) : Prop :=
+  (Remote.answerOf messages "2" "result").or
+      ((Remote.answerOf messages "2" "error").bind (·.member? "data")) =
+    some
+      (.obj
+        (("answer", .str (answerName answer)) ::
+          ("code", .number (toString (code answer))) :: members))
+
 /-- A record as a host's `sessions/list` gives one: an object each of whose members is a string. -/
 @[expose]
 def Record.of : Json → Option Record
   | .obj members => members.mapM fun (key, value) => value.text?.map ((key, ·))
   | _ => none
 
-/-- **The records a host's `sessions/list` returned**: its result for request 2, `done`, with
-these records. -/
+/-- **The records a host's `sessions/list` returned**: it answered the call `done`, with these
+records. -/
 @[expose]
-def Remote.Lists (messages : List Json) (records : List Record) : Prop :=
-  ∃ result items,
-    Remote.answerOf messages "2" "result" = some result ∧
-      result.member? "answer" = some (.str "done") ∧
-      result.member? "records" = some (.arr items) ∧ items.mapM Record.of = some records
+def Remote.Lists (code : Os.Answer → UInt32) (messages : List Json) (records : List Record) :
+    Prop :=
+  ∃ members items,
+    Remote.Answered code messages .done members ∧
+      members.lookup "records" = some (.arr items) ∧ items.mapM Record.of = some records
 
-/-- **A host answered the handshake with a usage answer**: it did not shake hands, and its command
-exited with the usage answer's status, 2, as the command line of a linger from before `serve`
-answers a word it does not take, or its `serve` answered `initialize` with an error whose `data` is
-the usage answer, as one that speaks no version this linger does. -/
+/-- **A host refused `serve` with a usage answer**: it did not shake hands, and its command exited
+with the usage answer's status, 2, as the command line of a linger from before `serve` answers a
+word it does not take, or its `serve` answered `initialize` with an error whose `data` is the usage
+answer, as one that speaks no version this linger does. -/
 @[expose]
 def Remote.Usage (messages : List Json) (status : UInt32) : Prop :=
   ¬Remote.Shook messages ∧
@@ -1491,43 +1545,108 @@ def Remote.Usage (messages : List Json) (status : UInt32) : Prop :=
         Remote.answerOf messages "1" "error" = some error ∧
           error.member? "data" = some data ∧ data.member? "answer" = some (.str "usage"))
 
-/-- What a host's `serve` told `ls -r`. -/
+/-- What a host's `serve` told linger of its call. -/
 inductive Remote.Heard where
-  /-- It shook hands, and its `sessions/list` returned these records. -/
-  | listed (records : List Record)
-  /-- It answered the handshake with a usage answer: an older linger, asked with the words of
-  `ls --porcelain`. -/
-  | older
-  /-- It answered nothing `ls -r` reads: the host lists as one that does not answer, `?`. -/
+  /-- It shook hands, and answered the call with this answer and these members. -/
+  | answered (answer : Os.Answer) (members : List (String × Json))
+  /-- It refused `serve` with a usage answer: a linger without `serve`, which linger refuses. -/
+  | refused
+  /-- It answered nothing linger reads. -/
   | silent
 
-/-- **A remote host's rows are exactly what its `sessions/list` returns, named `name@host`**, of
-how `heard` reads the messages a host's `serve` wrote and its command's exit status, how `rows`
-makes a host's rows of the records it listed and which names `accept` takes: it reads records
-exactly when the host shook hands and its `sessions/list` returned them, and an older linger
-exactly when the host answered the handshake with a usage answer; and the host's rows are its
-records whose names `accept` takes, in order, each named `name@host`. -/
+/-- **A remote request is its host's, and its answer the host's, attributed**, of the call linger
+makes for a request at the session `name` with the standard input `input`, `call`, how a host's
+`serve` reads a method and its params, `parse`, how linger reads what a host's `serve` wrote and its
+command's exit status, `heard`, the answers' codes, `code`, what a command finds of a host's answer
+and the members of its result, `found`, the answer of what a command finds, `answerOf`, the lines a
+command says of what the host `host` said, `said`, and how a name or a line is made clean text,
+`clean`: the host reads the call as exactly the request it performs for that session
+(`Remote.asked`), none when there is none; linger reads an answer exactly when the host shook hands
+and answered the call with it, and a refusal exactly when the host refused `serve` with a usage
+answer; what the command finds answers exactly as the host answered; and the command says each line
+the host said, in order, as the host's: its name, then the line. -/
 @[expose]
-def Remote.Exact (heard : List Json → UInt32 → Remote.Heard)
-    (rows : String → List Record → List Record) (accept : String → Option String) (host : String)
-    (messages : List Json) (status : UInt32) (records : List Record) : Prop :=
-  (heard messages status = .listed records ↔
-      Remote.Shook messages ∧ Remote.Lists messages records) ∧
-    (heard messages status = .older ↔ Remote.Usage messages status) ∧
+def Remote.Exact (call : Api.Request → String → List UInt8 → Option (String × Json))
+    (parse : String → Json → Option (Api.Request × List UInt8))
+    (heard : List Json → UInt32 → Remote.Heard) (code : Os.Answer → UInt32)
+    (found : Os.Answer → List (String × Json) → Api.Found) (answerOf : Api.Found → Os.Answer)
+    (said : String → List (String × Json) → List String) (clean : String → String)
+    (request : Api.Request) (name : String) (input : List UInt8) (messages : List Json)
+    (status : UInt32) (answer : Os.Answer) (members : List (String × Json)) (host : String) :
+    Prop :=
+  (call request name input).bind (fun called => parse called.1 called.2) =
+      Remote.asked request name input ∧
+    (heard messages status = .answered answer members ↔
+      Remote.Shook messages ∧ Remote.Answered code messages answer members) ∧
+    (heard messages status = .refused ↔ Remote.Usage messages status) ∧
+    answerOf (found answer members) = answer ∧
+    said host members =
+      (((members.lookup "said").bind Json.texts?).getD []).map fun text =>
+        clean host ++ ": " ++ clean text
+
+/-- **A remote host's rows are exactly what its `sessions/list` returns, named `name@host`**, of
+how `heard` reads what a host's `serve` wrote and its command's exit status, how `rows` makes a
+host's rows of the records it listed, which names `accept` takes and the answers' codes, `code`:
+linger reads records of a host's answer exactly when the host shook hands and its `sessions/list`
+returned them (`Remote.Lists`), and the host's rows are its records whose names `accept` takes, in
+order, each named `name@host`. -/
+@[expose]
+def Remote.Rows (heard : List Json → UInt32 → Remote.Heard)
+    (rows : String → List Record → List Record) (accept : String → Option String)
+    (code : Os.Answer → UInt32) (host : String) (messages : List Json) (status : UInt32)
+    (records : List Record) : Prop :=
+  ((∃ members items,
+        heard messages status = .answered .done members ∧
+          members.lookup "records" = some (.arr items) ∧ items.mapM Record.of = some records) ↔
+      Remote.Shook messages ∧ Remote.Lists code messages records) ∧
     (rows host records).map Record.key =
       (records.filter fun record => accept record.key == some record.key).map fun record =>
         record.key ++ "@" ++ host
 
-/-- A wrong part: a reading that takes the records of request 2's result, whatever request 1 got,
-and reads any other answer as silent. -/
+/-- A wrong part: a reading that takes request 2's result as `done`, whatever request 1 got, and
+reads any other answer as silent. -/
 @[expose]
 def Remote.unshaken (messages : List Json) (_ : UInt32) : Remote.Heard :=
-  match (Remote.answerOf messages "2" "result").bind (·.member? "records") with
-  | some (.arr items) =>
-    match items.mapM Record.of with
-    | some records => .listed records
-    | none => .silent
+  match Remote.answerOf messages "2" "result" with
+  | some (.obj (("answer", .str "done") :: (_, _) :: members)) => .answered .done members
   | _ => .silent
+
+/-- The notification that carries an update of an attach's stream, `session/output`, with these
+params. -/
+@[expose]
+def Remote.output (params : Json) : Json :=
+  .obj [("jsonrpc", .str "2.0"), ("method", .str "session/output"), ("params", params)]
+
+/-- **A remote attach shows exactly the bytes the host's `session/attach` sends, and sends it exactly
+the keys typed**, of what linger relays to its attach client of each line a host's `serve` writes
+for the attach `id`, `relay`, and the params of the `session/input` linger writes for keys,
+`keys`: of a stream of updates, each with the bytes it carries (`Carries`), none but the last
+`closed`, the messages linger relays each fit a frame, and an attach client writes of them exactly
+those bytes, in order (`Wire.shown`); an update that carries `closed` is relayed with a message that
+ends the attach (`Wire.Msg.ends`) when it names the attach; and the keys an attach client types
+reach the host as one `session/input` that carries exactly them. -/
+@[expose]
+def Remote.Shows (relay : Id → Json → List Session.Wire.Msg) (keys : Id → List UInt8 → Json)
+    (id : Id) (stream : List (Json × List UInt8)) (typed : List UInt8) : Prop :=
+  ((∀ update ∈ stream, Carries id update.2 update.1) →
+      (∀ update ∈ stream.dropLast, update.1.member? "closed" = none) →
+      (∀ m ∈ stream.flatMap (fun update => relay id (Remote.output update.1)), m.Fits) ∧
+        Session.Wire.shown (stream.flatMap fun update => relay id (Remote.output update.1)) =
+          (stream.map (·.2)).flatten) ∧
+    (∀ params,
+      params.member? "subscription" = some id.json →
+        (params.member? "closed").isSome → ∃ m ∈ relay id (Remote.output params), m.ends = true) ∧
+    Carries id typed (keys id typed)
+
+/-- A wrong part: a relay that writes an update's `data` as the text it is, a byte a character,
+its base64 undecoded, and ends the attach on `closed`. -/
+@[expose]
+def Remote.undecoded (_ : Id) (message : Json) : List Session.Wire.Msg :=
+  match (message.member? "params").bind (·.member? "data") with
+  | some (.str text) =>
+    [.output (text.toList.map fun c => c.toNat.toUInt8)] ++
+      (if ((message.member? "params").bind (·.member? "closed")).isSome then [.err []] else [])
+  | _ => []
 
 end Linger.App.Serve
 

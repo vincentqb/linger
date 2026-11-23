@@ -241,6 +241,13 @@ def unixConnect (path : String) (nonblocking : Bool := false) : IO Int64 := do
   checkCString "unixConnect path" path
   Boundary.unixConnect path nonblocking
 
+/-- A connected pair of Unix stream sockets, both close-on-exec and blocking: what one end writes
+the other reads, either way, and each end reads its end of input once the other is closed. Throws
+when socketpair or fcntl fails. -/
+def socketPair : IO (UInt32 × UInt32) := do
+  let packed ← Boundary.socketPair
+  return (packed.toUInt32, (packed >>> 32).toUInt32)
+
 /-- Accept on a nonblocking listen fd. `≥ 0` is the accepted fd; `-1` = nothing to
 accept, including a connection aborted before it was taken. Other failures, such as
 descriptor exhaustion, throw. The accepted fd is close-on-exec and blocking on every

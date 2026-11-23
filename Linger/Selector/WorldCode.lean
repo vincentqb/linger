@@ -5,7 +5,6 @@ public import Linger.Os.CoreSpec
 import Linger.Os.CoreCode.Answer
 import Linger.Selector.CoreCode.Picker
 import Os.WorldCode
-import Linger.Target.CoreCode.Remote
 import Terminal.CoreCode.Title
 import Os.WorldCode.Command
 import Linger.Display.CoreCode.View
@@ -236,11 +235,10 @@ def choose (executable : String) (readOnly : Bool := false) (heard : IO (Option 
     finally
       Os.Shell.Command.stop pending 1000
 
-/-- The exact attach argv for a chosen target. Its operands are the ones the attach
-parser reads back as `target` (`transport_exact`). -/
+/-- The exact attach argv for a chosen target: its options, then `--` and the target, which the
+attach parser reads back as exactly `target`, whatever it starts with (`names_round_trip`). -/
 def attachArgs (target : String) (readOnly : Bool := false) : Array String :=
-  ("attach" :: (if readOnly then ["--read-only"] else []) ++
-      Linger.Target.Remote.targetOperands target).toArray
+  ("attach" :: (if readOnly then ["--read-only"] else []) ++ ["--", target]).toArray
 
 /-- The name the session with an ID shows now, if any: how the chooser reads the ID that
 `LINGER_SESSION` holds. -/

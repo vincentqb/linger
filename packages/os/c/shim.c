@@ -694,6 +694,25 @@ LEAN_EXPORT lean_obj_res linger_unix_listen(b_lean_obj_arg path) {
     return lean_io_result_mk_ok(lean_box_uint32((uint32_t)fd));
 }
 
+/* linger_socket_pair : IO UInt64  a connected pair of Unix stream sockets, both close-on-exec
+ * and blocking: the first descriptor in the low 32 bits, the second in the high ones. */
+LEAN_EXPORT lean_obj_res linger_socket_pair(void) {
+    int fds[2];
+#if LINGER_HAVE_SOCK_CLOEXEC
+    if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, fds) < 0) return io_err("socketpair");
+#else
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) < 0) return io_err("socketpair");
+    if (fcntl(fds[0], F_SETFD, FD_CLOEXEC) < 0 || fcntl(fds[1], F_SETFD, FD_CLOEXEC) < 0) {
+        int e = errno;
+        close(fds[0]);
+        close(fds[1]);
+        return io_err_code("fcntl(FD_CLOEXEC)", e);
+    }
+#endif
+    uint64_t packed = (uint64_t)(uint32_t)fds[0] | ((uint64_t)(uint32_t)fds[1] << 32);
+    return lean_io_result_mk_ok(lean_box_uint64(packed));
+}
+
 /* A datagram socket, close-on-exec and nonblocking. */
 static int dgram_socket(void) {
     int fd = socket(AF_UNIX, SOCK_DGRAM, 0);

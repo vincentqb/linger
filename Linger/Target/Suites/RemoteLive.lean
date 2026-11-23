@@ -73,8 +73,8 @@ def run : IO UInt32 := do
         let (_, out, _) ← e.cliEnv env #["ls", "-r"]
         expect (has out s!"alpha@{host}") s!"remote alpha@{host} listed through its transport"
         expect (has out s!"beta@{host}") s!"remote beta@{host} listed through its transport"
-        -- `attach alpha@HOST` runs the host's attach command, then `linger` and the words
-        -- `Remote.command` encodes for `attach alpha`, there
+        -- `attach alpha@HOST` runs `linger serve` there through the host's command and attaches
+        -- to its `session/attach`
         let c ← e.spawnEnv ptyEnv #["attach", s!"alpha@{host}"] 110 30
         IO.sleep 3000
         let _ ← drain c.fd 2000

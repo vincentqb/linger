@@ -20,8 +20,8 @@ from what it found (`op_meaning`). -/
 namespace Linger.App.Api
 
 /-- The listing's options: an optional `--porcelain`, and either `-r` with its hosts or the names
-of the sessions to list, in any order, every word after `--` a name, as `Remote.targetOperands`
-places one that starts with `-`. `-r` followed by a `-`-prefixed token (or nothing) means "use the
+of the sessions to list, in any order, every word after `--` a name, as one that starts with `-`
+follows it. `-r` followed by a `-`-prefixed token (or nothing) means "use the
 file"; `-r hosts` is an explicit comma list. `none` on any other option, and on names with
 `-r`. -/
 def parseLs (args : List String) : Option (Bool × Option (List String) × List String) :=

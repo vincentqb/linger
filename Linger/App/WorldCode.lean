@@ -3,7 +3,6 @@ module
 import Os.WorldCode
 import Linger.Os.CoreCode.Env
 import Linger.Target.CoreCode.Remote
-import Terminal.CoreCode.Render
 import Linger.Display.CoreCode.Listing
 import Linger.Display.CoreCode.View
 import Linger.Os.CoreCode.Answer
@@ -25,8 +24,8 @@ command's operation, `Api.perform` performs it, and this module renders the repl
 command says as it goes to standard error, what it shows to standard output, and what it found as
 the exit status (`Api.answer`). Words no request reads are a usage error. The command line passes
 the API the namespace the environment names (`Paths.dirs`), this executable, the
-tmux-resurrect source and the remote hosts of the remotes file, whose transports it runs on this
-process's own standard streams. `main` routes terminal selection and import before entering this
+tmux-resurrect source and the remote hosts of the remotes file, whose transports may share this
+process's terminal, as ssh asking for a password needs. `main` routes terminal selection and import before entering this
 session backend. Bare invocation reaches help. `__daemon` and its kin are the internal re-exec
 targets of the detached spawn, and `__dirs` names the namespace they work in.
 -/
@@ -79,18 +78,6 @@ private def remoteConfig : IO (List (String × Linger.Target.Remote.Transport)) 
     return config
   | .error e =>
     throw (IO.userError e)
-
-/-- Run one transport command line on this process's standard streams and give its status, the
-remote command's; an attach's hands the terminal back after it. -/
-private def runRemote (interactive : Bool) : List String → IO UInt32
-  | [] => pure Answer.failed.code
-  | cmd :: argv => do
-    let child ← IO.Process.spawn { cmd, args := argv.toArray, stdin := .inherit }
-    try
-      child.wait
-    finally
-      if interactive then
-        writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
 
 /-- The width a human listing fits: the terminal's columns when standard output is one with a
 size, else none. -/
@@ -166,7 +153,8 @@ options, `--help` and `--version`, stand alone; any other command line is a requ
 what it says, what it shows and, as the answer, what it found (`Api.answer`), or a usage error,
 quoting its command's usage line (`Commands.usageLine`) when its first word names one and the
 command table otherwise. `serve` performs its requests through `server`, which `main` passes,
-with this command line's namespace and no remote host. `main` routes interactive selection and
+with this command line's namespace and its remote hosts, whose transports reach no terminal: the
+one `serve` may have is its client's. `main` routes interactive selection and
 tmux interchange elsewhere; `__daemon` and its kin run a session's daemon in this process, in the
 namespace a leading `__dirs` names. -/
 def main (source : Linger.App.Api.Source) (server : Linger.App.Api.Env → IO Linger.App.Api.Found)
@@ -204,11 +192,12 @@ def main (source : Linger.App.Api.Source) (server : Linger.App.Api.Env → IO Li
     | some request =>
       let env : Linger.App.Api.Env :=
         { dirs := ← Paths.dirs, exe := (← IO.appPath).toString, source,
-          remote := some { config := remoteConfig, run := runRemote },
+          remote := some { config := remoteConfig, terminal := true },
           say := fun said => IO.eprint said.render }
-      -- `serve` performs requests in this namespace, as this command line would, and reaches no
-      -- remote host
-      let env := { env with serve := some (server { env with remote := none }) }
+      -- `serve` performs requests in this namespace and reaches the remote hosts, as this command
+      -- line would, but no transport of its shares its terminal, which is its client's
+      let env :=
+        { env with serve := some (server { env with remote := some { config := remoteConfig } }) }
       let reply ← Linger.App.Api.perform env request
       render request reply.shown
       return Linger.App.Api.answer reply.found

@@ -67,6 +67,9 @@ private opaque unixListen (path : @& String) : IO UInt32
 @[extern "linger_unix_connect"]
 private opaque unixConnect (path : @& String) (nonblocking : Bool) : IO Int64
 
+@[extern "linger_socket_pair"]
+private opaque socketPair : IO UInt64
+
 @[extern "linger_accept"]
 private opaque accept (fd : UInt32) : IO Int64
 

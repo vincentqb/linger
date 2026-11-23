@@ -616,22 +616,83 @@ def Received.message : Received → Option Message
     ((String.fromUTF8? (ByteArray.mk bytes.toArray)).map decode).getD (some (.invalid none true))
   | .overlong => some (.invalid none false)
 
-/-! ## Remote hosts through `serve` -/
+/-! ## Remote hosts through `serve`
 
-/-- The lines `ls -r` writes a host's `serve`, one JSON-RPC message a line: `initialize`, request
-1, asking for the version this linger speaks, `initialized`, and `sessions/list`, request 2; then
-its standard input ends, and `serve` answers what it read and ends. -/
-def Remote.requests : String :=
-  let message (members : List (String × Json)) : String :=
-    (Json.render (.obj (("jsonrpc", .str "2.0") :: members))).push '\n'
-  message
-      [("id", .number "1"), ("method", .str "initialize"),
-        ("params",
-          .obj
-            [("protocolVersion", .str "1"), ("clientInfo", .obj [("name", .str "linger")]),
-              ("capabilities", .obj [])])] ++
-    message [("method", .str "initialized"), ("params", .obj [])] ++
-    message [("id", .number "2"), ("method", .str "sessions/list"), ("params", .obj [])]
+A command on a remote session calls its host's `serve` with the method and params of its request
+there (`Remote.call`), after the handshake (`Remote.lines`), and reads the host's answer of what
+the host wrote (`Remote.heard`): the answer of the call, by name and code (`answerNamed`), with the
+members of its result; a host that refused `serve` with a usage answer, as a linger from before it
+does, is refused. A remote attach relays the host's stream to an attach client as frames
+(`Remote.relay`) and the client's keys, size and leaving as the requests of the attach's
+conversation (`Remote.up`). -/
+
+/-- One JSON-RPC message as the line linger writes a host's `serve`. -/
+def Remote.message (members : List (String × Json)) : String :=
+  (Json.render (.obj (("jsonrpc", .str "2.0") :: members))).push '\n'
+
+/-- A request, with this id, as the line linger writes a host's `serve`. -/
+def Remote.request (id : Nat) (method : String) (params : Json) : String :=
+  Remote.message [("id", .number (toString id)), ("method", .str method), ("params", params)]
+
+/-- The handshake linger writes a host's `serve`: `initialize`, request 1, asking for the version
+this linger speaks, and `initialized`. -/
+def Remote.handshake : String :=
+  Remote.request 1 "initialize"
+      (.obj
+        [("protocolVersion", .str "1"), ("clientInfo", .obj [("name", .str "linger")]),
+          ("capabilities", .obj [])]) ++
+    Remote.message [("method", .str "initialized"), ("params", .obj [])]
+
+/-- **The lines linger writes a host's `serve` for a call**: the handshake, then the call, request
+2; then its standard input ends, and `serve` answers what it read and ends. -/
+def Remote.lines (method : String) (params : Json) : String :=
+  Remote.handshake ++ Remote.request 2 method params
+
+/-- A method's params that name only a session. -/
+def Remote.named (name : String) : Json := .obj [("name", .str name)]
+
+/-- **The call a request at a host's session makes**, the session `name` there, its standard
+input `input`: the method of the request's operation and the params that carry each of its
+arguments (`Remote.asked`), as JSON, so no word reaches a shell; none for a request no method
+performs on one session. -/
+def Remote.call (request : Api.Request) (name : String) (input : List UInt8) :
+    Option (String × Json) :=
+  match request with
+  | .attach readOnly _ command =>
+    some
+      ("session/attach",
+        .obj
+          ([("name", .str name)] ++ (if readOnly then [("readOnly", .bool true)] else []) ++
+            if command.isEmpty then [] else [("command", .arr (command.map .str))]))
+  | .list (.named _ _) => some ("sessions/list", .obj [("names", .arr [.str name])])
+  | .list _ => none
+  | .start _ program args =>
+    some
+      ("session/start",
+        .obj [("name", .str name), ("program", .str program), ("args", .arr (args.map .str))])
+  | .resume _ => some ("session/resume", Remote.named name)
+  | .send _ (.text words) =>
+    some
+      ("session/send",
+        .obj
+          [("name", .str name),
+            ("data", .str (Base64.encode (String.intercalate " " words).toUTF8.toList))])
+  | .send _ .stdin =>
+    some ("session/send", .obj [("name", .str name), ("data", .str (Base64.encode input))])
+  | .detach _ => some ("session/detach", Remote.named name)
+  | .kill _ => some ("session/kill", Remote.named name)
+  | .rename _ new => some ("session/rename", .obj [("name", .str name), ("new", .str new)])
+  | .capture history _ =>
+    some ("session/capture", .obj [("name", .str name), ("history", .bool history)])
+  | .resize _ cols rows =>
+    some
+      ("session/resize",
+        .obj
+          [("name", .str name), ("cols", .number (toString cols)),
+            ("rows", .number (toString rows))])
+  | .wait _ => some ("session/wait", Remote.named name)
+  | .upgrade _ => some ("session/upgrade", Remote.named name)
+  | .serve => none
 
 /-- Whether a host's `serve` shook hands (`Remote.Shook`). -/
 def Remote.shook (messages : List Json) : Bool :=
@@ -641,40 +702,59 @@ def Remote.shook (messages : List Json) : Bool :=
   | some version => versions.contains version
   | none => false
 
-/-- The records a host's `sessions/list` returned (`Remote.Lists`). -/
-def Remote.listed (messages : List Json) : Option (List Record) :=
-  match Remote.answerOf messages "2" "result" with
-  | some result =>
-    if (result.member? "answer").bind Json.text? == some "done" then
-      match result.member? "records" with
-      | some (.arr items) => items.mapM Record.of
-      | _ => none
-    else none
-  | none => none
-
 /-- Whether `initialize`'s error, in a host's messages, is the usage answer. -/
 def Remote.refusedUsage (messages : List Json) : Bool :=
   (((Remote.answerOf messages "1" "error").bind (·.member? "data")).bind (·.member? "answer")).bind
       Json.text? ==
     some "usage"
 
-/-- Whether a host answered the handshake with a usage answer (`Remote.Usage`). -/
+/-- Whether a host refused `serve` with a usage answer (`Remote.Usage`). -/
 def Remote.usage (messages : List Json) (status : UInt32) : Bool :=
   !Remote.shook messages && (status == 2 || Remote.refusedUsage messages)
 
-/-- **What a host's `serve` told `ls -r`**, of the messages it wrote and its command's exit
-status: the records its `sessions/list` returned once it shook hands, an older linger when it
-answered the handshake with a usage answer, and otherwise nothing `ls -r` reads. -/
+/-- The answer named `name` whose code is `code`, as a result gives an answer (`answerMembers`):
+none for a name no answer has, or a code that is not the named answer's. -/
+def answerNamed (name : String) (code : Nat) : Option Os.Answer :=
+  (([.done, .notDone, .usage, .timedOut, .failed, .cannotRun, .notFound, .cancelled] ++
+          (if 128 ≤ code ∧ code < 384 then
+            [.stopped (code - 128).toUInt8, .saved (code - 128).toUInt8]
+          else []) ++
+          if code < 4294967296 then [.program code.toUInt32] else [] :
+        List Os.Answer)).find?
+    fun answer => answerName answer == name && answer.code.toNat == code
+
+/-- The answer an object's first two members, `answer` and `code`, give, its code in decimal as
+`serve` writes it, and its other members. -/
+def Remote.answerIn : Json → Option (Os.Answer × List (String × Json))
+  | .obj (("answer", .str name) :: ("code", .number code) :: members) =>
+    match code.toNat? with
+    | some n => if toString n = code then (answerNamed name n).map ((·, members)) else none
+    | none => none
+  | _ => none
+
+/-- What answered the call, request 2: its result, or, where no result did, its error's `data`. -/
+def Remote.callAnswer (messages : List Json) : Option Json :=
+  (Remote.answerOf messages "2" "result").or
+    ((Remote.answerOf messages "2" "error").bind (·.member? "data"))
+
+/-- **What a host's `serve` told linger of its call**, of the messages it wrote and its command's
+exit status: the answer of the call and the result's other members, once it shook hands; a refusal
+when it refused `serve` with a usage answer; and otherwise nothing linger reads. -/
 def Remote.heard (messages : List Json) (status : UInt32) : Remote.Heard :=
   if Remote.shook messages then
-    match Remote.listed messages with
-    | some records => .listed records
+    match (Remote.callAnswer messages).bind Remote.answerIn with
+    | some (answer, members) => .answered answer members
     | none => .silent
-  else if Remote.usage messages status then .older else .silent
+  else if Remote.usage messages status then .refused else .silent
+
+/-- The records a `sessions/list` answer's members hold (`Remote.Lists`). -/
+def Remote.records (members : List (String × Json)) : Option (List Record) :=
+  match members.lookup "records" with
+  | some (.arr items) => items.mapM Record.of
+  | _ => none
 
 /-- A host's row of a record its `sessions/list` returned: `name@host`, its command as clean text,
-its state, and the status and attention its record gives, as a row from an older host's porcelain
-is (`Listing.rowStatus`). -/
+its state, and the status and attention its record gives (`Listing.rowStatus`). -/
 def Remote.row (host : String) (record : Record) : List (String × String) :=
   let live := (record.lookup "state").getD "live" == "live"
   [("name", record.key ++ "@" ++ host),
@@ -689,5 +769,140 @@ def Remote.row (host : String) (record : Record) : List (String × String) :=
 def Remote.rows (host : String) (records : List Record) : List Record :=
   (records.filter fun record => Linger.Target.Name.accept record.key == some record.key).map
     (Remote.row host)
+
+/-- A host's record of one of its sessions, as `ls name@host` lists it: every field the host gave,
+its name `name@host`; none for a record whose name a target does not take. -/
+def Remote.record (host : String) (record : Record) : Option Record :=
+  if Linger.Target.Name.accept record.key == some record.key then
+    some
+      (record.map fun field =>
+        if field.1 == "name" then ("name", record.key ++ "@" ++ host) else field)
+  else none
+
+/-- What a host's answer says it said, each line as its host's: `host: ` and the line, the host as
+clean text. -/
+def Remote.said (host : String) (members : List (String × Json)) : List String :=
+  (((members.lookup "said").bind Json.texts?).getD []).map fun text =>
+    Linger.Target.Remote.scrub host ++ ": " ++ Linger.Target.Remote.scrub text
+
+/-- How a session ended, of the record a host's answer gives of it (`Session.endingFields`): none
+for a record no ending gives. -/
+def Remote.endingOf (fields : Record) : Option Linger.Session.Ending :=
+  let small (text : String) : Option UInt8 :=
+    text.toNat?.bind fun n => if n < 256 then some n.toUInt8 else none
+  match fields.lookup "saved" with
+  | some n => (small n).map .saved
+  | none =>
+    if fields.lookup "outcome" == some "unknown" then some (.program .unknown)
+    else
+      match fields.lookup "signal" with
+      | some n => (small n).map fun signal => .program (.signaled signal)
+      | none =>
+        match fields.lookup "exit" with
+        | some n => (small n).map fun code => .program (.exited code)
+        | none => if fields.isEmpty then some .dismissed else none
+
+/-- **What a remote command found**, of the host's answer and the result's members: how the
+session ended, when the members say it and its answer is the host's, and otherwise the host's
+answer as it gave it. Either way, its answer is the host's. -/
+def Remote.found (answer : Os.Answer) (members : List (String × Json)) : Api.Found :=
+  match ((members.lookup "ending").bind Record.of).bind Remote.endingOf with
+  | some ending => if ending.answer = answer then .ended ending else .heard answer
+  | none => .heard answer
+
+/-! ## A remote attach -/
+
+/-- The frames of output bytes: runs of at most `Wire.inputChunk` bytes, in order. -/
+def Remote.outputFrames (bytes : List UInt8) : List Linger.Session.Wire.Msg :=
+  (Linger.Session.Wire.inputChunks bytes).map .output
+
+/-- `the far attach ended`, in ASCII: what a refusal that ends a remote attach says. -/
+def Remote.endedText : List UInt8 :=
+  [116, 104, 101, 32, 102, 97, 114, 32, 97, 116, 116, 97, 99, 104, 32, 101, 110, 100, 101, 100]
+
+/-- The message that ends an attach as the host's stream's `closed` says it ended: how its
+program ended, or that a signal saved it, as its daemon would say, and otherwise a refusal, whose
+answer the bridge keeps. -/
+def Remote.ending (closed : Json) : Linger.Session.Wire.Msg :=
+  match ((closed.member? "ending").bind Record.of).bind Remote.endingOf with
+  | some (.program outcome) => .ended outcome
+  | some (.saved signal) => .saved signal
+  | _ => .err Remote.endedText
+
+/-- **What linger relays to its attach client of a line the host's `serve` wrote** for the attach
+`id`: an update of the attach's stream, `session/output` naming it, as the frames of the bytes it
+carries, then, when it carries `closed`, the message that ends the attach (`Remote.ending`); the
+answer of the attach's request, when it is no `done`, as a refusal that says what the host said;
+and nothing of any other line. -/
+def Remote.relay (id : Id) (message : Json) : List Linger.Session.Wire.Msg :=
+  match message.member? "method", message.member? "params" with
+  | some (.str "session/output"), some params =>
+    if (params.member? "subscription").bind Id.of = some id then
+      let bytes :=
+        match params.member? "data" with
+        | some (.str text) => (Base64.decode text.toList).getD []
+        | _ => []
+      Remote.outputFrames bytes ++
+        match params.member? "closed" with
+        | some closed => [Remote.ending closed]
+        | none => []
+    else []
+  | _, _ =>
+    if (message.member? "id").bind Id.of = some id then
+      match message.member? "result" with
+      | some result =>
+        if (result.member? "answer").bind Json.text? = some "done" then []
+        else
+          let said := ((result.member? "said").bind Json.texts?).getD []
+          let answer := ((result.member? "answer").bind Json.text?).getD "unknown"
+          [.err
+              ((Linger.Target.Remote.scrub
+                      (if said.isEmpty then s!"the attach was refused: {answer}"
+                      else String.intercalate "; " said)).take
+                  1024).copy.toUTF8.toList]
+      | none =>
+        let error := ((message.member? "error").bind (·.member? "message")).bind Json.text?
+        [.err
+            ((Linger.Target.Remote.scrub (error.getD "the attach was refused")).take
+                1024).copy.toUTF8.toList]
+    else []
+
+/-- **The params of the `session/input` that carries keys** to the attach `id`: its subscription,
+and the keys in base64. -/
+def Remote.keys (id : Id) (bytes : List UInt8) : Json :=
+  .obj [("subscription", id.json), ("data", .str (Base64.encode bytes))]
+
+/-- `session/resize` of the attach `id`, request `next`, to a terminal's size, the emulator's, at
+most 1000 either way (`Vt.clampDim`). -/
+def Remote.sized (id : Id) (next : Nat) (cols rows : UInt32) : String :=
+  Remote.request next "session/resize"
+    (.obj
+      [("subscription", id.json), ("cols", .number (toString (Terminal.Vt.clampDim cols.toNat))),
+        ("rows", .number (toString (Terminal.Vt.clampDim rows.toNat)))])
+
+/-- What linger writes the host's `serve` of a message an attach client sends the attach `id`,
+`next` the id of the next request: `session/attach` of the session `name`, with its mode and its
+command, then, for a writable attach whose terminal has a size, `session/resize` to it
+(`Remote.sized`); the keys as `session/input`; the terminal's size as `session/resize`; and nothing
+of any other message. -/
+def Remote.up (id : Id) (name : String) (command : List String) (next : Nat) :
+    Linger.Session.Wire.Msg → List String
+  | .attach mode cols rows =>
+    let readOnly := mode == .readOnly
+    let attached :=
+      Remote.request 2 "session/attach"
+        (.obj
+          ([("name", .str name)] ++ (if readOnly then [("readOnly", .bool true)] else []) ++
+            if command.isEmpty then [] else [("command", .arr (command.map .str))]))
+    if readOnly || cols == 0 || rows == 0 then [attached]
+    else [attached, Remote.sized id next cols rows]
+  | .input bytes => [Remote.request next "session/input" (Remote.keys id bytes)]
+  | .resize cols rows => if cols == 0 || rows == 0 then [] else [Remote.sized id next cols rows]
+  | _ => []
+
+/-- What linger writes the host's `serve` when the attach `id`'s client leaves: `session/detach`
+of it, the session running on. -/
+def Remote.leave (id : Id) (next : Nat) : String :=
+  Remote.request next "session/detach" (.obj [("subscription", id.json)])
 
 end Linger.App.Serve

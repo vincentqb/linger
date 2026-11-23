@@ -22,6 +22,7 @@ import Linger.App.CoreCode.Handover
 import Linger.App.CoreCode.Recovery
 import Linger.App.CoreCode.Kill
 import Linger.App.CoreCode.Wait
+import Linger.App.WorldCode.Remote
 import Os.WorldCode.Command
 import Linger.Session.WorldCode.Resume
 import Linger.Session.WorldCode.Record
@@ -83,13 +84,14 @@ def Source.none : Source :=
     dismiss := fun _ => pure false, save := pure "" }
 
 /-- The remote hosts a caller lets the API reach: the hosts of its remotes file, each with its
-transport, and how to run one transport command line, its program first, giving its exit status,
-on this process's terminal for an attach (`interactive`). -/
+transport, and whether a transport may share this process's terminal, as ssh asking for a
+password needs: the command line's may, and a caller whose terminal is another's, as `serve`'s is
+its client's, may not. -/
 structure Remote where
   /-- The remotes file's hosts, each with its transport (`Remote.config`). -/
   config : IO (List (String × Linger.Target.Remote.Transport))
-  /-- Run one transport command line and give its exit status. -/
-  run : (interactive : Bool) → List String → IO UInt32
+  /-- Whether a transport shares this process's terminal. -/
+  terminal : Bool := false
 
 /-- A terminal an attach converses on instead of this process's, as `serve` gives one for each
 `session/attach`: given the connection to a session's daemon once its `info` answer admitted the
@@ -591,81 +593,6 @@ private def invalidTarget (env : Env) : IO Found := do
   say env s!"invalid session name or malformed name@host target (use {Paths.nameRule})"
   return .invalid
 
-/-- One transport boundary for all session verbs. The host's transport, which the remotes file
-gives it or else ssh (`Remote.transportFor`), runs linger there: its attach command for an attach,
-which gives the far end a terminal, and its query command for every other verb. Linger hands it
-`linger` and words every shell passes on as they are (`transport_exact`), the verb and every word,
-empty ones included, encoded: ssh joins them into the line `Remote.command` spells, and a command
-such as `docker exec` runs them as they are. Encoding doubles a word's length, and a Linux host
-takes a command line of at most 128 KiB, so `send name@host -`, whose inherited stdin stays
-byte-exact, carries longer text. The remote linger reads an attach or capture target with
-`targetArgs`, so it travels as `targetOperands`; the other verbs take it by position
-(`Remote.operands`). The transport's status, the remote command's, is what a remote target
-finds. The caller runs the transport (`Remote.run`), and with no `Env.remote` a remote target is
-refused, no transport run. -/
-private def runTarget (env : Env) (verb : String) (target : Linger.Target.Remote.Target)
-    (args : List String) (localAction : String → IO Found) (options : List String := []) :
-    IO Found := do
-  if verb == "attach" && env.tty.isSome then
-    -- an attach on a terminal `Env.tty` gives converses with a local daemon; no transport
-    -- carries one to a host
-    match target.host with
-    | none =>
-      return ← localAction target.name
-    | some host =>
-      say env s!"no transport carries this attach to '{Linger.Target.Remote.scrub host}'"
-      return .refused
-  let interactive := verb == "attach"
-  if interactive && (!(← stdinIsTty) || !(← (← IO.getStdout).isTty)) then
-    throw
-        (IO.userError
-          s!"{verb} needs terminal input and output (use `start`, `resume` or `send` for scripting)")
-  match target.host with
-  | none =>
-    localAction target.name
-  | some host =>
-    let some remote := env.remote |
-      do
-        say env s!"no transport reaches '{Linger.Target.Remote.scrub host}': this caller runs none"
-        return .refused
-    let transport := Linger.Target.Remote.transportFor (← remote.config) host
-    match Linger.Target.Remote.targetArgv transport verb options target.name args with
-    | [] =>
-      throw (IO.userError s!"remote host '{Linger.Target.Remote.scrub host}' has no command")
-    | argv =>
-      return .status (← remote.run interactive argv)
-
-/-- Run `verb` through `runTarget` once `Remote.parseTarget` accepts the operand; a
-malformed operand is `invalid` (`invalidTarget`) without connecting. -/
-private def withTarget (env : Env) (verb target : String) (args : List String)
-    (localAction : String → IO Found) (options : List String := []) : IO Found :=
-  match Linger.Target.Remote.parseTarget target with
-  | none => invalidTarget env
-  | some parsed => runTarget env verb parsed args localAction options
-
-/-- `withTarget`, its local action given the session the name leads to now (`Names.find`): every
-file of the session is the ID's for the rest of the command, whatever renames follow. A name that
-leads to no session's ID is no session (`noSession`). -/
-private def withSession (env : Env) (verb target : String) (args : List String)
-    (localAction : Names.Ref → IO Found) (options : List String := []) : IO Found :=
-  withTarget env verb target args
-    (fun name => do
-      match ← Names.find name with
-      | some s =>
-        localAction s
-      | none =>
-        noSession env name)
-    options
-
-/-- `withTarget` for a command that may create a session, its local action given the ID the name
-leads to, or a fresh one with an entry for the name when it leads nowhere (`Names.claim`). -/
-private def withNew (env : Env) (verb target : String) (args : List String)
-    (localAction : Names.Ref → IO Found) (options : List String := []) : IO Found :=
-  withTarget env verb target args
-    (fun name => do
-      localAction (← Names.claim name))
-    options
-
 /-- Maximum simultaneous remote overview commands. -/
 abbrev remoteQueryLimit : Nat := 4
 
@@ -696,25 +623,23 @@ private def resolveRemotes (env : Env) (flag : Option (List String)) :
     | .error e =>
       throw (IO.userError e)
 
-/-- What a host answered `ls -r`: the records its `serve` listed (`Serve.Remote.heard`), or, from
-an older linger, what its `ls --porcelain` printed. -/
+/-- What a host answered `ls -r`: the records its `serve` listed (`Serve.Remote.heard`), or that it
+refused `serve`, as a linger without it does. -/
 private inductive Listed where
   /-- The records the host's `sessions/list` returned. -/
   | records (records : List (List (String × String)))
-  /-- What an older linger's `ls --porcelain` printed. -/
-  | porcelain (text : String)
+  /-- It refused `serve` with a usage answer. -/
+  | refused
 
 /-- Four transport commands at most share a three-second command deadline, the bounded wait
 linger keeps whatever the transport: a transport's own keepalives alone cannot bound a remote
-command that never exits. Each host's command runs its `serve`, which takes the lines
-`Serve.Remote.requests` holds and ends with them: what it wrote is read as
-`Serve.Remote.heard` reads it, the records its `sessions/list` returned, or an older linger, which
-answered the handshake with a usage answer and is asked again, within the same deadline, with the
-words of `ls --porcelain`. Each host's answer, in host order, is the records, the complete output
-of the porcelain command when it succeeded, or `none`; stop and join every remaining group. Signal
-waiters let a cancelled chooser's listing retire the transports' isolated groups: a watched signal
-that comes before the waiters stop, even while the groups are retired, ends the listing, which
-answers with the first that came (`Watched.came`). -/
+command that never exits. Each host's command runs its `serve` (`Remote.argv`), which takes the
+lines `Serve.Remote.lines` holds for `sessions/list` and ends with them: what it wrote is read as
+`Serve.Remote.heard` reads it, the records its `sessions/list` returned, or a refusal of `serve`.
+Each host's answer, in host order, is the records, the refusal, or `none`; stop and join every
+remaining group. Signal waiters let a cancelled chooser's listing retire the transports' isolated
+groups: a watched signal that comes before the waiters stop, even while the groups are retired,
+ends the listing, which answers with the first that came (`Watched.came`). -/
 private def listRemotes (hosts : Array (String × Linger.Target.Remote.Transport)) :
     IO (Except UInt8 (Array (Option Listed))) := do
   let signals ← IO.mkRef (#[] : Array (Std.Async.Signal.Waiter × Std.Async.AsyncTask Int))
@@ -731,8 +656,6 @@ private def listRemotes (hosts : Array (String × Linger.Target.Remote.Transport
           throw e
       let deadline := (← monotonicMs) + remoteQueryTimeoutMs
       let mut outputs : Array (Option Listed) := Array.replicate hosts.size none
-      -- the hosts asked with the words of `ls --porcelain`, as older lingers
-      let mut older := Array.replicate hosts.size false
       let mut next := 0
       while next < hosts.size || !(← jobs.get).isEmpty do
         if let some signal← ({ waiters := ← signals.get } : Watched).came then
@@ -746,30 +669,27 @@ private def listRemotes (hosts : Array (String × Linger.Target.Remote.Transport
           let pending ← IO.mkRef none
           jobs.modify (·.push (index, pending))
           try
-            if let cmd :: args := Linger.Target.Remote.argv hosts[index]!.2 "serve" [] then
+            if let cmd :: args := Linger.Target.Remote.argv hosts[index]!.2 then
               pending.set
-                  (some (← Command.startFeeding cmd args.toArray Serve.Remote.requests.toUTF8))
+                  (some
+                    (←
+                      Command.startFeeding cmd args.toArray
+                          (Serve.Remote.lines "sessions/list" (.obj [])).toUTF8))
           catch _ =>
             pure ()
         let mut running := #[]
         for (index, pending) in ← jobs.get do
           try
             if let some output← Command.poll pending then
-              if older[index]! then
-                if output.exitCode == 0 then
-                  outputs := outputs.set! index (some (.porcelain output.stdout))
-              else
-                let messages := (output.stdout.splitOn "\n").filterMap Serve.Json.parse
-                match Serve.Remote.heard messages output.exitCode with
-                | .listed records =>
+              let messages := (output.stdout.splitOn "\n").filterMap Serve.Json.parse
+              match Serve.Remote.heard messages output.exitCode with
+              | .answered .done members =>
+                if let some records := Serve.Remote.records members then
                   outputs := outputs.set! index (some (.records records))
-                | .older =>
-                  older := older.set! index true
-                  if let cmd :: args :=
-                      Linger.Target.Remote.argv hosts[index]!.2 "ls" ["--porcelain"] then
-                    pending.set (some (← Command.start cmd args.toArray))
-                | .silent =>
-                  pure ()
+              | .refused =>
+                outputs := outputs.set! index (some .refused)
+              | _ =>
+                pure ()
           catch _ =>
             pure ()
           if (← pending.get).isSome then
@@ -1039,6 +959,45 @@ private def visitOffline (env : Env) (s : Names.Ref) (readOnly : Bool) :
   | _, _ =>
     return .error .notFound
 
+/-- What an attach to the session `name` found, of how it went, saying how it ended on the
+terminal it handed back: a refusal before it attached as it was; a session a signal to its daemon
+saved, how its program ended, a signal that stopped the attach and a detach, each said on a line
+of its own; and a daemon's refusal and a lost connection said, and found `refused`. -/
+private def attachEnded (env : Env) (name : String) (result : Except Found Client.Outcome) :
+    IO Found := do
+  match result with
+  | .error found =>
+    return found
+  | .ok (.ended (.saved signal)) =>
+    -- the system stopping linger may have hung up this terminal too: the answer says it
+    try
+      sayFresh env
+          s!"session '{name}' was saved when signal {signal} stopped its daemon; attach to \
+            resume it"
+    catch _ =>
+      pure ()
+    return endingFound (.saved signal)
+  | .ok (.ended ending) =>
+    sayFresh env s!"session '{name}' ended ({ending.describe})"
+    return endingFound ending
+  | .ok (.stopped signal) =>
+    -- the terminal is handed back, but a hung-up one cannot show why: the answer says it, and
+    -- `main` then ends the process by the signal
+    try
+      sayFresh env s!"signal {signal} stopped the attach; detached from '{name}'"
+    catch _ =>
+      pure ()
+    return .stopped signal
+  | .ok .detached =>
+    sayFresh env s!"detached from '{name}'"
+    return .done
+  | .ok (.refused msg) =>
+    sayFresh env msg
+    return .refused
+  | .ok (.lost why) =>
+    sayFresh env s!"{why} for '{name}'"
+    return .refused
+
 /-- A live connection is authoritative, once its daemon says it speaks this version's protocol
 (`attachSpoken`), and the client attaches in `mode`. With no daemon, an offline checkpoint is
 loaded with its end record while owning both resources and displayed after releasing them, under
@@ -1082,46 +1041,20 @@ private def cmdAttach (env : Env) (s : Names.Ref) (mode : Linger.Session.Mode) (
             attachSpoken env s fd mode
           | .error answer =>
             .error <$> refused env s answer
-  match result with
-  | .error found =>
-    return found
-  | .ok (.ended (.saved signal)) =>
-    -- the system stopping linger may have hung up this terminal too: the answer says it
-    try
-      sayFresh env
-          s!"session '{s.name}' was saved when signal {signal} stopped its daemon; attach to \
-            resume it"
-    catch _ =>
-      pure ()
-    return endingFound (.saved signal)
-  | .ok (.ended ending) =>
-    sayFresh env s!"session '{s.name}' ended ({ending.describe})"
-    return endingFound ending
-  | .ok (.stopped signal) =>
-    -- the terminal is handed back, but a hung-up one cannot show why: the answer says it, and
-    -- `main` then ends the process by the signal
-    try
-      sayFresh env s!"signal {signal} stopped the attach; detached from '{s.name}'"
-    catch _ =>
-      pure ()
-    return .stopped signal
-  | .ok .detached =>
-    sayFresh env s!"detached from '{s.name}'"
-    return .done
-  | .ok (.refused msg) =>
-    sayFresh env msg
-    return .refused
-  | .ok (.lost why) =>
-    sayFresh env s!"{why} for '{s.name}'"
-    return .refused
+  attachEnded env s.name result
+
+/-- What linger says of a host whose `serve` refused with a usage answer, as a linger without it
+does: the one refusal, which tells what to do. -/
+private def remoteRefusal (host : String) : String :=
+  s!"{Linger.Target.Remote.scrub host} runs a linger without serve; install a current linger there"
 
 /-- The rows of `ls`: local rows, then each remote host's rows named `name@host`, then the rows of
-the latest tmux-resurrect save's panes no record names (`Source.rows`). A host's rows are the records
-its `sessions/list` returned (`Serve.Remote.rows`), or, from an older linger, its porcelain's; they
-keep only name, command, state and status, as the host's linger reports them; a host that does not answer
-within the bounded wait is one record, its `host` with the status `?` no answer gives, which the
-terminal listing names `@host`. Finds `stopped`, with the signal, when a signal stops it while it
-queries remote hosts. -/
+the latest tmux-resurrect save's panes no record names (`Source.rows`). A host's rows are the
+records its `sessions/list` returned (`Serve.Remote.rows`); they keep only name, command, state and
+status, as the host's linger reports them. A host that does not answer within the bounded wait is
+one record, its `host` with the status `?` no answer gives, which the terminal listing names
+`@host`, and one that refused `serve` is that record with its `reason`, which linger also says.
+Finds `stopped`, with the signal, when a signal stops it while it queries remote hosts. -/
 private def cmdList (env : Env) (porcelain : Bool)
     (remotes : List (String × Linger.Target.Remote.Transport)) : IO Reply := do
   let (locals, remote) ←
@@ -1143,8 +1076,8 @@ private def cmdList (env : Env) (porcelain : Bool)
     | .error signal =>
       return { found := .stopped signal }
   let mut rows := locals
-  -- a host's rows: the records its `sessions/list` returned, each named `name@host`, as a row
-  -- from an older host's porcelain is (`remote_rows_exact`)
+  -- a host's rows: the records its `sessions/list` returned, each named `name@host`
+  -- (`remote_rows_exact`)
   for ((host, _), output) in remotes.zip remote.toList do
     match output with
     | none =>
@@ -1155,24 +1088,166 @@ private def cmdList (env : Env) (porcelain : Bool)
                 (Linger.Display.Status.classify { known := false })]
     | some (.records records) =>
       rows := rows ++ Serve.Remote.rows host records
-    | some (.porcelain output) =>
-      for row in Linger.Target.Remote.parse output do
-        -- a remote row is built from what the peer's porcelain says about identity
-        -- and liveness. It also emits `clients` and its record fields; those are dropped
-        -- rather than rendered, so a remote row's caption and watcher columns are
-        -- blank whatever the peer reports.
-        rows :=
-          rows ++
-            [[("name", s!"{row.name}@{host}"), ("cmd", row.cmd),
-                  ("state", if row.live then "live" else "resumable")] ++
+    | some .refused =>
+      say env (remoteRefusal host)
+      rows :=
+        rows ++
+          [("host", host) ::
                 Linger.Display.Listing.statusFields
-                  (Linger.Display.Listing.rowStatus (.remote row.live row.attention row.status))]
+                  (Linger.Display.Status.classify { known := false }) ++
+              [("reason", remoteRefusal host)]]
   let records : Linger.Session.Records :=
     { sockets := (← Paths.listSocketNames).map (·.name),
       checkpoints := (← Paths.listCkptNames).map (·.name),
       endings := (← Paths.listRecordNames).map (·.name),
       entries := (← Names.load).flatMap fun (name, id) => [name, id] }
   return { found := .done, shown := .rows porcelain (rows ++ (← env.source.rows records)) }
+
+/-- What a request shows of a host's answer, of the members of its result: a capture's bytes, a
+listing's records, every field the host gave, each named `name@host` (`Serve.Remote.record`), and
+the sessions an upgrade carried over, named `name@host`. -/
+private def remoteShown (request : Request) (host : String) (members : List (String × Serve.Json)) :
+    Shown :=
+  match request with
+  | .capture .. =>
+    match ((members.lookup "data").bind Serve.Json.text?).bind (Serve.Base64.decode ·.toList) with
+    | some bytes => .bytes (ByteArray.mk bytes.toArray)
+    | none => .nothing
+  | .list (.named porcelain _) =>
+    .rows porcelain (((Serve.Remote.records members).getD []).filterMap (Serve.Remote.record host))
+  | .upgrade _ =>
+    .upgraded
+      ((((members.lookup "upgraded").bind Serve.Json.texts?).getD []).map fun name =>
+        s!"{Linger.Target.Remote.scrub name}@{Linger.Target.Remote.scrub host}")
+  | _ => .nothing
+
+/-- **What a request at a remote session finds and shows**, of what its host's `serve` told it: the
+host's answer, as it gave it (`Serve.Remote.found`), what the host said said as its host's
+(`Serve.Remote.said`), and what the request shows of its result (`remoteShown`). A host that
+refused `serve` is refused with the one refusal that says what to do (`remoteRefusal`), and one
+that answered nothing linger reads is refused, saying what its transport wrote. -/
+private def remoteReply (env : Env) (request : Request) (host : String)
+    (asked : Linger.App.Remote.Asked) : IO Reply := do
+  match asked.heard with
+  | .answered answer members =>
+    for line in Serve.Remote.said host members do
+      say env line
+    return { found := Serve.Remote.found answer members, shown := remoteShown request host members }
+  | .refused =>
+    say env (remoteRefusal host)
+    return { found := .refused }
+  | .silent =>
+    for line in asked.errors do
+      say env s!"{Linger.Target.Remote.scrub host}: {line}"
+    say env s!"no answer from linger serve on '{Linger.Target.Remote.scrub host}'"
+    return { found := .refused }
+
+/-- **An attach to a remote session**, the session `name` of `host`, starting it with `command`
+when none holds the name: once the host's `serve` has shaken hands, the attach client converses
+with the host's `session/attach` through a bridge (`Remote.bridge`), on the terminal `Env.tty` gives
+or else on this process's, as with a daemon: the same client, detach key, title, synchronized
+repaint and handback; it says how the attach ended as an attach does (`attachEnded`), and finds
+what the host answered of the attach, but `stopped` when a signal stopped it here. -/
+private def remoteAttach (env : Env) (remote : Remote) (transport : Linger.Target.Remote.Transport)
+    (readOnly : Bool) (name host : String) (command : List String) : IO Found := do
+  let target := s!"{name}@{host}"
+  match ← Linger.App.Remote.bridge transport remote.terminal name command with
+  | .error asked =>
+    return (← remoteReply env (.attach readOnly target command) host asked).found
+  | .ok bridge =>
+    let mode : Linger.Session.Mode := if readOnly then .readOnly else .writable
+    -- the client lets its connection go whatever happens, which ends the bridge
+    let outcome ←
+      try
+        match env.tty with
+        | some tty =>
+          tty.attach target bridge.fd mode
+        | none =>
+          Client.attach target bridge.fd (attentionSample target) readOnly
+      catch err =>
+        discard bridge.join
+        throw err
+    let asked ← bridge.join
+    let found ← attachEnded env target (.ok outcome)
+    match outcome, asked.heard with
+    | .stopped signal, _ =>
+      return .stopped signal
+    | _, .answered answer members =>
+      return Serve.Remote.found answer members
+    | _, _ =>
+      return found
+
+/-- **A request at a remote session**, the session `name` of `host`: the host's `serve`, through
+the transport the remotes file gives the host or else ssh (`Remote.transportFor`), performs the
+request it performs there (`Serve.Remote.asked`), which linger calls as JSON (`Serve.Remote.call`),
+and what the command finds and shows is what the host answered (`remoteReply`): an attach through a
+bridge (`remoteAttach`), `send -` of this process's standard input as it comes
+(`Remote.stream`), and any other request as one call (`Remote.ask`). With no `Env.remote`, a remote
+target is refused, no transport run. -/
+private def remoteRequest (env : Env) (request : Request) (name host : String) : IO Reply := do
+  let some remote := env.remote |
+    do
+      say env s!"no transport reaches '{Linger.Target.Remote.scrub host}': this caller runs none"
+      return { found := .refused }
+  let transport := Linger.Target.Remote.transportFor (← remote.config) host
+  match request, env.input with
+  | .attach readOnly _ command, _ =>
+    return { found := ← remoteAttach env remote transport readOnly name host command }
+  | .send _ .stdin, none =>
+    remoteReply env request host
+        (← Linger.App.Remote.stream transport remote.terminal name (read stdinFd 65536))
+  | _, input =>
+    match Serve.Remote.call request name ((input.map (·.toList)).getD []) with
+    | some (method, params) =>
+      remoteReply env request host (← Linger.App.Remote.ask transport remote.terminal method params)
+    | none =>
+      say env s!"no method of linger serve performs this on '{Linger.Target.Remote.scrub host}'"
+      return { found := .invalid }
+
+/-- **One target boundary for every session verb**: the operand as `Remote.parseTarget` reads it,
+a malformed one `invalid` (`invalidTarget`) without connecting; a local session's name goes to the
+verb's local action, and a remote one to its host's `serve`, which performs the request there as it
+is performed here (`remoteRequest`). An attach not on a terminal `Env.tty` gives needs this process's
+input and output to be terminals. -/
+private def withTarget (env : Env) (request : Request) (target : String)
+    (localAction : String → IO Reply) : IO Reply := do
+  match Linger.Target.Remote.parseTarget target with
+  | none =>
+    return { found := ← invalidTarget env }
+  | some parsed =>
+    let interactive := request.op == .attach && env.tty.isNone
+    if interactive && (!(← stdinIsTty) || !(← (← IO.getStdout).isTty)) then
+      throw
+          (IO.userError
+            "attach needs terminal input and output (use `start`, `resume` or `send` for scripting)")
+    match parsed.host with
+    | none =>
+      localAction parsed.name
+    | some host =>
+      remoteRequest env request parsed.name host
+
+/-- `withTarget`, its local action given the session the name leads to now (`Names.find`): every
+file of the session is the ID's for the rest of the command, whatever renames follow. A name that
+leads to no session's ID is no session (`noSession`). -/
+private def withSession (env : Env) (request : Request) (target : String)
+    (localAction : Names.Ref → IO Reply) : IO Reply :=
+  withTarget env request target fun name => do
+    match ← Names.find name with
+    | some s =>
+      localAction s
+    | none =>
+      return { found := ← noSession env name }
+
+/-- `withTarget` for a command that may create a session, its local action given the ID the name
+leads to, or a fresh one with an entry for the name when it leads nowhere (`Names.claim`). -/
+private def withNew (env : Env) (request : Request) (target : String)
+    (localAction : Names.Ref → IO Reply) : IO Reply :=
+  withTarget env request target fun name => do
+    localAction (← Names.claim name)
+
+/-- A reply that shows nothing, once `action` has found what it found. -/
+private def reply (action : IO Found) : IO Reply := do
+  return { found := ← action }
 
 /-- What a one-shot request found: `done` when the daemon completed it with `done`, otherwise
 `refused` after saying why it did not complete. -/
@@ -1438,7 +1513,7 @@ private def waitNamed (env : Env) (m : Msg) (deadline : Option Nat) (name : Stri
     noSession env name
 
 /-- `wait` for each named session in turn and find what the last one's wait does, as a shell's
-`wait` does with several jobs. A remote session's wait takes no deadline. -/
+`wait` does with several jobs. A remote session's wait is its host's, which takes no deadline. -/
 private def waitAll (env : Env) (m : Msg) (names : List String) (deadline : Option Nat) :
     IO Found := do
   if names.isEmpty then
@@ -1447,7 +1522,12 @@ private def waitAll (env : Env) (m : Msg) (names : List String) (deadline : Opti
   let some targets := names.mapM Linger.Target.Remote.parseTarget | invalidTarget env
   let mut found : Found := .done
   for target in targets do
-    found ← runTarget env "wait" target [] (waitNamed env m deadline)
+    found ←
+      match target.host with
+      | none =>
+        waitNamed env m deadline target.name
+      | some host =>
+        (·.found) <$> remoteRequest env (.wait names) target.name host
     if found == .late then
       return found
   return found
@@ -1686,9 +1766,9 @@ private def cmdRename (env : Env) (new old : String) : IO Found := do
 session's fields as its daemon reports them, then its name, state and status; with no daemon or
 checkpoint for a name, its name and how the last session to hold it ended
 (`Session.endingFields`), from its end record, or with no record of it, the row of the latest
-tmux-resurrect save's pane of that name. A `name@host` target is listed by its host's linger. A
-name no session has taken is `missing`; one another process holds with no daemon answering says
-why and is `refused`. -/
+tmux-resurrect save's pane of that name. A `name@host` target is listed by its host's `serve`, its
+record every field the host gave, named `name@host`. A name no session has taken is `missing`; one
+another process holds with no daemon answering says why and is `refused`. -/
 private def cmdListNamed (env : Env) (porcelain : Bool) (names : List String) : IO Reply := do
   let some targets := names.mapM Linger.Target.Remote.parseTarget |
     do
@@ -1699,12 +1779,11 @@ private def cmdListNamed (env : Env) (porcelain : Bool) (names : List String) : 
   let mut found : Found := .done
   let mut shown : List (List (String × String)) := []
   for target in targets do
-    if target.host.isSome then
-      found :=
-        worse found
-          (←
-            runTarget env "ls" target [] (fun _ => pure .done)
-                (if porcelain then ["--porcelain"] else []))
+    if let some host := target.host then
+      let remote ← remoteRequest env (.list (.named porcelain names)) target.name host
+      if let .rows _ rows := remote.shown then
+        shown := shown ++ rows
+      found := worse found remote.found
     else
       match rows.find? (·.lookup "name" == some target.name) with
       | some row =>
@@ -1748,9 +1827,9 @@ private def upgradeOne (env : Env) (s : Names.Ref) : IO Found := do
     | some result =>
       requestStatus env s.name result
 
-/-- `upgrade [name...]`: `upgradeOne` of each named session, `name@host` on its host, or of every
-local live one when none is named, finding the worst of what they found and showing the sessions
-it carried over. -/
+/-- `upgrade [name...]`: `upgradeOne` of each named session, `name@host` by its host's `serve`, or
+of every local live one when none is named, finding the worst of what they found and showing the
+sessions it carried over, a remote one as `name@host`. -/
 private def cmdUpgrade (env : Env) (names : List String) : IO Reply := do
   let names ←
     if names.isEmpty then
@@ -1761,10 +1840,14 @@ private def cmdUpgrade (env : Env) (names : List String) : IO Reply := do
   let mut found : Found := .done
   let mut upgraded : List String := []
   for name in names do
-    let one ← withSession env "upgrade" name [] (upgradeOne env)
-    if one == .done && (Linger.Target.Remote.parseTarget name).any (·.host.isNone) then
-      upgraded := upgraded ++ [name]
-    found := worse found one
+    let one ← withSession env (.upgrade names) name (fun s => reply (upgradeOne env s))
+    match one.shown with
+    | .upgraded carried =>
+      upgraded := upgraded ++ carried
+    | _ =>
+      if one.found == .done then
+        upgraded := upgraded ++ [name]
+    found := worse found one.found
   return { found, shown := .upgraded upgraded }
 
 /-- `ls`: the attention counts, the sessions as a tmux-resurrect save, or a listing of every
@@ -1782,10 +1865,6 @@ private def cmdView (env : Env) : View → IO Reply
       return { found := .refused }
   | .named porcelain names => cmdListNamed env porcelain names
 
-/-- A reply that shows nothing, once `action` has found what it found. -/
-private def reply (action : IO Found) : IO Reply := do
-  return { found := ← action }
-
 /-- **Perform a request**: take the transition `plan` gives it (`op_meaning`), in the namespace
 `Env.dirs`, through the one command of its operation, and give back what it found and what it
 shows. This is the one place a request reaches its operation. A `deadline` on the monotonic
@@ -1797,49 +1876,37 @@ def perform (env : Env) (request : Request) (deadline : Option Nat := none) : IO
       match request, plan request with
       | .attach _ target _, .attach mode command =>
         if mode == .readOnly then
-          reply
-              (withSession env "attach" target command (cmdAttach env · mode command)
-                ["--read-only"])
+          withSession env request target fun s => reply (cmdAttach env s mode command)
         else
-          reply (withNew env "attach" target command (cmdAttach env · mode command))
+          withNew env request target fun s => reply (cmdAttach env s mode command)
       | .list _, .list view =>
         cmdView env view
       | .start target _ _, .start program args =>
-        reply (withNew env "start" target (program :: args) (cmdStart env · (program :: args)))
+        withNew env request target fun s => reply (cmdStart env s (program :: args))
       | .resume target, .resume =>
-        reply (withSession env "resume" target [] (cmdResume env))
-      | .send target (.text words), .deliver bytes =>
-        reply
-            (withSession env "send" target words
-              (requireLiveSend env · (Linger.Session.Wire.inputFrames bytes)))
+        withSession env request target fun s => reply (cmdResume env s)
+      | .send target (.text _), .deliver bytes =>
+        withSession env request target fun s =>
+            reply (requireLiveSend env s (Linger.Session.Wire.inputFrames bytes))
       | .send target .stdin, .pipe =>
         match env.input with
         | some bytes =>
-          reply
-              (withSession env "send" target ["-"]
-                (requireLiveSend env · (Linger.Session.Wire.inputFrames bytes.toList)))
+          withSession env request target fun s =>
+              reply (requireLiveSend env s (Linger.Session.Wire.inputFrames bytes.toList))
         | none =>
-          reply (withSession env "send" target ["-"] (cmdSendStdin env))
+          withSession env request target fun s => reply (cmdSendStdin env s)
       | .detach target, .ask m =>
-        reply (withSession env "detach" target [] (requireLive env · m))
+        withSession env request target fun s => reply (requireLive env s m)
       | .kill target, .ask m =>
-        reply (withSession env "kill" target [] (cmdKill env m))
+        withSession env request target fun s => reply (cmdKill env m s)
       | .rename target _, .rename new =>
-        reply (withTarget env "rename" target [new] (cmdRename env new))
+        withTarget env request target fun name => reply (cmdRename env new name)
       | .capture history target, .ask m =>
-        let shown ← IO.mkRef Shown.nothing
-        let found ←
-          withSession env "capture" target []
-              (fun s => do
-                let captured ←
-                  cmdRead env s m
-                      (if history then Terminal.Render.history else Terminal.Render.screenText)
-                shown.set captured.shown
-                return captured.found)
-              (if history then ["--history"] else [])
-        return { found, shown := ← shown.get }
-      | .resize target cols rows, .ask m =>
-        reply (withSession env "resize" target [toString cols, toString rows] (requireLive env · m))
+        withSession env request target fun s =>
+            cmdRead env s m
+              (if history then Terminal.Render.history else Terminal.Render.screenText)
+      | .resize target _ _, .ask m =>
+        withSession env request target fun s => reply (requireLive env s m)
       | .wait targets, .ask m =>
         reply (waitAll env m targets deadline)
       | .upgrade targets, .upgrade =>

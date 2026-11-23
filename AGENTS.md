@@ -60,7 +60,7 @@ or `WorldCode`, as the Lean Software Challenge reads it, and any other module is
   linger's environment policies (`CoreCode/Env.lean`) and the shim's smoke tests
   (`Suites/Shim.lean`, `./lake exe lingertest`).
 - `Linger/Target/`: session names, remote targets and the transports that reach their hosts, and
-  the world claims of login shells and transports.
+  the world claim of transports.
 - `Linger/Display/`: session status, titles and listings.
 - `Linger/Terminal/Suites/`: live suites of the VT toolkit as linger runs it.
 - `Linger/Session/`: the session machine (`CoreCode.lean`), its effect `Driver`, `Wire` format,
@@ -74,7 +74,8 @@ or `WorldCode`, as the Lean Software Challenge reads it, and any other module is
   `Resurrect` policy, and `WorldCode.lean` reads it for `ls`, an attach and a kill.
 - `Linger/App/`: the command line and the Lean API: the `Entry` route, and the typed requests
   `CoreCode/Api.lean` parses and plans; `WorldCode/Api.lean`, the Lean API, performs them and
-  writes to no standard stream, and `WorldCode.lean`, the command line, renders their replies;
+  writes to no standard stream, a remote session's through its host's `serve`
+  (`WorldCode/Remote.lean`), and `WorldCode.lean`, the command line, renders their replies;
   `WorldCode/Main.lean` holds `main`; `CoreCode/Serve.lean` and `CoreCode/Json.lean` hold
   `linger serve`'s JSON-RPC connection and JSON text, and `WorldCode/Serve.lean` its executor.
 - `Challenge.lean`: the program parts headline theorems name, declared as holes, and the
@@ -196,9 +197,6 @@ size: Lean erases proofs regardless of file placement.
   belongs only in interactive selection. Freeze each poll loop's fd set.
   Compose displays through `Title.compose` and `Status.summary` in the order
   `session · application title · attention`, reserving room for attention.
-- Place the target of every attach or capture argv the program builds for itself
-  with `Remote.targetOperands`, proved against `Remote.targetArgs`
-  (`targetArgs_targetOperands`); `scripts/gates.sh` rejects a literal attach argv.
 - Program logic, proofs and automated suites are Lean. Python is used only by
   the external `pre-commit` framework. The C shim, build wrapper, shell verifier
   and native configuration recipes are boundaries.

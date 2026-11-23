@@ -7,126 +7,105 @@ import SoftwareChallenge.Commands
 
 /-! # The checks of the remote commands' world claims
 
-`Shell.Literal` says that every login shell passes `linger` and then plain words, one space
-apart, to `linger` as exactly those words, and `Transport.Delivers` that a transport runs a
-`linger` with exactly the plain words after its own, or nothing. Each claim takes the world's
-reading as a parameter, which no Lean term computes: `split` and `deliver` name them, and the
-checks observe them through every login shell this host has and through the transports that run
-linger here, with no host to reach. No program module imports this one. -/
+`Transport.Delivers` says that a transport runs `linger serve` there and carries every byte
+either way exactly, or runs nothing. The claim takes the world's reading as a parameter, which no
+Lean term computes: `carry` names it, and the checks observe it through the transports that run
+linger here, with no host to reach, with a `linger` of the check's own first on `PATH` that, given
+`serve` and nothing else, writes back every byte it reads, so that the bytes come back exactly when
+the transport ran `linger serve` and carried them both ways. No program module imports this one. -/
 
 namespace Linger.Target.Checks
 
-/-- The words the program a login shell runs for a command line receives, its own name first:
-the observation `Shell.Literal` constrains. -/
-opaque split : String → List String
-
-/-- The words the program a transport runs receives when linger runs the transport's words and
-then the given ones, its own name first, or `none` when it runs nothing: the observation
-`Transport.Delivers` constrains. -/
-opaque deliver : List String → List String → Option (List String)
+/-- What arrives at one end of a transport's command, linger run as it, when the other end writes
+the given bytes: the observation `Transport.Delivers` constrains. -/
+opaque carry : List String → List UInt8 → Option (List UInt8)
 
 /-- The shells an account may log in with. Each one this host has is tried, here and by the
 shells suite. -/
 public def shells : List String :=
   ["sh", "bash", "zsh", "fish", "dash", "ksh", "mksh", "yash", "posh", "tcsh", "csh"]
 
-/-- Words a shell would expand, quote, escape, split or run: quotes, the escape fish reads inside
-single quotes, substitutions, globs, operators, controls, option-like words and Unicode. -/
-public def hostile : List String :=
-  ["", " ", "two words", "\\' ; id ; \\'", "'\\''", "a'b\"c", "back\\slash \\\\ \\", "$(id)",
-    "`id`", "${HOME} $HOME ~ ~root", "* ? [ab] {a,b}", "!! !$ %self ^x #hash",
-    "; & | > out < in ( ) &&", "line\nbreak", "tab\there", "\r", "\x01\x1b[31m\x7f", "--", "-n",
-    "=x", "a=b", "ünïcödé ✓ 🎉 界"]
+/-- Bytes a transport could change, drop, add or reorder: every byte value, in order and in
+reverse, NUL, newlines, carriage returns, an escape, invalid UTF-8, a run longer than a pipe holds,
+and the lines a handshake writes. -/
+public def hostile : List (List UInt8) :=
+  [(List.range 256).map UInt8.ofNat, ((List.range 256).map UInt8.ofNat).reverse, [0], [10, 13, 10],
+    [27, 91, 50, 74], [195, 40, 255, 254],
+    (List.range 300000).map fun i => UInt8.ofNat (i * 7 % 251),
+    ("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}\n" ++
+        "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\"}\n").toUTF8.toList]
 
--- Every login shell this host has passes `linger` the plain words of a command line as they
--- are: run as `<shell> -c <line>`, as SSH runs a remote account's command line, with a `linger`
--- of the check's own first on `PATH` that writes the words it receives to a file, each shell
--- passes on exactly the words of the lines `Remote.command` makes of words a shell would
--- otherwise expand, quote, escape, split or run, every word in one line and each in a line of
--- its own.
-Check Remote.Shell.Literal split := do
+/-- A `linger` for the checks: it writes the words it is given to `$LINGER_ARGV`, and, given `serve`
+and nothing else, writes back every byte it reads. -/
+public def echoLinger : String :=
+  "#!/bin/sh\nprintf '%s\\000' \"$@\" > \"$LINGER_ARGV\"\n" ++
+    "if [ \"$#\" -eq 1 ] && [ \"$1\" = serve ]; then exec cat; fi\nexit 99\n"
+
+/-- Run `argv` in `dir`, with `bin` first on `PATH` and a home of its own, writing `bytes` to its
+standard input and then its end: what it wrote to its standard output, and the words the
+check's `linger` was given. -/
+public def through (dir bin : System.FilePath) (argv : List String) (bytes : List UInt8) :
+    IO (ByteArray × List String) := do
+  let argvFile := dir / "argv"
+  if ← argvFile.pathExists then
+    IO.FS.removeFile argvFile
+  let some program := argv.head? | throw (IO.userError "a command names a program")
+  let path := (← IO.getEnv "PATH").getD "/usr/bin:/bin"
+  let child0 ←
+    IO.Process.spawn
+        { cmd := program, args := argv.tail.toArray, cwd := some dir, stdin := .piped,
+          stdout := .piped, stderr := .null,
+          env :=
+            #[("PATH", some s!"{bin}:{path}"), ("HOME", some dir.toString),
+              ("XDG_CONFIG_HOME", some dir.toString), ("ZDOTDIR", some dir.toString), ("ENV", none),
+              ("BASH_ENV", none), ("LINGER_ARGV", some argvFile.toString)] }
+  let (input, child) ← child0.takeStdin
+  let output ← IO.asTask child.stdout.readBinToEnd Task.Priority.dedicated
+  let writing ←
+    IO.asTask
+        (do
+          try
+            input.write (ByteArray.mk bytes.toArray)
+            input.flush
+          catch _ =>
+            pure ())
+        Task.Priority.dedicated
+  discard <| IO.wait writing
+  let wrote ← IO.ofExcept (← IO.wait output)
+  discard child.wait
+  let given ←
+    if ← argvFile.pathExists then
+      pure (((← IO.FS.readFile argvFile).splitOn "\x00").dropLast)
+    else
+      pure []
+  return (wrote, given)
+
+/-- Run `transport`'s command, then `linger serve`, with `echoLinger` first on `PATH`, writing each
+set of `hostile` bytes, and throw unless the `linger` was given exactly `serve` and every byte came
+back as it went. -/
+def carries (transport : Linger.Target.Remote.Transport) : IO Unit := do
   IO.FS.withTempDir fun dir => do
       let bin := dir / "bin"
       IO.FS.createDirAll bin
-      IO.FS.writeFile (bin / "linger") "#!/bin/sh\nprintf '%s\\000' \"$@\" > \"$LINGER_ARGV\"\n"
+      IO.FS.writeFile (bin / "linger") echoLinger
       Os.Shell.chmod (bin / "linger").toString 0o755
-      let path := (← IO.getEnv "PATH").getD "/usr/bin:/bin"
-      let mut found : List String := []
-      for name in shells do
-        for place in path.splitOn ":" do
-          if !place.isEmpty && (← System.FilePath.pathExists s!"{place}/{name}") then
-            found := found ++ [s!"{place}/{name}"]
-            break
-      if found.isEmpty then
-        throw (IO.userError "no login shell was found on PATH")
-      let argv := (dir / "argv").toString
-      for shell in found do
-        for words in ("work" :: hostile) :: hostile.map (["work", ·]) do
-          let line := Linger.Target.Remote.command "send" words
-          if ← System.FilePath.pathExists argv then
-            IO.FS.removeFile argv
-          let _ ←
-            IO.Process.output
-                { cmd := shell, args := #["-c", line], cwd := some dir,
-                  env :=
-                    #[("PATH", some s!"{bin}:{path}"), ("HOME", some dir.toString),
-                      ("XDG_CONFIG_HOME", some dir.toString), ("ZDOTDIR", some dir.toString),
-                      ("ENV", none), ("BASH_ENV", none), ("LINGER_ARGV", some argv)] }
-          let received ←
-            if ← System.FilePath.pathExists argv then
-              pure (((← IO.FS.readFile argv).splitOn "\x00").dropLast)
-            else
-              pure []
-          unless received == (line.splitOn " ").tail do
-            throw (IO.userError s!"{shell} passed linger {repr received} for the line {line}")
+      for bytes in hostile do
+        let (wrote, given) ← through dir bin (Linger.Target.Remote.argv transport) bytes
+        unless given == ["serve"] do
+          throw (IO.userError s!"{transport.command} ran linger with {repr given}")
+        unless wrote.toList == bytes do
+          throw
+              (IO.userError
+                s!"{transport.command} carried {bytes.length} bytes as {wrote.size} other bytes")
 
-/-- Run each of `transport`'s commands, then `Remote.commandWords` for `send` with each set of words
-a shell would otherwise expand, quote, escape, split or run, every word at once and each alone,
-with a `linger` of the check's own first on `PATH` that writes the words it receives to a file,
-and throw unless that `linger` received exactly those words each time. -/
-def runsLinger (transport : Linger.Target.Remote.Transport) : IO Unit := do
-  IO.FS.withTempDir fun dir => do
-      let bin := dir / "bin"
-      IO.FS.createDirAll bin
-      IO.FS.writeFile (bin / "linger") "#!/bin/sh\nprintf '%s\\000' \"$@\" > \"$LINGER_ARGV\"\n"
-      Os.Shell.chmod (bin / "linger").toString 0o755
-      let path := (← IO.getEnv "PATH").getD "/usr/bin:/bin"
-      let argv := (dir / "argv").toString
-      for command in [transport.query, transport.attach] do
-        let some program := command.head? | throw (IO.userError "a command names a program")
-        for words in ("work" :: hostile) :: hostile.map (["work", ·]) do
-          let sent := Linger.Target.Remote.commandWords "send" words
-          if ← System.FilePath.pathExists argv then
-            IO.FS.removeFile argv
-          let _ ←
-            IO.Process.output
-                { cmd := program, args := (command.tail ++ sent).toArray, cwd := some dir,
-                  env :=
-                    #[("PATH", some s!"{bin}:{path}"), ("HOME", some dir.toString), ("ENV", none),
-                      ("BASH_ENV", none), ("LINGER_ARGV", some argv)] }
-          let received ←
-            if ← System.FilePath.pathExists argv then
-              pure (some ("linger" :: ((← IO.FS.readFile argv).splitOn "\x00").dropLast))
-            else
-              pure none
-          unless received == some sent do
-            throw (IO.userError s!"{command} ran linger with {repr received} for {repr sent}")
+-- `env`, a command that runs its words here, runs `linger serve` and carries every byte either way,
+-- as `docker exec -i` and `kubectl exec -i` do.
+Check Remote.Transport.Delivers carry { command := ["env"] } := carries { command := ["env"] }
 
--- `env`, a command that runs its words here, passes `linger` the plain words after it as they
--- are, as `docker exec` and `kubectl exec` pass theirs: the words `Remote.commandWords` spells
--- for words a shell would otherwise expand, quote, escape, split or run.
-Check Remote.Transport.Delivers deliver { query := ["env"], attach := ["env"] } :=
-  runsLinger { query := ["env"], attach := ["env"] }
-
--- Commands shaped as ssh's are, which join the words after them with spaces and hand the line to
--- a login shell, as sshd hands it to the remote account's: `sh -c 'exec sh -c "$*"'` passes
--- `linger` the same words, for a query and for an attach.
-Check
-  Remote.Transport.Delivers deliver
-    { query := ["sh", "-c", "exec sh -c \"$*\"", "ssh"],
-      attach := ["sh", "-c", "exec sh -c \"$*\"", "ssh-t"] } :=
-  runsLinger
-    { query := ["sh", "-c", "exec sh -c \"$*\"", "ssh"],
-      attach := ["sh", "-c", "exec sh -c \"$*\"", "ssh-t"] }
+-- A command shaped as ssh's is, which joins the words after it with spaces and hands the line to a
+-- login shell, as sshd hands it to the remote account's: `sh -c 'exec sh -c "$*"'` runs
+-- `linger serve` and carries every byte either way, as `ssh -T` does.
+Check Remote.Transport.Delivers carry { command := ["sh", "-c", "exec sh -c \"$*\"", "ssh"] } :=
+  carries { command := ["sh", "-c", "exec sh -c \"$*\"", "ssh"] }
 
 end Linger.Target.Checks

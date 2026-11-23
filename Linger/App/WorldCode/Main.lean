@@ -25,8 +25,7 @@ private def source : Linger.App.Api.Source where
   save := Linger.Import.Shell.exportSave
 
 /-- The executable: `Entry.route` sends the argv to interactive selection or a session command,
-each of which answers, and refuses an encoded command line that does not decode as a usage
-error. An uncaught error prints `linger: <error>` and answers
+each of which answers. An uncaught error prints `linger: <error>` and answers
 `notDone`. Whatever the route, the process exits with the code of its answer, but for one a
 signal stopped (`stopped`): having handed its terminal back, it ends by that signal, as a program
 that does not catch it ends, so its caller sees the signal itself, and exits with the code only
@@ -39,9 +38,6 @@ def main (args : List String) : IO UInt32 := do
         Linger.Selector.Shell.run (← IO.appPath).toString Linger.Session.Shell.Names.nameOf readOnly
       | .session argv =>
         Linger.App.Shell.main source Linger.App.Serve.Shell.run argv
-      | .malformed =>
-        IO.eprintln "linger: malformed encoded command line"
-        pure .usage
     catch e =>
       IO.eprintln s!"linger: {e}"
       pure .notDone

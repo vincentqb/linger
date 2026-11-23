@@ -110,6 +110,89 @@ private def retireGroup (job : Job) : IO Unit := do
   catch _ =>
     pure ()
 
+/-- A command its owner converses with: the process, its standard input while the owner holds it
+open, its standard output, which the owner reads a line at a time (`Talk.line`), and its standard
+error, read to the end on a dedicated task, at most 64 KiB kept. -/
+structure Talk where
+  /-- The process, its standard input taken. -/
+  child : IO.Process.Child { stdin := .null, stdout := .piped, stderr := .piped }
+  /-- Its standard input, until the owner closes it. -/
+  input : IO.Ref (Option IO.FS.Handle)
+  /-- Its standard error, read to the end on a dedicated task. -/
+  stderr : Task (Except IO.Error String)
+  /-- Whether it leads a session and process group of its own. -/
+  isolated : Bool
+
+/-- Start `executable` with `args`, its standard input and output on pipes its owner holds, and its
+standard error read to the end on a dedicated task, at most 64 KiB kept. An `isolated` command
+leads a new session and process group, so that it reaches no terminal; any other shares this
+process's group and terminal, as a transport asking its user for a password does. -/
+def talk (executable : String) (args : Array String) (isolated : Bool) : IO Talk := do
+  let spawned ←
+    IO.Process.spawn
+        { cmd := executable, args, stdin := .piped, stdout := .piped, stderr := .piped,
+          setsid := isolated }
+  let (stdin, child) ← spawned.takeStdin
+  let stderr ← IO.asTask (readLimited child.stderr (64 * 1024)) Task.Priority.dedicated
+  return { child, input := ← IO.mkRef (some stdin), stderr, isolated }
+
+/-- Write `text` to the command's standard input and flush it: whether all of it was written, which
+it is not once the input is closed or the command no longer reads it. -/
+def Talk.say (t : Talk) (text : String) : IO Bool := do
+  match ← t.input.get with
+  | none =>
+    return false
+  | some handle =>
+    try
+      handle.putStr text
+      handle.flush
+      return true
+    catch _ =>
+      return false
+
+/-- Close the command's standard input, so that it reads its end. -/
+def Talk.hangUp (t : Talk) : IO Unit := t.input.set none
+
+/-- The next line the command writes to its standard output, its newline aside, as it comes; none
+once its output ends or cannot be read. -/
+def Talk.line (t : Talk) : IO (Option String) := do
+  let line ←
+    try
+      t.child.stdout.getLine
+    catch _ =>
+      pure ""
+  if line.isEmpty then
+    return none
+  return some ((line.dropSuffix "\n").copy)
+
+/-- What the command wrote to its standard error, once it has ended it: empty when it is not text
+or more than its cap. -/
+def Talk.errors (t : Talk) : IO String := do
+  return (← IO.wait t.stderr).toOption.getD ""
+
+/-- Close the command's standard input and wait for it to end: its exit status. -/
+def Talk.finish (t : Talk) : IO UInt32 := do
+  t.hangUp
+  t.child.wait
+
+/-- End the command now: close its standard input, kill it, and its group when it leads one, and
+reap it. -/
+def Talk.stop (t : Talk) : IO Unit := do
+  t.hangUp
+  try
+    if t.isolated then
+      try
+        discard <| Os.Shell.signalGroup t.child.pid 9
+      catch _ =>
+        pure ()
+    t.child.kill
+  catch _ =>
+    pure ()
+  try
+    discard t.child.wait
+  catch _ =>
+    pure ()
+
 /-- Optionally give the leader time to retire separately isolated children.
 Then retire its group before reaping the leader, whose reserved PID identifies
 the group even when a descendant still holds a pipe. Join both readers on every

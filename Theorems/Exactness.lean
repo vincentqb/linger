@@ -88,22 +88,15 @@ namespace Linger
 
 open Linger.Display Linger.Session Linger.Target Terminal
 
-theorem route_exact (args : List String) :
-    App.Entry.route args =
-      if args.head? = some Remote.marker then
-        (Remote.decode args.tail).elim .malformed App.Entry.Route.of
-      else App.Entry.Route.of args := by
-  rw [App.Entry.route_eq args]
-  cases Remote.decode args.tail <;> rfl
+theorem route_exact (args : List String) : App.Entry.route args = App.Entry.Route.of args :=
+  App.Entry.route_eq args
 
 theorem route_exact_rejects_selector :
     ¬∀ (args : List String),
         (fun (args : List String) => App.Entry.Route.session args) args =
-          if args.head? = some Remote.marker then
-            (Remote.decode args.tail).elim .malformed App.Entry.Route.of
-          else App.Entry.Route.of args := by
+          App.Entry.Route.of args := by
   intro h
-  exact absurd (h ["attach"]) (by simp [App.Entry.Route.of, Remote.marker])
+  exact absurd (h ["attach"]) (by simp [App.Entry.Route.of])
 
 theorem op_meaning (args argv : List String) (request : App.Api.Request) (found : App.Api.Found) :
     App.Entry.route args = .session argv →
@@ -460,31 +453,98 @@ theorem serve_attach_exact_rejects_unpainted :
 
 theorem remote_rows_exact (host : String) (messages : List App.Serve.Json) (status : UInt32)
     (records : List App.Serve.Record) :
-    App.Serve.Remote.Exact App.Serve.Remote.heard App.Serve.Remote.rows Name.accept host messages
-      status records :=
-  ⟨App.Serve.Remote.heard_listed messages status records,
-    App.Serve.Remote.heard_older messages status, App.Serve.Remote.rows_keys host records⟩
+    App.Serve.Remote.Rows App.Serve.Remote.heard App.Serve.Remote.rows Name.accept Os.Answer.code
+      host messages status records := by
+  refine ⟨?_, App.Serve.Remote.rows_keys host records⟩
+  unfold App.Serve.Remote.Lists
+  constructor
+  · rintro ⟨members, items, heard, listed, read⟩
+    obtain ⟨shook, answered⟩ :=
+      (App.Serve.Remote.heard_answered messages status .done members).mp heard
+    exact ⟨shook, members, items, answered, listed, read⟩
+  · rintro ⟨shook, members, items, answered, listed, read⟩
+    exact
+      ⟨members, items,
+        (App.Serve.Remote.heard_answered messages status .done members).mpr ⟨shook, answered⟩,
+        listed, read⟩
 
 theorem remote_rows_exact_rejects_unshaken :
     ¬∀ (host : String) (messages : List App.Serve.Json) (status : UInt32)
         (records : List App.Serve.Record),
-        App.Serve.Remote.Exact App.Serve.Remote.unshaken App.Serve.Remote.rows Name.accept host
-          messages status records := by
+        App.Serve.Remote.Rows App.Serve.Remote.unshaken App.Serve.Remote.rows Name.accept
+          Os.Answer.code host messages status records := by
   intro h
   -- a reading that takes request 2's records whatever request 1 got lists a host that never
   -- shook hands
   have listed :=
     (h "far"
         [.obj
-            [("id", .number "2"), ("result", .obj [("answer", .str "done"), ("records", .arr [])])]]
+            [("id", .number "2"),
+              ("result",
+                .obj [("answer", .str "done"), ("code", .number "0"), ("records", .arr [])])]]
         0 []).1
   have shook :=
     (listed.mp
-        (by
+        ⟨[("records", .arr [])], [], by
           simp [App.Serve.Remote.unshaken, App.Serve.Remote.answerOf, App.Serve.Json.member?,
-            App.Serve.Id.of, List.lookup])).1
+            App.Serve.Id.of, List.lookup],
+          by simp [List.lookup], rfl⟩).1
   obtain ⟨result, version, found, -⟩ := shook
   simp [App.Serve.Remote.answerOf, App.Serve.Json.member?, App.Serve.Id.of, List.lookup] at found
+
+theorem remote_exact (request : App.Api.Request) (name : String) (input : List UInt8)
+    (messages : List App.Serve.Json) (status : UInt32) (answer : Os.Answer)
+    (members : List (String × App.Serve.Json)) (host : String) (t : Remote.Transport)
+    (carry : List String → List UInt8 → Option (List UInt8))
+    (delivers : Remote.Transport.Delivers carry t) (bytes : List UInt8) :
+    App.Serve.Remote.Exact App.Serve.Remote.call App.Serve.parse App.Serve.Remote.heard
+        Os.Answer.code App.Serve.Remote.found App.Api.answer App.Serve.Remote.said Remote.scrub
+        request name input messages status answer members host ∧
+      Remote.argv t = t.command ++ ["linger", "serve"] ∧
+      (carry (Remote.argv t) bytes = none ∨ carry (Remote.argv t) bytes = some bytes) := by
+  refine
+    ⟨⟨App.Serve.Remote.call_parse request name input,
+        App.Serve.Remote.heard_answered messages status answer members,
+        App.Serve.Remote.heard_refused messages status,
+        App.Serve.Remote.found_answer answer members, App.Serve.Remote.said_eq host members⟩,
+      Remote.argv_eq t, ?_⟩
+  rw [Remote.argv_eq]
+  exact delivers bytes
+
+theorem remote_exact_rejects_crossed :
+    ¬∀ (request : App.Api.Request) (name : String) (input : List UInt8)
+        (messages : List App.Serve.Json) (status : UInt32) (answer : Os.Answer)
+        (members : List (String × App.Serve.Json)) (host : String) (t : Remote.Transport)
+        (carry : List String → List UInt8 → Option (List UInt8)),
+        Remote.Transport.Delivers carry t →
+          ∀ (bytes : List UInt8),
+            App.Serve.Remote.Exact
+                (fun (request : App.Api.Request) (name : String) (input : List UInt8) =>
+                  App.Serve.Remote.call (if request.op = .detach then .kill name else request) name
+                    input)
+                App.Serve.parse App.Serve.Remote.heard Os.Answer.code App.Serve.Remote.found
+                App.Api.answer App.Serve.Remote.said Remote.scrub request name input messages status
+                answer members host ∧
+              Remote.argv t = t.command ++ ["linger", "serve"] ∧
+              (carry (Remote.argv t) bytes = none ∨ carry (Remote.argv t) bytes = some bytes) := by
+  intro h
+  -- a call that crosses `detach` to `kill` has the host kill the session it was to detach
+  have crossed :=
+    (h (.detach "x") "x" [] [] 0 .done [] "far" { command := ["ssh"] } (fun _ bytes => some bytes)
+        (fun _ => Or.inr rfl) []).1.1
+  simp only [App.Api.Request.op, ↓reduceIte] at crossed
+  rw [App.Serve.Remote.call_parse] at crossed
+  simp [App.Serve.Remote.asked] at crossed
+
+theorem remote_attach_exact (id : App.Serve.Id) (stream : List (App.Serve.Json × List UInt8))
+    (typed : List UInt8) :
+    App.Serve.Remote.Shows App.Serve.Remote.relay App.Serve.Remote.keys id stream typed :=
+  App.Serve.Remote.shows id stream typed
+
+theorem remote_attach_exact_rejects_undecoded :
+    ¬∀ (id : App.Serve.Id) (stream : List (App.Serve.Json × List UInt8)) (typed : List UInt8),
+        App.Serve.Remote.Shows App.Serve.Remote.undecoded App.Serve.Remote.keys id stream typed :=
+  App.Serve.Remote.shows_rejects_undecoded
 
 theorem fields_owned :
     (App.Fields.table.map (·.key)).Nodup ∧
@@ -676,19 +736,18 @@ theorem dismissal_happened_rejects_hangup :
 theorem names_round_trip (s name : String) :
     (Name.accept s = some name ↔ name = s ∧ Name.Accepted s) ∧
       (Name.Usable name →
-        Remote.targetArgs (Remote.targetOperands name) = some (name, []) ∧
+        Remote.targetArgs ["--", name] = some (name, []) ∧
           Names.entryName (Names.entryFile name) = some name) ∧
-      Name.accept "build · ✓ tests" = some "build · ✓ tests" := by
-  refine
-    ⟨Name.accept_eq_some_iff s name, fun usable => ⟨?_, Names.entryName_entryFile name usable⟩,
-      (Name.accept_eq_some_iff _ _).mpr ⟨rfl, .inl ((Name.usable_iff _).mp (by decide))⟩⟩
-  simpa using Remote.targetArgs_targetOperands name []
+      Name.accept "build · ✓ tests" = some "build · ✓ tests" :=
+  ⟨Name.accept_eq_some_iff s name, fun usable =>
+    ⟨Remote.targetArgs_separated name [], Names.entryName_entryFile name usable⟩,
+    (Name.accept_eq_some_iff _ _).mpr ⟨rfl, .inl ((Name.usable_iff _).mp (by decide))⟩⟩
 
 theorem names_round_trip_rejects_keyed :
     ¬∀ (s name : String),
         (Name.keyed s = some name ↔ name = s ∧ Name.Accepted s) ∧
           (Name.Usable name →
-            Remote.targetArgs (Remote.targetOperands name) = some (name, []) ∧
+            Remote.targetArgs ["--", name] = some (name, []) ∧
               Names.entryName (Names.entryFile name) = some name) ∧
           Name.keyed "build · ✓ tests" = some "build · ✓ tests" := by
   intro h
@@ -703,150 +762,6 @@ theorem check_eq_some_iff_rejects_any :
     ¬∀ (s result : String), (fun s => some s) s = some result ↔ result = s ∧ Name.Valid s := by
   intro h
   exact absurd ((h "" "").mp rfl).2.1 (by simp)
-
-theorem command_exact (split : String → List String) (literal : Remote.Shell.Literal split)
-    (verb : String) (words : List String) :
-    ∃ args,
-      split (String.intercalate " " (Remote.commandWords verb words)) = "linger" :: args ∧
-        App.Entry.route args = App.Entry.Route.of (verb :: words) := by
-  obtain ⟨encoded, received, decoded⟩ := Remote.command_decode split literal verb words
-  rw [← Remote.intercalate_commandWords] at received
-  exact ⟨Remote.marker :: encoded, received, App.Entry.route_encoded encoded _ decoded⟩
-
-theorem command_exact_rejects_quoted :
-    ¬∀ (split : String → List String),
-        Remote.Shell.Literal split →
-          ∀ (verb : String) (words : List String),
-            ∃ args,
-              split
-                    (String.intercalate " "
-                      ((fun (verb : String) (words : List String) =>
-                          ("linger" :: verb :: words).map fun word =>
-                            String.ofList
-                              ('\'' ::
-                                  word.toList.flatMap
-                                    (fun c => if c = '\'' then ['\'', '\\', '\'', '\''] else [c]) ++
-                                ['\'']))
-                        verb words)) =
-                  "linger" :: args ∧
-                App.Entry.route args = App.Entry.Route.of (verb :: words) := by
-  intro h
-  -- fish keeps the world claim, and reads POSIX quoting of `send \'` as `send ''`
-  obtain ⟨args, received, routed⟩ := h Remote.fishSplit Remote.fishSplit_literal "send" ["\\'"]
-  dsimp only at received
-  rw [Remote.fishSplit_quoted] at received
-  simp only [List.cons.injEq, true_and] at received
-  subst received
-  rw [App.Entry.route_eq] at routed
-  simp [App.Entry.Route.of, Remote.marker] at routed
-
-theorem transport_exact (t : Remote.Transport) (verb name : String) (options args : List String)
-    (deliver : List String → List String → Option (List String))
-    (delivers : Remote.Transport.Delivers deliver t) :
-    (∃ line,
-        Remote.targetArgv t verb options name args =
-            (if verb = "attach" then t.attach else t.query) ++ "linger" :: line ∧
-          (∀ received,
-            deliver (if verb = "attach" then t.attach else t.query) ("linger" :: line) =
-                some received →
-              received = "linger" :: line) ∧
-          App.Entry.route line =
-            App.Entry.Route.of
-              (verb :: options ++
-                (if verb = "attach" ∨ verb = "capture" ∨ verb = "ls" then Remote.targetOperands name
-                else [name]) ++
-                args)) ∧
-      Remote.targetArgs (Remote.targetOperands name ++ args) = some (name, args) := by
-  refine ⟨?_, Remote.targetArgs_targetOperands name args⟩
-  refine
-    ⟨Remote.marker ::
-        (verb :: options ++
-              (if verb = "attach" ∨ verb = "capture" ∨ verb = "ls" then Remote.targetOperands name
-              else [name]) ++
-              args).map
-          Remote.encodeWord,
-      Remote.targetArgv_eq t verb options name args, ?_,
-      App.Entry.route_encoded _ _ (Remote.decode_map_encodeWord _)⟩
-  intro received ran
-  -- the words after `linger` are plain, so the transport runs a `linger` with exactly them
-  have plain :
-    ∀
-      word ∈
-        Remote.marker ::
-          (verb :: options ++
-                (if verb = "attach" ∨ verb = "capture" ∨ verb = "ls" then Remote.targetOperands name
-                else [name]) ++
-                args).map
-            Remote.encodeWord,
-      Remote.Shell.plain word = true := by
-    intro word member
-    simp only [List.mem_cons, List.mem_map] at member
-    rcases member with rfl | ⟨original, -, rfl⟩
-    · exact Remote.plain_marker
-    · exact Remote.plain_encodeWord original
-  have chosen : (if verb = "attach" then t.attach else t.query) ∈ [t.query, t.attach] := by
-    split <;> simp
-  rcases delivers _ chosen _ plain with nothing | exactly
-  · rw [nothing] at ran
-    cases ran
-  · rw [exactly] at ran
-    exact (Option.some.inj ran).symm
-
-theorem transport_exact_rejects_ssh :
-    ¬∀ (t : Remote.Transport) (verb name : String) (options args : List String)
-        (deliver : List String → List String → Option (List String)),
-        Remote.Transport.Delivers deliver t →
-          (∃ line,
-              (fun (_ : Remote.Transport) (_ : String) (_ : List String) (_ : String)
-                        (_ : List String) =>
-                      ["ssh", "-T", "--"])
-                    t verb options name args =
-                  (if verb = "attach" then t.attach else t.query) ++ "linger" :: line ∧
-                (∀ received,
-                  deliver (if verb = "attach" then t.attach else t.query) ("linger" :: line) =
-                      some received →
-                    received = "linger" :: line) ∧
-                App.Entry.route line =
-                  App.Entry.Route.of
-                    (verb :: options ++
-                      (if verb = "attach" ∨ verb = "capture" ∨ verb = "ls" then
-                        Remote.targetOperands name
-                      else [name]) ++
-                      args)) ∧
-            Remote.targetArgs (Remote.targetOperands name ++ args) = some (name, args) := by
-  intro h
-  -- a transport the remotes file names, `docker`, which ssh hard-coded in its place ignores
-  obtain ⟨⟨line, ran, -, -⟩, -⟩ :=
-    h { query := ["docker"], attach := ["docker"] } "send" "w" [] [] (fun _ words => some words)
-      (fun _ _ _ _ => Or.inr rfl)
-  simp at ran
-
-theorem transport_exact_rejects_unread :
-    ¬∀ (t : Remote.Transport) (verb name : String) (options args : List String)
-        (deliver : List String → List String → Option (List String)),
-        Remote.Transport.Delivers deliver t →
-          (∃ line,
-              Remote.targetArgv t verb options name args =
-                  (if verb = "attach" then t.attach else t.query) ++ "linger" :: line ∧
-                (∀ received,
-                  deliver (if verb = "attach" then t.attach else t.query) ("linger" :: line) =
-                      some received →
-                    received = "linger" :: line) ∧
-                App.Entry.route line =
-                  App.Entry.Route.of
-                    (verb :: options ++
-                      (if verb = "attach" ∨ verb = "capture" ∨ verb = "ls" then
-                        (fun (_ : String) => ([] : List String)) name
-                      else [name]) ++
-                      args)) ∧
-            Remote.targetArgs ((fun (_ : String) => ([] : List String)) name ++ args) =
-              some (name, args) := by
-  intro h
-  -- a target placed as nothing, which the far end cannot read back as the name
-  have read :=
-    (h { query := ["ssh"], attach := ["ssh"] } "attach" "s" [] [] (fun _ words => some words)
-        (fun _ _ _ _ => Or.inr rfl)).2
-  simp [Remote.targetArgs_nil] at read
 
 theorem env_defaults (home flag : Option String) (shell dir saved : String) (named : shell ≠ "")
     (set : dir ≠ "") :

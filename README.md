@@ -59,8 +59,8 @@ with the `protocolVersion` it speaks (`"1"`), gets the version, `serverInfo` and
 error -32002. Each method is one command's request: `sessions/list` (optional `names`),
 `session/start` (`name`, `program`, optional `args`), `session/resume`, `session/send` (`name`,
 `data` in base64), `session/detach`, `session/kill`, `session/rename` (`name`, `new`),
-`session/capture` (`name`, optional `history`), `session/resize` (`name`, `cols`, `rows`) and
-`session/wait` (`name`). `sessions/subscribe` lists the sessions as `sessions/list` does and opens
+`session/capture` (`name`, optional `history`), `session/resize` (`name`, `cols`, `rows`),
+`session/wait` (`name`) and `session/upgrade` (`name`). `sessions/subscribe` lists the sessions as `sessions/list` does and opens
 a subscription named by its request's id: from then on `serve` lists them one second after its
 last listing ended, and whenever its records differ from what the client was last told, read
 without `idle` and `lastout`, the clock's readings, sends `sessions/changed` with that id, the
@@ -72,8 +72,9 @@ base64 as `data`, how a session ended as `ending`, and what the command said as 
 32 lines, with `saidDropped` counting the rest. A
 malformed line, an unknown method and wrong params get JSON-RPC's errors, with linger's answer in
 their `data`. linger's own chooser reads the same records: it runs `ls --porcelain`, which prints
-the listing `sessions/list` sends, each key and value clean text. `serve` reaches no remote host. Once its standard input ends, it answers the
-requests it read and exits.
+the listing `sessions/list` sends, each key and value clean text. A `name@host` session reaches its
+host's `serve`, as on the command line. Once its standard input ends, it answers the requests it
+read and exits.
 
 A client with no terminal of its own follows a session's terminal as rows. `session/screen`
 (`name`) attaches to the session read-only, as `attach --read-only` does, and answers with its
@@ -92,8 +93,9 @@ when the session ends, carries `closed` with the answer its ending gives; `sessi
 closes either, and a connection holds at most 16.
 
 A client that is a terminal attaches to a session as `linger attach` does. `session/attach`
-(`name`) attaches writable, starting the session under the name when none holds it, and with no
-size of its own until the client gives one; it answers `done`, and from then on
+(`name`, optional `readOnly` and `command`) attaches, writable unless `readOnly`, starting the
+session under the name with `command`, or the shell, when none holds it, and with no size of its
+own until the client gives one; it answers `done`, and from then on
 `session/output` (`subscription`, `data`) carries in base64 exactly the bytes the session's daemon
 sends an attach client: the synchronized repaint, then the output as it comes. `session/input`
 (`subscription`, `data` in base64) types into the session, `session/resize` (`subscription`,
@@ -140,21 +142,24 @@ only.
 Every command takes a `name@host` target, and `linger ls -r` and the chooser also list the
 sessions of the hosts in `~/.config/linger/remotes`. Each line names a host, then the command
 that runs linger there, as you would type it before `linger`. A line that is only a host reaches
-it with `ssh -T` (`ssh -t` for an attach). An attach needs a terminal at the far end, so a line
-may give the attach its own command after a `|`:
+it with `ssh -T`:
 
 ```
 devbox
-box   docker exec -i box | docker exec -it box
-pod   kubectl exec -i pod -- | kubectl exec -it pod --
-far   ssh -T -- far | mosh far --
+box   docker exec -i box
+pod   kubectl exec -i pod --
 ```
 
 Blanks separate words, which are never quoted or expanded. A line whose first word starts with
-`#` is a comment. `ls -r` runs `linger serve` on each host through its command, shakes hands with
-it and calls `sessions/list`, as any client of `serve` does, and lists the records it returns, each
-named `name@host`; a host whose linger is older than `serve`, and so answers it as a usage error,
-is asked with `ls --porcelain` instead. An attach stays a terminal's byte stream through the attach
-command. A host that does not answer within 3 s lists as `?`. The chooser lists remote
-hosts when it opens and when you press Ctrl-L, which also redraws the screen, and its header says
-how long ago it listed them, as `remote 12s`.
+`#` is a comment. Every command on a remote session runs `linger serve` on its host through its
+command and calls the method of its request there, as any client of `serve` does, with every
+argument in JSON, so no shell reads any of them: what the command finds, shows and says is what the
+host's linger answered, each line it said prefixed with the host. An attach is linger's own attach
+client, conversing with the host's `session/attach`: the detach key, the title, the synchronized
+repaint and the handback are the same as for a local session, and the far end needs no terminal.
+`ls -r` calls `sessions/list` of each host and lists the records it returns, each named
+`name@host`. A host that does not answer within 3 s lists as `?`; a host whose linger does not
+speak `serve` is refused, `HOST runs a linger without serve; install a current linger there`, and
+lists as `?` with that `reason` in `ls -r --porcelain`. The chooser lists remote hosts when it
+opens and when you press Ctrl-L, which also redraws the screen, and its header says how long ago
+it listed them, as `remote 12s`.

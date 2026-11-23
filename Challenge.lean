@@ -98,20 +98,26 @@ def Linger.App.Serve.Remote.heard : List Serve.Json → UInt32 → Serve.Remote.
 
 def Linger.App.Serve.Remote.rows : String → List Serve.Record → List Serve.Record := sorry
 
+def Linger.App.Serve.Remote.call :
+    App.Api.Request → String → List UInt8 → Option (String × Serve.Json) := sorry
+
+def Linger.App.Serve.Remote.relay : Serve.Id → Serve.Json → List Wire.Msg := sorry
+
+def Linger.App.Serve.Remote.keys : Serve.Id → List UInt8 → Serve.Json := sorry
+
+def Linger.App.Serve.Remote.found : Os.Answer → List (String × Serve.Json) → App.Api.Found := sorry
+
+def Linger.App.Serve.Remote.said : String → List (String × Serve.Json) → List String := sorry
+
 def Linger.Target.Name.check : String → Option String := sorry
 
 def Linger.Target.Name.accept : String → Option String := sorry
 
-def Linger.Target.Remote.commandWords : String → List String → List String := sorry
-
-def Linger.Target.Remote.decode : List String → Option (List String) := sorry
-
 def Linger.Target.Remote.targetArgs : List String → Option (String × List String) := sorry
 
-def Linger.Target.Remote.targetOperands : String → List String := sorry
+def Linger.Target.Remote.argv : Remote.Transport → List String := sorry
 
-def Linger.Target.Remote.targetArgv :
-    Remote.Transport → String → List String → String → List String → List String := sorry
+def Linger.Target.Remote.scrub : String → String := sorry
 
 def Linger.Target.Remote.checkHosts : List String → Except String (List String) := sorry
 
@@ -1415,20 +1421,14 @@ theorem picker_moves_cycle_rejects_clamped :
                 (if n = 0 then s else { s with cursor := ((s.cursor - k : Int) % n).toNat }) := by
   sorry
 
-theorem route_exact (args : List String) :
-    App.Entry.route args =
-      if args.head? = some Remote.marker then
-        (Remote.decode args.tail).elim .malformed App.Entry.Route.of
-      else App.Entry.Route.of args := by
+theorem route_exact (args : List String) : App.Entry.route args = App.Entry.Route.of args := by
   sorry
 
 @[kills route_exact]
 theorem route_exact_rejects_selector :
     ¬∀ (args : List String),
         (fun (args : List String) => App.Entry.Route.session args) args =
-          if args.head? = some Remote.marker then
-            (Remote.decode args.tail).elim .malformed App.Entry.Route.of
-          else App.Entry.Route.of args := by
+          App.Entry.Route.of args := by
   sorry
 
 theorem op_meaning (args argv : List String) (request : Api.Request) (found : Api.Found) :
@@ -1688,15 +1688,56 @@ theorem serve_attach_exact_rejects_unpainted :
 
 theorem remote_rows_exact (host : String) (messages : List Serve.Json) (status : UInt32)
     (records : List Serve.Record) :
-    Serve.Remote.Exact App.Serve.Remote.heard App.Serve.Remote.rows Name.accept host messages status
-      records := by
+    Serve.Remote.Rows App.Serve.Remote.heard App.Serve.Remote.rows Name.accept Os.Answer.code host
+      messages status records := by
   sorry
 
 @[kills remote_rows_exact]
 theorem remote_rows_exact_rejects_unshaken :
     ¬∀ (host : String) (messages : List Serve.Json) (status : UInt32) (records : List Serve.Record),
-        Serve.Remote.Exact Serve.Remote.unshaken App.Serve.Remote.rows Name.accept host messages
-          status records := by
+        Serve.Remote.Rows Serve.Remote.unshaken App.Serve.Remote.rows Name.accept Os.Answer.code
+          host messages status records := by
+  sorry
+
+theorem remote_exact (request : Api.Request) (name : String) (input : List UInt8)
+    (messages : List Serve.Json) (status : UInt32) (answer : Os.Answer)
+    (members : List (String × Serve.Json)) (host : String) (t : Remote.Transport)
+    (carry : List String → List UInt8 → Option (List UInt8))
+    (delivers : Remote.Transport.Delivers carry t) (bytes : List UInt8) :
+    Serve.Remote.Exact App.Serve.Remote.call App.Serve.parse App.Serve.Remote.heard Os.Answer.code
+        App.Serve.Remote.found App.Api.answer App.Serve.Remote.said Remote.scrub request name input
+        messages status answer members host ∧
+      Remote.argv t = t.command ++ ["linger", "serve"] ∧
+      (carry (Remote.argv t) bytes = none ∨ carry (Remote.argv t) bytes = some bytes) := by
+  sorry
+
+@[kills remote_exact]
+theorem remote_exact_rejects_crossed :
+    ¬∀ (request : Api.Request) (name : String) (input : List UInt8) (messages : List Serve.Json)
+        (status : UInt32) (answer : Os.Answer) (members : List (String × Serve.Json))
+        (host : String) (t : Remote.Transport)
+        (carry : List String → List UInt8 → Option (List UInt8)),
+        Remote.Transport.Delivers carry t →
+          ∀ (bytes : List UInt8),
+            Serve.Remote.Exact
+                (fun (request : Api.Request) (name : String) (input : List UInt8) =>
+                  App.Serve.Remote.call (if request.op = .detach then .kill name else request) name
+                    input)
+                App.Serve.parse App.Serve.Remote.heard Os.Answer.code App.Serve.Remote.found
+                App.Api.answer App.Serve.Remote.said Remote.scrub request name input messages status
+                answer members host ∧
+              Remote.argv t = t.command ++ ["linger", "serve"] ∧
+              (carry (Remote.argv t) bytes = none ∨ carry (Remote.argv t) bytes = some bytes) := by
+  sorry
+
+theorem remote_attach_exact (id : Serve.Id) (stream : List (Serve.Json × List UInt8))
+    (typed : List UInt8) :
+    Serve.Remote.Shows App.Serve.Remote.relay App.Serve.Remote.keys id stream typed := by sorry
+
+@[kills remote_attach_exact]
+theorem remote_attach_exact_rejects_undecoded :
+    ¬∀ (id : Serve.Id) (stream : List (Serve.Json × List UInt8)) (typed : List UInt8),
+        Serve.Remote.Shows Serve.Remote.undecoded App.Serve.Remote.keys id stream typed := by
   sorry
 
 theorem fields_owned :
@@ -1855,7 +1896,7 @@ theorem dismissal_happened_rejects_hangup :
 theorem names_round_trip (s name : String) :
     (Name.accept s = some name ↔ name = s ∧ Name.Accepted s) ∧
       (Name.Usable name →
-        Remote.targetArgs (Remote.targetOperands name) = some (name, []) ∧
+        Remote.targetArgs ["--", name] = some (name, []) ∧
           Names.entryName (Names.entryFile name) = some name) ∧
       Name.accept "build · ✓ tests" = some "build · ✓ tests" := by
   sorry
@@ -1865,7 +1906,7 @@ theorem names_round_trip_rejects_keyed :
     ¬∀ (s name : String),
         (Name.keyed s = some name ↔ name = s ∧ Name.Accepted s) ∧
           (Name.Usable name →
-            Remote.targetArgs (Remote.targetOperands name) = some (name, []) ∧
+            Remote.targetArgs ["--", name] = some (name, []) ∧
               Names.entryName (Names.entryFile name) = some name) ∧
           Name.keyed "build · ✓ tests" = some "build · ✓ tests" := by
   sorry
@@ -1876,100 +1917,6 @@ theorem check_eq_some_iff (s result : String) :
 @[kills check_eq_some_iff]
 theorem check_eq_some_iff_rejects_any :
     ¬∀ (s result : String), (fun s => some s) s = some result ↔ result = s ∧ Name.Valid s := by
-  sorry
-
-theorem command_exact (split : String → List String) (literal : Remote.Shell.Literal split)
-    (verb : String) (words : List String) :
-    ∃ args,
-      split (String.intercalate " " (Remote.commandWords verb words)) = "linger" :: args ∧
-        App.Entry.route args = App.Entry.Route.of (verb :: words) := by
-  sorry
-
-@[kills command_exact]
-theorem command_exact_rejects_quoted :
-    ¬∀ (split : String → List String),
-        Remote.Shell.Literal split →
-          ∀ (verb : String) (words : List String),
-            ∃ args,
-              split
-                    (String.intercalate " "
-                      ((fun (verb : String) (words : List String) =>
-                          ("linger" :: verb :: words).map fun word =>
-                            String.ofList
-                              ('\'' ::
-                                  word.toList.flatMap
-                                    (fun c => if c = '\'' then ['\'', '\\', '\'', '\''] else [c]) ++
-                                ['\'']))
-                        verb words)) =
-                  "linger" :: args ∧
-                App.Entry.route args = App.Entry.Route.of (verb :: words) := by
-  sorry
-
-theorem transport_exact (t : Remote.Transport) (verb name : String) (options args : List String)
-    (deliver : List String → List String → Option (List String))
-    (delivers : Remote.Transport.Delivers deliver t) :
-    (∃ line,
-        Remote.targetArgv t verb options name args =
-            (if verb = "attach" then t.attach else t.query) ++ "linger" :: line ∧
-          (∀ received,
-            deliver (if verb = "attach" then t.attach else t.query) ("linger" :: line) =
-                some received →
-              received = "linger" :: line) ∧
-          App.Entry.route line =
-            App.Entry.Route.of
-              (verb :: options ++
-                (if verb = "attach" ∨ verb = "capture" ∨ verb = "ls" then Remote.targetOperands name
-                else [name]) ++
-                args)) ∧
-      Remote.targetArgs (Remote.targetOperands name ++ args) = some (name, args) := by
-  sorry
-
-@[kills transport_exact]
-theorem transport_exact_rejects_ssh :
-    ¬∀ (t : Remote.Transport) (verb name : String) (options args : List String)
-        (deliver : List String → List String → Option (List String)),
-        Remote.Transport.Delivers deliver t →
-          (∃ line,
-              (fun (_ : Remote.Transport) (_ : String) (_ : List String) (_ : String)
-                        (_ : List String) =>
-                      ["ssh", "-T", "--"])
-                    t verb options name args =
-                  (if verb = "attach" then t.attach else t.query) ++ "linger" :: line ∧
-                (∀ received,
-                  deliver (if verb = "attach" then t.attach else t.query) ("linger" :: line) =
-                      some received →
-                    received = "linger" :: line) ∧
-                App.Entry.route line =
-                  App.Entry.Route.of
-                    (verb :: options ++
-                      (if verb = "attach" ∨ verb = "capture" ∨ verb = "ls" then
-                        Remote.targetOperands name
-                      else [name]) ++
-                      args)) ∧
-            Remote.targetArgs (Remote.targetOperands name ++ args) = some (name, args) := by
-  sorry
-
-@[kills transport_exact]
-theorem transport_exact_rejects_unread :
-    ¬∀ (t : Remote.Transport) (verb name : String) (options args : List String)
-        (deliver : List String → List String → Option (List String)),
-        Remote.Transport.Delivers deliver t →
-          (∃ line,
-              Remote.targetArgv t verb options name args =
-                  (if verb = "attach" then t.attach else t.query) ++ "linger" :: line ∧
-                (∀ received,
-                  deliver (if verb = "attach" then t.attach else t.query) ("linger" :: line) =
-                      some received →
-                    received = "linger" :: line) ∧
-                App.Entry.route line =
-                  App.Entry.Route.of
-                    (verb :: options ++
-                      (if verb = "attach" ∨ verb = "capture" ∨ verb = "ls" then
-                        (fun (_ : String) => ([] : List String)) name
-                      else [name]) ++
-                      args)) ∧
-            Remote.targetArgs ((fun (_ : String) => ([] : List String)) name ++ args) =
-              some (name, args) := by
   sorry
 
 theorem env_defaults (home flag : Option String) (shell dir saved : String) (named : shell ≠ "")

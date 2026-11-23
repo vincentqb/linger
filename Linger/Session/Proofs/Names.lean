@@ -5,7 +5,6 @@ public import Os.WorldSpec
 public import Linger.Target.CoreCode.Name
 import all Linger.Session.CoreCode.Names
 import Linger.Target.Proofs.Name
-import Linger.Target.Proofs.Remote
 public import Linger.Target.CoreSpec
 
 public section
@@ -111,6 +110,33 @@ theorem check_eq_none_of_eq (rest : String) : Linger.Target.Name.check ("=" ++ r
     have := valid.2.2.1 '=' (by simp)
     simp [Linger.Target.Name.okChar] at this
 
+/-! ## A name in hexadecimal -/
+
+theorem digitValue_hexChar : ∀ n, n < 16 → digitValue (hexChar n) = some n := by decide
+
+theorem unhex_hexChars (bytes done : List UInt8) :
+    unhex (hexChars bytes) done = some (done.reverse ++ bytes) := by
+  induction bytes generalizing done with
+  | nil => simp [hexChars, unhex]
+  | cons b bytes
+    ih =>
+    have high : b.toNat / 16 < 16 := by
+      have := b.toNat_lt; omega
+    have low : b.toNat % 16 < 16 := Nat.mod_lt _ (by decide)
+    have byte : UInt8.ofNat (16 * (b.toNat / 16) + b.toNat % 16) = b := by
+      rw [Nat.div_add_mod]
+      exact UInt8.ofNat_toNat
+    simp only [hexChars, List.flatMap_cons, List.cons_append, List.nil_append] at ih ⊢
+    simp [unhex, digitValue_hexChar _ high, digitValue_hexChar _ low, byte, ih]
+
+/-- **A spelled word reads back as itself.** -/
+theorem decodeWord_encodeWord (word : String) : decodeWord (encodeWord word) = some word := by
+  simp only [decodeWord, encodeWord, String.toList_ofList, unhex_hexChars, List.reverse_nil,
+    List.nil_append, Option.bind_some, Array.toArray_toList]
+  show String.fromUTF8? word.toUTF8 = some word
+  simp only [String.fromUTF8?, String.toUTF8_eq_toByteArray, word.isValidUTF8, dite_true]
+  rfl
+
 /-- **A name's entry holds the name**: the entry file `entryFile` gives a name reads back as it. -/
 theorem entryName_entryFile (name : String) (usable : Linger.Target.Name.Usable name) :
     entryName (entryFile name) = some name := by
@@ -121,11 +147,9 @@ theorem entryName_entryFile (name : String) (usable : Linger.Target.Name.Usable 
     rw [check_eq_none_of_eq]
     simp only [Option.isSome_none, Bool.false_eq_true, ↓reduceIte, String.toList_append]
     show
-      (Linger.Target.Remote.decodeWord
-              (String.ofList (Linger.Target.Remote.encodeWord name).toList)).bind
-          Linger.Target.Name.accept =
+      (decodeWord (String.ofList (encodeWord name).toList)).bind Linger.Target.Name.accept =
         some name
-    rw [String.ofList_toList, Linger.Target.Remote.decodeWord_encodeWord]
+    rw [String.ofList_toList, decodeWord_encodeWord]
     exact (Linger.Target.Name.accept_eq_some_iff name name).mpr ⟨rfl, .inl usable⟩
   · simp only [↓reduceIte]
     unfold entryName

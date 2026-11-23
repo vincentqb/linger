@@ -7,45 +7,26 @@ public section
 
 /-! # What remote commands assume of the world
 
-A remote command runs through a transport, a command that runs linger elsewhere, which may be
-any command, each reaching its host its own way: reaching it is the transport's, its keys, jumps,
-latency and authentication included. `Transport.Delivers` says that a transport runs a `linger`
-there with exactly the plain words after its own, or runs nothing. SSH hands those words, joined
-by spaces, to the login shell of the remote account, which may be any shell, each with its own
-quoting; `Shell.Literal` says that every shell passes `linger` and then plain words, one space
-apart, to `linger` as exactly those words. -/
-
-namespace Linger.Target.Remote.Shell
-
-/-- SSH hands its command line to the login shell of the remote account, whichever shell that is,
-and `split line` is the words the program that shell runs for `line` receives, its own name first.
-A line that is `linger` and then plain words, one space apart, reaches `linger` as exactly those
-words. A shell that changes, drops, joins or re-splits such a word, or passes `linger` any word
-the line does not hold, falsifies it. -/
-WorldClaim Literal (split : String → List String) :=
-  ∀ words : List String,
-    (∀ word ∈ words, plain word = true) →
-      split (String.intercalate " " ("linger" :: words)) = "linger" :: words
-
-end Linger.Target.Remote.Shell
+A remote command runs through a transport, a command that runs linger elsewhere, which may be any
+command, each reaching its host its own way: reaching it is the transport's, its keys, jumps,
+latency and authentication included. Every remote command runs `linger serve` there and speaks to
+it in bytes, on the command's standard input and output, which `Transport.Delivers` says the
+transport carries either way exactly, or runs nothing. -/
 
 namespace Linger.Target.Remote.Transport
 
-/-- A transport is a host's commands that run linger there, and `deliver command words` is the
-words the program `command` runs there receives when linger runs `command`'s words and then
-`words`, its own name first, or `none` when it runs nothing, as when it cannot reach its host.
-Each of the transport's commands, its query's and its attach's, hands the words on as they are,
-as `docker exec` and `kubectl exec` do, or joined by spaces to the login shell of an account
-there, as ssh does, which passes plain words on (`Shell.Literal`): either way `linger` and then
-plain words reach a `linger` as exactly those words, or nothing runs. A command that changes,
-drops, joins or re-splits such a word, or runs anything there but `linger` with them, falsifies
-it. -/
-WorldClaim Delivers (deliver : List String → List String → Option (List String))
+/-- A transport is a host's command that runs linger there, and `carry command bytes` is what
+arrives at one end of the command `command`, linger run as it, when the other end writes `bytes`:
+what the program the command runs there reads on its standard input of what linger writes to the
+command's, and what linger reads on the command's standard output of what that program writes to
+its own, or `none` when it runs nothing, as when it cannot reach its host. The transport's command
+runs `linger serve` there, two words every shell passes on as they are, and carries every byte
+either way, in order, as `ssh -T`, `docker exec -i` and `kubectl exec -i` do. A command that
+changes, drops, adds or reorders a byte, or runs anything there but `linger serve`, falsifies it. -/
+WorldClaim Delivers (carry : List String → List UInt8 → Option (List UInt8))
   (transport : Transport) :=
-  ∀ command ∈ [transport.query, transport.attach],
-    ∀ words : List String,
-      (∀ word ∈ words, Shell.plain word = true) →
-        deliver command ("linger" :: words) = none ∨
-          deliver command ("linger" :: words) = some ("linger" :: words)
+  ∀ bytes : List UInt8,
+    carry (transport.command ++ ["linger", "serve"]) bytes = none ∨
+      carry (transport.command ++ ["linger", "serve"]) bytes = some bytes
 
 end Linger.Target.Remote.Transport

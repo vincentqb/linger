@@ -2,7 +2,6 @@ module
 
 public import Linger.Session.CoreSpec
 import Linger.Target.CoreCode.Name
-import Linger.Target.CoreCode.Remote
 
 public section
 
@@ -24,13 +23,50 @@ def isFresh (id : String) : Bool :=
   | '.' :: digits => !digits.isEmpty && digits.all hexDigit
   | _ => false
 
+/-! ## A name in hexadecimal
+
+A name that is no key is spelled in the names directory as an `x` and the lowercase hex of its UTF-8
+bytes (`encodeWord`), which reads back as exactly the name (`decodeWord_encodeWord`). -/
+
+/-- The hex digit of `n`, which is below 16: `0`–`9`, then `a`–`f`. -/
+def hexChar (n : Nat) : Char := if n < 10 then Char.ofNat (48 + n) else Char.ofNat (87 + n)
+
+/-- Each byte as two hex digits, the high one first. -/
+def hexChars (bytes : List UInt8) : List Char :=
+  bytes.flatMap fun b => [hexChar (b.toNat / 16), hexChar (b.toNat % 16)]
+
+/-- One word, spelled: an `x`, so that the empty word is a word too, then the hex digits of its
+UTF-8 bytes. -/
+def encodeWord (word : String) : String := String.ofList ('x' :: hexChars word.toUTF8.data.toList)
+
+/-- The value of a lowercase hex digit, or `none` for any other character. -/
+def digitValue (c : Char) : Option Nat :=
+  if '0' ≤ c ∧ c ≤ '9' then some (c.toNat - 48)
+  else if 'a' ≤ c ∧ c ≤ 'f' then some (c.toNat - 87) else none
+
+/-- The bytes that pairs of lowercase hex digits spell, after the bytes `done` holds in reverse,
+or `none` for an odd digit or any other character. -/
+def unhex : List Char → List UInt8 → Option (List UInt8)
+  | [], done => some done.reverse
+  | high :: low :: rest, done =>
+    match digitValue high, digitValue low with
+    | some h, some l => unhex rest (UInt8.ofNat (16 * h + l) :: done)
+    | _, _ => none
+  | [_], _ => none
+
+/-- The word a spelled word spells, or `none` when it does not start with `x`, its digits do not
+spell bytes, or the bytes are not UTF-8. -/
+def decodeWord (word : String) : Option String :=
+  match word.toList with
+  | 'x' :: digits =>
+    (unhex digits []).bind fun bytes => String.fromUTF8? (ByteArray.mk bytes.toArray)
+  | _ => none
+
 /-- The file a name's entry is in the names directory: the name itself when it is a key, as every
-entry was before names were clean text, and otherwise `=` and the name as an encoded command line
-spells a word (`Remote.encodeWord`), in hexadecimal, which no key can be, since `=` is no
-`Name.okChar` (`entryName_entryFile`). -/
+entry was before names were clean text, and otherwise `=` and the name spelled in hexadecimal
+(`encodeWord`), which no key can be, since `=` is no `Name.okChar` (`entryName_entryFile`). -/
 def entryFile (name : String) : String :=
-  if (Linger.Target.Name.check name).isSome then name
-  else "=" ++ Linger.Target.Remote.encodeWord name
+  if (Linger.Target.Name.check name).isSome then name else "=" ++ encodeWord name
 
 /-- The name an entry's file holds, the inverse of `entryFile`: `none` for a file that is neither a
 key nor `=` and the hexadecimal of a name. -/
@@ -38,8 +74,7 @@ def entryName (file : String) : Option String :=
   if (Linger.Target.Name.check file).isSome then some file
   else
     match file.toList with
-    | '=' :: rest =>
-      (Linger.Target.Remote.decodeWord (String.ofList rest)).bind Linger.Target.Name.accept
+    | '=' :: rest => (decodeWord (String.ofList rest)).bind Linger.Target.Name.accept
     | _ => none
 
 /-- Whether `key` may key a session's files: a valid name, or a fresh ID. -/

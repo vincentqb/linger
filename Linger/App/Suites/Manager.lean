@@ -70,7 +70,7 @@ private def listed : String := call ["ls", "-r", "--porcelain"]
 
 /-- One accepted visit: the listing, the attach of `target`, and the listing on return. -/
 private def attachVisit (target : List String) : String :=
-  listed ++ call ("attach" :: target) ++ listed
+  listed ++ call ("attach" :: "--" :: target) ++ listed
 
 private def appendText (path : System.FilePath) (text : String) : IO Unit := do
   let file ← IO.FS.Handle.mk path .append
@@ -972,16 +972,16 @@ private def failureChecks (e : Env) : IO Unit := do
         "readonly-output"
 
 private def selectionChecks (e : Env) : IO Unit := do
-  for (slug, target, separator) in
-    [("remote", "work@me@dev-a", []), ("leading", "-leading+name", ["--"]),
-      ("shell-text", "work@host with 'spaces' $TERM", [])] do
+  for (slug, target) in
+    [("remote", "work@me@dev-a"), ("leading", "-leading+name"),
+      ("shell-text", "work@host with 'spaces' $TERM")] do
     check e s!"exact-{slug}"
         s!"picker probe attaches the original target as one argument ({target})" fun f => do
         f.listing s!"name\t{target}\n"
         withPrompt f.picker #[] fun s => do
             let shown ← s.until target
             let clean ← acceptThenCancel s
-            return shown && clean && (← f.visits) == attachVisit (separator ++ [target])
+            return shown && clean && (← f.visits) == attachVisit [target]
   let moves :=
     [("down", "\x1b[B", "Beta"), ("up", "\x1b[B\x1b[B\x1b[A", "Beta"), ("ctrl-n", "\x0e", "Beta"),
       ("ctrl-p", "\x0e\x0e\x10", "Beta"), ("end", "\x1b[F", "main"),
@@ -1053,16 +1053,14 @@ private def selectionChecks (e : Env) : IO Unit := do
         unless ← s.typeQuery "\x15Gamma" "Gamma" do
           return false
         return (← acceptThenCancel s) && (← f.visits) == attachVisit ["Gamma"]
-  for (slug, listing, query, target, separator) in
-    [("no-match", "name\tAlpha\n", "new-session", "new-session", []),
-      ("empty-list", "", "", "main", []),
-      ("create-leading", "", "-leading+name", "-leading+name", ["--"]),
-      ("create-remote", "", "work@me@dev-a", "work@me@dev-a", []),
-      ("create-shell-text", "", "work@host with 'spaces' $TERM", "work@host with 'spaces' $TERM",
-        []),
-      ("create-unicode-host", "", "work@界é", "work@界é", []),
+  for (slug, listing, query, target) in
+    [("no-match", "name\tAlpha\n", "new-session", "new-session"), ("empty-list", "", "", "main"),
+      ("create-leading", "", "-leading+name", "-leading+name"),
+      ("create-remote", "", "work@me@dev-a", "work@me@dev-a"),
+      ("create-shell-text", "", "work@host with 'spaces' $TERM", "work@host with 'spaces' $TERM"),
+      ("create-unicode-host", "", "work@界é", "work@界é"),
       ("create-max-name", "", String.ofList (List.replicate Linger.Target.Name.maxLen 'n'),
-        String.ofList (List.replicate Linger.Target.Name.maxLen 'n'), [])] do
+        String.ofList (List.replicate Linger.Target.Name.maxLen 'n'))] do
     check e slug
         s!"picker probe visibly creates the exact target through a restored attach child ({slug})"
         fun f => do
@@ -1075,7 +1073,7 @@ private def selectionChecks (e : Env) : IO Unit := do
                   return false
               let shown ← s.selected s!"+ Create {target}" (if query.isEmpty then 0 else start)
               let clean ← acceptThenCancel s
-              return shown && clean && (← f.visits) == attachVisit (separator ++ [target]))
+              return shown && clean && (← f.visits) == attachVisit [target])
             "both" (UInt32.ofNat (Linger.Target.Name.maxLen + 40)) 12
   for create in [false, true] do
     let slug := if create then "prefix-create" else "prefix-existing"
@@ -2194,9 +2192,9 @@ private def defaultChecks (e : Env) : IO Unit := do
         let mut expected := listed
         let mut count := 0
         let mut normal := true
-        for (target, query, rc, next, separator) in
-          [("Beta", "B", 0, remote, []), (remote, "wrk", 7, shellText, ["--"]),
-            (shellText, "host", 255, "Fresh", [])] do
+        for (target, query, rc, next) in
+          [("Beta", "B", 0, remote), (remote, "wrk", 7, shellText),
+            (shellText, "host", 255, "Fresh")] do
           unless ← s.typeQuery query query do
             return false
           f.afterAttach s!"name\t{next}\nname\tOther{count}\n"
@@ -2205,7 +2203,7 @@ private def defaultChecks (e : Env) : IO Unit := do
           count := count + 1
           unless ← returned s next count do
             return false
-          expected := expected ++ call ("attach" :: separator ++ [target]) ++ listed
+          expected := expected ++ call ["attach", "--", target] ++ listed
           normal :=
             normal && (← beforeAttach s count count) && (← attachNormal f count) &&
               (← f.visits) == expected
