@@ -41,7 +41,17 @@ answer gives the size the mirror has, hands the step the screen the mirror rende
 lines that left since (`Event.watched`); where the size changed, it attaches again, for a repaint
 at the new size. The writer sends each watch's update when nothing else waits (`Event.flush`). A
 watch ends with its session, its connection or its subscription: an `info` request on its
-connection wakes it when the step closes it, and when standard input ends. -/
+connection wakes it when the step closes it, and when standard input ends.
+
+An attach, `session/attach`, attaches to the session writable on a thread of its own, through
+`Api.perform`, as `attach` does, on a terminal that is its subscriber (`Api.Tty`): it hands the
+step each read of the daemon's connection, which decodes it as the attach client does and keeps
+what the client would write for the writer to send (`Event.read`), and reads no further while
+`attachHold` bytes wait, so that a subscriber that does not read holds back the daemon, which cuts
+the connection off past its own cap, as it cuts off any client that does not read. The keys and the
+size the subscriber sends, the step relays (`Effect.relay`), and the thread that read the request
+writes them on the attach's connection once the step is done, in order; the attach lets its
+connection go only once no relay is being written on it. -/
 
 namespace Linger.App.Serve.Shell
 
@@ -75,8 +85,14 @@ private structure Shared where
   /-- The connections the watches attach over, by the watch's id: the descriptor, and whether an
   `info` request on it waits for its answer. -/
   watchers : List (Id × UInt32 × Bool) := []
-  /-- How many watches are followed. -/
+  /-- How many watches and attaches are followed. -/
   following : Nat := 0
+  /-- The messages a step relays to an attach, by the connection they go on, which `run` writes,
+  in order, once the step is done. -/
+  relays : List (UInt32 × List Linger.Session.Wire.Msg) := []
+  /-- The connections a relay is being written on, which their attach closes only once it is
+  written. -/
+  relaying : List UInt32 := []
 
 /-- Write one message, a line of clean text (`Serve.line`). -/
 private def emit (out : Outgoing) : IO Unit := writeAll stdoutFd (Serve.line out).toUTF8
@@ -110,17 +126,27 @@ private def stepShared (ev : Event) :
     effects.filterMap fun (effect : Effect) =>
       match effect with
       | .send out => some out
-      | .perform .. => none
+      | .perform .. | .relay .. => none
+  -- a relay goes on the connection its attach registered, which stays open while it is written
+  let relays : List (UInt32 × List Linger.Session.Wire.Msg) :=
+    effects.filterMap fun (effect : Effect) =>
+      match effect with
+      | .relay key messages =>
+        (shared.watchers.lookup key).map fun (entry : UInt32 × Bool) => (entry.1, messages)
+      | .send _ | .perform .. => none
   set
       { shared with
-        state, outbox := shared.outbox ++ sent }
+        state, outbox := shared.outbox ++ sent, relays := shared.relays ++ relays
+        relaying :=
+          shared.relaying ++
+            relays.map fun (relay : UInt32 × List Linger.Session.Wire.Msg) => relay.1 }
   for (key, _) in shared.state.watches do
     if (state.watching key).isNone then
       askWatcher key
   return effects.filterMap fun (effect : Effect) =>
       match effect with
       | .perform id method request bytes => some (id, method, request, bytes)
-      | .send _ => none
+      | .send _ | .relay .. => none
 
 /-- The members of a result that show what a request shows: a capture's bytes in base64,
 `data`; a listing's records, `records`, each a session's fields as clean text; any other text, and
@@ -161,7 +187,7 @@ private def writer (conn : Std.Mutex Shared) (wake : Std.Condvar) : IO Unit := d
                   return effects.findSome? fun (effect : Effect) =>
                       match effect with
                       | .send out => some out
-                      | .perform .. => none
+                      | .perform .. | .relay .. => none
               | none =>
                 return none)
     match next with
@@ -412,6 +438,86 @@ private def followWatch (env : Api.Env) (conn : Std.Mutex Shared) (wake : Std.Co
             following := s.following - 1 }
   wake.notifyAll
 
+/-- How many bytes may wait for an attach's subscriber before `serve` reads the attach's connection
+no further (`State.holdsBack`): one read's worth, so that a subscriber that does not read holds back
+the daemon, which cuts the connection off past its own cap, as it cuts off any client that does not
+read. -/
+def attachHold : Nat := 65536
+
+/-- Converse with a session's daemon over `fd`, as the attach `id`: attach in `mode` with no size of
+its own (`Msg.attach`, 0×0), as a terminal that has none yet does, until the subscriber says its
+size, and hand the step each read of the connection, which decodes it and sends what an attach
+client writes of it to the subscriber (`Event.read`), reading no further while `attachHold` bytes
+wait for the subscriber; the step writes the subscriber's keys and size on the connection
+(`Effect.relay`). The attach ends when the step holds it no more, the attach's end or its
+subscriber's having closed it, or when the daemon closes the connection, which is lost. The first
+read answers the attach's request, which then counts as answered. -/
+private def converseOn (conn : Std.Mutex Shared) (wake : Std.Condvar) (id : Id)
+    (opened : IO.Ref Bool) (fd : UInt32) (mode : Linger.Session.Mode) :
+    IO Linger.Session.Shell.Client.Outcome := do
+  try
+    conn.atomically
+        (modify fun s => { s with watchers := s.watchers.filter (·.1 != id) ++ [(id, fd, false)] })
+    Linger.Session.Shell.Client.sendMsg fd (.attach mode 0 0)
+    repeat
+      let closed ←
+        conn.atomicallyOnce wake
+            (do
+              let s ← get
+              return (← watchClosed id) || !s.state.holdsBack id attachHold)
+            (watchClosed id)
+      if closed then
+        return .detached
+      let _ ← poll #[fd] #[POLLIN] (-1)
+      let chunk ←
+        try
+          read fd 65536
+        catch _ =>
+          pure none
+      let some bytes := chunk | return .lost "connection lost"
+      conn.atomically do
+          let asked :=
+            match (← get).state.watching id with
+            | some .attaching => true
+            | _ => false
+          discard <| stepShared (.read id bytes.toList)
+          if asked then
+            modify fun s => { s with inFlight := s.inFlight - 1 }
+            opened.set true
+      wake.notifyAll
+    return .detached
+  finally
+    -- no relay is written on the connection once it is let go
+    conn.atomicallyOnce wake (return !(← get).relaying.contains fd)
+        (modify fun s => { s with watchers := s.watchers.filter (·.1 != id) })
+    close fd
+
+/-- Follow an attach, `session/attach`, of the session its request names, as `attach` attaches to
+it (`Api.perform`), on a terminal that is the attach's subscriber (`Api.Tty`, `converseOn`), with
+what it says kept for its result, then tell the step how it ended (`Event.unwatched`). -/
+private def followAttach (env : Api.Env) (conn : Std.Mutex Shared) (wake : Std.Condvar) (id : Id)
+    (request : Api.Request) : IO Unit := do
+  conn.atomically (modify fun s => { s with following := s.following + 1 })
+  let said ← IO.mkRef ({} : Log String)
+  let opened ← IO.mkRef false
+  let env :=
+    { env with
+      say := fun s => said.modify (Log.push saidCap · s.text)
+      tty := some { attach := fun _ fd mode => converseOn conn wake id opened fd mode } }
+  let found ←
+    try
+      (·.found) <$> Api.perform env request
+    catch _ =>
+      pure .unknown
+  let wasOpened ← opened.get
+  conn.atomically do
+      discard <| stepShared (.unwatched id found (← said.get))
+      modify fun s =>
+          { s with
+            inFlight := if wasOpened then s.inFlight else s.inFlight - 1
+            following := s.following - 1 }
+  wake.notifyAll
+
 /-- Perform a request as the command line does, with `bytes` for its standard input and what it
 says kept for its result, and queue its result: the answer it found, what it shows, how a
 session it found ended, and what it said. A `sessions/subscribe`'s listing is the table its
@@ -420,6 +526,9 @@ private def answer (env : Api.Env) (conn : Std.Mutex Shared) (wake : Std.Condvar
     (method : String) (request : Api.Request) (bytes : List UInt8) : IO Unit := do
   if method = "session/screen" ∨ method = "session/history" then
     followWatch env conn wake id method request
+    return
+  if method = "session/attach" then
+    followAttach env conn wake id request
     return
   let said ← IO.mkRef ({} : Log String)
   let env :=
@@ -467,20 +576,32 @@ def run (env : Api.Env) : IO Api.Found := do
         let some message := line.message | continue
         -- room for what the line asks: the requests performed and the messages waiting below
         -- their cap
-        let performs ←
+        let (performs, relays) ←
           conn.atomicallyOnce wake
               (do
                 let s ← get
                 return s.broken || s.inFlight + s.outbox.length < maxInFlight)
               (do
                 if (← get).broken then
-                  return []
+                  return ([], [])
                 let performs ← stepShared (.received message)
-                modify fun s => { s with inFlight := s.inFlight + performs.length }
-                return performs)
+                let relays := (← get).relays
+                modify fun s =>
+                    { s with
+                      inFlight := s.inFlight + performs.length, relays := [] }
+                return (performs, relays))
         wake.notifyAll
         for (id, method, request, bytes) in performs do
           discard <| IO.asTask (answer env conn wake id method request bytes) .dedicated
+        -- an attach's keys and size, in order, on the connection its attach keeps open for them
+        for (fd, messages) in relays do
+          try
+            for message in messages do
+              Linger.Session.Shell.Client.sendMsg fd message
+          catch _ =>
+            pure ()
+          conn.atomically (modify fun s => { s with relaying := s.relaying.erase fd })
+          wake.notifyAll
       if ← conn.atomically (return (← get).broken) then
         reading := false
   conn.atomicallyOnce wake

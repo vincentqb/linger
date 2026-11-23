@@ -29,6 +29,7 @@ import all Linger.App.Proofs.Entry
 import all Linger.App.Proofs.Kill
 import all Linger.App.Proofs.Recovery
 import all Linger.App.Proofs.Serve
+import all Linger.App.Proofs.Stream
 import all Linger.App.Proofs.Screen
 import all Linger.App.Proofs.Wait
 import Linger.Display.Proofs.Clean
@@ -310,7 +311,8 @@ theorem serve_negotiated (s : App.Serve.State) (ev : App.Serve.Event) :
       App.Serve.step_welcome s ev, fun id method params received => by
       subst received
       exact App.Serve.step_answers s id method params, App.Serve.step_notify_open s ev,
-      App.Serve.step_opens s ev, fun id params version ready received => by
+      App.Serve.step_relays_open s ev, App.Serve.step_opens s ev,
+      fun id params version ready received => by
       subst received
       exact App.Serve.subscribe_opens s id params version ready,
       fun id asked params version ready subscribed received names => by
@@ -421,6 +423,39 @@ theorem history_log_exact_rejects_uncounted :
     App.Serve.State.watching, App.Serve.State.setWatch, App.Serve.Log.append] at holds
   subst holds
   simp [App.Serve.Log.reads, App.Serve.Log.Masks] at masks
+
+theorem serve_attach_exact (s : App.Serve.State) (version : String) (id : App.Serve.Id)
+    (dec : Wire.Decoder) (pending bytes : List UInt8) (ready : s.phase = .ready version) :
+    App.Serve.AttachStream App.Serve.State.watching App.Serve.step App.Serve.result
+      Wire.Decoder.feed s id dec pending bytes :=
+  App.Serve.attach_stream s version id dec pending bytes ready
+
+theorem serve_attach_exact_rejects_unpainted :
+    ¬∀ (s : App.Serve.State) (version : String) (id : App.Serve.Id) (dec : Wire.Decoder)
+        (pending bytes : List UInt8),
+        s.phase = .ready version →
+          App.Serve.AttachStream App.Serve.State.watching
+            (App.Serve.unpainted App.Serve.State.watching App.Serve.step) App.Serve.result
+            Wire.Decoder.feed s id dec pending bytes := by
+  intro h
+  -- a stream that drops its first read's bytes, which open the repaint, leaves its subscriber
+  -- waiting for none of them
+  have painted :
+    Wire.Decoder.feed {} (Wire.encode (.output [65])) =
+      ({ buf := [], errored := false }, [.output [65]]) := by
+    simpa [Wire.decode] using
+      Wire.decode_encode_stream [.output [65]]
+        (by simpa using Wire.fits_wf _ (by simp [Wire.Msg.Fits, Wire.maxPayload]))
+  have quiet : Wire.Decoder.feed {} [] = ({ buf := [], errored := false }, []) := by
+    simpa [Wire.decode] using Wire.decode_encode_stream [] (by simp)
+  obtain ⟨rest, sent, streamed⟩ :=
+    (h ({ stage := .ready "1", watches := [(.number "1", .attaching)] } : App.Serve.StateRec) "1"
+          (.number "1") {} [] (Wire.encode (.output [65])) rfl).1
+      (by simp [App.Serve.State.watching])
+  simp [App.Serve.unpainted, App.Serve.State.watching, App.Serve.step, App.Serve.readAttach,
+    App.Serve.State.phase, App.Serve.streamed, quiet, App.Serve.State.setWatch] at sent streamed
+  subst sent
+  simp [App.Serve.Streamed, painted, Wire.shown, Wire.Msg.ends] at streamed
 
 theorem fields_owned :
     (App.Fields.table.map (·.key)).Nodup ∧

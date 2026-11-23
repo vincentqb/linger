@@ -21,8 +21,11 @@ exits with, by name and code. It watches a session's terminal as rows: the scree
 lines it keeps in a grid of its own and finds, after each step of the session's program, what
 `capture` prints, with the cursor `info` reports, each update carrying only lines that changed and
 the last one how the session ended; and the history's log, whose lines and drops are the lines that
-scrolled off, as `capture --history` prints them. A method `serve` does not answer, params it does not take and a line
-that is no JSON get JSON-RPC's errors. Once its standard input ends, `serve` exits 0. -/
+scrolled off, as `capture --history` prints them. It attaches to a session as a terminal client
+does: the stream's bytes, base64 in each update, open with the synchronized repaint, then carry
+what the session prints; it types into the session, sizes it, detaches, and hears the session's
+end in the stream's last update. A method `serve` does not answer, params it does not take and a
+line that is no JSON get JSON-RPC's errors. Once its standard input ends, `serve` exits 0. -/
 
 namespace Linger.App.Suites.Serve
 
@@ -584,6 +587,80 @@ private def historyLog (p : Peer) : IO Unit := do
   expect exact
       s!"a burst's history, its lines and its counted drops in order, is each line that scrolled off, every line kept in its own place ({read.length} places of {expected.length}, {(read.filter (·.isNone)).length} dropped)"
 
+/-- The `session/output` updates the peer wrote so far for the subscription `id`, each its params. -/
+def Peer.outputs (p : Peer) (id : Nat) : IO (List Json) := do
+  return (← p.notes "session/output").filterMap fun note =>
+      (at? note ["params"]).filter fun params =>
+        textAt? params ["subscription"] == some (toString id)
+
+/-- The bytes the updates for the subscription `id` carry, each update's `data` decoded, in order. -/
+def Peer.stream (p : Peer) (id : Nat) : IO ByteArray := do
+  let chunks :=
+    (← p.outputs id).map fun params =>
+      ((textAt? params ["data"]).bind (Base64.decode ·.toList)).getD []
+  return ByteArray.mk chunks.flatten.toArray
+
+/-- The params of a conversation request on the attach `id`, with `more` members. -/
+def onAttach (id : Nat) (more : List (String × Json) := []) : Json :=
+  .obj (("subscription", .number (toString id)) :: more)
+
+/-- The byte stream of a terminal client: `session/attach` answers done and its updates carry the
+session's output as base64, the synchronized repaint first; `session/input` types into the session,
+`session/resize` sizes it, and `session/detach` ends the stream, after which no update names it and
+the session runs on with no client; and an attached session's end sends a last update that carries
+`closed` with how it ended. -/
+private def attachStream (e : Env) (p : Peer) : IO Unit := do
+  p.say (request 80 "session/attach" (named "typed"))
+  let opened ← p.answer 80
+  let painted ←
+    waitFor patienceMs do
+        let bytes ← p.stream 80
+        return startsWithBytes bytes Terminal.Render.syncBegin &&
+            hasBytes bytes Terminal.Render.syncEnd
+  expect (answerOf opened == some ("done", "0") && painted)
+      s!"session/attach answers done, and its stream opens with the synchronized repaint ({answerOf opened}, {(← p.stream 80).size} bytes)"
+  p.say
+      (request 81 "session/input"
+        (onAttach 80 [("data", .str (Base64.encode "echo hi-$((40+2))\r".toUTF8.toList))]))
+  let typed ← p.answer 81
+  let echoed ← waitFor patienceMs (return hasText (← p.stream 80) "hi-42")
+  expect (answerOf typed == some ("done", "0") && echoed)
+      s!"session/input types into the session, and what it runs streams back: hi-42 ({answerOf typed})"
+  p.say
+      (request 82 "session/resize" (onAttach 80 [("cols", .number "100"), ("rows", .number "30")]))
+  let resized ← p.answer 82
+  let sized ←
+    waitFor patienceMs do
+        return (← e.info "typed" "cols") == some "100" && (← e.info "typed" "rows") == some "30"
+  p.say
+      (request 83 "session/input"
+        (onAttach 80 [("data", .str (Base64.encode "stty size\r".toUTF8.toList))]))
+  let _ ← p.answer 83
+  let told ← waitFor patienceMs (return hasText (← p.stream 80) "30 100")
+  expect (answerOf resized == some ("done", "0") && sized && told)
+      s!"session/resize sizes the session: info says 100x30, and its program reads 30 100 ({answerOf resized}, {sized}, {told})"
+  p.say (request 84 "session/detach" (onAttach 80))
+  let detached ← p.answer 84
+  let left ← waitFor patienceMs (return (← e.info "typed" "clients") == some "0")
+  let after := (← p.outputs 80).length
+  let _ ← e.cli #["send", "typed", "echo still-$((20+3))\n"]
+  let ran ← waitFor patienceMs (return has (← e.out #["capture", "--history", "typed"]) "still-23")
+  let quiet := (← p.outputs 80).length == after
+  expect (answerOf detached == some ("done", "0") && left && ran && quiet)
+      s!"session/detach ends the stream: the session runs on with no client, and no update names it after ({answerOf detached}, {left}, {ran}, {quiet})"
+  p.say (request 85 "session/attach" (named "typed"))
+  let _ ← p.answer 85
+  p.say
+      (request 86 "session/input"
+        (onAttach 85 [("data", .str (Base64.encode "exit 7\r".toUTF8.toList))]))
+  let _ ← p.answer 86
+  let closed ←
+    waitFor patienceMs do
+        return (← p.outputs 85).any fun params =>
+            textAt? params ["closed", "answer"] == some "program" &&
+              textAt? params ["closed", "code"] == some "7"
+  expect closed "an attached session's end sends a last update that carries closed, program 7"
+
 /-- The suite. -/
 def run : IO UInt32 :=
   Env.suite "serve" fun e => do
@@ -595,6 +672,7 @@ def run : IO UInt32 :=
       sameList e p
       screenTable p
       historyLog p
+      attachStream e p
       let rc ← p.close
       expect (rc == some 0) s!"once its standard input ends, serve exits 0 ({rc})"
     finally

@@ -216,6 +216,7 @@ theorem flushed_watching (s : State) (id : Id) (key : Id) :
   split
   · rw [setWatch_watching]; split <;> simp
   · rw [setWatch_watching]; split <;> simp
+  · rw [setWatch_watching]; split <;> simp
   · rfl
 
 /-- A watch's end holds a watch under an id only where the connection held one. -/
@@ -230,6 +231,59 @@ theorem unwatched_watching (s : State) (id : Id) (found : Api.Found) (said : Log
         split at held
         · simp at held
         · exact held)
+
+/-- A read of an attach's connection sets or drops the attach and nothing else. -/
+theorem streamed_eq (s : State) (id : Id) (dec : Session.Wire.Decoder)
+    (pending bytes : List UInt8) :
+    ∃ ws, (streamed s id dec pending bytes).1 = { s with watches := ws } := by
+  simp only [streamed]
+  split
+  · exact dropWatch_eq _ _
+  · split
+    · exact dropWatch_eq _ _
+    · exact setWatch_eq _ _ _
+
+/-- A read of an attach's connection, as a connection takes it, sets or drops the attach and
+nothing else. -/
+theorem readAttach_eq (s : State) (id : Id) (bytes : List UInt8) :
+    ∃ ws, (readAttach s id bytes).1 = { s with watches := ws } := by
+  unfold readAttach
+  split
+  · exact streamed_eq _ _ _ _ _
+  · exact streamed_eq _ _ _ _ _
+  · exact ⟨s.watches, rfl⟩
+
+/-- A read of an attach's connection holds a watch under an id only where the connection held
+one. -/
+theorem streamed_watching (s : State) (id : Id) (dec : Session.Wire.Decoder)
+    (pending bytes : List UInt8) (key : Id)
+    (held : ((streamed s id dec pending bytes).1.watching key).isSome) :
+    (s.watching key).isSome := by
+  simp only [streamed] at held
+  split at held
+  · rw [dropWatch_watching] at held
+    split at held
+    · simp at held
+    · exact held
+  · split at held
+    · rw [dropWatch_watching] at held
+      split at held
+      · simp at held
+      · exact held
+    · rw [setWatch_watching] at held
+      split at held
+      · simpa using held
+      · exact held
+
+/-- A read of an attach's connection, as a connection takes it, holds a watch under an id only
+where the connection held one. -/
+theorem read_watching (s : State) (id : Id) (bytes : List UInt8) (key : Id)
+    (held : ((readAttach s id bytes).1.watching key).isSome) : (s.watching key).isSome := by
+  unfold readAttach at held
+  split at held
+  · exact streamed_watching s id {} [] bytes key held
+  · exact streamed_watching s id _ _ bytes key held
+  · exact held
 
 /-! ## Requests -/
 
@@ -261,6 +315,24 @@ theorem performs_stage (s : State) (id : Id) (method : String) (req : Api.Reques
     · split <;> rfl
     · rfl
 
+/-- A request of an attach's conversation drops the attach, or nothing, and changes nothing
+else. -/
+theorem converse_eq (s : State) (id : Id) (method : String) (params : Json) :
+    ∃ ws, (converse s id method params).1 = { s with watches := ws } := by
+  unfold converse
+  split
+  · exact ⟨s.watches, rfl⟩
+  · split
+    · split
+      · exact dropWatch_eq _ _
+      · exact ⟨s.watches, rfl⟩
+    · split
+      · exact dropWatch_eq _ _
+      · split
+        · exact ⟨s.watches, rfl⟩
+        · exact ⟨s.watches, rfl⟩
+    · exact ⟨s.watches, rfl⟩
+
 /-- What a request does to the handshake: nothing, but an `initialize` before it, answered. -/
 theorem request_stage (s : State) (id : Id) (method : String) (params : Json) :
     (request s id method params).1.stage = s.stage ∨
@@ -281,10 +353,13 @@ theorem request_stage (s : State) (id : Id) (method : String) (params : Json) :
     · split
       · exact .inl (unsubscribe_stage s id params)
       · split
+        · obtain ⟨ws, same⟩ := converse_eq s id method params
+          exact .inl (by rw [same])
         · split
-          · exact .inl (performs_stage _ _ _ _ _)
+          · split
+            · exact .inl (performs_stage _ _ _ _ _)
+            · exact .inl rfl
           · exact .inl rfl
-        · exact .inl rfl
     · exact .inl rfl
 
 /-- What an event does to the handshake: nothing, but an `initialize` before it, answered, and
@@ -346,6 +421,10 @@ theorem step_stage (s : State) (ev : Event) :
     left
     obtain ⟨ws, same⟩ := unwatched_eq s id found said
     simp only [step, same]
+  | read id bytes =>
+    left
+    obtain ⟨ws, same⟩ := readAttach_eq s id bytes
+    simp only [step, same]
 
 /-- **Before it is ready, a connection writes nothing but errors and `initialize`'s result, and
 performs nothing.** -/
@@ -376,6 +455,7 @@ theorem step_negotiating (s : State) (ev : Event) (notReady : ∀ version, s.pha
     | watched id screen left => simp [step, watched, State.phase]
     | flush id => simp [step, flushed, State.phase]
     | unwatched id found said => simp [step, unwatched, State.phase]
+    | read id bytes => simp [step, readAttach, State.phase]
   | negotiated version =>
     cases ev with
     | received message =>
@@ -393,6 +473,7 @@ theorem step_negotiating (s : State) (ev : Event) (notReady : ∀ version, s.pha
     | watched id screen left => simp [step, watched, State.phase]
     | flush id => simp [step, flushed, State.phase]
     | unwatched id found said => simp [step, unwatched, State.phase]
+    | read id bytes => simp [step, readAttach, State.phase]
 
 /-- **A connection is ready only once the client said `initialized`** after `initialize` was
 answered. -/
@@ -423,12 +504,44 @@ theorem unsubscribe_sends (s : State) (id : Id) (params : Json) :
       simp only [List.mem_append, List.mem_singleton] at sent
       rcases sent with sent | sent
       · split at sent
-        · simp only [List.mem_singleton] at sent
-          exact .inl ⟨_, _, _, sent⟩
-        · simp at sent
+        all_goals
+          first
+          | ( simp only [List.mem_singleton] at sent
+              exact .inl ⟨_, _, _, sent⟩)
+          | simp at sent
       · exact .inl ⟨_, _, _, sent⟩
     · simp
   · simp
+
+/-- What a request of an attach's conversation sends: results, errors, and the messages it relays
+to the attach its params name, an attach open. -/
+theorem converse_sends (s : State) (id : Id) (method : String) (params : Json) :
+    ∀ e ∈ (converse s id method params).2,
+      (∃ key found members, e = .send (.result key (result found members))) ∨
+        (∃ code message data, e = .send (.error (some id) code message data)) ∨
+        ∃ key messages decoder pending,
+          e = .relay key messages ∧ s.watching key = some (.stream decoder pending) := by
+  unfold converse
+  split
+  · simp
+  · rename_i key _
+    split
+    · split
+      · simp only [List.mem_cons, List.not_mem_nil, or_false]
+        rintro e (sent | sent) <;> exact .inl ⟨_, _, _, sent⟩
+      · simp
+    · rename_i decoder pending holds
+      split
+      · simp only [List.mem_singleton]
+        intro e sent
+        exact .inl ⟨_, _, _, sent⟩
+      · split
+        · simp only [List.mem_cons, List.not_mem_nil, or_false]
+          rintro e (sent | sent)
+          · exact .inr (.inr ⟨key, _, decoder, pending, sent, holds⟩)
+          · exact .inl ⟨_, _, _, sent⟩
+        · simp
+    · simp
 
 /-- What a performed request sends: its result, or that it is performed. -/
 theorem performs_sends (s : State) (id : Id) (method : String) (req : Api.Request)
@@ -457,6 +570,61 @@ theorem watched_sends (s : State) (id : Id) (screen : Screen) (left : Log Line) 
   all_goals
     intro e sent
     exact ⟨_, _, sent⟩
+
+/-- An update of an attach's stream names its subscription, with members after it or none. -/
+theorem output_update_names (id : Id) (bytes : List UInt8) (more : List (String × Json)) :
+    ((Output.update id bytes).withMembers more).member? "subscription" = some id.json ∧
+      (Output.update id bytes).member? "subscription" = some id.json := by
+  simp [Output.update, Json.withMembers, Json.member?, List.lookup]
+
+/-- What a read of an attach's connection sends: the stream's updates, each naming the attach. -/
+theorem streamed_sends (s : State) (id : Id) (dec : Session.Wire.Decoder)
+    (pending bytes : List UInt8) :
+    ∀ e ∈ (streamed s id dec pending bytes).2,
+      ∃ params,
+        e = .send (.notify "session/output" params) ∧
+          params.member? "subscription" = some id.json := by
+  simp only [streamed]
+  split
+  · simp only [List.mem_singleton]
+    intro e sent
+    exact ⟨_, sent, (output_update_names _ _ _).1⟩
+  · split
+    · simp only [List.mem_singleton]
+      intro e sent
+      exact ⟨_, sent, (output_update_names _ _ _).1⟩
+    · simp
+
+/-- What a read of an attach's connection, as a connection takes it, sends: the first answers the
+attach's request `done`, and each sends the stream's updates, each naming the attach. -/
+theorem read_sends (s : State) (id : Id) (bytes : List UInt8) :
+    ∀ e ∈ (readAttach s id bytes).2,
+      e = .send (.result id (result .done [])) ∨
+        ∃ params,
+          e = .send (.notify "session/output" params) ∧
+            params.member? "subscription" = some id.json := by
+  unfold readAttach
+  split
+  · simp only [List.mem_cons]
+    rintro e (sent | sent)
+    · exact .inl sent
+    · exact .inr (streamed_sends s id {} [] bytes e sent)
+  · intro e sent
+    exact .inr (streamed_sends s id _ _ bytes e sent)
+  · simp
+
+/-- A read of an attach's connection sends something only for an attach the connection holds. -/
+theorem read_holds (s : State) (id : Id) (bytes : List UInt8)
+    (sends : (readAttach s id bytes).2 ≠ []) :
+    s.watching id = some .attaching ∨
+      ∃ decoder pending, s.watching id = some (.stream decoder pending) := by
+  unfold readAttach at sends
+  split at sends
+  · rename_i holds
+    exact .inl holds
+  · rename_i decoder pending _ holds
+    exact .inr ⟨decoder, pending, holds⟩
+  · simp at sends
 
 /-- **`initialize`'s result goes only to `initialize`, with the version the client asked for**,
 one `serve` speaks. -/
@@ -504,13 +672,20 @@ theorem step_welcome (s : State) (ev : Event) (id : Id) (version linger : String
               exact absurd same.2.symm (result_ne_welcome found members version linger)
             · simp at same
           · split at sent
+            · rcases converse_sends s id' method params _ sent with ⟨_, found, members, same⟩ |
+                ⟨_, _, _, same⟩ | ⟨_, _, _, _, same, -⟩
+              · simp only [Effect.send.injEq, Outgoing.result.injEq] at same
+                exact absurd same.2.symm (result_ne_welcome found members version linger)
+              · simp at same
+              · simp at same
             · split at sent
-              · rcases performs_sends s id' method _ _ _ sent with ⟨found, members, same⟩ | same
-                · simp only [Effect.send.injEq, Outgoing.result.injEq] at same
-                  exact absurd same.2.symm (result_ne_welcome found members version linger)
-                · simp at same
+              · split at sent
+                · rcases performs_sends s id' method _ _ _ sent with ⟨found, members, same⟩ | same
+                  · simp only [Effect.send.injEq, Outgoing.result.injEq] at same
+                    exact absurd same.2.symm (result_ne_welcome found members version linger)
+                  · simp at same
+                · simp at sent
               · simp at sent
-            · simp at sent
         · simp [notInitialized] at sent
   | opened id' records =>
     simp only [step] at sent
@@ -537,15 +712,39 @@ theorem step_welcome (s : State) (ev : Event) (id : Id) (version linger : String
     split at sent
     · split at sent <;> simp at sent
     · split at sent <;> simp at sent
+    · split at sent <;> simp at sent
     · simp at sent
   | unwatched id' found said =>
     simp only [step, unwatched] at sent
     split at sent
-    · simp only [List.mem_singleton, Effect.send.injEq, Outgoing.result.injEq] at sent
-      exact absurd sent.2.symm (result_ne_welcome found _ version linger)
-    · simp at sent
-    · simp at sent
-    · simp at sent
+    all_goals
+      first
+      | ( simp only [List.mem_singleton, Effect.send.injEq, Outgoing.result.injEq] at sent
+          exact absurd sent.2.symm (result_ne_welcome found _ version linger))
+      | simp at sent
+  | read id' bytes =>
+    simp only [step] at sent
+    rcases read_sends s id' bytes _ sent with same | ⟨_, same, -⟩
+    · simp only [Effect.send.injEq, Outgoing.result.injEq] at same
+      exact absurd same.2.symm (result_ne_welcome .done [] version linger)
+    · simp at same
+
+/-- **A request of an attach's conversation is answered.** -/
+theorem converse_answers (s : State) (id : Id) (method : String) (params : Json) :
+    ∃ e ∈ (converse s id method params).2, e.Answers id := by
+  unfold converse
+  split
+  · simp [Effect.Answers]
+  · split
+    · split
+      · exact ⟨_, List.mem_cons_of_mem _ (List.mem_singleton_self _), rfl⟩
+      · simp [Effect.Answers]
+    · split
+      · simp [Effect.Answers]
+      · split
+        · exact ⟨_, List.mem_cons_of_mem _ (List.mem_singleton_self _), rfl⟩
+        · simp [Effect.Answers]
+    · simp [Effect.Answers]
 
 /-- **Every request is answered or performed.** -/
 theorem step_answers (s : State) (id : Id) (method : String) (params : Json) :
@@ -564,15 +763,17 @@ theorem step_answers (s : State) (id : Id) (method : String) (params : Json) :
           · simp [Effect.Answers]
         · simp [Effect.Answers]
       · split
+        · exact converse_answers s id method params
         · split
-          · unfold performs
-            split
-            · simp [Effect.Answers]
-            · split
-              · split <;> simp [Effect.Answers]
+          · split
+            · unfold performs
+              split
               · simp [Effect.Answers]
+              · split
+                · split <;> simp [Effect.Answers]
+                · simp [Effect.Answers]
+            · simp [Effect.Answers]
           · simp [Effect.Answers]
-        · simp [Effect.Answers]
     · simp [Effect.Answers, notInitialized]
 
 /-- An update's params name the subscription they update. -/
@@ -604,7 +805,10 @@ theorem step_notify_open (s : State) (ev : Event) :
                 method = "session/screen/changed" ∧
                   (∃ told latest, s.watching id = some (.screen told latest)) ∨
                 method = "session/history/changed" ∧
-                  ∃ pending, s.watching id = some (.history pending)) := by
+                  (∃ pending, s.watching id = some (.history pending)) ∨
+                method = "session/output" ∧
+                  (s.watching id = some .attaching ∨
+                    ∃ decoder pending, s.watching id = some (.stream decoder pending))) := by
   intro e sent method params notified
   subst notified
   cases ev with
@@ -626,11 +830,15 @@ theorem step_notify_open (s : State) (ev : Event) :
           · rcases unsubscribe_sends s id params' _ sent with ⟨_, _, _, same⟩ | ⟨_, _, _, same⟩
             all_goals simp at same
           · split at sent
+            · rcases converse_sends s id method' params' _ sent with ⟨_, _, _, same⟩ |
+                ⟨_, _, _, same⟩ | ⟨_, _, _, _, same, -⟩
+              all_goals simp at same
             · split at sent
-              · rcases performs_sends s id method' _ _ _ sent with ⟨_, _, same⟩ | same
-                all_goals simp at same
+              · split at sent
+                · rcases performs_sends s id method' _ _ _ sent with ⟨_, _, same⟩ | same
+                  all_goals simp at same
+                · simp at sent
               · simp at sent
-            · simp at sent
         · simp [notInitialized] at sent
   | opened id records =>
     simp only [step] at sent
@@ -670,12 +878,27 @@ theorem step_notify_open (s : State) (ev : Event) :
       · simp at sent
       · simp only [List.mem_singleton, Effect.send.injEq, Outgoing.notify.injEq] at sent
         obtain ⟨rfl, rfl⟩ := sent
-        exact ⟨id, (log_update_names _ _ []).2, .inr (.inr ⟨rfl, pending, holds⟩)⟩
+        exact ⟨id, (log_update_names _ _ []).2, .inr (.inr (.inl ⟨rfl, pending, holds⟩))⟩
+    · rename_i version decoder pending _ holds
+      split at sent
+      · simp at sent
+      · simp only [List.mem_singleton, Effect.send.injEq, Outgoing.notify.injEq] at sent
+        obtain ⟨rfl, rfl⟩ := sent
+        exact
+          ⟨id, (output_update_names _ _ []).2,
+            .inr (.inr (.inr ⟨rfl, .inr ⟨decoder, pending, holds⟩⟩))⟩
     · simp at sent
   | unwatched id found said =>
     simp only [step, unwatched] at sent
     split at sent
     · simp at sent
+    · simp at sent
+    · rename_i version decoder pending _ holds
+      simp only [List.mem_singleton, Effect.send.injEq, Outgoing.notify.injEq] at sent
+      obtain ⟨rfl, rfl⟩ := sent
+      exact
+        ⟨id, (output_update_names _ _ _).1,
+          .inr (.inr (.inr ⟨rfl, .inr ⟨decoder, pending, holds⟩⟩))⟩
     · rename_i version told latest _ holds
       simp only [List.mem_singleton, Effect.send.injEq, Outgoing.notify.injEq] at sent
       obtain ⟨rfl, rfl⟩ := sent
@@ -683,8 +906,15 @@ theorem step_notify_open (s : State) (ev : Event) :
     · rename_i version pending _ holds
       simp only [List.mem_singleton, Effect.send.injEq, Outgoing.notify.injEq] at sent
       obtain ⟨rfl, rfl⟩ := sent
-      exact ⟨id, (log_update_names _ _ _).1, .inr (.inr ⟨rfl, pending, holds⟩)⟩
+      exact ⟨id, (log_update_names _ _ _).1, .inr (.inr (.inl ⟨rfl, pending, holds⟩))⟩
     · simp at sent
+  | read id bytes =>
+    simp only [step] at sent
+    rcases read_sends s id bytes _ sent with same | ⟨params', same, names⟩
+    · simp at same
+    · simp only [Effect.send.injEq, Outgoing.notify.injEq] at same
+      obtain ⟨rfl, rfl⟩ := same
+      exact ⟨id, names, .inr (.inr (.inr ⟨rfl, read_holds s id bytes (List.ne_nil_of_mem sent)⟩))⟩
 
 /-- What `sessions/unsubscribe` does to the subscription: nothing, or closes it. -/
 theorem unsubscribe_open (s : State) (id : Id) (params : Json) :
@@ -740,12 +970,15 @@ theorem request_open (s : State) (id : Id) (method : String) (params : Json) :
         · exact .inl same
         · exact .inr (.inl closed)
       · split
+        · obtain ⟨ws, same⟩ := converse_eq s id method params
+          exact .inl (by rw [same])
         · split
-          · rcases performs_open s id method _ _ with same | ⟨subscribe, now⟩
-            · exact .inl same
-            · exact .inr (.inr ⟨version, ready, subscribe, now⟩)
+          · split
+            · rcases performs_open s id method _ _ with same | ⟨subscribe, now⟩
+              · exact .inl same
+              · exact .inr (.inr ⟨version, ready, subscribe, now⟩)
+            · exact .inl rfl
           · exact .inl rfl
-        · exact .inl rfl
     · exact .inl rfl
 
 /-- **A subscription opens only by its `sessions/subscribe`**, in a ready connection. -/
@@ -798,12 +1031,25 @@ theorem step_opens (s : State) (ev : Event) (id : Id)
     obtain ⟨ws, same⟩ := unwatched_eq s id' found said
     simp only [step, same] at opened
     exact .inl opened
+  | read id' bytes =>
+    obtain ⟨ws, same⟩ := readAttach_eq s id' bytes
+    simp only [step, same] at opened
+    exact .inl opened
+
+/-- `sessions/subscribe` is no request of an attach's conversation. -/
+theorem converses_subscribe (params : Json) : converses "sessions/subscribe" params = false := by
+  simp [converses]
+
+/-- `sessions/unsubscribe` is no request of an attach's conversation. -/
+theorem converses_unsubscribe (params : Json) :
+    converses "sessions/unsubscribe" params = false := by simp [converses]
 
 /-- **A `sessions/subscribe` in a ready connection opens its subscription**, named by its id. -/
 theorem subscribe_opens (s : State) (id : Id) (params : Json) (version : String)
     (ready : s.phase = .ready version) :
     (step s (.received (.request id "sessions/subscribe" params))).1.subscription = some id := by
-  simp [step, request, ready, parse_subscribe, methods, performs, State.subscription]
+  simp [step, request, ready, converses_subscribe, parse_subscribe, methods, performs,
+    State.subscription]
 
 /-- **A `sessions/unsubscribe` of the subscription open closes it.** -/
 theorem unsubscribe_closes (s : State) (id asked : Id) (params : Json) (version : String)
@@ -833,13 +1079,36 @@ theorem unsubscribe_watching (s : State) (id : Id) (params : Json) (key : Id)
     · exact held
   · exact held
 
+/-- What a request of an attach's conversation does to the watches: drops the attach it names, or
+nothing. -/
+theorem converse_watching (s : State) (id : Id) (method : String) (params : Json) (key : Id)
+    (held : ((converse s id method params).1.watching key).isSome) : (s.watching key).isSome := by
+  unfold converse at held
+  split at held
+  · exact held
+  · split at held
+    · split at held
+      · rw [dropWatch_watching] at held
+        split at held
+        · simp at held
+        · exact held
+      · exact held
+    · split at held
+      · rw [dropWatch_watching] at held
+        split at held
+        · simp at held
+        · exact held
+      · split at held <;> exact held
+    · exact held
+
 /-- What a performed request does to the watches: asks for one under its id, a watch's request, or
 nothing. -/
 theorem performs_watching (s : State) (id : Id) (method : String) (req : Api.Request)
     (bytes : List UInt8) (key : Id)
     (held : ((performs s id method req bytes).1.watching key).isSome) :
     (s.watching key).isSome ∨
-      key = id ∧ (method = "session/screen" ∨ method = "session/history") := by
+      key = id ∧
+        (method = "session/screen" ∨ method = "session/history" ∨ method = "session/attach") := by
   unfold performs at held
   split at held
   · exact .inl held
@@ -864,7 +1133,8 @@ theorem request_watching (s : State) (id : Id) (method : String) (params : Json)
     (s.watching key).isSome ∨
       ∃ version,
         s.phase = .ready version ∧
-          key = id ∧ (method = "session/screen" ∨ method = "session/history") := by
+          key = id ∧
+          (method = "session/screen" ∨ method = "session/history" ∨ method = "session/attach") := by
   unfold request at held
   split at held
   · split at held
@@ -877,23 +1147,26 @@ theorem request_watching (s : State) (id : Id) (method : String) (params : Json)
       split at held
       · exact .inl (unsubscribe_watching s id params key held)
       · split at held
+        · exact .inl (converse_watching s id method params key held)
         · split at held
-          · rcases performs_watching s id method _ _ key held with old | ⟨same, watch⟩
-            · exact .inl old
-            · exact .inr ⟨version, ready, same, watch⟩
+          · split at held
+            · rcases performs_watching s id method _ _ key held with old | ⟨same, watch⟩
+              · exact .inl old
+              · exact .inr ⟨version, ready, same, watch⟩
+            · exact .inl held
           · exact .inl held
-        · exact .inl held
     · exact .inl held
 
-/-- **A watch opens only by its request**, `session/screen` or `session/history`, in a ready
-connection. -/
+/-- **A watch opens only by its request**, `session/screen`, `session/history` or
+`session/attach`, in a ready connection. -/
 theorem step_watch_opens (s : State) (ev : Event) (id : Id)
     (held : ((step s ev).1.watching id).isSome) :
     (s.watching id).isSome ∨
       ∃ params version,
         s.phase = .ready version ∧
           (ev = .received (.request id "session/screen" params) ∨
-            ev = .received (.request id "session/history" params)) := by
+            ev = .received (.request id "session/history" params) ∨
+            ev = .received (.request id "session/attach" params)) := by
   cases ev with
   | received message =>
     cases message with
@@ -907,9 +1180,10 @@ theorem step_watch_opens (s : State) (ev : Event) (id : Id)
       simp only [step] at held
       rcases request_watching s id' method params id held with old | ⟨version, ready, rfl, watch⟩
       · exact .inl old
-      · rcases watch with rfl | rfl
+      · rcases watch with rfl | rfl | rfl
         · exact .inr ⟨params, version, ready, .inl rfl⟩
-        · exact .inr ⟨params, version, ready, .inr rfl⟩
+        · exact .inr ⟨params, version, ready, .inr (.inl rfl)⟩
+        · exact .inr ⟨params, version, ready, .inr (.inr rfl)⟩
   | opened id' records =>
     simp only [step] at held
     split at held
@@ -934,6 +1208,9 @@ theorem step_watch_opens (s : State) (ev : Event) (id : Id)
   | unwatched id' found said =>
     simp only [step] at held
     exact .inl (unwatched_watching s id' found said id held)
+  | read id' bytes =>
+    simp only [step] at held
+    exact .inl (read_watching s id' bytes id held)
 
 /-- **A `sessions/unsubscribe` of a watch closes it.** -/
 theorem unsubscribe_closes_watch (s : State) (id asked : Id) (params : Json) (version : String)
@@ -943,6 +1220,82 @@ theorem unsubscribe_closes_watch (s : State) (id asked : Id) (params : Json) (ve
   simp only [step, request, ready]
   simp only [unsubscribe, names, Option.bind_some, Id.of_json, held, or_true, ↓reduceIte]
   simp [dropWatch_watching]
+
+/-- **A connection relays messages only to an attach open.** -/
+theorem step_relays_open (s : State) (ev : Event) :
+    ∀ e ∈ (step s ev).2,
+      ∀ id messages,
+        e = .relay id messages →
+          ∃ decoder pending, s.watching id = some (.stream decoder pending) := by
+  intro e sent id messages relayed
+  subst relayed
+  cases ev with
+  | received message =>
+    cases message with
+    | invalid id' unparsed => cases unparsed <;> simp [step] at sent
+    | notification method params =>
+      simp only [step] at sent
+      split at sent
+      · split at sent <;> simp at sent
+      · simp at sent
+    | request id' method params =>
+      simp only [step, request] at sent
+      split at sent
+      · repeat' split at sent
+        all_goals simp at sent
+      · split at sent
+        · split at sent
+          · rcases unsubscribe_sends s id' params _ sent with ⟨_, _, _, same⟩ | ⟨_, _, _, same⟩
+            all_goals simp at same
+          · split at sent
+            · rcases converse_sends s id' method params _ sent with ⟨_, _, _, same⟩ |
+                ⟨_, _, _, same⟩ | ⟨key, messages', decoder, pending, same, holds⟩
+              · simp at same
+              · simp at same
+              · simp only [Effect.relay.injEq] at same
+                obtain ⟨rfl, rfl⟩ := same
+                exact ⟨decoder, pending, holds⟩
+            · split at sent
+              · split at sent
+                · rcases performs_sends s id' method _ _ _ sent with ⟨_, _, same⟩ | same
+                  all_goals simp at same
+                · simp at sent
+              · simp at sent
+        · simp [notInitialized] at sent
+  | opened id' records =>
+    simp only [step] at sent
+    split at sent
+    · split at sent <;> simp at sent
+    · simp at sent
+  | sampled records =>
+    simp only [step] at sent
+    split at sent
+    · split at sent <;> simp at sent
+    · simp at sent
+  | writable =>
+    simp only [step] at sent
+    split at sent
+    · split at sent <;> simp at sent
+    · simp at sent
+  | watched id' screen left =>
+    simp only [step] at sent
+    obtain ⟨_, _, same⟩ := watched_sends s id' screen left _ sent
+    simp at same
+  | flush id' =>
+    simp only [step, flushed] at sent
+    split at sent
+    all_goals
+      first
+      | (split at sent <;> simp at sent)
+      | simp at sent
+  | unwatched id' found said =>
+    simp only [step, unwatched] at sent
+    split at sent
+    all_goals simp at sent
+  | read id' bytes =>
+    simp only [step] at sent
+    rcases read_sends s id' bytes _ sent with same | ⟨_, same, -⟩
+    all_goals simp at same
 
 /-- **What a free writer sends the subscriber**: `sessions/changed`, exactly when the latest
 records differ from what it last told the subscriber, with the records that differ and the keys

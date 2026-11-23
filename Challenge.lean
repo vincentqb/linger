@@ -1666,6 +1666,22 @@ theorem history_log_exact_rejects_uncounted :
             App.Serve.result s id pending screen left := by
   sorry
 
+theorem serve_attach_exact (s : App.Serve.State) (version : String) (id : Serve.Id)
+    (dec : Wire.Decoder) (pending bytes : List UInt8) (ready : s.phase = .ready version) :
+    Serve.AttachStream App.Serve.State.watching App.Serve.step App.Serve.result Wire.Decoder.feed s
+      id dec pending bytes := by
+  sorry
+
+@[kills serve_attach_exact]
+theorem serve_attach_exact_rejects_unpainted :
+    ¬∀ (s : App.Serve.State) (version : String) (id : Serve.Id) (dec : Wire.Decoder)
+        (pending bytes : List UInt8),
+        s.phase = .ready version →
+          Serve.AttachStream App.Serve.State.watching
+            (Serve.unpainted App.Serve.State.watching App.Serve.step) App.Serve.result
+            Wire.Decoder.feed s id dec pending bytes := by
+  sorry
+
 theorem fields_owned :
     (App.Fields.table.map (·.key)).Nodup ∧
       (∀ key ∈ Listing.sources, key ∈ App.Fields.table.map (·.key)) ∧

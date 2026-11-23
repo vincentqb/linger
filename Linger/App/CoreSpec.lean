@@ -688,19 +688,20 @@ inductive Life (ε : Type) where
 
 /-- The methods `serve` answers as operations, each with the operation whose request it is, the
 word of that operation's command and its shape: every one is an ask but `sessions/subscribe`, a
-table of the sessions' records, keyed by name, and the watches of a session's terminal, which
+table of the sessions' records, keyed by name, the watches of a session's terminal, which
 attach to it read-only as `attach --read-only` does: `session/screen`, a table of its screen's
 lines, keyed by number, with its cursor and title, and `session/history`, a log of the lines that
-leave the top of its screen. -/
+leave the top of its screen, and `session/attach`, which attaches to it as `attach` does, a log of
+the bytes its daemon sends an attach client. -/
 @[expose]
 def methods : List (String × Commands.Op × String × Shape) :=
   [("sessions/list", .list, "ls", .ask), ("sessions/subscribe", .list, "ls", .table),
     ("session/screen", .attach, "attach", .table), ("session/history", .attach, "attach", .log),
-    ("session/start", .start, "start", .ask), ("session/resume", .resume, "resume", .ask),
-    ("session/send", .send, "send", .ask), ("session/detach", .detach, "detach", .ask),
-    ("session/kill", .kill, "kill", .ask), ("session/rename", .rename, "rename", .ask),
-    ("session/capture", .capture, "capture", .ask), ("session/resize", .resize, "resize", .ask),
-    ("session/wait", .wait, "wait", .ask)]
+    ("session/attach", .attach, "attach", .log), ("session/start", .start, "start", .ask),
+    ("session/resume", .resume, "resume", .ask), ("session/send", .send, "send", .ask),
+    ("session/detach", .detach, "detach", .ask), ("session/kill", .kill, "kill", .ask),
+    ("session/rename", .rename, "rename", .ask), ("session/capture", .capture, "capture", .ask),
+    ("session/resize", .resize, "resize", .ask), ("session/wait", .wait, "wait", .ask)]
 
 /-- The standard input a method's command line reads: the bytes `session/send`'s `data` encodes
 in base64 (`Base64.decode`), and none for any other method. -/
@@ -713,7 +714,8 @@ def input (method : String) (params : Json) : Option (List UInt8) :=
 /-- The words of a method's command line after its command's: its options from the params'
 members and its target last, after `--` where the command reads one, so that a name that starts
 with `-` stays a name; none for params the method does not take. `session/send` is `send NAME -`,
-whose standard input is `input`'s, and a watch is `attach --read-only -- NAME`. -/
+whose standard input is `input`'s, a watch is `attach --read-only -- NAME` and an attach
+`attach -- NAME`. -/
 @[expose]
 def operands (method : String) (params : Json) : Option (List String) :=
   if method = "sessions/list" then
@@ -724,31 +726,34 @@ def operands (method : String) (params : Json) : Option (List String) :=
       if method = "session/screen" ∨ method = "session/history" then
         (params.need "name" Json.text?).map fun name => ["--read-only", "--", name]
       else
-        if method = "session/start" then do
-          let name ← params.need "name" Json.text?
-          let program ← params.need "program" Json.text?
-          let args ← params.opt "args" Json.texts? []
-          pure ([name, program] ++ args)
+        if method = "session/attach" then
+          (params.need "name" Json.text?).map fun name => ["--", name]
         else
-          if method = "session/rename" then do
+          if method = "session/start" then do
             let name ← params.need "name" Json.text?
-            let new ← params.need "new" Json.text?
-            pure [name, new]
+            let program ← params.need "program" Json.text?
+            let args ← params.opt "args" Json.texts? []
+            pure ([name, program] ++ args)
           else
-            if method = "session/capture" then do
+            if method = "session/rename" then do
               let name ← params.need "name" Json.text?
-              let history ← params.opt "history" Json.flag? false
-              pure ((if history then ["--history"] else []) ++ ["--", name])
+              let new ← params.need "new" Json.text?
+              pure [name, new]
             else
-              if method = "session/resize" then do
+              if method = "session/capture" then do
                 let name ← params.need "name" Json.text?
-                let cols ← params.need "cols" Json.nat?
-                let rows ← params.need "rows" Json.nat?
-                pure [name, toString cols, toString rows]
+                let history ← params.opt "history" Json.flag? false
+                pure ((if history then ["--history"] else []) ++ ["--", name])
               else
-                if method = "session/send" then
-                  (params.need "name" Json.text?).map fun name => [name, "-"]
-                else (params.need "name" Json.text?).map fun name => [name]
+                if method = "session/resize" then do
+                  let name ← params.need "name" Json.text?
+                  let cols ← params.need "cols" Json.nat?
+                  let rows ← params.need "rows" Json.nat?
+                  pure [name, toString cols, toString rows]
+                else
+                  if method = "session/send" then
+                    (params.need "name" Json.text?).map fun name => [name, "-"]
+                  else (params.need "name" Json.text?).map fun name => [name]
 
 /-- **The command line a method and its params are**: its operation's command word (`methods`),
 then its `operands`; none for a method `methods` does not list or params it does not take. -/
@@ -998,8 +1003,10 @@ def Log.Masks {α : Type} : List (Option α) → List (Option α) → Prop
 
 /-- What a connection holds for a watch, a subscription to a session's terminal: asked for and not
 answered yet, a screen's or a history's; open on a screen, which its subscriber was last told and
-the latest look found; or open on a history, with the lines that left the screen since the last
-update, a bounded tail and a count of those it dropped. -/
+the latest look found; open on a history, with the lines that left the screen since the last
+update, a bounded tail and a count of those it dropped; or an attach, asked for and not answered
+yet, or open, with how far its connection's frames are read and the bytes that wait for its
+subscriber. -/
 inductive Watch where
   /-- Asked for, of a history or else of a screen, and not answered yet. -/
   | asked (history : Bool)
@@ -1007,6 +1014,11 @@ inductive Watch where
   | screen (told latest : Screen)
   /-- Open on a history: the lines that left since the last update. -/
   | history (pending : Log Line)
+  /-- An attach asked for and not answered yet. -/
+  | attaching
+  /-- An attach open: the decoder of its connection's frames, and the bytes that wait for its
+  subscriber, in order. -/
+  | stream (decoder : Session.Wire.Decoder) (pending : List UInt8)
 
 /-- The two lowercase hexadecimal digits of a byte. -/
 @[expose]
@@ -1136,6 +1148,9 @@ inductive Event where
   opened, as `found` says, with what it said, which answers the request that asked for it when it
   never opened. -/
   | unwatched (id : Id) (found : Api.Found) (said : Log String)
+  /-- The bytes one read took from the connection of the attach with this id: what its daemon
+  sent, as an attach client reads them. -/
+  | read (id : Id) (bytes : List UInt8)
 
 /-- What a connection does. -/
 inductive Effect where
@@ -1144,6 +1159,9 @@ inductive Effect where
   /-- Perform this request, the command line's (`words`) with this standard input (`input`), as
   the command line does, and answer the request with this id from its reply. -/
   | perform (id : Id) (method : String) (request : Api.Request) (input : List UInt8)
+  /-- Write these messages, in order, on the connection of the attach with this id, as an attach
+  client writes its keys and its terminal's size. -/
+  | relay (id : Id) (messages : List Session.Wire.Msg)
 
 /-- The result of `initialize`: the protocol version chosen, the server, `linger` at its version,
 and its capabilities, the methods it answers and the notifications it may send. -/
@@ -1155,11 +1173,14 @@ def welcome (version linger : String) : Json :=
       ("capabilities",
         .obj
           [("methods",
-              .arr (("initialize" :: methods.map (·.1) ++ ["sessions/unsubscribe"]).map .str)),
+              .arr
+                (("initialize" :: methods.map (·.1) ++
+                      ["sessions/unsubscribe", "session/input"]).map
+                  .str)),
             ("notifications",
               .arr
                 [.str "sessions/changed", .str "session/screen/changed",
-                  .str "session/history/changed"])])]
+                  .str "session/history/changed", .str "session/output"])])]
 
 /-- What a connection may write before it is ready: an error, or the result of `initialize`. -/
 @[expose]
@@ -1176,6 +1197,7 @@ def Effect.Answers (id : Id) : Effect → Prop
   | .send (.error answered ..) => answered = some id
   | .perform answered .. => answered = id
   | .send (.notify ..) => False
+  | .relay .. => False
 
 /-- A wrong part: a connection that answers every request at once with an empty result, whatever
 its handshake says, and otherwise steps as `step` does. -/
@@ -1208,9 +1230,9 @@ until it is ready it writes nothing but errors and the result of `initialize`, a
 nothing; it is ready only once the client said `initialized` after `initialize` was answered;
 `initialize`'s result goes only to `initialize`, with the version the client asked for, one it
 speaks; it answers or performs every request; each notification names a subscription open, of its
-kind; the sessions table opens only by its `sessions/subscribe`, which opens it in a ready
-connection, and a watch only by its request; and `sessions/unsubscribe` closes the subscription it
-names. -/
+kind; it relays messages only to an attach open; the sessions table opens only by its
+`sessions/subscribe`, which opens it in a ready connection, and a watch only by its request; and
+`sessions/unsubscribe` closes the subscription it names. -/
 @[expose]
 def Negotiated {σ : Type} (init : σ) (phase : σ → Phase) (subscription : σ → Option Id)
     (watching : σ → Id → Option Watch) (step : σ → Event → σ × List Effect) (s : σ) (ev : Event) :
@@ -1239,7 +1261,14 @@ def Negotiated {σ : Type} (init : σ) (phase : σ → Phase) (subscription : σ
                 method = "session/screen/changed" ∧
                   (∃ told latest, watching s id = some (.screen told latest)) ∨
                 method = "session/history/changed" ∧
-                  (∃ pending, watching s id = some (.history pending)))) ∧
+                  (∃ pending, watching s id = some (.history pending)) ∨
+                method = "session/output" ∧
+                  (watching s id = some .attaching ∨
+                    ∃ decoder pending, watching s id = some (.stream decoder pending)))) ∧
+    (∀ e ∈ (step s ev).2,
+      ∀ id messages,
+        e = .relay id messages →
+          ∃ decoder pending, watching s id = some (.stream decoder pending)) ∧
     (∀ id,
       subscription (step s ev).1 = some id →
         subscription s = some id ∨
@@ -1260,7 +1289,8 @@ def Negotiated {σ : Type} (init : σ) (phase : σ → Phase) (subscription : σ
           ∃ params version,
             phase s = .ready version ∧
               (ev = .received (.request id "session/screen" params) ∨
-                ev = .received (.request id "session/history" params))) ∧
+                ev = .received (.request id "session/history" params) ∨
+                ev = .received (.request id "session/attach" params))) ∧
     ∀ id request params version,
       phase s = .ready version →
         (watching s id).isSome →
@@ -1322,6 +1352,93 @@ def HistoryLog {σ : Type} (watching : σ → Id → Option Watch) (step : σ �
           (if pending.tail = [] ∧ pending.dropped = 0 then []
           else [.send (.notify "session/history/changed" (Log.update id pending))]) ∧
         watching (step s (.flush id)).1 id = some (.history {}))
+
+/-! ## A session's terminal as bytes
+
+A client that is a terminal follows a session as an attach client does: `session/attach` attaches
+to it writable, as `attach` does, and each update of its stream, `session/output`, carries in base64
+bytes its daemon sent the attach, its repaint, then its output as it comes, in order, every one,
+with nothing else. `session/input`, `session/resize` and `session/detach`, each naming the attach
+by its subscription, carry its keys, its terminal's size and its leaving to the daemon, as an
+attach client's terminal does. A reader that does not read is cut off as an attach client is:
+`serve` reads the attach's connection no further while what waits for its subscriber passes a
+bound, so the daemon, which owes a client no more than its cap, cuts the connection, and the
+stream's last update says so. -/
+
+/-- **An update of an attach's stream carries `bytes`**: its params name the subscription `id`, and
+their `data` is text that decodes as base64 (`Base64.decode`) to exactly those bytes. -/
+@[expose]
+def Carries (id : Id) (bytes : List UInt8) (params : Json) : Prop :=
+  params.member? "subscription" = some id.json ∧
+    ∃ text, params.member? "data" = some (.str text) ∧ Base64.decode text.toList = some bytes
+
+/-- **What one read of an attach's connection does**, for the attach `id`, whose connection's
+frames `dec` has read so far and whose subscriber `pending` waits for, when it took `bytes`, of
+which `feed` decodes messages as an attach client decodes them: when the connection's framing
+breaks, where an attach client writes nothing of the read and loses its connection, it sends one
+last update, which carries what waited and `closed`, and holds the attach no more; when one of the
+messages ends the attach (`Wire.Msg.ends`), it sends one last update, which carries what waited and
+the bytes an attach client writes of the messages (`Wire.shown`), and `closed`, and holds the
+attach no more; otherwise it sends nothing and holds the attach open, its decoder past them and
+those bytes waiting after what waited. -/
+@[expose]
+def Streamed
+    (feed : Session.Wire.Decoder → List UInt8 → Session.Wire.Decoder × List Session.Wire.Msg)
+    (id : Id) (dec : Session.Wire.Decoder) (pending bytes : List UInt8) (sent : List Effect)
+    (after : Option Watch) : Prop :=
+  if (feed dec bytes).1.errored then
+    after = none ∧
+      ∃ params,
+        sent = [.send (.notify "session/output" params)] ∧
+          Carries id pending params ∧ (params.member? "closed").isSome
+  else
+    if (feed dec bytes).2.any Session.Wire.Msg.ends then
+      after = none ∧
+        ∃ params,
+          sent = [.send (.notify "session/output" params)] ∧
+            Carries id (pending ++ Session.Wire.shown (feed dec bytes).2) params ∧
+            (params.member? "closed").isSome
+    else
+      sent = [] ∧
+        after = some (.stream (feed dec bytes).1 (pending ++ Session.Wire.shown (feed dec bytes).2))
+
+/-- **An attach's stream is exact**, of the connection whose states read as `watching`, whose
+transition is `step` and whose results are `result`, at `s` for the attach `id`, where `feed`
+decodes what a daemon sends as an attach client decodes it: the first read of the attach's
+connection answers its request, and every read is `Streamed`, so its subscriber gets the bytes an
+attach client writes of what the daemon sent, the repaint and the output after it, in order, every
+one and nothing else, and the last update, once the attach ends, carries `closed`; and a free
+writer sends what waits, as one update without `closed`, when anything waits, and then nothing
+waits. -/
+@[expose]
+def AttachStream {σ : Type} (watching : σ → Id → Option Watch) (step : σ → Event → σ × List Effect)
+    (result : Api.Found → List (String × Json) → Json)
+    (feed : Session.Wire.Decoder → List UInt8 → Session.Wire.Decoder × List Session.Wire.Msg)
+    (s : σ) (id : Id) (dec : Session.Wire.Decoder) (pending bytes : List UInt8) : Prop :=
+  (watching s id = some .attaching →
+      ∃ rest,
+        (step s (.read id bytes)).2 = .send (.result id (result .done [])) :: rest ∧
+          Streamed feed id {} [] bytes rest (watching (step s (.read id bytes)).1 id)) ∧
+    (watching s id = some (.stream dec pending) →
+      Streamed feed id dec pending bytes (step s (.read id bytes)).2
+          (watching (step s (.read id bytes)).1 id) ∧
+        (pending = [] → (step s (.flush id)).2 = []) ∧
+        (pending ≠ [] →
+          ∃ params,
+            (step s (.flush id)).2 = [.send (.notify "session/output" params)] ∧
+              Carries id pending params ∧ params.member? "closed" = none) ∧
+        watching (step s (.flush id)).1 id = some (.stream dec []))
+
+/-- A wrong part: a connection whose attach drops what its first read took, the bytes that open
+the daemon's repaint, and otherwise steps as `step` does. -/
+@[expose]
+def unpainted {σ : Type} (watching : σ → Id → Option Watch) (step : σ → Event → σ × List Effect)
+    (s : σ) : Event → σ × List Effect
+  | .read id bytes =>
+    match watching s id with
+    | some .attaching => step s (.read id [])
+    | _ => step s (.read id bytes)
+  | ev => step s ev
 
 end Linger.App.Serve
 

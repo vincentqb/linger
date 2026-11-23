@@ -458,6 +458,22 @@ def feedAll (feed : Decoder → List UInt8 → Decoder × List Msg) (d : Decoder
     let rest := feedAll feed r.1 cs
     (rest.1, r.2 ++ rest.2)
 
+/-- Whether a message from its daemon ends an attach: how the session's program ended, the status
+of that ending, that a signal stopped the daemon, which saved the session, or a refusal. -/
+@[expose]
+def Msg.ends : Msg → Bool
+  | .ended _ | .exited _ | .saved _ | .err _ => true
+  | _ => false
+
+/-- **The bytes an attach client writes to its terminal** of the messages one read of its
+daemon's connection brings: each output's payload, in order, up to the first message that ends the
+attach (`Msg.ends`). -/
+@[expose]
+def shown : List Msg → List UInt8
+  | [] => []
+  | .output bytes :: rest => bytes ++ shown rest
+  | m :: rest => if m.ends then [] else shown rest
+
 end Linger.Session.Wire
 
 namespace Linger.Session

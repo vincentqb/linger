@@ -760,11 +760,15 @@ done
 # A watch's look is the screen its mirror renders and the rows that left it, each through the one
 # renderer `capture` uses (`one_renderer`), and a watch attaches, read-only, only over the
 # connection `Api.watch` opened, once its daemon said in an info answer on it that it speaks this
-# version's protocol (`Wire.admits`), as every attach does.
+# version's protocol (`Wire.admits`), as every attach does; an attach's stream is what the step
+# decodes of each read of its connection (`serve_attach_exact`), which attaches, with no size of its
+# own, over the connection `attachHeard` admitted.
 for tie in \
   'discard <[|] stepShared [(][.]watched id [(]Screen[.]render mirror[)] left[)]' \
   'Linger[.]Session[.]Shell[.]Client[.]sendMsg fd [(][.]attach [.]readOnly [(]UInt32[.]ofNat cols[)] [(]UInt32[.]ofNat rows[)][)]' \
   'let some [(]fd, fields[)] ← watched[.]connect [|] return [.]refused' \
+  'Linger[.]Session[.]Shell[.]Client[.]sendMsg fd [(][.]attach mode 0 0[)]' \
+  'discard <[|] stepShared [(][.]read id bytes[.]toList[)]' \
   'let [(]fed, kept[)] := feedLeaving mirror live left'; do
   printf '%s\n' "$serve_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "a watch looks or attaches otherwise than through its renderer and its checked connection: $tie"
@@ -772,15 +776,15 @@ done
 tie='let level := [(]heard[.]toOption[.]bind [(]·[.]lookup "protocol"[)][)][.]bind String[.]toNat[?] if Linger[.]Session[.]Wire[.]admits level then if let [.]ok fields := heard then return some [(]fd, fields[)] close fd'
 printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
   || fail "a watch's connection bypasses its daemon's protocol level (Wire.admits): $tie"
-[ "$(code_count 'Client[.]sendMsg fd [(][.]attach' Linger/App/WorldCode/Serve.lean)" -eq 1 ] \
-  || fail "a watch attaches outside followOn, whose connection Api.watch checked"
+[ "$(code_count 'Client[.]sendMsg fd [(][.]attach' Linger/App/WorldCode/Serve.lean)" -eq 2 ] \
+  || fail "a watch attaches outside followOn, whose connection Api.watch checked, or an attach outside converseOn, whose connection attachHeard admitted"
 # An attach, writable or watching, goes only to a daemon that says in an info answer on the
 # attach's own connection, within the one-shot reply budget, that it speaks this version's
 # protocol (`admits_level`); the chooser runs `linger attach`. Linger.Session.Suites.Attach checks
 # the refusals against older daemons' answers and against silence.
 for tie in \
   'private def hearInfo [(]fd : UInt32[)] : IO [(]Except IO[.]Error [(]List [(]String × String[)][)][)] := do [(]Inventory[.]readInfo fd [(]some [(][(]← monotonicMs[)] [+] Client[.]replySilenceMs[.]toNatClampNeg[)][)][)][.]toBaseIO' \
-  'let level := [(]heard[.]toOption[.]bind [(]·[.]lookup "protocol"[)][)][.]bind String[.]toNat[?] if Linger[.]Session[.]Wire[.]admits level then return [.]ok [(]← Client[.]attach name fd [(]attentionSample name[)] [(]mode == [.]readOnly[)][)] close fd'; do
+  'let level := [(]heard[.]toOption[.]bind [(]·[.]lookup "protocol"[)][)][.]bind String[.]toNat[?] if Linger[.]Session[.]Wire[.]admits level then match env[.]tty with [|] some tty => return [.]ok [(]← tty[.]attach name fd mode[)] [|] none => return [.]ok [(]← Client[.]attach name fd [(]attentionSample name[)] [(]mode == [.]readOnly[)][)] close fd'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "an attach bypasses its daemon's protocol level (Wire.admits): $tie"
 done
@@ -872,7 +876,7 @@ client_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/WorldCode/Clie
 for tie in \
   'let mut observer := Terminal[.]Vt[.]Vt[.]init 1 1' \
   'while !leaving do if let some task[[:space:]]*← pending[.]get then if ← IO[.]hasFinished task then pending[.]set none let fresh ← match ← IO[.]wait task with [|] [.]ok sampled => previous := some sampled[.]statuses alerts := [(]alerts [+][+] sampled[.]alerts[)][.]take alertCap pure sampled[.]summary [|] [.]error _ => pure [(]String[.]singleton [(]Linger[.]Display[.]Status[.]icon [.]unknown[)][)] titleDirty := titleDirty [|][|] fresh != summary summary := fresh nextSummary := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextSummary then pending[.]set [(]some [(]← IO[.]asTask [(]sample previous[)] Task[.]Priority[.]dedicated[)][)] let revs ← poll #[[]stdinFd, fd[]] #[[]POLLIN, POLLIN[]] 200' \
-  'writeAll stdoutFd [(]ByteArray[.]mk payload[.]toArray[)] observer := observer[.]observe payload receivedOutput := true' \
+  'writeAll stdoutFd [(]ByteArray[.]mk shown[.]toArray[)] observer := observer[.]observe shown receivedOutput := true' \
   'if receivedOutput && titleDirty && !leaving then let title := Linger[.]Display[.]Title[.]compose name observer[.]windowTitle summary Terminal[.]Title[.]maxChars let bytes := Terminal[.]Title[.]update observer title if !bytes[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] titleDirty := false' \
   'try writeAll stdoutFd [(]ByteArray[.]mk Terminal[.]Render[.]leaveAnsi[.]toArray[)] finally termRestore stdinFd saved return result finally close fd' \
   'if !alerts[.]isEmpty && observer[.]atBoundary && !leaving then for alert in alerts do writeAll stdoutFd [(]ByteArray[.]mk alert[.]toArray[)] alerts := [[][]]' \
@@ -1972,7 +1976,9 @@ ed_n="$(code_count '(^|[^[:alnum:]_.])drain(Str)?[[:space:]]+[^[:space:]]+[[:spa
 #     looking at most once a second; its writer waits for a message, with no timeout; a watch,
 #     its daemon's connection, with no timeout: it wakes only for the output, the `info`
 #     answers and the ending the daemon sends it, and an `info` the step's closing of the watch
-#     asks for wakes it to let the connection go.
+#     asks for wakes it to let the connection go; an attach, its daemon's connection, with no
+#     timeout, as a watch does, and, while `attachHold` bytes wait for its subscriber, the writer's
+#     sending them.
 #   Import/WorldCode: tmux's configuration and a pane archive, every 10 ms for at most 1 s and 5 s.
 #   packages/os, Os/WorldCode: `nap` and `pause`, the only sleeps; a full write's wait for its
 #     descriptor to take more (`writeAll`), with no deadline, on its reader, as a blocking
@@ -2002,6 +2008,7 @@ Linger/App/WorldCode/Api.lean: let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN
 Linger/App/WorldCode/Api.lean: discard <| nap (first + Wait.heldNameMs) 20
 Linger/App/WorldCode/Api.lean: discard <| nap (taken + Wait.heldNameMs) 20
 Linger/App/WorldCode/Serve.lean: if ← nap next sampleMs then
+Linger/App/WorldCode/Serve.lean: let _ ← poll #[fd] #[POLLIN] (-1)
 Linger/App/WorldCode/Serve.lean: let _ ← poll #[fd] #[POLLIN] (-1)
 Linger/App/WorldCode/Serve.lean: let _ ← poll #[stdinFd] #[POLLIN] (-1)
 Linger/Import/WorldCode.lean: unless ← Os.Shell.nap deadline 10 do
@@ -2062,7 +2069,7 @@ Linger/Selector/WorldCode.lean: writeAll stdoutFd (ByteArray.mk (Terminal.Title.
 Linger/Session/WorldCode/Client.lean: writeAll stdoutFd (ByteArray.mk bytes.toArray)
 Linger/Session/WorldCode/Client.lean: writeAll stdoutFd (ByteArray.mk (Terminal.Title.update view title).toArray)
 Linger/Session/WorldCode/Client.lean: writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
-Linger/Session/WorldCode/Client.lean: writeAll stdoutFd (ByteArray.mk payload.toArray)
+Linger/Session/WorldCode/Client.lean: writeAll stdoutFd (ByteArray.mk shown.toArray)
 Linger/Session/WorldCode/Client.lean: writeAll stdoutFd (ByteArray.mk bytes.toArray)
 Linger/Session/WorldCode/Client.lean: writeAll stdoutFd (ByteArray.mk alert.toArray)
 Linger/Session/WorldCode/Client.lean: writeAll stdoutFd (ByteArray.mk Terminal.Render.leaveAnsi.toArray)
@@ -2073,6 +2080,11 @@ $term_writes"
 tie='[|] [.]output payload [|] [.]infoReply payload => sink [(]ByteArray[.]mk payload[.]toArray[)]'
 printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
   || fail "a one-shot reply is written other than as the daemon's frames: $tie"
+# What an attach writes of a read is `Wire.shown` of the read's messages, the bytes a `serve` attach
+# streams to its subscriber (`serve_attach_exact`).
+tie='let shown := Linger[.]Session[.]Wire[.]shown msgs if !shown[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk shown[.]toArray[)]'
+printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+  || fail "an attach writes otherwise than Wire.shown of the messages a read brings: $tie"
 # The Lean API writes nothing to standard output or standard error (`Linger.App.Api`): what a
 # command says goes to its caller's `Env.say`, and what it shows is returned, which the command
 # line renders (`Linger.App.Shell`); and it reads no environment variable, so it finds its

@@ -364,31 +364,31 @@ private def converse (name : String) (fd : UInt32)
                   if dec.errored then
                     result := .lost "invalid response from daemon"
                     leaving := true
-                  else
-                    for m in msgs do
-                      if leaving then
-                        continue
-                      match m with
-                      | .output payload =>
-                        writeAll stdoutFd (ByteArray.mk payload.toArray)
-                        observer := observer.observe payload
-                        receivedOutput := true
-                        -- Reassert even if the application repeats the same OSC title.
-                        titleDirty := true
-                      | .ended outcome =>
-                        result := .ended (.outcome outcome)
-                        leaving := true
-                      | .exited status =>
-                        result := .ended (.status status)
-                        leaving := true
-                      | .saved signal =>
-                        result := .ended (.saved signal)
-                        leaving := true
-                      | .err msg =>
-                        result := .refused (replyText "attach refused" msg)
-                        leaving := true
-                      | _ =>
-                        pure ()
+                  else if !leaving then
+                    -- what the client writes of a read's messages, `Wire.shown`, is what a
+                    -- `serve` attach streams (`serve_attach_exact`)
+                    let shown := Linger.Session.Wire.shown msgs
+                    if !shown.isEmpty then
+                      writeAll stdoutFd (ByteArray.mk shown.toArray)
+                      observer := observer.observe shown
+                      receivedOutput := true
+                      -- Reassert even if the application repeats the same OSC title.
+                      titleDirty := true
+                    match msgs.find? Linger.Session.Wire.Msg.ends with
+                    | some (.ended outcome) =>
+                      result := .ended (.outcome outcome)
+                      leaving := true
+                    | some (.exited status) =>
+                      result := .ended (.status status)
+                      leaving := true
+                    | some (.saved signal) =>
+                      result := .ended (.saved signal)
+                      leaving := true
+                    | some (.err msg) =>
+                      result := .refused (replyText "attach refused" msg)
+                      leaving := true
+                    | _ =>
+                      pure ()
             if receivedOutput && titleDirty && !leaving then
               let title :=
                 Linger.Display.Title.compose name observer.windowTitle summary

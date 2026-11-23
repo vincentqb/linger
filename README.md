@@ -91,6 +91,18 @@ updates. Each update names its subscription, the id of the request that opened i
 when the session ends, carries `closed` with the answer its ending gives; `sessions/unsubscribe`
 closes either, and a connection holds at most 16.
 
+A client that is a terminal attaches to a session as `linger attach` does. `session/attach`
+(`name`) attaches writable, starting the session under the name when none holds it, and with no
+size of its own until the client gives one; it answers `done`, and from then on
+`session/output` (`subscription`, `data`) carries in base64 exactly the bytes the session's daemon
+sends an attach client: the synchronized repaint, then the output as it comes. `session/input`
+(`subscription`, `data` in base64) types into the session, `session/resize` (`subscription`,
+`cols`, `rows`) gives it the client's size, and `session/detach` (`subscription`) ends the attach;
+the session runs on. When the session ends, the last update carries `closed` with the answer its
+ending gives. A client that stops reading is cut off as an attach client is: `serve` stops reading
+the daemon while 64 KiB wait for the client, the daemon closes the connection once it owes the
+client its cap, and the last update carries `closed`.
+
 ## Upgrades
 
 `linger upgrade [name...]`, run by a newer linger, moves each named live session, or every one,

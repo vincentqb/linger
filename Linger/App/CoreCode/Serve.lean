@@ -5,6 +5,7 @@ import Linger.App.CoreCode.Json
 import Linger.App.CoreCode.Api
 import Linger.Os.CoreCode.Answer
 import Linger.Session.CoreCode
+import Linger.Session.CoreCode.Wire
 import Linger.Display.CoreCode.Listing
 import Terminal.CoreCode.Mediation
 public import Terminal.CoreCode.Vt
@@ -22,7 +23,10 @@ error any other request until the client says `initialized`; then each request o
 performs as the command line does and answers with its result (`result`): the answer the command
 line would exit with, its name and its code, then what the request shows. A method it does not
 answer, params it does not take and a line that is no request get JSON-RPC's errors, with
-linger's answer, `usage`, in their `data`. -/
+linger's answer, `usage`, in their `data`. An attach's conversation, `session/input`,
+`session/resize` and `session/detach` naming it by its subscription, relays its keys and its size
+to its daemon and ends it (`converse`), and the reads of its connection are its stream
+(`readAttach`). -/
 
 namespace Linger.App.Serve
 
@@ -75,11 +79,22 @@ def State.dropWatch (s : State) (id : Id) : State :=
   { s with watches := s.watches.filter fun entry => entry.1 != id }
 
 /-- Whether a watch has an update due: an open screen whose latest look differs from what its
-subscriber was last told, or an open history with lines it has not sent or a count of drops. -/
+subscriber was last told, an open history with lines it has not sent or a count of drops, or an
+open attach with bytes waiting for its subscriber. -/
 def Watch.due : Watch → Bool
   | .screen told latest => told != latest
   | .history pending => !pending.tail.isEmpty || pending.dropped != 0
   | .asked _ => false
+  | .attaching => false
+  | .stream _ pending => !pending.isEmpty
+
+/-- Whether what waits for the subscriber of the attach `id` has reached `cap` bytes, so that the
+attach's connection is read no further until its writer sends it: the bound that makes a reader that
+does not read cost its own attach, which its daemon then cuts off, as it cuts off any client. -/
+def State.holdsBack (s : State) (id : Id) (cap : Nat) : Bool :=
+  match s.watching id with
+  | some (.stream _ pending) => cap ≤ pending.length
+  | _ => false
 
 /-! ## Logs -/
 
@@ -208,15 +223,20 @@ def unsubscribe (s : State) (id : Id) (params : Json) : State × List Effect :=
             else s).dropWatch
           key,
         (match s.watching key with
-          | some (.asked _) => [.send (.result key (result .done []))]
+          | some (.asked _) | some .attaching => [.send (.result key (result .done []))]
           | _ => []) ++
           [.send (.result id (result .done []))])
     else (s, [.send (.error (some id) (-32602) "no such subscription" (refusal))])
   | none => (s, [.send (.error (some id) (-32602) "no such subscription" (refusal))])
 
+/-- What a watch's request asks for: an attach for `session/attach`, and otherwise a watch of a
+history, for `session/history`, or of a screen. -/
+def Watch.asking (method : String) : Watch :=
+  if method = "session/attach" then .attaching else .asked (method = "session/history")
+
 /-- What a connection does with a request it performs: a `sessions/subscribe` opens its
-subscription, and a watch is asked for under its id, unless the connection holds `maxWatches` or a
-subscription under the id already, when it is refused. -/
+subscription, and a watch or an attach is asked for under its id, unless the connection holds
+`maxWatches` or a subscription under the id already, when it is refused. -/
 def performs (s : State) (id : Id) (method : String) (req : Api.Request) (bytes : List UInt8) :
     State × List Effect :=
   if method = "sessions/subscribe" then
@@ -224,17 +244,64 @@ def performs (s : State) (id : Id) (method : String) (req : Api.Request) (bytes 
         open? := some id, toldRecords := none, latestRecords := none },
       [.perform id method req bytes])
   else
-    if method = "session/screen" ∨ method = "session/history" then
+    if method = "session/screen" ∨ method = "session/history" ∨ method = "session/attach" then
       if s.watches.length < maxWatches ∧ s.subscription ≠ some id ∧ (s.watching id).isNone then
-        ({ s with watches := s.watches ++ [(id, .asked (method = "session/history"))] },
+        ({ s with watches := s.watches ++ [(id, Watch.asking method)] },
           [.perform id method req bytes])
       else (s, [.send (.result id (result .refused []))])
     else (s, [.perform id method req bytes])
 
+/-- Whether a request is part of an attach's conversation, which names the attach by its
+subscription: `session/input`, and `session/resize` or `session/detach` with a `subscription`,
+which without one are the command line's `resize` and `detach`. -/
+def converses (method : String) (params : Json) : Bool :=
+  method = "session/input" ||
+    (method = "session/resize" || method = "session/detach") &&
+      (params.member? "subscription").isSome
+
+/-- The messages a request of an attach's conversation writes on its connection: the bytes
+`session/input`'s `data` encodes in base64, as the input frames `send` cuts (`Wire.inputFrames`),
+and `session/resize`'s size, one the emulator keeps as it is, as `resize` takes it; none for params
+it does not take. -/
+def relayed (method : String) (params : Json) : Option (List Session.Wire.Msg) :=
+  if method = "session/input" then
+    ((params.need "data" Json.text?).bind fun data => Base64.decode data.toList).map
+      Session.Wire.inputFrames
+  else do
+    let cols ← params.need "cols" Json.nat?
+    let rows ← params.need "rows" Json.nat?
+    if Terminal.Vt.clampDim cols = cols ∧ Terminal.Vt.clampDim rows = rows then
+      pure [.resize cols.toUInt32 rows.toUInt32]
+    else
+      none
+
+/-- **A request of an attach's conversation**, of the attach its params name by its subscription:
+`session/input` writes its keys on the attach's connection and `session/resize` its terminal's size,
+as an attach client does, and `session/detach` ends the attach, as an attach client's leaving does,
+answering one not answered yet `done`; each is answered `done`, and one that names no attach open
+is refused, and params it does not take are invalid. -/
+def converse (s : State) (id : Id) (method : String) (params : Json) : State × List Effect :=
+  match (params.member? "subscription").bind Id.of with
+  | none => (s, [.send (.error (some id) (-32602) "invalid params" (refusal))])
+  | some key =>
+    match s.watching key with
+    | some .attaching =>
+      if method = "session/detach" then
+        (s.dropWatch key,
+          [.send (.result key (result .done [])), .send (.result id (result .done []))])
+      else (s, [.send (.error (some id) (-32602) "no such subscription" (refusal))])
+    | some (.stream _ _) =>
+      if method = "session/detach" then (s.dropWatch key, [.send (.result id (result .done []))])
+      else
+        match relayed method params with
+        | some messages => (s, [.relay key messages, .send (.result id (result .done []))])
+        | none => (s, [.send (.error (some id) (-32602) "invalid params" (refusal))])
+    | _ => (s, [.send (.error (some id) (-32602) "no such subscription" (refusal))])
+
 /-- What a connection does with a request: `initialize` once, before anything else, then the
 methods `methods` lists, each performed as its command line's request (`parse`), a
-`sessions/subscribe` opening its subscription, a watch asked for, and `sessions/unsubscribe` of an
-open one. -/
+`sessions/subscribe` opening its subscription, a watch or an attach asked for, `sessions/unsubscribe`
+of an open one, and the requests of an attach's conversation (`converse`). -/
 private def request (s : State) (id : Id) (method : String) (params : Json) : State × List Effect :=
   if method = "initialize" then
     match s.phase with
@@ -254,11 +321,13 @@ private def request (s : State) (id : Id) (method : String) (params : Json) : St
     | .ready _ =>
       if method = "sessions/unsubscribe" then unsubscribe s id params
       else
-        if (methods.lookup method).isSome then
-          match parse method params with
-          | some (req, bytes) => performs s id method req bytes
-          | none => (s, [.send (.error (some id) (-32602) "invalid params" (refusal))])
-        else (s, [.send (.error (some id) (-32601) "method not found" (refusal))])
+        if converses method params then converse s id method params
+        else
+          if (methods.lookup method).isSome then
+            match parse method params with
+            | some (req, bytes) => performs s id method req bytes
+            | none => (s, [.send (.error (some id) (-32602) "invalid params" (refusal))])
+          else (s, [.send (.error (some id) (-32601) "method not found" (refusal))])
     | _ => (s, [.send (notInitialized id)])
 
 /-- An answer as a member: `closed`, with the answer the command line exits with for what the watch
@@ -301,8 +370,57 @@ def watched (s : State) (id : Id) (screen : Screen) (left : Log Line) : State ×
     (s.setWatch id (.history (Log.append historyCap pending left)), [])
   | _, _ => (s, [])
 
+/-- The params of `session/output`: the subscription it updates, the id of the request that opened
+the attach, and the bytes it carries, as base64 `data` (`Base64.encode`). -/
+def Output.update (id : Id) (bytes : List UInt8) : Json :=
+  .obj [("subscription", id.json), ("data", .str (Base64.encode bytes))]
+
+/-- What an attach found when the first of `messages` that ends it (`Wire.Msg.ends`) did, as an
+attach client reads it: how the program ended, the status of an older daemon's report, that a
+signal saved the session, or, for a refusal or none, `refused`. -/
+def stopFound (messages : List Session.Wire.Msg) : Api.Found :=
+  match messages.find? Session.Wire.Msg.ends with
+  | some (.ended outcome) => .ended (.program outcome)
+  | some (.exited status) => .status status
+  | some (.saved signal) => .ended (.saved signal)
+  | _ => .refused
+
+/-- What a read of an attach's connection does, the attach holding the decoder `dec` and `pending`
+for its subscriber: the messages the read's bytes end decode (`Wire.Decoder.feed`) add the bytes an
+attach client writes of them (`Wire.shown`) after what waits; when one of them ends the attach it
+sends what waits as the stream's last update, with `closed` and what the attach found, and holds
+the attach no more, and when the framing breaks, where an attach client writes nothing of the read
+and loses the connection, it sends what waited so, `closed` with `refused`. -/
+def streamed (s : State) (id : Id) (dec : Session.Wire.Decoder) (pending bytes : List UInt8) :
+    State × List Effect :=
+  let decoded := dec.feed bytes
+  if decoded.1.errored then
+    (s.dropWatch id,
+      [.send
+          (.notify "session/output"
+            ((Output.update id pending).withMembers (closedMembers .refused)))])
+  else
+    let waiting := pending ++ Session.Wire.shown decoded.2
+    if decoded.2.any Session.Wire.Msg.ends then
+      (s.dropWatch id,
+        [.send
+            (.notify "session/output"
+              ((Output.update id waiting).withMembers (closedMembers (stopFound decoded.2))))])
+    else (s.setWatch id (.stream decoded.1 waiting), [])
+
+/-- What a connection does with a read of an attach's connection: the first answers the attach's
+request `done`, and each is `streamed`. -/
+def readAttach (s : State) (id : Id) (bytes : List UInt8) : State × List Effect :=
+  match s.phase, s.watching id with
+  | .ready _, some .attaching =>
+    ((streamed s id {} [] bytes).1,
+      .send (.result id (result .done [])) :: (streamed s id {} [] bytes).2)
+  | .ready _, some (.stream dec pending) => streamed s id dec pending bytes
+  | _, _ => (s, [])
+
 /-- What a free writer sends a watch: a screen's changes since what its subscriber was last told,
-when any, or a history's lines and drops since its last update, when any; then it has told them. -/
+when any, a history's lines and drops since its last update, when any, or the bytes waiting for an
+attach's subscriber, when any; then it has told them. -/
 def flushed (s : State) (id : Id) : State × List Effect :=
   match s.phase, s.watching id with
   | .ready _, some (.screen told latest) =>
@@ -314,6 +432,9 @@ def flushed (s : State) (id : Id) : State × List Effect :=
     (s.setWatch id (.history {}),
       if pending.tail = [] ∧ pending.dropped = 0 then []
       else [.send (.notify "session/history/changed" (Log.update id pending))])
+  | .ready _, some (.stream dec pending) =>
+    (s.setWatch id (.stream dec []),
+      if pending = [] then [] else [.send (.notify "session/output" (Output.update id pending))])
   | _, _ => (s, [])
 
 /-- What a connection does when a watch ends: one not answered yet is answered with what it found
@@ -321,8 +442,13 @@ and what it said; an open one sends its last update, `closed` with what it found
 watch no more. -/
 def unwatched (s : State) (id : Id) (found : Api.Found) (said : Log String) : State × List Effect :=
   match s.phase, s.watching id with
-  | .ready _, some (.asked _) =>
+  | .ready _, some (.asked _) | .ready _, some .attaching =>
     (s.dropWatch id, [.send (.result id (result found (saidMembers said)))])
+  | .ready _, some (.stream _ pending) =>
+    (s.dropWatch id,
+      [.send
+          (.notify "session/output"
+            ((Output.update id pending).withMembers (closedMembers found)))])
   | .ready _, some (.screen told latest) =>
     (s.dropWatch id,
       [.send
@@ -339,7 +465,9 @@ def unwatched (s : State) (id : Id) (found : Api.Found) (said : Log String) : St
 the result of `initialize`, and performs nothing, and it sends `sessions/changed` only to the open
 subscription (`serve_negotiated`): a listing's records replace the latest it holds and send nothing,
 and each time the writer is free it sends the records that differ from those it last told the
-subscriber, and the keys that went, when any do (`changed_exactly`, `table_converges`). -/
+subscriber, and the keys that went, when any do (`changed_exactly`, `table_converges`); a read of an
+attach's connection keeps what an attach client would write of it for the attach's subscriber
+(`serve_attach_exact`). -/
 def step (s : State) : Event → State × List Effect
   | .received (.invalid id unparsed) =>
     (s,
@@ -379,6 +507,7 @@ def step (s : State) : Event → State × List Effect
   | .watched id screen left => watched s id screen left
   | .flush id => flushed s id
   | .unwatched id found said => unwatched s id found said
+  | .read id bytes => readAttach s id bytes
 
 /-! ## Messages as lines -/
 

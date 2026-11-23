@@ -4,7 +4,7 @@ import Os.WorldCode
 public import Linger.Session.WorldCode.Paths
 import Linger.Session.WorldCode.Names
 import Linger.Session.WorldCode.Daemon
-import Linger.Session.WorldCode.Client
+public import Linger.Session.WorldCode.Client
 import Linger.Session.WorldCode.Inventory
 import Linger.Target.CoreCode.Remote
 import Linger.Target.CoreCode.Name
@@ -89,6 +89,16 @@ structure Remote where
   /-- Run one transport command line and give its exit status. -/
   run : (interactive : Bool) → List String → IO UInt32
 
+/-- A terminal an attach converses on instead of this process's, as `serve` gives one for each
+`session/attach`: given the connection to a session's daemon once its `info` answer admitted the
+attach, it converses with the daemon as the attach client does, taking the daemon's output to
+whoever reads it and the keys and the size whoever writes give it, and closes the connection when
+it is done; how the attach ended. It shows no saved session's screen, which only a terminal of
+this process's can. -/
+structure Tty where
+  /-- Converse over the connection, as an attach in this mode, about the session of this name. -/
+  attach : (name : String) → (fd : UInt32) → Linger.Session.Mode → IO Client.Outcome
+
 /-- Where and how the API works: the namespace its sessions live in, the linger executable that
 runs their daemons, the source of saved sessions, the remote hosts it may reach, and where what a
 command says as it goes goes. -/
@@ -110,6 +120,8 @@ structure Env where
   /-- The server that `serve` runs, which answers JSON-RPC on standard input and output: none
   unless the caller passes one, since the API writes to no standard stream. -/
   serve : Option (IO Found) := none
+  /-- The terminal an attach converses on: none for this process's, the attach client's. -/
+  tty : Option Tty := none
 
 /-- What a request shows besides what it found. -/
 inductive Shown where
@@ -592,6 +604,15 @@ refused, no transport run. -/
 private def runTarget (env : Env) (verb : String) (target : Linger.Target.Remote.Target)
     (args : List String) (localAction : String → IO Found) (options : List String := []) :
     IO Found := do
+  if verb == "attach" && env.tty.isSome then
+    -- an attach on a terminal `Env.tty` gives converses with a local daemon; no transport
+    -- carries one to a host
+    match target.host with
+    | none =>
+      return ← localAction target.name
+    | some host =>
+      say env s!"no transport carries this attach to '{Linger.Target.Remote.scrub host}'"
+      return .refused
   let interactive := verb == "attach"
   if interactive && (!(← stdinIsTty) || !(← (← IO.getStdout).isTty)) then
     throw
@@ -791,7 +812,8 @@ private def hearInfo (fd : UInt32) : IO (Except IO.Error (List (String × String
   (Inventory.readInfo fd (some ((← monotonicMs) + Client.replySilenceMs.toNatClampNeg))).toBaseIO
 
 /-- Attach over `fd` once its daemon has said, in `heard`, its `info` answer on `fd`, that it
-speaks this version's protocol (`Wire.admits`). Otherwise close `fd`, say which session and which
+speaks this version's protocol (`Wire.admits`), on the terminal `Env.tty` gives, or else on this
+process's, as the attach client does. Otherwise close `fd`, say which session and which
 level its daemon reported, and find `refused`: a daemon an older linger started refuses this
 version's attach as a message it does not know, one from before the level was reported drops it
 without a reply, and one that does not answer would leave the attach waiting for the detach key. -/
@@ -799,7 +821,11 @@ private def attachHeard (env : Env) (name : String) (fd : UInt32) (mode : Linger
     (heard : Except IO.Error (List (String × String))) : IO (Except Found Client.Outcome) := do
   let level := (heard.toOption.bind (·.lookup "protocol")).bind String.toNat?
   if Linger.Session.Wire.admits level then
-    return .ok (← Client.attach name fd (attentionSample name) (mode == .readOnly))
+    match env.tty with
+    | some tty =>
+      return .ok (← tty.attach name fd mode)
+    | none =>
+      return .ok (← Client.attach name fd (attentionSample name) (mode == .readOnly))
   close fd
   match heard, level with
   | .error why, _ =>
@@ -941,6 +967,12 @@ private def runVisit (env : Env) (s : Names.Ref) (shown : ByteArray) (vt : Termi
     | .resume =>
       return none
     | .show =>
+      if env.tty.isSome then
+        -- a terminal `Env.tty` gives shows no saved screen, so the session stays as it is
+        return some
+            (.refused
+              s!"session '{s.name}' is saved, and only a terminal shows its screen; attach on \
+                one, or capture it")
       let viewed ← Client.viewSaved s.name vt status
       if let .detached := viewed then
         pure ()
