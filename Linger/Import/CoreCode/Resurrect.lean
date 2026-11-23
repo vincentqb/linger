@@ -3,9 +3,9 @@ module
 public import Linger.Import.CoreSpec
 import Linger.Target.CoreCode.Name
 import Linger.Display.CoreCode.Status
-import Linger.Session.CoreCode.Checkpoint
 public import Terminal.CoreCode.Vt
 public import Linger.Session.CoreSpec
+import Linger.Target.CoreSpec
 
 public section
 

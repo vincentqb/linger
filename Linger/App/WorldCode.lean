@@ -2,7 +2,6 @@ module
 
 import Os.WorldCode
 import Linger.Os.CoreCode.Env
-import Linger.Session.WorldCode.Paths
 import Linger.Target.CoreCode.Remote
 import Terminal.CoreCode.Render
 import Linger.Display.CoreCode.Listing

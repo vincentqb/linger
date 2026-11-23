@@ -9,8 +9,8 @@ import Linger.Session.WorldCode.Names
 import Linger.Session.WorldCode.Record
 import Linger.Display.CoreCode.Listing
 public import Linger.Display.CoreSpec
-import Linger.Display.CoreCode.Status
 import Linger.Display.CoreCode.View
+import Linger.Session.CoreCode.Names
 
 public section
 

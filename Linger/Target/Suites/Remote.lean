@@ -8,6 +8,7 @@ import Os.WorldCode.Command
 import Linger.Target.CoreCode.Remote
 import Linger.Target.CoreSpec
 import Linger.Session.WorldCode.Client
+import Linger.App.CoreCode.Api
 
 public section
 

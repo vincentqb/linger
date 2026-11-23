@@ -11,6 +11,7 @@ import Linger.Target.Proofs.Remote
 import Input.Proofs
 import all Linger.Display.Proofs.View
 import all Linger.Display.Proofs.Listing
+public import Linger.Selector.CoreSpec
 
 /-! Selection contracts within and between listing snapshots.
 

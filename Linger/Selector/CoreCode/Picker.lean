@@ -6,7 +6,6 @@ import Fuzzy.CoreCode
 import Linger.Target.CoreCode.Name
 import Linger.Display.CoreCode.Listing
 public import Linger.Display.CoreSpec
-import Linger.Display.CoreCode.Status
 import Linger.Target.CoreCode.Remote
 import Terminal.CoreCode.Vt
 import Terminal.CoreCode.Render

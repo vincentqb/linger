@@ -5,6 +5,7 @@ import all Linger.App.CoreSpec
 import all Linger.App.CoreCode.Kill
 import all Linger.App.CoreCode.Wait
 import all Linger.App.Proofs.Wait
+public import Linger.App.CoreSpec
 
 /-! # What `kill` answers
 

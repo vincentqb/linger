@@ -1,6 +1,5 @@
 module
 
-public import Linger.Session.CoreSpec
 import all Linger.Session.CoreCode
 
 /-! # What `info` reports of the session's present

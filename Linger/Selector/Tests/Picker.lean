@@ -2,6 +2,7 @@ module
 
 import all Linger.Selector.CoreCode.Picker
 meta import Linger.Selector.CoreCode.Picker
+import Linger.Display.CoreCode.Status
 
 /-! Concrete selector fixtures. General contracts live in `Linger.Selector.Proofs.Picker`. -/
 

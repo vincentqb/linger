@@ -3,8 +3,7 @@ module
 import all Linger.Session.CoreCode
 import all Linger.App.CoreCode.Fields
 import all Linger.Session.Proofs.Session
-public import Linger.Session.CoreCode
-public import Linger.App.CoreCode.Fields
+public import Linger.App.CoreSpec
 
 /-! # A listing's program fields are readings of what the program owns
 

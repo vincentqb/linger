@@ -1,9 +1,10 @@
 module
 
-public import Linger.Session.CoreCode.Names
+import Linger.Session.CoreCode.Names
 import Linger.Session.WorldCode.Paths
 import Linger.Target.CoreCode.Name
 import Os.WorldCode
+public import Linger.Session.CoreSpec
 
 public section
 

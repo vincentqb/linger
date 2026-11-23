@@ -3,6 +3,7 @@ module
 import all Linger.Display.CoreCode.View
 import all Linger.Display.CoreCode.Status
 import all Init.Data.Repr
+public import Linger.Display.CoreSpec
 
 /-! # Views of many sessions — nothing that needs you is hidden, and every count adds up
 

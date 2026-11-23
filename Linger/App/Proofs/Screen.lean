@@ -1,6 +1,6 @@
 module
 
-public import Linger.App.CoreCode.Serve
+public import Linger.App.CoreSpec
 import all Linger.App.CoreSpec
 import all Linger.App.CoreCode.Serve
 import all Linger.Display.CoreCode.Listing

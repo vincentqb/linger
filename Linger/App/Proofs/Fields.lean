@@ -1,7 +1,6 @@
 module
 
 import all Linger.App.CoreCode.Fields
-public import Linger.Display.CoreSpec
 
 /-! # Every field has one owner and each owner's fields one role -/
 

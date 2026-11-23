@@ -6,6 +6,7 @@ public import Linger.Target.CoreCode.Name
 import all Linger.Session.CoreCode.Names
 import Linger.Target.Proofs.Name
 import Linger.Target.Proofs.Remote
+public import Linger.Target.CoreSpec
 
 public section
 

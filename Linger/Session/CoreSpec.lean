@@ -1,7 +1,6 @@
 module
 
 public import Linger.Os.CoreSpec
-public import Linger.Target.CoreSpec
 public import Terminal.CoreSpec
 
 public section

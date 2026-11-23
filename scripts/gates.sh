@@ -397,13 +397,13 @@ module_imports packages/terminal/Terminal/Proofs/Vt.lean 'packages/terminal/Term
 # imports them, even through an intermediate module: every library import stays in
 # the closure that the check after `Linger.lean`'s list below declares.
 import_closure Linger/Import/CoreSpec.lean ''
-import_closure Linger/Import/CoreCode/Resurrect.lean 'public import Linger.Import.CoreSpec;import Linger.Target.CoreCode.Name;import Linger.Display.CoreCode.Status;import Linger.Session.CoreCode.Checkpoint;public import Terminal.CoreCode.Vt;public import Linger.Session.CoreSpec;'
+import_closure Linger/Import/CoreCode/Resurrect.lean 'public import Linger.Import.CoreSpec;import Linger.Target.CoreCode.Name;import Linger.Display.CoreCode.Status;public import Terminal.CoreCode.Vt;public import Linger.Session.CoreSpec;import Linger.Target.CoreSpec;'
 import_closure Linger/Selector/CoreCode/Key.lean 'public import Linger.Selector.CoreSpec;public import Input.CoreSpec;'
 import_closure Linger/Selector/CoreCode/Fetch.lean 'public import Linger.Selector.CoreSpec;'
 import_closure Linger/Selector/CoreSpec.lean 'public import Linger.Display.CoreSpec;'
 import_closure packages/fuzzy/Fuzzy/CoreCode.lean 'public import Fuzzy.CoreSpec;'
 import_closure packages/fuzzy/Fuzzy/CoreSpec.lean ''
-import_closure Linger/Selector/CoreCode/Picker.lean 'import Input.CoreCode;public import Linger.Selector.CoreSpec;import Fuzzy.CoreCode;import Linger.Target.CoreCode.Name;import Linger.Display.CoreCode.Listing;public import Linger.Display.CoreSpec;import Linger.Display.CoreCode.Status;import Linger.Target.CoreCode.Remote;import Terminal.CoreCode.Vt;import Terminal.CoreCode.Render;import Linger.Display.CoreCode.View;'
+import_closure Linger/Selector/CoreCode/Picker.lean 'import Input.CoreCode;public import Linger.Selector.CoreSpec;import Fuzzy.CoreCode;import Linger.Target.CoreCode.Name;import Linger.Display.CoreCode.Listing;public import Linger.Display.CoreSpec;import Linger.Target.CoreCode.Remote;import Terminal.CoreCode.Vt;import Terminal.CoreCode.Render;import Linger.Display.CoreCode.View;'
 import_closure Linger/Display/CoreCode/View.lean 'public import Linger.Display.CoreSpec;import Linger.Display.CoreCode.Status;'
 import_closure Linger/Display/CoreSpec.lean 'public import Terminal.CoreSpec;'
 import_closure Linger/Display/CoreCode/Status.lean 'public import Linger.Display.CoreSpec;'

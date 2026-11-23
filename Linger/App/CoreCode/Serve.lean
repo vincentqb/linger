@@ -1,7 +1,7 @@
 module
 
 public import Linger.App.CoreSpec
-public import Linger.App.CoreCode.Json
+import Linger.App.CoreCode.Json
 import Linger.App.CoreCode.Api
 import Linger.Os.CoreCode.Answer
 import Linger.Session.CoreCode
