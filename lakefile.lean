@@ -45,7 +45,10 @@ lean_exe lingertest where root := `Linger.Os.Suites.Shim
 /-- Proofs have their own import and verification graph: every module under `Theorems/` and
 under a component's `Proofs/` is built. Lean erases proofs regardless of file placement. -/
 @[default_target] lean_lib Theorems where
-  roots := #[`Theorems.Coverage, `Theorems.Solution]
+  roots :=
+  #[`Theorems.Accountability, `Theorems.Authority, `Theorems.Bounded, `Theorems.CleanTerminal,
+    `Theorems.Coverage, `Theorems.Events, `Theorems.Exactness, `Theorems.Faults, `Theorems.Identity,
+    `Theorems.Recovery, `Theorems.Solution, `Theorems.Status, `Theorems.Transparency]
   globs :=
   #[.submodules `Theorems, .submodules `Linger.App.Proofs, .submodules `Linger.Display.Proofs,
     .submodules `Linger.Import.Proofs, .submodules `Linger.Os.Proofs,

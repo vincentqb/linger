@@ -20,8 +20,8 @@ meta import SoftwareChallenge
 
 /-! # Headline theorems
 
-The guarantees linger must keep, in ten parts. Each part's section states its headline theorems,
-each with a kill, and says what it does not claim yet:
+The guarantees linger must keep, in ten parts and the status rule. Each part's section says what
+its headlines claim and what they do not; the statements say the rest.
 
 1. Transparency: a client that attaches shows the session's terminal, losing only history beyond
    the replay budget, and then receives the program's output as linger's mediator releases it;
@@ -40,93 +40,40 @@ each with a kill, and says what it does not claim yet:
 6. Bounded and clean: input cannot raise any buffer, loop or wait past its cap, and nothing of a
    session's terminal session that linger's signals reach outlives it.
 7. Recovery: resuming from a checkpoint gives back the saved session, less any half-parsed
-   control sequence, and a crash costs at most the changes of the last interval, never the
-   session: a checkpoint that does not decode is kept and refused, not replaced. An upgrade
-   carries a running session to a newer binary whole, or leaves it running as it was.
+   control sequence, and a checkpoint that does not decode is kept and refused, not replaced. An
+   upgrade carries a running session to a newer binary whole, or leaves it running as it was.
 8. Clean terminal: what linger writes to a terminal on its own account is safe text or one of
    its fixed sequences, in color only where the caller's environment allows it, and handing a
    terminal back leaves it canonical.
 9. Work follows events: linger works only in response to an event, a byte, a request, a program
-   ending or a deadline an earlier event set, and each event sets at most a fixed number of
-   deadlines. An event costs in proportion to its size and its audience, never to how many
-   sessions exist, so every linger process goes quiet after the last event. Parts 1 to 8 decide
-   what linger does and this one how cheaply: work no event pays for is allowed only where it is
-   named, with its bound.
+   ending or a deadline an earlier event set, never in proportion to how many sessions exist, so
+   every linger process goes quiet after the last event; work no event pays for is allowed only
+   where it is named, with its bound.
 10. Graceful under load and faults: a fault in a daemon, a client or a peer costs at most its
    own session or client, plus a declared bound elsewhere; work a request needs never waits on
    optional work or on another session, every wait is bounded and says what it missed, and
    optional work is skipped or coalesced, never queued.
 
-The status rule: a session's row shows two facts, each in its own column and each a signal's,
-none a guess from timing. Its attention says whether there is something for you since you looked:
-`⚑` a bell or a desktop notification, `∙` new lines in its history or an ending nobody was attached
-to see, and blank for neither, an ask winning when both hold. Its state says what it is: `!` its
-program declared that an error stopped its progress, `⣷` it says it is working, `⣤` it says it is
-paused, `⣀` it runs and declares nothing, `✓` it ended with status 0, `✗` it ended any other way,
-`~` saved with no daemon and `?` no answer. A row's first two columns are exactly its attention's
-mark and its state's glyph, and every attention shows with every state, as `⚑ ⣷` for a session
-that rang while it works (`row_pair`, killed by the single glyph rows had before, which cannot);
-attention reads the asks and the new lines alone, and the state the answer, the daemon, the
-ending, the declared progress and the shell's marks alone (`attention_independent`,
-`state_independent`, each killed by that single glyph). Titles and `ls --summary` count attention
-alone, `⚑` and `∙`. No two marks or states share a glyph, no mark is a state's, and `linger
-help`'s legend gives an `Attention` block, one line per mark, then a `State` block, one line per
-state, each beginning with its glyph (`icon_glyphs`); a row of a session with no daemon shows the
-state the legend gives what its end record says, with news nobody saw, and a remote host's saved
-row only an ending or `~` (`rowStatus_saved`). Its section follows the ten parts, with the titles,
-listings and selector views that show statuses: a view ranks rows by attention, `⚑`, then `∙`,
-then blank, first, then by where the session is in its life, the running sessions, `!`, `⣷`, `⣤`
-and `⣀` in one place, then the saved ones, `~`, then the ended ones, `✓` and `✗`, then `?`
-(`sort_two_keys`), so no row that ended or can only be resumed sits above a live one of its
-attention, and a running session's row keeps its place whatever its activity: an error is a state
-and ranks with the running ones. Each state of ConEmu's OSC `9;4` progress report, which the terminal
-package's mediator hears byte by byte (`progress_source`), has its own state and keeps it until
-the program reports another or removes it with state 0: state 1, normal, and 3, indeterminate,
-are `⣷`, state 2, an error, is `!`, and state 4, a pause, is `⣤`, whatever its attention
-(`progress_status`, killed by an
-error read as working, by a pause read as working, and by a declaration lost at the program's
-next output with no 0). Declaring no progress, a session is `⣷` exactly while its shell's OSC
-133 marks say a command runs, a `C` that no `D` or `A` has followed (`working_declared`, killed
-by the window rule before it, output within three seconds). A running session's attention is `∙`
-exactly while new lines entered its terminal's history with nobody attached since it was last
-looked at, and it asks for none
-(`unseen_lines`, killed by any output since the last look, which a title or a line rewritten in
-place is): a redraw in place, a title, a status line's tick and a cursor move add no line, and a
-program on the alternate screen, which keeps no history, never sets it. No tick, the one event
-that tells a session the time, changes what its status reads (`status_clockless`, killed by the
-window rule), so a status changes only when a signal does, and a daemon sets a tick only for a
-save. A client attached to one session tells its terminal, with
-one OSC 9 desktop notification, of each other local session that changed into asking between two
-of the samples its title takes, and of none on the first, whose asks the title counts
-(`announce_changes`). Within a place a view keeps the listing's order,
-and a listing orders names as people read them: a total order (`before_total`) that puts names
-differing only in one number in the order of that number, `w2` before `w10` (`before_number`). A session
-asks exactly while its program has rung the bell or posted a notification since the session was
-last looked at, and tells how its shell's last command ended until someone sees it, each as part 2
-says its program owns it (`step_owned`). An ending is
-no status: `✓` and `✗` stay the endings of the session's own program.
+The status rule: a session's row shows its attention, whether there is something for you since
+you looked, and its state, what it is, each a signal's, none a guess from timing.
 
-Each theorem below is stated over definitions in the components' `CoreSpec` modules and the world
-claims in their `WorldSpec` modules, over the terminal package's parts, which its own challenge
-claims, and over the program parts declared below as holes: each hole is `sorry` here, the program
-supplies it, and the claims say what it must do. `Theorems/Solution.lean` proves the same statements
-of the program's parts, and `./lake comparator` checks that it proves exactly these, that each part
-has the declared type, and that no axiom beyond `propext`, `Quot.sound` and `Classical.choice` is
-used. Changing a statement or a hole here changes what linger claims.
+Each theorem is stated over the components' `CoreSpec` definitions, the world claims of their
+`WorldSpec` modules, the terminal package's parts, which its own challenge claims, and the
+program's parts, declared below as holes, which the program supplies. `Theorems.Solution` proves
+the same statements of the program's parts, and `./lake comparator` checks that it proves exactly
+these, that each part has the declared type, and that no axiom beyond `propext`, `Quot.sound` and
+`Classical.choice` is used. Changing a statement or a hole here changes what linger claims.
 
-Not claimed: that the IO executors, the C shim and the operating system behave as the world
-claims say, which each claim's check tests on the host it runs on and the suites named with
-each claim test through linger, except for power loss, which `Disk.Durable` speaks of and no
-check or suite causes; scheduling, allocation failure, termination
-by SIGKILL or power loss and failures of the compiler, the runtime or the C shim; a bound in bytes
-or rows on what a crash loses, which is bounded in time; memory beyond the logical bytes the
-buffers retain; ownership among processes that do not cooperate or replace the lock files;
-fidelity beyond linger's own terminal model, which stands in for every receiver; the incoming
-title content and the saved cursor slot, which fixtures cover; processes or images, since
-recovery restores screens; that an exit status tells linger's answers from a program's, since a
-program may exit with any status, as with `timeout` and `env`, so that the porcelain output is
-the exact channel; for a saved tmux pane, captures other than the latest save's archive;
-and that an imported pane's saved command never runs, which a gate checks. -/
+Not claimed anywhere: that the IO executors, the C shim and the operating system behave as the
+world claims say, which each claim's check tests on its host and the suites named with the claim
+test through linger, except for power loss, which `Disk.Durable` speaks of and nothing causes;
+scheduling, allocation failure, termination by SIGKILL or power loss and failures of the
+compiler, the runtime or the C shim; memory beyond the logical bytes the buffers retain; ownership
+among processes that do not cooperate or replace the lock files; fidelity beyond linger's own
+terminal model, which stands in for every receiver; the incoming title content and the saved
+cursor slot, which fixtures cover; processes or images, since recovery restores screens; and that
+an exit status tells linger's answers from a program's, since a program may exit with any status,
+as `timeout` and `env` do, so the porcelain output is the exact channel. -/
 
 public section
 
@@ -485,36 +432,19 @@ namespace Linger
 
 /-! ## 1. Transparency
 
-What a repaint gives a client is claimed by the terminal package (`packages/terminal`), of the
-terminals a session can hold: fresh, fed, resized, quiesced, or admitted by the toolkit's decoder
-door, which every terminal linger's checkpoint decoder returns passes
-(`Checkpoint.live_of_decoded`). There a client receives the repaint as a stream, in steps of any
-positive byte budget, the stream ends, and a receiver of the same size that parses it shows what the
-terminal shows and, for a repaint taken between control sequences and characters, keeps showing it
-as the same output reaches both; and a terminal's history only gains rows at its end, unless output
-may ask to erase it. Here: a read that attaches a connection, writable or read-only, streams it the
-repaint of the session's terminal as the attach leaves it, and the read sends it nothing before the
-repaint: only the pty's resize and the program's focus report come first. A chunk of program output
-feeds the session's terminal exactly that chunk, reaches every attached client, writable or
-read-only, in roster order, as the same frames, each nonempty and of at most 64 KiB, whose payloads
-are exactly the bytes the terminal package's mediator releases, in order, and writes the program
-only the mediator's replies to its queries. The daemon does what the session asks: when every effect
-succeeds, its driver hands the session each event and then what the event's effects feed back, ends
-in the state of their trace, and executes exactly the trace's effects, in order, each with the state
-its event left (`run_refines`, in part 5). Linger writes to a session's terminal exactly the input
-it accepted for the program, in order, whatever mode the program set, and a program whose terminal
-is in raw mode reads exactly that, when the kernel hands raw input on unchanged (`Pty.Delivers`,
-which its check and the agent suite test byte for byte); linger accepts each frame a writable client
-sends, whatever its terminal's size, whole, or refuses it whole when the program's queue is full;
-and `send` hands the program text of any length in frames the decoder takes, whose payloads are the
-text, in order. A program that enabled focus reporting hears that it gained focus when a writable
-client attaches to a session nobody could type into, whatever its size, and that it lost it when the
-last one leaves. Not claimed: which bytes the mediator releases, which `Terminal.Mediation` decides:
-all the program wrote but the queries linger owns, which its terminal answers or nobody does, a
-request still incomplete at a chunk's end waiting for the next; an attach a read completes with
-other messages; that the runtime streams a repaint ahead of the output that follows it, which the
-delivery suite checks; and what a program reads in any other mode than raw, such as the cooked mode
-a terminal starts in, whose line discipline edits lines and turns ^C into a signal. -/
+The terminal package (`packages/terminal`) claims what a repaint gives a client, of every terminal
+a session can hold, a decoded checkpoint's included (`Checkpoint.live_of_decoded`). Here: an attach
+streams the client that repaint, sending nothing before it but the pty's resize and the focus
+report; program output feeds the terminal and reaches every attached client as the mediator
+releases it; linger writes the program exactly the input it accepted, whole frames or none, which a
+program in raw mode reads as sent when the kernel passes it on (`Pty.Delivers`); and a program that
+enabled focus reporting hears focus follow writable clients. That the daemon does what the session
+asks is part 5's (`run_refines`). Not claimed: which bytes the mediator releases, which
+`Terminal.Mediation` decides, a request still incomplete at a chunk's end waiting for the next; an
+attach a read completes with other messages; that the runtime streams a repaint ahead of the output
+that follows it, which the delivery suite checks; and what a program reads in any mode other than
+raw, such as the cooked mode a terminal starts in, whose line discipline edits lines and turns ^C
+into a signal. -/
 
 theorem step_attach_repaint (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {mode : Mode} {cols rows : UInt32} (hc : s.client? id = some c)
@@ -710,115 +640,36 @@ theorem step_closed_focus_rejects_eager :
 
 /-! ## 2. Authority and attribution
 
-A connection's rights are the mode it attached with, read-only or writable, and nothing else: a
-watcher is a client that attached read-only, whatever its terminal's size, a client keeps the
-rights it attached with whatever sizes it then reports, and a connection that never attached is
-writable. No pty resize the session asks for has a zero dimension: each is the size, clamped, of
-an attach or a resize in the read that asked for it, a size with no zero, so a terminal with no
-size yet never reaches the pty. Not claimed: which client sizes the session, the newest writable
-one whose terminal has a size, which the session fixtures and the attach suite check.
-`start` takes no name a session holds (`start_plan`); the daemon decides that holding the name,
-which has one owner (`one_owner`).
-A session's ID is fixed when it is created and keys its files and its `LINGER_SESSION`; its name
-is a handle that leads to the ID, which `rename` changes (`Session.Names`). A name is clean text,
-spaces and Unicode included, accepted exactly as it is, which every command takes as one argument
-and the names directory keeps, a name that is no key as `=` and its hexadecimal, and reads back
-(`names_round_trip`); a key, a name of the older grammar, stays accepted, one that starts with
-`-` after `--`, and only a key can be its session's own ID. A session created
-under a name that is no session's ID takes it for its ID, as every session an older linger keyed
-by name did, so with no entries every valid name leads to itself and old files keep their
-meaning; in a table linger keeps, a name leads to an ID exactly when that ID shows as the name,
-so no two names lead to one ID (`names_one_to_one`). A rename moves the name to the same ID,
-leaves the old name leading elsewhere and no other name changed (`rename_moves`), so every
-command, which reaches a session through the ID its name leads to, reaches it by the new name and
-the program, terminal, clients, waiters, description and status it keeps by its ID stay as they
-were. A start of a name that leads nowhere, because a renamed session holds the name's own ID,
-gives it a fresh ID that no session holds (`claim_fresh`); an ID shows as its entry's name or as
-itself only when it is a name, never a fresh ID (`nameOf_shown`). `rename` moves a name exactly when
-the new name is valid, a live or saved session has the old one, none has the new one, an ended one
-still listed included, and no older linger started the session's daemon, and each refusal names
-a reason that holds (`rename_plan`), as `start` refuses a name a live or saved session holds,
-saying which (`start_plan`),
-and places a name on disk only with calls that never replace one, so of a start and a rename
-onto one name, whichever comes first, the second fails and the name keeps the first one's
-session (`one_name`, assuming `Os.Place.NoReplace`). Not claimed: that a command resolves its
-name once and keys everything after by the ID, that the daemon takes the name only while it still
-leads to its ID, holding the ID's locks, that `rename` holds the names lock and the new name's ID's
-locks while it places the name, which the rename suite checks, and that a client attached before
-a rename titles its terminal with the new name, which it does from its next attach.
-What a session's program owns has one source each, and the session machine reads each from it
-alone (`step_owned`): the title is what OSC 0 and OSC 2 set on the session's terminal, as the
-terminal it fed the output holds it, which the terminal package claims byte by byte
-(`title_source`); whether it asks, a bell or a notification since the last look, and the
-notification's text are what the terminal package's mediator hears of a BEL, an OSC 9 that is no
-ConEmu sub-command and an OSC 777 `notify`, which it claims byte by byte too (`asks_exact`); the
-progress it declared is what the mediator hears of ConEmu's OSC `9;4`, the last report's state,
-none after one that removes it (`progress_source`); its commands are what its shell's OSC 133
-marks tell, each as `Commands.hear` says the marks' standard means it, so a `D` after a `C` is
-that command's ending, with the command line the `C` gave and the status the `D` gave, a later `C`
-replaces it, and a `D` with no `C` since the last `D` or `A` is no ending; its foreground and its
-echo are what the operating system last reported of its terminal; and whether it is ready and its
-status text are what it sent through `sd_notify`'s socket, which its `NOTIFY_SOCKET` names.
-Output changes each exactly as its source in that output tells, output while a client is attached
-is seen as it arrives, so it leaves nothing to tell, a look, an attach or a capture, clears the
-ask, its text and the ending and nothing else, the daemon's reading of the world changes what it
-reported and nothing else, a notification changes the readiness and the status and nothing else,
-and no other event, no client input among them, changes any; a session lists `⚑` exactly while
-its program asks. A program is ready exactly once it sent `READY=1`, and its status text is the
-value of the last `STATUS=` it sent, every other key telling nothing, when datagrams sent to a
-socket's path arrive whole and in order (`notify_exact`, over the os package's `Os.Dgram.Whole`,
-which its check tests); a daemon reads at most `Notify.cap` bytes of each, `Notify.keys`
-assignments of each and `Notify.perRound` of them a poll round, and a listing shows the status as
-clean text. The program's fields a listing reports, as `Fields.table` gives the program each,
-are readings of these alone: two sessions whose programs own the same report the same program
-fields (`fields_owned`). Not claimed: a notification sent while a daemon upgrades, which the
-image that replaces it binds its socket afresh for; which bytes the mediator hears as a mark, which
-`Terminal.Mediation` decides and its fixtures and the status suite check; what output outside the
-terminal package's whole tokens tells; a mark inside a full-screen program, which the session hears
-as its shell's.
-The fields of a session's record, the description an older linger saved and an import's
-provenance, come from the checkpoint the session booted from, and no event changes them
-(`step_fields_kept`); they, the boot metadata and the terminal a session reports each have
-one source, and a listing names each row by its socket. A human row reads only
-the fields `Listing.sources` names (`rowText_sources`): the program's title is the caption, its
-status text in its place while it sets none, the program's own words first, and a description an
-older linger saved in their place while the program gives neither, and the foreground program, which the operating system reports, shows only when that caption does not name
-it (`caption_precedence`); its glyph and name are never cut, the rest
-fits a width in display columns (`rowText_fits`), and each character is printable
-(`rowText_clean`). One field, one column: a row's parts, the glyph, the name and the caption,
-program, directory, age and watchers cells, each take the display columns its view's layout gives
-them while the name fits its column, so each field starts at one column in every row
-(`columns_aligned`), and each cell reads only its own fields (`cells_sources`); the layout may
-depend on the view, a cell's content may not. A session's `info` reports the foreground the
-operating system reports of its terminal as that process sees itself, its words, its process and
-its directory (`info_foreground`, over `Pty.Foreground`, which its check tests), and whether its
-terminal echoes what is typed, its `ECHO` flag as the program last set it (`info_echo`, over
-`Pty.Echo`, which its check tests), a machine field no human row shows. Not claimed:
-that the daemon reports the title, foreground and idle time it read, which the overview suite
-checks, and that a row shows the text of a notification right after its caption
-while its session asks, and only then, and how the last command that finished unseen ended right
-after that, which the listing tests and the status suite check.
-In the chooser, a key does only what it does in a line editor: Enter attaches only to a listed
-target (`picker_attach_listed`) and creates only a new, valid one (`picker_create_new`), and
-Ctrl-D, which deletes the character under the cursor and on an empty line ends the input, ends the
-visit only on an empty query, since the cursor sits after the query (`picker_eof_empty`). Up and
-Down move around the rows as a cycle, as fzf's do with `--cycle`: of the `n` rows Enter acts on,
-the creation row among them when the chooser offers one, `k` moves down from row `i` select row
-`(i + k) mod n` and `k` moves up select row `(i − k) mod n`, the remainder in `[0, n)` that `%`
-gives on `Int`, so up from the first row selects the last, down from the last selects the first,
-and up undoes down; with no row, a move changes nothing (`picker_moves_cycle`). The
-chooser's view moves only when its person moves it: a listing keeps the rows it shows where they
-are, a vanished row closing up and a new one last, unless it sorts them again, as when the chooser
-opens and on Ctrl-L (`relist_keeps_rows`). Returning is the inverse of leaving: the view a visit
-enters after an attach is the one it left, its rows where they were and new ones last, selecting
-the session it was in, and a visit opened inside a session selects that session; a session the
-listing no longer has, as after a seen ending, leaves the first row selected (`enter_returns`).
-Not claimed: which key requests which action, which
-the selector's key proofs and the manager suite check, that the chooser sorts exactly when it
-opens and on Ctrl-L, which the manager suite checks, and that the highlight follows its row, which
-the selector's picker proofs show, that a cursor on a candidate's index selects it, which holds
-with an empty query, whose rows are the candidates in order, and that the chooser enters with the
-session it returns from or `LINGER_SESSION` names, which the manager suite checks. -/
+A connection's rights are the mode it attached with and nothing else, and no pty resize has a zero
+dimension. A session's ID, fixed when it is created, keys its files and its `LINGER_SESSION`; its
+name is clean text that leads to the ID, kept exactly as given, so with no entries a name leads to
+itself and files an older linger keyed by name keep their meaning. A name has one owner, and a
+rename moves it to the same ID, so what the session keeps by its ID, its program, terminal,
+clients, waiters, description and status, stays as it was. Each value a session reports has one
+source, which alone changes it: what its program owns, its title, its asks, its declared progress,
+its shell's commands, what the operating system reports of its terminal and what it sent through
+`sd_notify` (`step_owned`); the fields its record keeps from its boot; and each cell of a listing
+row. In the chooser a key does only what it does in a line editor, Up and Down cycle as fzf's do,
+and the view moves only when its person moves it.
+
+Not claimed: which client sizes the session, the newest writable one whose terminal has a size,
+which the session fixtures and the attach suite check; that a command resolves its name once and
+keys everything after by the ID, that the daemon takes the name only while it still leads to its
+ID, holding the ID's locks, and that `rename` holds the names lock and the new name's ID's locks
+while it places the name, which the rename suite checks; that a client attached before a rename
+titles its terminal with the new name, which it does from its next attach; a notification sent
+while a daemon upgrades, which the new image binds its socket afresh for; which bytes the mediator
+hears as a mark, which `Terminal.Mediation` decides and its fixtures and the status suite check;
+what output outside the terminal package's whole tokens tells; a mark inside a full-screen
+program, which the session hears as its shell's; that the daemon reports the title, foreground and
+idle time it read, which the overview suite checks; that a row shows a notification's text after
+its caption while its session asks, and how the last command that finished unseen ended, which the
+listing tests and the status suite check; which key requests which action, which the selector's key
+proofs and the manager suite check; that the chooser sorts exactly when it opens and on Ctrl-L,
+and enters with the session it returns from or `LINGER_SESSION` names, which the manager suite
+checks; that the highlight follows its row, which the selector's picker proofs show; and that a
+cursor on a candidate's index selects it, which holds with an empty query, whose rows are the
+candidates in order. -/
 
 theorem one_owner (grant : Claim.State → Nat → Nat → Bool) (exclusive : Claim.Exclusive grant)
     {s : Claim.State} (reached : Claim.Reachable grant Claim.enters s) {a b resource : Nat}
@@ -1679,133 +1530,42 @@ theorem picker_moves_cycle_rejects_clamped :
 
 /-! ## 3. Exactness
 
-`start` runs its program in the caller's directory and with the caller's environment, which only
-`LINGER_SESSION`, `TERM`, `COLORTERM`, `TERM_PROGRAM` and `TERM_PROGRAM_VERSION` change, when the
-operating system runs what linger asks (`start_runs`, in part 4); `LINGER_SESSION` holds the
-session's ID, which no rename changes. A program that cannot start there
-makes `start` return what `env -C` would, and a resume that runs elsewhere than its saved directory
-says so. An unset or empty variable reads as its standard default: SHELL as `sh`, HOME as no
-remotes file and no directory a resume runs in, and `LINGER_NO_DETACH_KEY`, set to anything, turns
-the detach key off for a writable attach only (`env_defaults`).
+The command line is complete and minimal: every operation of the session model, `Op`, has exactly
+one command, and a command exists only for an `Op`, so adding one changes what linger claims. A
+command line that parses is the typed request of its operation, which takes exactly that
+operation's transition and exits with the answer true of what it found; any other is a usage
+error. The command line and the Lean API reach an operation only through `Api.perform`, the API
+writes to no standard stream (`scripts/gates.sh`), and every field a listing reports has one
+owner, the name the user's alone. `start` runs its program where its caller is, or answers what
+`env -C` would, and an unset or empty variable reads as its standard default (`env_defaults`). A
+command on a `name@host` target runs linger there through the host's transport, its words encoded
+as plain words, which any login shell passes on as they are and POSIX quoting would not: fish reads
+a backslash inside single quotes.
 
-A command on a `name@host` target runs through the host's transport, a command that runs linger
-elsewhere: the one the remotes file names for the host, or else ssh. Linger runs the transport's
-attach command for an attach, which gives the far end a terminal, and its query command for every
-other verb, followed by `linger` and the verb and words encoded as plain words, with the target
-placed as `targetOperands` places it for `attach` and `capture`, which read it with `targetArgs`
-(`transport_exact`). A transport that runs a `linger` with exactly the plain words after its own,
-or nothing (`Transport.Delivers`), delivers words the remote entry routes as exactly the verb and
-words, whatever they hold. SSH joins those words with spaces into one line, which any login shell
-that passes plain words on (`Shell.Literal`) hands the remote linger as they are
-(`command_exact`); the remote entry decodes them before it routes the command line, and refuses
-one that does not decode as a usage error. POSIX quoting would not: fish reads a backslash inside
-single quotes, so a quoted word could close its quote there and run what follows. Not claimed:
-that a transport reaches its host, which is the transport's, its keys, jumps, latency and
-authentication included; that the remote linger decodes, since an older one refuses the encoded
-line as a usage error; nor that a command line fits the remote host's argument limit.
+`linger serve` takes the same requests as JSON-RPC 2.0 over pipes, one value a line, as MCP's
+stdio transport frames them: a request that parses is exactly its command line's, and its result
+is that command line's answer and what it shows. Its methods take the shapes leanvim states its
+peers in (`Serve.Shape`), an ask, answered once, or a table or a log, which a subscription keeps,
+and `sessions/list` sends the records linger's own chooser reads. A watch, `session/screen` or
+`session/history`, renders what `attach --read-only` is shown by the renderer `capture` uses, and
+a log counts every line it drops. A tmux-resurrect save is a source linger reads and never writes:
+its panes are rows exactly while linger keeps no record of their names, and an attach, a resume or
+a kill of one never replaces a record.
 
-The command line is complete and minimal. Every operation of the session model, `Op`, has a
-command, a word that names it, and exactly one: one word names each
-operation, so no command is another's alias or a second reader or writer of what another reads or
-writes, the table has one row for each operation, in `Op.all`'s order, each word names its own
-row, and help lists the rows, each line its command's word (`commands_minimal`). A command exists
-only for an `Op`, so adding one changes `Op`, and with it what linger claims: `serve`, the last,
-answers the others' requests for a client that speaks JSON-RPC, and adds none of its own. Every
-field a listing reports is human, shown in rows as clean text, or machine, exact and only in
-`--porcelain`; each has one owner, the user, through one command, the program or linger
-(`fields_owned`): the name is the one field the user owns, which `rename` writes, and says what
-the session is, and the program's fields are readings of what its session keeps of it alone, as
-part 2 says.
-
-The model is the interface. A session command line that parses (`Api.parse`) is the typed
-request of its first word's operation, the row `lookup` finds, each of the operation's options and
-operands one typed parameter (`Api.Request`); the program takes exactly that request's
-transition, what its operation means, the message it sends each session's daemon or the step it
-runs (`Request.act`, through `Api.plan`), and exits with the answer true of what the command found
-(`Found.answer`, through `Api.answer`), for each finding its operation can make (`Op.finds`)
-(`op_meaning`). Any other command line is a usage error. The command line and the Lean API reach
-an operation only through `Api.perform`, which takes the transition `plan` gives, and the command
-line renders the reply: what the command says to standard error, what it shows to standard output
-and its answer as the exit status; the API writes to neither (`scripts/gates.sh`), and what it
-says the command line writes as `linger: ` and the text, on a line of its own (`said_rendered`).
-What `wait` and `kill` find from what they hear on each look at a name is part 5's (`wait_held`,
-`kill_answers`). Not claimed:
-that what the IO code finds is what happened, which the suites check.
-
-`linger serve` is the command line for a client that runs linger as a child with pipes: JSON-RPC
-2.0 on standard input and output, one JSON value a line, as MCP's stdio transport frames it,
-since a pipe needs no lengths and no line `serve` writes holds a newline or any other control
-character, which a string holds as an escape. A client first sends `initialize` with the
-`protocolVersion` it speaks: `serve` answers with that version when it speaks it
-(`Serve.versions`), with `serverInfo`, `linger` at its version, and `capabilities`, the methods it
-answers, or with an error that names the versions it speaks; then the client sends the
-`initialized` notification. Until then a connection writes nothing but errors and the result of
-`initialize` and performs nothing, and it answers or performs every request it hears
-(`serve_negotiated`). Its methods are operations (`Serve.methods`): a request that parses is
-exactly the request of its command line (`Serve.words`), `session/send`'s base64 `data` the
-standard input of `send NAME -`, and its result is the answer that command line exits with, by
-name and code, then what the request shows, a listing's records, a capture's bytes in base64 or how
-a session ended (`serve_renders_api`). A line that is no JSON, a method `serve` does not answer
-and params it does not take get JSON-RPC's errors -32700, -32600, -32601 and -32602, and a request
-before `initialized` gets -32002, each with linger's answer, `usage`, in its `data`. Each method
-takes one of the shapes leanvim states its peers in (`Serve.Shape`, `Serve.methods`): an ask,
-answered once by its id, or a table, `sessions/subscribe`, whose result lists the sessions'
-records and opens a subscription, named by the id of its request, which every `sessions/changed`
-names; `sessions/unsubscribe` closes it, and a connection sends a notification to no subscription
-that is not open (`serve_negotiated`). A log keeps the last entries it was given, at most its cap,
-and counts the ones it dropped, the two adding up to every entry (`fault_contained`), as a result's
-`said` keeps what its request said; and a session is a life (`Serve.Life`). Not claimed:
-that the executor writes each message whole, on one line, reads each line as `Serve.decode` reads
-it and performs each request the step performs as the command line does, with its `data` as its
-standard input, which the serve suite checks; nor anything of a remote target, which `serve`
-reaches no transport for and refuses.
-
-A client with no terminal of its own follows a session's terminal as rows. `session/screen` and
-`session/history` are `attach --read-only`'s request in the table and log shapes: a watch, which
-attaches read-only once the session's daemon has said on that connection that it speaks this
-version's protocol, and renders what a watcher is shown through linger's own terminal
-(`packages/terminal`), which stands in for every receiver, as part 1 says, by the one renderer
-`capture` uses: a screen's lines, each with a line feed, are what `capture` prints, a line's text
-is its row's `Render.rowText`, and its spans, maximal runs of one pen, cover the pens of its
-characters up to the last that is not a blank of the default pen, so a coloured bar that ends in
-blanks keeps its colour; the cursor and the title are the terminal's (`one_renderer`, killed by a
-second renderer that keeps trailing blanks). A pen is JSON with `fg` and `bg`, a palette index or
-`#rrggbb`, when not the default, and each attribute set as `true`; a span is `[length, pen]`, in
-characters. A watch keeps the lines that left between two looks as a log keeps them, at most
-`Serve.historyCap` and a count of the rest, and a history's log likewise between two updates: what
-its reader reads, a gap for each line dropped, then each line kept, masks what it read before
-followed by what each look's log reads, so no line is dropped uncounted (`history_log_exact`,
-killed by a connection that forgets how many a look dropped). A connection holds at most 16 watches. Not claimed: a mirror
-across a change of the terminal's size: the watch asks for the daemon's `info` on its connection
-after the output it read and attaches again where that gives another size, so a resize shows at
-the next look, but two between looks that leave the size as it was do not, nor do the lines a
-resize pushes into the history or that leave around it; nor a terminal repainted inside a control
-sequence, as part 1 says.
-
-linger's own chooser and every `serve` client read the same list. `sessions/list` sends the
-records of `Api.perform`'s listing, each key and value clean text (`Serve.records`); `ls
---porcelain` prints the same records, a `key<TAB>value` line for each field and a blank line after
-each record (`Listing.porcelain`), and the chooser runs it and reads what it prints
-(`parseSnapshot`, `Snapshot.row`): the names in their order and, under each, exactly the record
-`sessions/list` sends, when each record begins with its name, a valid target no other record has,
-and holds no other `name` field, as a listing's records do (`chooser_same_list`, killed by a
-chooser that reads a list of its own). Not claimed: that the chooser's listing and a client's are
-taken at the same moment, and the remote rows of `ls -r`, which `serve` does not list.
-
-A tmux-resurrect save is a source linger reads and never writes. A pane takes its name from its
-window, as a key, a later pane's name that an earlier one took made unique with a natural-order
-suffix, `-2`, `-3`, and keeps the window's own text as its description. Its panes are rows of `ls`
-and the chooser exactly while linger keeps no record of their names, no socket, checkpoint, end
-record or names entry that names them or leads to them (`listed_unrecorded`), so whether a pane was dealt with is read from the records linger
-already keeps. An attach or a resume of such a pane writes its checkpoint only while no record
-names it, and otherwise writes nothing, so it never replaces a record (`adopt_exclusive`). A kill
-of one writes an end record and nothing else, so the pane stays hidden while the end records are
-kept (`dismiss_hides`), which no command removes, and that record says only what happened: a kill
-dismissed a pane linger never ran, so nothing ended, and `wait` answers for the name, as before
-the kill, that no session has it (`dismissal_happened`). Not claimed: that the IO code
-decides each of these holding the name's locks and creates the checkpoint only where no file is,
-which the interop suite checks, and that linger writes, moves or deletes nothing in tmux's
-directory, which the interop suite checks by hashing it around every command. -/
+Not claimed: that what the IO code finds is what happened, which the suites check; that a
+transport reaches its host, which is the transport's, its keys, jumps, latency and authentication
+included; that the remote linger decodes, since an older one refuses the encoded line as a usage
+error; that a command line fits the remote host's argument limit; that the executor of `serve`
+writes each message whole, on one line, reads each line as `Serve.decode` reads it and performs each
+request as the command line does, which the serve suite checks; anything of a remote target
+through `serve`, which reaches no transport for one and refuses it; a mirror across two resizes
+between looks that leave the size as it was, the lines a resize pushes into the history, and a
+terminal repainted inside a control sequence; that the chooser's listing and a client's are taken
+at the same moment, and the remote rows of `ls -r`, which `serve` does not list; that the IO code
+decides a pane's fate holding the name's locks and creates its checkpoint only where no file is,
+and that linger writes, moves or deletes nothing in tmux's directory, which the interop suite
+checks; for a saved pane, captures other than the latest save's archive; and that an imported
+pane's saved command never runs, which a gate checks. -/
 
 theorem route_exact (args : List String) :
     App.Entry.route args =
@@ -2466,36 +2226,21 @@ theorem metadata_dirs_rejects_silent :
 
 /-! ## 4. Program identity
 
-A session runs the program its creation named, with its words, or without a command the
-session's shell alone, which is what a resume runs again on the saved session's last screen
-(`resume_restores`, in part 7). The operating system runs it as asked: the world claim
-`Spawn.Runs`, which its check and the agent and resume suites test. Its terminal says what it is:
-`TERM=xterm-256color`, `COLORTERM=truecolor`, since the session's terminal keeps and repaints
-24-bit colour, and linger's name and version; its `NOTIFY_SOCKET` names the socket its daemon
-reads its `sd_notify` notifications from, as systemd's does for a service, whatever the command
-that asked for the session had; it reads every other variable as the command that asked for the
-session has it, but linger's own, whose names begin `LINGER_` (`Start.lingers`), which it never
-sees but for its session's `LINGER_SESSION`, so `env -i K=V … linger start` gives it exactly `K=V`
-and the session's variables (`start_runs`).
-
-The program starts from what its start asks, never from how linger was started: every signal at its
-default action, none blocked, and its terminal on descriptors 0, 1 and 2 with no other open,
-whatever the command that asked for the session ignored, blocked or left open, as a shell's `&` job
-ignores SIGINT and SIGQUIT and `exec 3>&1` leaves a pipe open (`start_clean`, over the world claim
-`Spawn.Clean`, which its check and the agent suite test). Not claimed: the rest of what a program
-inherits as any child does, such as resource limits, the file mode mask, scheduling priority and the
-user and groups it runs as.
-
-Linger only delivers what a person types: input reaches the program and nothing else of the
-session. Two runs from one boot whose events differ only in the bytes of the input messages
-clients send, each read whole frames, end in the same session, with the same effects but for the
-bytes they write to the program (`input_unrecorded`), so every record a session asks for, a
-checkpoint of its terminal, its fields and its metadata, its name's end record and the handoff of
-its state, is the same whatever was typed, and none holds what was typed. Not claimed: a read that
-cuts a frame, whose start the session holds until the rest arrives; that the daemon hands a session
-over only once it holds no such start and has written its program every byte it owed it, which the
-upgrade code decides; and that a person's input reaches no file, which the attach suite checks of a
-line typed with echo off. -/
+A session runs the program its creation named, or the session's shell, which a resume runs again on
+the saved session's last screen (`resume_restores`, in part 7), with the environment of the command
+that asked for it less linger's own variables, those beginning `LINGER_` (`Start.lingers`), but its
+`LINGER_SESSION`, and with the variables that say what its terminal is, `TERM=xterm-256color`,
+`COLORTERM=truecolor` and linger's name and version, and the `NOTIFY_SOCKET` its daemon reads, as
+systemd gives a service (`start_runs`). It starts with every signal at its default action, none
+blocked, and only its terminal open, on descriptors 0, 1 and 2, whatever the command that asked
+ignored, blocked or left open (`start_clean`). What a person types reaches the program and nothing
+else of the session, so no record a session asks for holds it (`input_unrecorded`). Not claimed: the
+rest of what a program inherits as any child does, such as resource limits, the file mode mask,
+scheduling priority and the user and groups it runs as; a read that cuts a frame, whose start the
+session holds until the rest arrives; that the daemon hands a session over only once it holds no
+such start and has written its program every byte it owed it, which the upgrade code decides; and
+that a person's input reaches no file, which the attach suite checks of a line typed with echo
+off. -/
 
 theorem input_unrecorded (vt : Vt.Vt) (fields metadata : List (String × String))
     (evs evs' : List Event) (framed : ∀ ev ∈ evs, Framed Wire.encode ev)
@@ -2624,78 +2369,37 @@ theorem start_clean_rejects_inherited :
 
 /-! ## 5. Accountability
 
-A session ends through one ending, whatever ends it (`step_ended_reports`): its program, by itself;
-a kill, once the daemon has stopped the program; or SIGHUP, SIGINT, SIGQUIT or SIGTERM to the
-daemon, the system stopping linger at logout or shutdown, after which the daemon stops the program
-the same way (`step_signal_saves`). Every client attached or waiting hears how the session ended
-before the daemon exits, and the daemon leaves its name an end record that says so. A kill discards
-the session, and a program's own ending stays exactly until someone has
-seen it: one that ends while a client is attached, typist or watcher, is seen as it ends, and the
-session then ends as a kill ends it, its checkpoint deleted once every client is told
-(`step_ended_reports`, with `seenBy`); one that ends with nobody attached saves its last screen,
-as the ending found it, and keeps it, and the first attach to it, in either mode,
-shows that screen, then how its program ended, and discards it once it leaves (`visit_result`). A
-watcher counts as seeing, since it is shown the same screen and told the same ending as a typist
-(`seenBy`); `wait` and `ls` tell the status, not the screen, and `capture` exports it, so
-none of them sees it. A session a signal stopped is saved, not ended: everyone hears which signal stopped the daemon and
-nothing of an outcome of its program, which `resume` runs again from that screen. When the file
-system keeps what linger saves (`Record.Kept`, which its check and the agent suite test), a name's
-end record keeps how its last session ended, for whoever asks later: how its program ended, or which
-signal stopped its daemon, which never reads as an outcome or an unknown ending; a record its
-session left while the program still ran answers that the ending is unknown, and only a name with no
-record answers nothing (`record_answer`). `ls` reports each ending in fields no other ending has, a
-program's ending in the same fields whether a daemon or an end record tells it
-(`endingFields_injective`). `wait` answers with how the session ended when its daemon or the end
-record says, for a saved session `saved` with the signal that stopped its daemon, never a status of
-its program, and that it could not find out only when that is so: the program's ending is unknown,
-or the name stays held, with no daemon answering, from the look that first found it so for longer
-than a daemon's ending lasts, and never while a daemon may still be ending, its drain and the
-waits of its signals (`wait_held`). `kill` answers with what happened to the session it asked to
-end, whoever holds the name after it: once the session's daemon has taken the request, it answers
-that it ended the session exactly when a look finds that the session gave its name up, which a
-daemon does only once its session has ended: no process holds the name, or a newer session does,
-which can take it only after that, as `kill` then says; that the session has not ended only when
-the daemon it asked still answers for the name as itself; and that it could not find out only when
-a process it cannot tell from that daemon holds the name; each of the last two only once `wait`'s
-patience has passed since the daemon took the request, and so never while a daemon may still be
-ending (`kill_answers`, killed by the rule before it, which read a name a newer session took as
-the session not ended). Every command answers with one of the answers `Os.Answer`
-names, the operating system's vocabulary, the selector as the session commands do, and exits with
-its code: a signal's status says which signal, whatever it stopped: a program it killed, a
-command it stopped and a session whose daemon it stopped each answer 128 plus its number, as a
-shell reports a program that signal ended (`code_documented`), and a chooser cancelled by a key
-answers 130, as fzf's does. An attach goes only to a daemon whose `info`
-answer reports this version's protocol level, as every daemon of this version does
-(`infoFields_protocol`), so a daemon an older linger started, of any earlier level, is refused with
-a reason, never sent an attach it would refuse as unknown or drop unanswered. Not claimed: that the
-answer comes within the client's wait and that the refusal names the session and the level, which
-the attach suite checks against a level-2 daemon, one that reports no level and one that never
-answers; that a daemon hears a stop signal, which the operating system delivers through the daemon's
-signal pipe and the resume suite checks, and when it cannot make the pipe takes its default action;
-that an attached client, the chooser and `ls -r`, given SIGTERM, SIGHUP or SIGINT,
-hand their terminal back or retire their transports and answer `stopped` with the first that came,
-however late in their cleanup it came, and that `main` then ends the process by that signal, as a
-program that does not catch it ends, which the attach, manager and remote suites check, and the
-resume suite that a client attached when a signal saves its session answers `saved`; that a client
-the model counts as attached when the program ends still reads what it is told, and that an attach
-executes the steps `visit_result` names, discarding only the checkpoint it showed and keeping the
-session when a signal interrupts the view, which the attach and watch suites check; that a look
-of `kill` hears who holds the name, a daemon told by the start its `info` answer reports, its
-program's pid and when it started, which the identity suite checks against sessions it plays,
-one whose name a newer session takes before `kill` looks again among them; and that the
-process exits with the code of its command's answer, or for `stopped` ends by its signal, which the
-type of every executor's result, `main`'s one exit and a gate on the shells keep.
+A session ends through one ending, whatever ends it: its program, a kill, or SIGHUP, SIGINT,
+SIGQUIT or SIGTERM to its daemon, the system stopping linger at logout or shutdown, which saves the
+session instead of ending it (`step_ended_reports`, `step_signal_saves`). Everyone attached or
+waiting hears how it ended before the daemon exits, and its name keeps an end record that says so
+for whoever asks later (`record_answer`). A program's own ending stays until someone has seen it,
+a watcher as a typist (`seenBy`): the first attach to one nobody saw shows the last screen, tells
+the ending and discards the session (`visit_result`). `wait` and `kill` answer what happened, never
+guessing while a daemon may still be ending (`wait_held`, `kill_answers`), and every command exits
+with the code of one answer `Os.Answer` names, a signal's 128 plus its number, as a shell reports
+it, and a chooser cancelled by a key 130, as fzf's (`code_documented`). An attach goes only to a
+daemon that reports this version's protocol level (`infoFields_protocol`). The daemon's driver runs
+the session's trace: when every effect succeeds it executes exactly the trace's effects, in order
+(`run_refines`), and whatever its effects reply it returns and keeps the session within its bounds
+(`run_total_safe`).
 
-The daemon's driver runs the session's trace. When every effect succeeds, a stop replying how the
-program ended, the driver hands the session each event and then what that event's effects feed
-back, a stop's reply as the event `stopped`, before the next event; it ends in the state of the
-trace of `Session.step` over those events, executes exactly that trace's effects, in order, each
-with the state its event left, and exits exactly when one of them asks it to (`run_refines`).
-Whatever its effects reply, an executor that answers every effect lets it return and keeps the
-session within its bounds (`run_total_safe`), disconnects and failed saves never stop it
-(`run_feedback_alive`), and an event whose
-effects stop the program ends the session (`run_stop_exits`). Not claimed: which events the
-driver hands the session and which effects it executes when an effect fails. -/
+Not claimed: that the answer comes within the client's wait and that a refusal names the session
+and the level, which the attach suite checks against a level-2 daemon, one that reports no level
+and one that never answers; that a daemon hears a stop signal, which the operating system delivers
+through the daemon's signal pipe and the resume suite checks, and when it cannot make the pipe
+takes its default action; that an attached client, the chooser and `ls -r`, given SIGTERM, SIGHUP
+or SIGINT, hand their terminal back or retire their transports and answer `stopped` with the first
+that came, and that `main` then ends the process by that signal, which the attach, manager and
+remote suites check, and the resume suite that a client attached when a signal saves its session
+answers `saved`; that a client the model counts as attached when the program ends still reads what
+it is told, and that an attach executes the steps `visit_result` names, discarding only the
+checkpoint it showed and keeping the session when a signal interrupts the view, which the attach
+and watch suites check; that a look of `kill` hears who holds the name, which the identity suite
+checks; that the process exits with the code of its command's answer, or for `stopped` ends by its
+signal, which the type of every executor's result, `main`'s one exit and a gate on the shells keep;
+and which events the driver hands the session and which effects it executes when an effect
+fails. -/
 
 theorem step_kill_stops (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {rest : List Wire.Msg} (hc : s.client? id = some c)
@@ -3244,46 +2948,24 @@ theorem run_stop_exits_rejects_jump :
 
 /-! ## 6. Bounded and clean
 
-After every batch of events, the driver leaves the session's clients, record fields, frame decoders and pty
-scanner within their caps, whatever its effects reply, when its executor answers every effect
-(`run_total_safe`, in part 5); when every effect succeeds, the states it leaves are those of the
-session's trace (`run_refines`, in part 5). The pty's input queue never owes more than its cap, nor
-does a client's output queue the daemon keeps (`reachableIn_bound`, `fault_contained`); a read
-gets at most one rendered reply, its frames followed by `done`, and when it leaves its sender
-unattached at most one pty resize (`step_bytes_one_reply`); every frame of program output carries at
-most 64 KiB (`step_output_delivered`, in part 1); and a tmux capture's bytes are at most twice its
-limit (`captureBytes_bounded`). When a session ends, by a kill or by its program's own end, the
-daemon signals the program's whole process group, which the program leads, at once, and the rest
-of its terminal session, with each signal of `Session.ending`: SIGHUP, then SIGKILL to what still
-runs at the grace, `Stop.grace`; it then writes the end record, so `kill` and `wait` return once
-that is done, and reaps the program last, so the program's pid, which is the group's and the
-session's id, stays reserved until then. Of the processes of the program's group, none still runs
-once the ending is over (`ending_clean`), when a signal to a group reaches every member
-(`Os.Signal.Group`, which its check tests) and SIGKILL ends within a second each process it
-reaches (`Signal.Ends`, which its check and the attach suite test and a process stuck in the
-kernel falsifies). Not claimed: how many pty resizes a read asks for while its sender stays
-attached; the rest of the terminal session, which the attach suite tests; and the processes
-linger's signals miss: one that left the group and the terminal session with `setsid`, which only
-a PID namespace would hold, and one of another user.
-
-State is bounded by what it means: every file in linger's state is one fact, a session's socket,
-its notification socket, which its daemon removes as the session ends and a listing removes with
-a stale socket, or checkpoint or an ID's end record, or a names entry, and a lock file means
-nothing of its own.
-A process that held an ID's locks deletes their files, still holding them, as it lets them go,
-when no socket, notification socket, checkpoint or end record has the ID and no names entry leads to it, and keeps
-every other lock file, so after any command every lock file names a session or an ending, when
-only the command's ID named nothing before (`locks_named`); the names lock, `names/.lock`, names
-no session, and its holder deletes it as it lets it go. A deleted lock file excludes as one kept: only a holder deletes one, and a
-process that locks a file checks that the path still names it, locking the path's file again when
-not (`Os.Shell.flock`), which `fstat` and `stat` tell apart, so it keeps a lock only of the file
-the path names (the os package's `lock_named`, over `Os.Lock.Tells`), and `Claim.Exclusive`
-holds of the lock of the file a path names and a name keeps one owner (`one_owner`). End records
-are not bounded: one is kept for each name a session ended under or a kill hid a saved tmux pane
-under, so `wait` answers and the pane stays hidden, and the lock files are bounded by them. Not
-claimed: that each command lets its locks go as `Locks.release` says, which the identity suite
-checks, nor that a crash or a SIGKILL leaves no lock file, which the next command on the name or
-the next listing deletes. -/
+After every batch of events the driver leaves a session's clients, record fields, frame decoders
+and pty scanner within their caps (`run_total_safe`, in part 5); a read gets at most one rendered
+reply (`step_bytes_one_reply`), a frame of output carries at most 64 KiB, a tmux capture's bytes are
+at most twice its limit (`captureBytes_bounded`), and the queues the daemon keeps owe at most their
+caps (`reachableIn_bound`, `fault_contained`). When a session ends, the daemon signals the program's
+process group and the rest of its terminal session with each signal of `Session.ending`, SIGHUP,
+then SIGKILL at the grace, `Stop.grace`, writes the end record and reaps the program last, so its
+pid stays reserved until then, and none of the group still runs once the ending is over
+(`ending_clean`). Every file in linger's state is one fact, and after any command every lock file
+names a session or an ending (`locks_named`); a lock is kept only of the file its path names (the
+os package's `lock_named`), so a deleted lock file excludes as one kept. End records are not
+bounded: one is kept for each name a session ended under or a kill hid a saved tmux pane under,
+and the lock files are bounded by them. Not claimed: how many pty resizes a read asks for while
+its sender stays attached; the rest of the terminal session, which the attach suite tests; the
+processes linger's signals miss, one that left the group and the terminal session with `setsid`,
+which only a PID namespace would hold, and one of another user; that each command lets its locks
+go as `Locks.release` says, which the identity suite checks; and that a crash or a SIGKILL leaves
+no lock file, which the next command on the name or the next listing deletes. -/
 
 theorem locks_named (records : Session.Records) (name : String)
     (before : ∀ held ∈ records.locks, held = name ∨ records.holds held = true) :
@@ -3395,40 +3077,27 @@ theorem ending_clean_rejects_pid :
 
 /-! ## 7. Recovery
 
-The terminal package's claims cover every terminal the checkpoint decoder returns
-(`Checkpoint.live_of_decoded`), so any bytes on disk resume a session those claims cover, or are
-refused, and a command never takes bytes that do not decode for no checkpoint: it starts nothing
-over them and leaves them as they are, for `kill` to discard (`recovery_exact`). A resume gives
-back the saved terminal and the saved record's own fields, its description and an import's
-provenance, but no label an older linger saved (`resume_restores`). A crash costs at most the
-changes of the last interval, never the session, as part 10 says (`fault_contained`). A record an
-older linger wrote reads as it meant then: a record of format 3,
-its tag then today's layout, that holds no description reads with the description a tmux import
-gives its labels, the window's name, as an import from before a row had a description recorded
-the pane's provenance and none (`older_record_described`); a record of today's
-format reads as written (`loadBytes_saveBytes_live`), so a description its user cleared stays
-cleared. Not claimed: that records of formats 1 and 2 read the same way, which the checkpoint
-proofs state (`load_saveV2_live`, `load_saveV1_live`); that a description a user cleared in a
-record of an earlier format stays cleared, since those formats do not tell it from one never
-given; a bound in bytes or rows on what a crash loses, since the bound is
-in time, the interval and the saves then running, whatever the program wrote in it, and a bound in
-rows waits for an append-only store of the history; and that power loss keeps what the flushes
-returned for, which rests on `Disk.Durable` and which no check or suite causes.
+Any bytes on disk resume a session the terminal package's claims cover
+(`Checkpoint.live_of_decoded`) or are refused, and a command never takes bytes that do not decode
+for no checkpoint: it leaves them as they are, for `kill` to discard (`recovery_exact`). A resume
+gives back the saved terminal and the saved record's own fields, but no label an older linger saved
+(`resume_restores`), and a record an older linger wrote reads as it meant then
+(`older_record_described`). What a crash costs is part 10's (`fault_contained`). Not claimed: that
+records of formats 1 and 2 read the same way, which the checkpoint proofs state
+(`load_saveV2_live`, `load_saveV1_live`); that a description a user cleared in a record of an
+earlier format stays cleared, since those formats do not tell it from one never given; and a bound
+in bytes or rows on what a crash loses, which is bounded in time, whatever the program wrote, and in
+rows waits for an append-only store of the history.
 
-An upgrade replaces a daemon's image with a newer binary's, by an exec, which keeps the daemon's
-process, its program, which stays its child on the same terminal, and the descriptors it keeps
-(`Os.Exec.Keeps`): every descriptor the handoff names, the listening socket, the pty, the signal
-pipe, the locks and every connection (`upgrade_keeps`). The new image
-resumes from the handoff, which carries the session's whole state and what the daemon still owed
-its program and its connections, so the session is carried, not rebuilt: the handoff of a session
-whose terminal's parser is quiet decodes as exactly that session (`handoff_carries`, whose kill
-rebuilds it as a resume does). A handoff names its format, and a binary decodes the formats it
-lists and no other (`handoff_versioned`); a daemon hands its session only to a binary whose probe
-lists the format it writes (`upgrade_probes`), and keeps serving otherwise, as it does when the
-exec fails. Not claimed: that the binary the exec starts is the one the probe ran, since the file
-may be replaced between them, nor that it has the resources to decode the handoff; such an image
-ends, and the session's program loses its daemon, with the checkpoint the old image saved just
-before the exec left to resume. -/
+An upgrade replaces a daemon's image with a newer binary's by an exec, which keeps the daemon's
+process, its program and every descriptor the handoff names (`upgrade_keeps`); the new image
+resumes from the handoff, which carries the session whole, not rebuilt as a resume does
+(`handoff_carries`); a binary decodes the handoff formats it lists and no other
+(`handoff_versioned`), and a daemon hands its session only to a binary whose probe lists the format
+it writes, and serves on otherwise, as when the exec fails (`upgrade_probes`). Not claimed: that
+the binary the exec starts is the one the probe ran, since the file may be replaced between them,
+nor that it has the resources to decode the handoff; such an image ends, and the session's program
+loses its daemon, with the checkpoint the old image saved just before the exec left to resume. -/
 
 theorem handoff_carries (s : State) (w : Handoff.World)
     (h :
@@ -3665,15 +3334,12 @@ theorem older_record_described_rejects_stored :
 
 What linger writes to a terminal on its own account is clean (`Display.Clean`): printable text,
 line breaks, tabs and a short list of control sequences, none of which asks the terminal for a
-reply, resets it or erases its scrollback. A gate lists every write to standard output in the
-program with whose bytes it writes: a printer `writes_clean` names, or the session's own bytes,
-its output and the repaint of its screen, which the terminal package's headlines describe.
-Linger's listings, those of `ls` and the chooser, are in color exactly when they go to
-a terminal, NO_COLOR is unset or empty, as no-color.org reads it, and TERM names a terminal other
-than `dumb`, which takes no escape sequences (`withColor_iff`); a gate ties each to
-`Os.Env.withColor` of whether standard output is a terminal, NO_COLOR and TERM, each read once.
-Not claimed: what linger prints as lines of text (help, version, `ls --summary`, porcelain
-records) and its messages on standard error. -/
+reply, resets it or erases its scrollback. A gate lists every write to standard output with what it
+writes: a printer `writes_clean` names, or the session's own bytes, which the terminal package's
+headlines describe. The listings of `ls` and the chooser are in color exactly when they go to a
+terminal, NO_COLOR is unset or empty, as no-color.org reads it, and TERM is not `dumb`
+(`withColor_iff`), each read once. Not claimed: what linger prints as lines of text (help,
+version, `ls --summary`, porcelain records) and its messages on standard error. -/
 
 theorem infoText_text (s : State) :
     ∃ cs : List Char,
@@ -3771,62 +3437,25 @@ theorem withColor_iff_rejects_presence :
 
 /-! ## 9. Work follows events
 
-A daemon's state holds its own session alone, so no event's work depends on how many sessions exist.
-Program output costs work only for the clients attached to its session (`step_output_delivered`, in
-part 1), and a daemon's poll that no event or signal ends returns no sooner than the earliest
-deadline the daemon holds, and never when it holds none (`poll_wakes`), when poll(2) waits out its
-timeout (`Poll.Sleeps`, which its check tests by timing quiet polls, as the quiet suite does, which
-also counts the wakeups of idle sessions). `scripts/gates.sh` lists every timer the program sets,
-with its bound. On the screen, the selector repaints only what an event changed
-(`picker_repaints_changes`): from a frame on screen to the next one, its update writes, for each row
-that differs, the cursor's move to that row and the row's paint, so it costs the rows that differ
-and moving the highlight costs two; it writes nothing to a row the two frames share, whatever that
-row shows; and over a terminal showing the first frame it shows exactly what the second frame shows
-there. Only the first frame, the first after a resize and the first after the refresh key paint
-every row: Ctrl-L, which clears and redraws the screen in a line editor, redraws the chooser's.
-The chooser queries remote hosts, through a transport command each, only when an event asks it to
-(`fetch_follows_events`): a listing it starts queries them exactly when no listing came before it
-since it opened, or the refresh key, Ctrl-L, came after the one before; its other listings, one
-each second while it is open, a timer `scripts/gates.sh` names, read its local sessions alone and
-keep the remote rows the last query reported, and the header says how long before the latest
-listing that query started (`remote 12s`), so a remote row's status reads as of then; each change
-of that age repaints the header's row alone. Not claimed: that the header's age is that time,
-which the manager suite checks, how much later than its deadline a loaded host lets a daemon wake,
-and an update over a terminal in insert or origin mode, without autowrap, with a narrower scroll
-region or a DEC line-drawing character set, none of which the picker sets. Not claimed yet: that
-an event's work follows its size.
-
-`serve` keeps a subscriber's table by events, and holds no backlog however slowly the subscriber
-reads. While a subscription is open, `serve` lists the sessions one second after its last listing
-ended, the cadence the chooser lists at, a timer `scripts/gates.sh` names, and lists nothing
-while none is open. The subscription's own listing is the table its subscriber first holds; a
-later listing sends nothing and replaces the latest records the connection holds, so it holds two
-listings, what it last told the subscriber and the latest, never a queue; and each time its
-writer is free, having written what came before, it sends `sessions/changed` exactly when the
-latest records differ from what it last told the subscriber, read without `idle` and `lastout`,
-the clock's readings, which change while nothing happens: the records that differ and the keys
-that went (`changed_exactly`), which bring the subscriber's view, the record it holds under each
-key, to the latest records (`fault_contained`). So a quiet session sends nothing, a session that
-prints sends at most one update a second, and a subscriber that reads late gets the latest
-record under each key, never every one between. A watch follows its session's output, not a
-clock: after a read that brought output, it asks for the daemon's `info` on the same connection,
-whose answer, coming after that output, confirms the terminal's size, and there it takes a look,
-the screen its mirror renders and the lines that left since, so a quiet session costs a watch
-nothing. A screen's first look answers its request with the whole screen, which its subscriber
-then holds; a later look sends nothing and replaces the latest screen, so the connection holds
-what it told and the latest, never a queue; and each time the writer is free it sends
-`session/screen/changed` exactly when the two differ, with exactly the lines that changed, under
-their numbers, the numbers of those that went, and the cursor and title when they changed, which
-bring the subscriber's copy to the latest look (`screen_table_exact`, killed by an update that
-carries every line and by one that carries only the first that changed), as the chooser's repaint
-writes only the rows that differ (`picker_repaints_changes`). A history's looks add the lines that
-left to its log and send nothing, and a free writer sends the log, its lines and its count of
-drops, when it holds any (`history_log_exact`). A watch's last update, when its session ends or
-its connection is lost, carries `closed`, with the answer the command line exits with for that. At most 64 requests are performed, and messages
-wait to be written, at once, past which `serve` reads no more input until one has answered or been
-written, and a line is at most 1 MiB, so a client that sends much and reads nothing holds `serve`
-at a bounded size. Not claimed: that a listing's records are the sessions' as they stand, which
-the listing's own claims and the suites cover, and how late a loaded host makes a listing. -/
+A daemon's state holds its own session alone, so no event's work depends on how many sessions
+exist; program output costs work only for the clients attached to its session
+(`step_output_delivered`, in part 1); a session's ticks settle, the third in a row setting none
+(`ticks_settle`); and a daemon's poll that no event ends sleeps until its earliest deadline, or
+for good with none (`poll_wakes`). `scripts/gates.sh` lists every timer the program sets, with its
+bound. The chooser repaints only the rows an event changed (`picker_repaints_changes`), and asks
+remote hosts only when an event asks it to, keeping the rows their last answer gave and saying how
+old they are (`fetch_follows_events`). `serve` holds, for each subscription, what it last told the
+subscriber and the latest, never a queue, and sends an update exactly when the two differ
+(`changed_exactly`, `screen_table_exact`, `history_log_exact`); it lists the sessions once a second
+only while a subscription is open, and a watch looks only after output, so a quiet session costs
+nothing. At most 64 requests are performed, and messages wait to be written, at once, and a line is
+at most 1 MiB, so a client that sends much and reads nothing holds `serve` at a bounded size. Not
+claimed: that the chooser's header gives the age of the remote rows, which the manager suite
+checks; how much later than its deadline a loaded host lets a daemon wake or makes a listing; an
+update over a terminal in insert or origin mode, without autowrap, with a narrower scroll region
+or a DEC line-drawing character set, none of which the picker sets; that a listing's records are
+the sessions' as they stand, which the listing's own claims and the suites cover; and, yet, that an
+event's work follows its size. -/
 
 theorem changed_exactly (s : App.Serve.State) (version : String) (id : Serve.Id)
     (told latest : List Serve.Record) (ready : s.phase = .ready version)
@@ -4034,55 +3663,31 @@ theorem fetch_follows_events_rejects_polling :
 
 /-! ## 10. Graceful under load and faults
 
-A fault in a daemon, a client or a peer costs at most its own session or client, plus a declared
-bound elsewhere: each fault has its cost (`Fault.cost`), and the claims that bound it at that cost
-are its case (`fault_contained`, killed by an output queue that never cuts a client that stops
-reading, which grows the daemon without bound, and by the wrong parts that kill the claims it
-gathers). A daemon that crashes costs its own session, which it holds alone, back to its last save:
-a session asks for a save within `ckptIntervalMs` of every change no save holds, by the clock its
-ticks give it; its daemon saves off its loop and replaces the checkpoint whole and durably, so that
-after a crash the file at the path is the last save whose flushes returned, or the one then running,
-whole (`Disk.Durable`, which the resume suite tests by killing a daemon while it saves, and its
-check once both flushes returned); and resuming then gives back that save, never a fresh session. A
-client that dies costs its own client: its connection's end drops it alone from the roster, keeps
-the terminal and the record, and asks for no more than a save and the report that the program lost
-focus. A client that floods its session or stops reading costs its own client: a frame the program's
-full input queue cannot take is refused and a client whose output queue would pass its cap is cut,
-so the queues owe at most their caps (`reachableIn_bound`); `serve` holds two listings for a
-subscriber, never a queue, as part 9 says; and a log keeps its last entries, at most its cap, and
-counts the ones it dropped. A daemon that does not answer costs its own row: a listing asks its
-daemons at once, under one deadline, and lists one whose reply did not come as a live socket that
-sent nothing, which reads `?` with no attention; a remote host that does not answer costs its own
-record, an observation with no answer, which reads the same (`classify_iff`). Optional work costs no
-session or client, only a declared bound of the work that needs it. A daemon saves its checkpoint
-and writes its end record, their flushes included, off its loop, on a thread of its own
-(`scripts/gates.sh`), so a slow disk holds up no answer and no output: a write starts only when none
-of its kind runs, one asked for meanwhile waits in place of any that waited, and the last one asked
-for is the last to start, at once or as soon as the running one ends. A `capture` of a saved session
-loads and renders it holding the name's locks and lets them go before it writes, so no step it takes
-holding them waits on a party outside linger, and an attach or a resume that starts the session
-while a pager or a pipe nobody reads holds up the capture's write waits for the locks only as long
-as the load and the render take: the shell runs these steps in the phases `Capture.phases` cuts them
-into, which hold the locks exactly where `Capture.work` says, whatever the plan, and runs them for
-every capture of a saved session (`scripts/gates.sh`). Not claimed: shared host resources, CPU, disk
-bandwidth and memory; a full state directory; a daemon's program, which dies with its daemon;
-`serve`'s cost, which grows with its subscribed clients; and the IO of three cases, which suites
-test: that a client's death leaves its daemon serving the rest (the attach suite), that a daemon
-that does not answer by the listing's deadline lists as `?` while the rest list (the status and
-robust suites), and that a remote host that does not answer within its wait lists as `?` (the remote
-suite).
-
-A command waits for its daemon's answer a bounded time, and what it answers when that time runs
-out is still true. Every wait sleeps as `Os.Wait.next` decides (`scripts/gates.sh`), so it gives up
-once its deadline has passed, which the os package claims (`packages/os`), and then reports what it
-missed: `start` that its daemon did not answer and `ls` a remote host as `?`. A write that finds
-its descriptor full, as one another program left nonblocking is, waits for the reader and goes on,
-never taken for a reader that is gone, which the os package claims. Not claimed: the waits with no
-deadline, each on something that ends without waiting itself, or on purpose: `wait`, which takes
-no time limit of its own, since `timeout(1)` composes with it, an idle daemon's poll, `start` or
-`resume` once their daemon took the request's ticket, a daemon's last disk write, which it reports
-after a second, and a command's write to a reader that does not read, as a blocking write waits
-too. How long a wait takes under load the robust, resume and status suites measure. -/
+Each fault has its cost (`Fault.cost`), and the claims that bound it at that cost are its case
+(`fault_contained`). A daemon that crashes costs its own session back to its last save: it asks for
+a save within `ckptIntervalMs` of every change no save holds and replaces its checkpoint whole and
+durably (`Disk.Durable`, which the resume suite tests by killing a daemon while it saves). A client
+that dies costs its own client, and so does one that floods its session or stops reading, whose
+frames are refused or whose connection is cut, so every queue owes at most its cap. A daemon or a
+remote host that does not answer costs its own row, which reads `?` with no attention. Optional
+work costs only its declared bound: a daemon saves its checkpoint and writes its end record off its
+loop (`scripts/gates.sh`), so a slow disk holds up no answer and no output, those writes coalesce,
+and a `capture` of a saved session holds the name's locks only while it loads and renders. A command
+waits for its daemon's answer a bounded time, and what it answers when that time runs out is still
+true (`start_answer_true`): every wait sleeps as `Os.Wait.next` decides (`scripts/gates.sh`), so
+it gives up once its deadline has passed, which the os package claims, and reports what it missed,
+and a write that finds its descriptor full waits for the reader, never taken for a reader that is
+gone. Not claimed: shared host resources, CPU, disk bandwidth and memory; a full state directory; a
+daemon's program, which dies with its daemon; `serve`'s cost, which grows with its subscribed
+clients; the IO of three cases, which suites test: that a client's death leaves its daemon serving
+the rest (the attach suite), that a daemon that does not answer by the listing's deadline lists as
+`?` while the rest list (the status and robust suites), and that a remote host that does not answer
+within its wait lists as `?` (the remote suite); and the waits with no deadline, each on something
+that ends without waiting itself, or on purpose: `wait`, which takes no time limit of its own,
+since `timeout(1)` composes with it, an idle daemon's poll, `start` or `resume` once their daemon
+took the request's ticket, a daemon's last disk write, which it reports after a second, and a
+command's write to a reader that does not read, as a blocking write waits too. How long a wait
+takes under load the robust, resume and status suites measure. -/
 
 theorem start_answer_true (r : Start.Request) (h : Start.Reachable Start.proceeds Start.answer r) :
     (r.answer = some .started → r.runs = true) ∧
@@ -4244,10 +3849,20 @@ theorem fault_contained_rejects_eager :
 
 /-! ## The status rule
 
-And the titles, listings and selector views that show statuses; what makes a session ask and what
-it tells of its shell's commands is part 2's (`step_owned`). Not claimed: that the porcelain and
-a row report the text of the last notification since the last look and an ending's command line
-and status, and the porcelain the declared progress, which the status suite checks; that the
+And the titles, listings and selector views that show statuses. A row's first two columns are its
+attention's mark and its state's glyph, each read from its own signals: attention `⚑` for a bell
+or a desktop notification since the last look, `∙` for new lines in its history or an ending
+nobody was attached to see, blank for neither, an ask winning; state `!` for an error its program
+declared, `⣷` working, `⣤` paused, `⣀` running and declaring nothing, `✓` ended with status 0, `✗`
+ended any other way, `~` saved with no daemon and `?` no answer (`icon_glyphs`). A program declares
+progress by ConEmu's OSC `9;4`, which the terminal package's mediator hears (`progress_source`),
+and works, declaring none, while its shell's OSC 133 marks say a command runs. No tick changes a
+status, so a status changes only when a signal does. A view ranks rows by attention, then by where
+the session is in its life, and within a place keeps the listing's order, which orders names as
+people read them; titles and `ls --summary` count attention alone. What makes a session ask and
+what it tells of its shell's commands is part 2's (`step_owned`). Not claimed: that the porcelain
+and a row report the text of the last notification since the last look and an ending's command
+line and status, and the porcelain the declared progress, which the status suite checks; that the
 mediator's `lines` is set exactly when rows enter the terminal's history, which the terminal
 package's tests and the status suite check; repainting the marks after a reattach, which a repaint
 does not carry; and that the daemon publishes what it sees to its name's end record, which the

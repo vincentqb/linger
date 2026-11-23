@@ -82,9 +82,11 @@ or `WorldCode`, as the Lean Software Challenge reads it, and any other module is
   `WorldSpec` modules and the packages' modules, and the build writes `comparator.json` from it
   for `lake comparator`.
 - `Linger.lean`: the session library's umbrella module.
-- `Theorems/`: the headline proofs (`Solution.lean`) and `Coverage.lean`, which checks the
-  pure code's `@[csimp]` replacements and lists its definitions for the emitter check in
-  `Verify/Coverage.lean`; `Verify/`: the verifier's harness, runner and own suites.
+- `Theorems/`: the headline proofs, one module for each part of `Challenge.lean` (`Faults.lean`
+  for part 10, `Status.lean` for the status rule), which `Solution.lean` imports for the
+  comparator, and `Coverage.lean`, which checks the pure code's `@[csimp]` replacements and lists
+  its definitions for the emitter check in `Verify/Coverage.lean`; the library names each module
+  of `Theorems/` as a root; `Verify/`: the verifier's harness, runner and own suites.
 - `packages/`: Lake packages linger requires by path, each with its own `Challenge.lean`,
   solution, audit and `owned.lock`, and laid out by role as a component is: `fuzzy`, the fuzzy
   matcher (namespace `Fuzzy`), `input`, the bounded terminal key decoder (`Input`), `terminal`,
@@ -130,8 +132,8 @@ size: Lean erases proofs regardless of file placement.
   it. The challenges follow the library's convention: a module doc says what is claimed and
   what is not, and holes, headlines and kills carry no doc comments.
 - Every headline in `Challenge.lean` needs a kill marked `@[kills headline]`: a theorem there
-  stating the headline's negation with a wrong part in place of a hole, proved in
-  `Theorems/Solution.lean`. The audit matches a kill against its headline term by term, ignoring
+  stating the headline's negation with a wrong part in place of a hole, proved beside its
+  headline in its part's module under `Theorems/`. The audit matches a kill against its headline term by term, ignoring
   binder names and metadata, so a wrong part is a closed term of the hole's type as written: when
   a hole takes type parameters, or the elaborator would widen a lambda's type, name the wrong part
   in a `CoreSpec` module (`Offloop.eager`, `Render.escape`). Statements bind no `let` and match
