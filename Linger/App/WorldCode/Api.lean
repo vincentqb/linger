@@ -16,6 +16,7 @@ public import Linger.Os.CoreSpec
 public import Linger.Session.CoreSpec
 public import Linger.App.CoreSpec
 public import Linger.App.CoreCode.Api
+import Linger.App.CoreCode.Handover
 import Linger.App.CoreCode.Recovery
 import Linger.App.CoreCode.Commands
 import Linger.App.CoreCode.Kill
@@ -23,6 +24,7 @@ import Linger.App.CoreCode.Wait
 import Os.WorldCode.Command
 import Linger.Session.WorldCode.Resume
 import Linger.Session.WorldCode.Record
+import Linger.Session.CoreCode.Build
 import Linger.Session.CoreCode.Handoff
 import Std.Async.Signal
 import Linger.Display.CoreCode.Status
@@ -777,16 +779,24 @@ private def endingFound : Client.Ending → Found
   | .saved signal => .ended (.saved signal)
   | .status status => .status status
 
-/-- Attach over `fd` once its daemon has said, in an `info` answer on `fd` within
-`Client.replySilenceMs`, that it speaks this version's protocol (`Wire.admits`). Otherwise close
-`fd`, say which session and which level its daemon reported, and find `refused`: a daemon an
-older linger started refuses this version's attach as a message it does not know, one from
-before the level was reported drops it without a reply, and one that does not answer would leave
-the attach waiting for the detach key. -/
-private def attachSpoken (env : Env) (name : String) (fd : UInt32) (mode : Linger.Session.Mode) :
-    IO (Except Found Client.Outcome) := do
-  let heard ←
-    (Inventory.readInfo fd (some ((← monotonicMs) + Client.replySilenceMs.toNatClampNeg))).toBaseIO
+/-- Bytes a reply carries that a request does not show. -/
+private def unshown (_ : ByteArray) : IO Unit := pure ()
+
+/-- How long `upgrade`, and an attach that hands its daemon over, wait for the daemon's answer: its
+probe of the new binary, its saves and the new image's start, which a loaded host slows. -/
+private def upgradeWaitMs : Int32 := 60000
+
+/-- The `info` answer of `fd`'s daemon, within `Client.replySilenceMs`. -/
+private def hearInfo (fd : UInt32) : IO (Except IO.Error (List (String × String))) := do
+  (Inventory.readInfo fd (some ((← monotonicMs) + Client.replySilenceMs.toNatClampNeg))).toBaseIO
+
+/-- Attach over `fd` once its daemon has said, in `heard`, its `info` answer on `fd`, that it
+speaks this version's protocol (`Wire.admits`). Otherwise close `fd`, say which session and which
+level its daemon reported, and find `refused`: a daemon an older linger started refuses this
+version's attach as a message it does not know, one from before the level was reported drops it
+without a reply, and one that does not answer would leave the attach waiting for the detach key. -/
+private def attachHeard (env : Env) (name : String) (fd : UInt32) (mode : Linger.Session.Mode)
+    (heard : Except IO.Error (List (String × String))) : IO (Except Found Client.Outcome) := do
   let level := (heard.toOption.bind (·.lookup "protocol")).bind String.toNat?
   if Linger.Session.Wire.admits level then
     return .ok (← Client.attach name fd (attentionSample name) (mode == .readOnly))
@@ -804,6 +814,50 @@ private def attachSpoken (env : Env) (name : String) (fd : UInt32) (mode : Linge
         s!"session '{name}' was started by an older linger (no protocol level); restart it, or \
           attach with that linger"
   return .error .refused
+
+/-- Ask the daemon of `s` to replace its image with this binary, `Env.exe`, which carries the
+session over, as `upgrade` asks (`Msg.upgrade`) and as long as it waits: `none` once the new image
+answers, or why the daemon kept its own image. -/
+private def handOver (env : Env) (s : Names.Ref) : IO (Option String) := do
+  let request := Msg.upgrade env.exe.toUTF8.toList
+  match ← Client.oneShot s.id request unshown (silenceMs := upgradeWaitMs) with
+  | some .done =>
+    return none
+  | some (.refused why) =>
+    return some why
+  | some (.lost why) =>
+    return some why
+  | some (.exited ending) =>
+    return some s!"the session ended ({ending.describe})"
+  | some .silent =>
+    return some "it did not answer"
+  | none =>
+    return some "no daemon answers"
+
+/-- Attach over `fd` as `attachHeard` does, once the daemon of `s` has said in an `info` answer on
+`fd` what it is, handing it over first to this binary when `Handover.plan` says so of the attach's
+mode, this binary's build and that answer (`attach_upgrades`): a writable attach by a higher build
+to a daemon that can hand its session to this binary closes `fd`, asks the daemon to replace its
+image with this binary, says on one line why when the daemon keeps its own, and attaches over a new
+connection to the daemon that answers. Any other attach attaches over `fd`, saying nothing. -/
+private def attachSpoken (env : Env) (s : Names.Ref) (fd : UInt32) (mode : Linger.Session.Mode) :
+    IO (Except Found Client.Outcome) := do
+  let heard ← hearInfo fd
+  match heard with
+  | .ok fields =>
+    if Linger.App.Handover.plan mode Linger.Session.Build.number fields == .handOver then
+      close fd
+      if let some why← handOver env s then
+        say env s!"kept the older daemon: {why}"
+      match ← Client.connect s.id with
+      | some fd =>
+        attachHeard env s.name fd mode (← hearInfo fd)
+      | none =>
+        return .error (← noSession env s.name)
+    else
+      attachHeard env s.name fd mode heard
+  | .error _ =>
+    attachHeard env s.name fd mode heard
 
 /-- A connection a watch attaches over, to the daemon of the session `s` names: open once its
 daemon has said, in an `info` answer on it within `Client.replySilenceMs`, that it speaks this
@@ -940,7 +994,7 @@ private def cmdAttach (env : Env) (s : Names.Ref) (mode : Linger.Session.Mode) (
     if mode == .readOnly then
       match ← Client.connect s.id with
       | some fd =>
-        attachSpoken env s.name fd mode
+        attachSpoken env s fd mode
       | none =>
         match ← visitOffline env s true with
         | .ok (some outcome) =>
@@ -955,7 +1009,7 @@ private def cmdAttach (env : Env) (s : Names.Ref) (mode : Linger.Session.Mode) (
       -- the create/resume path, as does a name another process holds
       match ← Client.connect s.id with
       | some fd =>
-        attachSpoken env s.name fd mode
+        attachSpoken env s fd mode
       | none =>
         adoptPane env s.name
         match ← (visitOffline env s false).toBaseIO with
@@ -964,7 +1018,7 @@ private def cmdAttach (env : Env) (s : Names.Ref) (mode : Linger.Session.Mode) (
         | _ =>
           match ← connectUpsert env s cmd with
           | .ok fd =>
-            attachSpoken env s.name fd mode
+            attachSpoken env s fd mode
           | .error answer =>
             .error <$> refused env s answer
   match result with
@@ -1069,9 +1123,6 @@ private def requestStatus (env : Env) (name : String) (result : Client.Drained) 
   | .silent =>
     say env s!"no reply from '{name}'"
   return .refused
-
-/-- Bytes a reply carries that a request does not show. -/
-private def unshown (_ : ByteArray) : IO Unit := pure ()
 
 /-- One request to a live session, given up after `Client.replySilenceMs` of silence, as every
 one-shot request is (`Client.oneShot`). -/
@@ -1608,10 +1659,6 @@ private def cmdListNamed (env : Env) (porcelain : Bool) (names : List String) : 
           say env s!"no answer for '{target.name}': {why}"
           found := worse found .refused
   return { found, shown := .rows porcelain shown }
-
-/-- How long `upgrade` waits for a daemon's answer: its probe of the new binary, its saves and the
-new image's start, which a loaded host slows. -/
-private def upgradeWaitMs : Int32 := 60000
 
 /-- `upgrade` of one live session: ask its daemon to replace its image with `Env.exe`, which
 carries the session over, its program running on (`Msg.upgrade`). A daemon whose `info` names no

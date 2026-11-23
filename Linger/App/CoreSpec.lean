@@ -13,8 +13,10 @@ the session model and one row of the command table, an operation's one command, 
 does with a name's saved session and what an attach to it does, what `wait` hears on each look
 at a name and does next, what `kill` hears on each look at a name once a daemon has taken its
 request and does next, and the steps of `capture` of a saved session, which of them hold the
-name's locks and which wait on a party outside linger. What a command answers is the operating
-system's vocabulary, `Linger.Os.Answer`, which the selector answers in too. -/
+name's locks and which wait on a party outside linger, and what a daemon's `info` answer says
+that decides whether an attach hands the daemon over to the attaching binary. What a command
+answers is the operating system's vocabulary, `Linger.Os.Answer`, which the selector answers in
+too. -/
 
 namespace Linger.App.Entry
 
@@ -1503,3 +1505,65 @@ def Fault.Contained {V S P B σ : Type}
   | _, _ => False
 
 end Linger.App
+
+namespace Linger.App.Handover
+
+/-! ## Whether an attach hands the session's daemon over to the attaching binary -/
+
+/-- What a daemon's `info` answer says that decides whether an attach hands the daemon over: the
+handoff format it writes and its build number, each when it reports it as a number. -/
+structure Daemon where
+  /-- The handoff format the daemon writes, which it reports as `handoff`. -/
+  handoff : Option Nat
+  /-- The daemon's build number, which it reports as `build`: the step of linger's history its
+  binary was built at. A daemon an older linger started reports none. -/
+  build : Option Nat
+  deriving Repr, DecidableEq
+
+/-- A daemon as the fields of its `info` answer describe it. -/
+@[expose]
+def Daemon.ofInfo (fields : List (String × String)) : Daemon :=
+  { handoff := (fields.lookup "handoff").bind String.toNat?
+    build := (fields.lookup "build").bind String.toNat? }
+
+/-- Whether the daemon can hand its session to this version's binary: it writes a handoff format
+this version reads. -/
+@[expose]
+def Daemon.hands (d : Daemon) : Bool := d.handoff.any (Session.Handoff.formats.contains ·)
+
+/-- Whether the daemon's binary is older than build `b`: it reports a lower build number, or
+none, as a daemon an older linger started does. -/
+@[expose]
+def Daemon.older (d : Daemon) (b : Nat) : Bool := d.build.all (· < b)
+
+/-- What an attach does with the session's daemon before it attaches. -/
+inductive Plan where
+  /-- Hand the daemon over to the attaching binary, by the handoff `linger upgrade` asks for. -/
+  | handOver
+  /-- Leave the daemon as it is. -/
+  | keep
+  deriving Repr, DecidableEq
+
+/-- The build of the session's daemon after an attach by build `b` that planned `p` for the
+daemon `d`, which `took` the handoff or not: `b` when the attach handed the daemon over and the
+daemon took it, the new image being the attaching binary, and `d`'s own otherwise, since a
+daemon that refuses a handoff serves on as it was (`upgrade_probes`). -/
+@[expose]
+def after (p : Plan) (took : Bool) (d : Daemon) (b : Nat) : Option Nat :=
+  match p, took with
+  | .handOver, true => some b
+  | _, _ => d.build
+
+/-- A wrong plan, which a kill names: hand over every daemon that can hand its session to this
+binary, whatever its build, so an attach would hand a daemon over to an equal or a lower build. -/
+@[expose]
+def anyBuild (mode : Session.Mode) (_ : Nat) (fields : List (String × String)) : Plan :=
+  if mode = .writable ∧ (Daemon.ofInfo fields).hands = true then .handOver else .keep
+
+/-- A wrong plan, which a kill names: hand an older daemon over on a read-only attach too. -/
+@[expose]
+def anyMode (_ : Session.Mode) (b : Nat) (fields : List (String × String)) : Plan :=
+  if (Daemon.ofInfo fields).hands = true ∧ (Daemon.ofInfo fields).older b = true then .handOver
+  else .keep
+
+end Linger.App.Handover

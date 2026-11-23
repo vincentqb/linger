@@ -4,6 +4,7 @@ public import Linger.Session.CoreCode.Wire
 public import Linger.Session.CoreCode.Record
 public import Terminal.CoreCode.Vt
 public import Terminal.CoreCode.Replay
+import Linger.Session.CoreCode.Build
 import Terminal.CoreCode.Mediation
 import Terminal.CoreCode.Render
 
@@ -409,7 +410,7 @@ def infoFields (s : State) : List (String × String) :=
     -- what a client needs before sending a request this daemon may not serve
     ++
     [("protocol", toString Wire.protocol), ("version", Terminal.Mediation.versionNumber),
-      ("handoff", toString Handoff.version), ("renames", "true")]
+      ("build", toString Build.number), ("handoff", toString Handoff.version), ("renames", "true")]
     -- the observations `Status.classify` needs from the daemon; the rest
     -- (reachability, checkpoint loadability) only the caller can know
     ++

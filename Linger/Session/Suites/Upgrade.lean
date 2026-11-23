@@ -1,6 +1,7 @@
 module
 
 public import Verify.Harness
+import Linger.Session.CoreCode.Build
 import Linger.Session.CoreCode.Wire
 
 public section
@@ -16,7 +17,16 @@ parent on the same terminal; a waiter keeps waiting and hears the real ending; k
 a program after it as before. The upgrade's target is a second copy of the built binary, so
 the daemon's image is seen to change. A target that names no format this version writes,
 cannot be run, or fails leaves the daemon serving, as it was (`upgrade_probes`), and a daemon
-whose `info` names no handoff format is reported as started by an older linger, never asked. -/
+whose `info` names no handoff format is reported as started by an older linger, never asked.
+
+A writable attach by a binary of a higher build hands the daemon over to that binary first
+(`attach_upgrades`). The suite makes a binary of build 0 by rewriting the digits of the built
+binary's stamp in a copy (`copyAsBuildZero`), and that copy starts the sessions: an attach by the
+built binary hands its daemon over, in the same process, the program keeping its pid and a client
+attached across it every line; an attach by an equal build or a lower one, a read-only attach,
+`ls` and `capture` leave the daemon as it is; and a daemon that refuses, here because its program
+stopped inside a control sequence, serves on as it was, while the attach says why on one line and
+attaches. -/
 
 namespace Linger.Session.Suites.Upgrade
 
@@ -130,6 +140,60 @@ def olderDaemon (socket : String) : IO Unit := do
   finally
     close lfd
 
+/-- Where `needle` first begins in `hay`, at `start` or later. -/
+def indexOf (hay needle : ByteArray) (start : Nat := 0) : Option Nat :=
+  Id.run do
+    for i in [start:hay.size + 1 - needle.size] do
+      if (List.range needle.size).all fun j => hay.get! (i + j) == needle.get! j then
+        return some i
+    return none
+
+/-- The places a binary's bytes hold the stamp `Linger.Session.Build.stamp`: where each run of
+its digits begins, and how many digits it has. -/
+def stampsIn (bytes : ByteArray) : List (Nat × Nat) :=
+  Id.run do
+    let marker := "linger-build:".toUTF8
+    let mut found : List (Nat × Nat) := []
+    let mut pos := 0
+    -- a binary holds its stamp once, or a few times where the compiler copies a literal
+    for _ in [0:8] do
+      let some i := indexOf bytes marker pos | break
+      let start := i + marker.size
+      let mut len := 0
+      for k in [start:bytes.size] do
+        let c := bytes.get! k
+        if c < 48 || c > 57 then
+          break
+        len := len + 1
+      found := found ++ [(start, len)]
+      pos := start + len
+    return found
+
+/-- Write to `dst` a copy of the linger binary at `src` that is build 0: each run of its stamp's
+digits rewritten as zeros, as many as there were, which `Linger.Session.Build.number` reads as 0
+when the copy runs. macOS refuses to run a binary whose bytes no longer match its signature, so
+there the copy is signed again, ad hoc, as the linker signed it. Whether `src` held a stamp. -/
+def copyAsBuildZero (src dst : String) : IO Bool := do
+  let bytes ← IO.FS.readBinFile src
+  let places := stampsIn bytes
+  if places.isEmpty || places.any (·.2 == 0) then
+    return false
+  let mut out := bytes
+  for (start, len) in places do
+    for j in [0:len] do
+      out := out.set! (start + j) 48
+  IO.FS.writeBinFile dst out
+  discard <| IO.Process.output { cmd := "chmod", args := #["+x", dst] }
+  if System.Platform.isOSX then
+    discard <| IO.Process.output { cmd := "codesign", args := #["--force", "--sign", "-", dst] }
+  return true
+
+/-- `linger <args>` run as the binary at `bin` on a pty of 80 by 24, in the suite's state
+directory, as `Env.spawn` runs the built binary. -/
+def spawnAs (e : Env) (bin : String) (args : Array String) : IO Client := do
+  let (pid, fd) ← spawnPty 80 24 "" bin args e.ptyEnv
+  return { pid, fd }
+
 /-- The upgrade suite. -/
 def run : IO UInt32 :=
   Env.suite "upgrade" fun e => do
@@ -242,5 +306,108 @@ def run : IO UInt32 :=
     client.bye false
     reapOrKill waiter 0
     e.killAll #["c"]
+    -- an attach by a binary of a higher build hands the session's daemon over to that binary
+    -- first: a copy of build 0 starts the ticker, and a client of its own build watches it
+    let older := s!"{e.dir}/linger-older"
+    let stamped ← copyAsBuildZero e.bin older
+    let built := toString Linger.Session.Build.number
+    let builtImage := (← IO.FS.realPath e.bin).toString
+    let olderImage ←
+      if stamped then
+        pure (← IO.FS.realPath older).toString
+      else
+        pure ""
+    let aStart ← runAs e older #["start", "a", "/bin/sh", "-c", ticker]
+    let aDaemon ← e.daemonPid "a"
+    let aPid ← e.info "a" "pid"
+    let aBuild ← e.info "a" "build"
+    let aImage ← imageOf (aDaemon.getD 0)
+    expect (stamped && aStart.any (·.1 == 0) && aBuild == some "0" && aImage == some olderImage)
+        s!"a copy whose stamp says build 0 reports build 0, and its session's daemon runs it \
+          ({aBuild}, {aImage})"
+    let watcher ← spawnAs e older #["attach", "a"]
+    let watched ← IO.mkRef ByteArray.empty
+    let watching ←
+      watcher.awaitText watched (fun b => (ticks (String.fromUTF8? b |>.getD "")).length ≥ 3)
+    let typist ← e.spawn #["attach", "a"]
+    let typed ← IO.mkRef ByteArray.empty
+    let attached ←
+      typist.awaitText typed (ms := hangMs) fun b =>
+          (ticks (String.fromUTF8? b |>.getD "")).length ≥ 2
+    let handed ←
+      waitFor patienceMs do
+          return (← e.info "a" "build") == some built
+    let lastAt := ((ticks (String.fromUTF8? (← watched.get) |>.getD "")).getLast?.map (·.1)).getD 0
+    let carried ←
+      watcher.awaitText watched (ms := hangMs) fun b =>
+          (ticks (String.fromUTF8? b |>.getD "")).any (·.1 ≥ lastAt + 10)
+    let shown := ticks (String.fromUTF8? (← watched.get) |>.getD "")
+    expect
+        (watching && attached && handed && (← imageOf (aDaemon.getD 0)) == some builtImage &&
+          (← e.daemonPid "a") == aDaemon)
+        s!"a writable attach by a higher build hands the daemon over to its own binary first: the \
+          daemon, in the same process, runs that binary and reports its build \
+          ({← e.info "a" "build"}, {← imageOf (aDaemon.getD 0)})"
+    expect
+        (carried && consecutive (shown.map (·.1)) && (← e.info "a" "pid") == aPid &&
+          (shown.map (·.2.1)).eraseDups == [toString (aDaemon.getD 0)])
+        s!"the program keeps its pid and its parent, and a client attached across the hand-over \
+          receives every line once, in order ({shown.map (·.1)})"
+    expect (!hasText (← typed.get) "kept the older daemon")
+        "a hand-over the daemon takes says nothing"
+    typist.bye
+    watcher.bye
+    -- an attach by an equal build or a lower one hands nothing over
+    let same := s!"{e.dir}/linger-same"
+    discard <| IO.Process.output { cmd := "cp", args := #[e.bin, same] }
+    let mut leftAsIs := true
+    for bin in [same, older] do
+      let viewer ← spawnAs e bin #["attach", "a"]
+      let seen ← IO.mkRef ByteArray.empty
+      let looked ← viewer.awaitText seen fun b => (ticks (String.fromUTF8? b |>.getD "")).length ≥ 2
+      viewer.bye
+      leftAsIs := leftAsIs && looked && !hasText (← seen.get) "kept the older daemon"
+    expect
+        (leftAsIs && (← imageOf (aDaemon.getD 0)) == some builtImage &&
+          (← e.info "a" "build") == some built)
+        s!"an attach by an equal build or a lower one leaves the daemon as it is, and says nothing \
+          ({← imageOf (aDaemon.getD 0)})"
+    -- a read-only attach, `ls` and `capture` by a higher build ask for nothing
+    let wStart ← runAs e older #["start", "w", "/bin/cat"]
+    let wDaemon ← e.daemonPid "w"
+    let reader ← e.spawn #["attach", "--read-only", "w"]
+    let reading ←
+      waitFor patienceMs do
+          return (← e.info "w" "clients") == some "1"
+    reader.bye
+    let (lsRc, _, _) ← e.cli #["ls"]
+    let (captureRc, _, _) ← e.cli #["capture", "w"]
+    expect
+        (wStart.any (·.1 == 0) && reading && lsRc == 0 && captureRc == 0 &&
+          (← e.info "w" "build") == some "0" &&
+          (← imageOf (wDaemon.getD 0)) == some olderImage)
+        s!"a read-only attach, `ls` and `capture` by a higher build leave the daemon as it is \
+          ({← e.info "w" "build"})"
+    -- a hand-over the daemon refuses, here because its program stopped inside a control sequence,
+    -- says why on one line, and the attach goes on
+    let rStart ←
+      runAs e older #["start", "r", "/bin/sh", "-c", "printf 'r-ready\\033['; exec sleep 600"]
+    let rDaemon ← e.daemonPid "r"
+    let rReady ←
+      waitFor patienceMs do
+          return has (← e.out #["capture", "r"]) "r-ready"
+    let refusing ← e.spawn #["attach", "r"]
+    let rSeen ← IO.mkRef ByteArray.empty
+    let rShown ← refusing.awaitText rSeen (ms := hangMs) fun b => hasText b "r-ready"
+    let rText := String.fromUTF8? (← rSeen.get) |>.getD ""
+    let told := (rText.splitOn "kept the older daemon: ").length - 1
+    refusing.bye
+    expect
+        (rStart.any (·.1 == 0) && rReady && rShown && told == 1 &&
+          has rText "partway through a control sequence")
+        s!"a hand-over the daemon refuses says why on one line, and the attach goes on ({told})"
+    expect ((← e.info "r" "build") == some "0" && (← imageOf (rDaemon.getD 0)) == some olderImage)
+        "the daemon that refused the hand-over serves on as it was"
+    e.killAll #["a", "w", "r"]
 
 end Linger.Session.Suites.Upgrade

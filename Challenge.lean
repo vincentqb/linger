@@ -41,7 +41,8 @@ its headlines claim and what they do not; the statements say the rest.
    session's terminal session that linger's signals reach outlives it.
 7. Recovery: resuming from a checkpoint gives back the saved session, less any half-parsed
    control sequence, and a checkpoint that does not decode is kept and refused, not replaced. An
-   upgrade carries a running session to a newer binary whole, or leaves it running as it was.
+   upgrade carries a running session to a newer binary whole, or leaves it running as it was, and
+   an attach by a newer binary asks for one.
 8. Clean terminal: what linger writes to a terminal on its own account is safe text or one of
    its fixed sequences, in color only where the caller's environment allows it, and handing a
    terminal back leaves it canonical.
@@ -119,6 +120,9 @@ def Linger.App.Recovery.visit : Bool → Option (List UInt8) → List App.Visit.
 def Linger.App.Capture.plan : List App.Capture.Step := sorry
 
 def Linger.App.Capture.phases : List App.Capture.Step → List App.Capture.Phase := sorry
+
+def Linger.App.Handover.plan : Session.Mode → Nat → List (String × String) → App.Handover.Plan :=
+  sorry
 
 def Linger.App.Serve.parse : String → Serve.Json → Option (App.Api.Request × List UInt8) := sorry
 
@@ -3094,10 +3098,20 @@ process, its program and every descriptor the handoff names (`upgrade_keeps`); t
 resumes from the handoff, which carries the session whole, not rebuilt as a resume does
 (`handoff_carries`); a binary decodes the handoff formats it lists and no other
 (`handoff_versioned`), and a daemon hands its session only to a binary whose probe lists the format
-it writes, and serves on otherwise, as when the exec fails (`upgrade_probes`). Not claimed: that
-the binary the exec starts is the one the probe ran, since the file may be replaced between them,
-nor that it has the resources to decode the handoff; such an image ends, and the session's program
-loses its daemon, with the checkpoint the old image saved just before the exec left to resume. -/
+it writes, and serves on otherwise, as when the exec fails (`upgrade_probes`). A writable attach
+asks for that upgrade first, to its own binary, exactly when the daemon writes a handoff format the
+binary reads and reports a lower build than the binary's, or none, as a daemon an older linger
+started does, so the daemon it attaches to has the binary's build or a higher one, unless it
+refused the handoff and serves on as it was; a read-only attach never asks (`attach_upgrades`).
+Not claimed: that the binary the exec starts is the one the probe ran, since the file may be
+replaced between them, nor that it has the resources to decode the handoff; such an image ends,
+and the session's program loses its daemon, with the checkpoint the old image saved just before
+the exec left to resume; that the attach asks as `Handover.plan` decides, reading its own build
+and the daemon's `info`, and says on one line why a daemon kept its image, which a gate ties and
+the upgrade suite checks; that only `upgrade` and the attach ask a daemon to replace its image, so
+`ls`, the chooser and `capture` never do, which a gate ties and the upgrade suite checks of `ls`
+and `capture`; and that a binary's build is the step of linger's history it was built at, which a
+gate ties to the history. -/
 
 theorem handoff_carries (s : State) (w : Handoff.World)
     (h :
@@ -3173,6 +3187,91 @@ theorem upgrade_probes_rejects_unprobed :
     ¬∀ (reported : Option (List Nat)),
         (fun (_ : Option (List Nat)) => true) reported = true ↔
           ∃ formats, reported = some formats ∧ Handoff.version ∈ formats := by
+  sorry
+
+theorem attach_upgrades (mode : Mode) (b : Nat) (info : List (String × String)) (took : Bool) :
+    (Handover.plan mode b info = .handOver ↔
+        mode = .writable ∧
+          (Handover.Daemon.ofInfo info).hands = true ∧
+          (Handover.Daemon.ofInfo info).older b = true) ∧
+      (mode = .writable →
+        (Handover.Daemon.ofInfo info).hands = true →
+        (∃ n,
+            Handover.after (Handover.plan mode b info) took (Handover.Daemon.ofInfo info) b =
+                some n ∧
+              b ≤ n) ∨
+          Handover.plan mode b info = .handOver ∧
+            took = false ∧
+            Handover.after (Handover.plan mode b info) took (Handover.Daemon.ofInfo info) b =
+              (Handover.Daemon.ofInfo info).build) := by
+  sorry
+
+@[kills attach_upgrades]
+theorem attach_upgrades_rejects_kept :
+    ¬∀ (mode : Mode) (b : Nat) (info : List (String × String)) (took : Bool),
+        ((fun (_ : Mode) (_ : Nat) (_ : List (String × String)) => Handover.Plan.keep) mode b info =
+              .handOver ↔
+            mode = .writable ∧
+              (Handover.Daemon.ofInfo info).hands = true ∧
+              (Handover.Daemon.ofInfo info).older b = true) ∧
+          (mode = .writable →
+            (Handover.Daemon.ofInfo info).hands = true →
+            (∃ n,
+                Handover.after
+                      ((fun (_ : Mode) (_ : Nat) (_ : List (String × String)) => Handover.Plan.keep)
+                        mode b info)
+                      took (Handover.Daemon.ofInfo info) b =
+                    some n ∧
+                  b ≤ n) ∨
+              (fun (_ : Mode) (_ : Nat) (_ : List (String × String)) => Handover.Plan.keep) mode b
+                    info =
+                  .handOver ∧
+                took = false ∧
+                Handover.after
+                    ((fun (_ : Mode) (_ : Nat) (_ : List (String × String)) => Handover.Plan.keep)
+                      mode b info)
+                    took (Handover.Daemon.ofInfo info) b =
+                  (Handover.Daemon.ofInfo info).build) := by
+  sorry
+
+@[kills attach_upgrades]
+theorem attach_upgrades_rejects_equal :
+    ¬∀ (mode : Mode) (b : Nat) (info : List (String × String)) (took : Bool),
+        (Handover.anyBuild mode b info = .handOver ↔
+            mode = .writable ∧
+              (Handover.Daemon.ofInfo info).hands = true ∧
+              (Handover.Daemon.ofInfo info).older b = true) ∧
+          (mode = .writable →
+            (Handover.Daemon.ofInfo info).hands = true →
+            (∃ n,
+                Handover.after (Handover.anyBuild mode b info) took (Handover.Daemon.ofInfo info)
+                      b =
+                    some n ∧
+                  b ≤ n) ∨
+              Handover.anyBuild mode b info = .handOver ∧
+                took = false ∧
+                Handover.after (Handover.anyBuild mode b info) took (Handover.Daemon.ofInfo info)
+                    b =
+                  (Handover.Daemon.ofInfo info).build) := by
+  sorry
+
+@[kills attach_upgrades]
+theorem attach_upgrades_rejects_watcher :
+    ¬∀ (mode : Mode) (b : Nat) (info : List (String × String)) (took : Bool),
+        (Handover.anyMode mode b info = .handOver ↔
+            mode = .writable ∧
+              (Handover.Daemon.ofInfo info).hands = true ∧
+              (Handover.Daemon.ofInfo info).older b = true) ∧
+          (mode = .writable →
+            (Handover.Daemon.ofInfo info).hands = true →
+            (∃ n,
+                Handover.after (Handover.anyMode mode b info) took (Handover.Daemon.ofInfo info) b =
+                    some n ∧
+                  b ≤ n) ∨
+              Handover.anyMode mode b info = .handOver ∧
+                took = false ∧
+                Handover.after (Handover.anyMode mode b info) took (Handover.Daemon.ofInfo info) b =
+                  (Handover.Daemon.ofInfo info).build) := by
   sorry
 
 theorem loadBytes_saveBytes_live (c : Checkpoint.Ckpt Vt.Vt)

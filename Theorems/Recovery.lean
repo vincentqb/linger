@@ -1,5 +1,6 @@
 module
 
+public import Linger.App.CoreCode.Handover
 public import Linger.App.CoreCode.Recovery
 public import Linger.Import.CoreCode.Resurrect
 public import Linger.Session.CoreCode
@@ -15,6 +16,8 @@ import all Linger.App.Proofs.Commands
 import all Linger.App.Proofs.Entry
 import all Linger.App.Proofs.Kill
 import all Linger.App.Proofs.Recovery
+import Linger.App.Proofs.Handover
+import Std.Data.String.ToNat
 import all Linger.App.Proofs.Serve
 import all Linger.App.Proofs.Screen
 import all Linger.App.Proofs.Wait
@@ -173,6 +176,124 @@ theorem upgrade_probes_rejects_unprobed :
   intro h
   obtain ⟨_, none_some, _⟩ := (h none).1 rfl
   cases none_some
+
+theorem attach_upgrades (mode : Mode) (b : Nat) (info : List (String × String)) (took : Bool) :
+    (App.Handover.plan mode b info = .handOver ↔
+        mode = .writable ∧
+          (App.Handover.Daemon.ofInfo info).hands = true ∧
+          (App.Handover.Daemon.ofInfo info).older b = true) ∧
+      (mode = .writable →
+        (App.Handover.Daemon.ofInfo info).hands = true →
+        (∃ n,
+            App.Handover.after (App.Handover.plan mode b info) took
+                  (App.Handover.Daemon.ofInfo info) b =
+                some n ∧
+              b ≤ n) ∨
+          App.Handover.plan mode b info = .handOver ∧
+            took = false ∧
+            App.Handover.after (App.Handover.plan mode b info) took
+                (App.Handover.Daemon.ofInfo info) b =
+              (App.Handover.Daemon.ofInfo info).build) :=
+  ⟨App.Handover.plan_eq_handOver mode b info, App.Handover.after_plan mode b info took⟩
+
+/-- What a daemon of this version answers of its handoff and its build, when it reports build `n`:
+the format it writes, which this version reads. -/
+private theorem reported (n : Nat) :
+    App.Handover.Daemon.ofInfo [("handoff", Nat.repr Handoff.version), ("build", Nat.repr n)] =
+      { handoff := some Handoff.version, build := some n } := by
+  have other : ("build" == "handoff") = false := by decide
+  simp [App.Handover.Daemon.ofInfo, List.lookup, other, Nat.toNat?_repr]
+
+theorem attach_upgrades_rejects_kept :
+    ¬∀ (mode : Mode) (b : Nat) (info : List (String × String)) (took : Bool),
+        ((fun (_ : Mode) (_ : Nat) (_ : List (String × String)) => App.Handover.Plan.keep) mode b
+                info =
+              .handOver ↔
+            mode = .writable ∧
+              (App.Handover.Daemon.ofInfo info).hands = true ∧
+              (App.Handover.Daemon.ofInfo info).older b = true) ∧
+          (mode = .writable →
+            (App.Handover.Daemon.ofInfo info).hands = true →
+            (∃ n,
+                App.Handover.after
+                      ((fun (_ : Mode) (_ : Nat) (_ : List (String × String)) =>
+                          App.Handover.Plan.keep)
+                        mode b info)
+                      took (App.Handover.Daemon.ofInfo info) b =
+                    some n ∧
+                  b ≤ n) ∨
+              (fun (_ : Mode) (_ : Nat) (_ : List (String × String)) => App.Handover.Plan.keep) mode
+                    b info =
+                  .handOver ∧
+                took = false ∧
+                App.Handover.after
+                    ((fun (_ : Mode) (_ : Nat) (_ : List (String × String)) =>
+                        App.Handover.Plan.keep)
+                      mode b info)
+                    took (App.Handover.Daemon.ofInfo info) b =
+                  (App.Handover.Daemon.ofInfo info).build) := by
+  intro h
+  -- a daemon of build 0 that hands its session over to this version is left running
+  have kept :=
+    ((h .writable 1 [("handoff", Nat.repr Handoff.version), ("build", Nat.repr 0)] true).1).mpr
+      ⟨rfl, by
+        rw [reported]; decide, by
+        rw [reported]; decide⟩
+  exact absurd kept (by decide)
+
+theorem attach_upgrades_rejects_equal :
+    ¬∀ (mode : Mode) (b : Nat) (info : List (String × String)) (took : Bool),
+        (App.Handover.anyBuild mode b info = .handOver ↔
+            mode = .writable ∧
+              (App.Handover.Daemon.ofInfo info).hands = true ∧
+              (App.Handover.Daemon.ofInfo info).older b = true) ∧
+          (mode = .writable →
+            (App.Handover.Daemon.ofInfo info).hands = true →
+            (∃ n,
+                App.Handover.after (App.Handover.anyBuild mode b info) took
+                      (App.Handover.Daemon.ofInfo info) b =
+                    some n ∧
+                  b ≤ n) ∨
+              App.Handover.anyBuild mode b info = .handOver ∧
+                took = false ∧
+                App.Handover.after (App.Handover.anyBuild mode b info) took
+                    (App.Handover.Daemon.ofInfo info) b =
+                  (App.Handover.Daemon.ofInfo info).build) := by
+  intro h
+  -- a daemon of the attaching binary's own build would be handed over to it
+  have equal :=
+    ((h .writable 1 [("handoff", Nat.repr Handoff.version), ("build", Nat.repr 1)] true).1).mp
+      (by
+        simp only [App.Handover.anyBuild, reported]; decide)
+  have older := equal.2.2
+  rw [reported] at older
+  exact absurd older (by decide)
+
+theorem attach_upgrades_rejects_watcher :
+    ¬∀ (mode : Mode) (b : Nat) (info : List (String × String)) (took : Bool),
+        (App.Handover.anyMode mode b info = .handOver ↔
+            mode = .writable ∧
+              (App.Handover.Daemon.ofInfo info).hands = true ∧
+              (App.Handover.Daemon.ofInfo info).older b = true) ∧
+          (mode = .writable →
+            (App.Handover.Daemon.ofInfo info).hands = true →
+            (∃ n,
+                App.Handover.after (App.Handover.anyMode mode b info) took
+                      (App.Handover.Daemon.ofInfo info) b =
+                    some n ∧
+                  b ≤ n) ∨
+              App.Handover.anyMode mode b info = .handOver ∧
+                took = false ∧
+                App.Handover.after (App.Handover.anyMode mode b info) took
+                    (App.Handover.Daemon.ofInfo info) b =
+                  (App.Handover.Daemon.ofInfo info).build) := by
+  intro h
+  -- a read-only attach would hand an older daemon over
+  have watched :=
+    ((h .readOnly 1 [("handoff", Nat.repr Handoff.version), ("build", Nat.repr 0)] true).1).mp
+      (by
+        simp only [App.Handover.anyMode, reported]; decide)
+  exact absurd watched.1 (by decide)
 
 theorem loadBytes_saveBytes_live (c : Checkpoint.Ckpt Vt.Vt)
     (h :

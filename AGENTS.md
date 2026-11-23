@@ -230,8 +230,9 @@ never silently switch sessions. Terminal handback clears the title; do not
 introduce a title stack. Keep documentation factual and concise.
 
 Use one writer per tree and a separate worktree for another writer. Copy into
-a fresh destination. Commit verified changes as `step N: <summary>`; never
-rewrite pushed history.
+a fresh destination. Commit verified changes as `step N: <summary>`, with N in the
+build stamp of `Linger/Session/CoreCode/Build.lean`, which `scripts/gates.sh` checks;
+never rewrite pushed history.
 
 Git history holds plans, work logs and retired documentation, including paths
 cited by older source comments. Do not add progress logs or continuity files.

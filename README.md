@@ -97,7 +97,11 @@ closes either, and a connection holds at most 16.
 onto it: its daemon replaces its own image with that binary, keeping its process, its program,
 its terminal and every connection, so the program and attached clients see nothing happen. A
 daemon an older linger started cannot do this; it keeps running, as does one whose new binary
-cannot take the session over, and `upgrade` says why.
+cannot take the session over, and `upgrade` says why. `linger attach NAME` does the same first,
+saying nothing, when the session's daemon was built at an earlier step than the attaching linger,
+as `ls NAME --porcelain` reports in `build`, or reports no build, and can hand its session over;
+a daemon that refuses keeps running, and the attach says why on one line before it attaches. A
+read-only attach, `ls`, the chooser and `capture` never upgrade.
 
 ## Names
 

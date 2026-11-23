@@ -459,7 +459,7 @@ module_imports ':(glob)Linger/Session/*.lean' 'Linger/Session/CoreCode/*' 'Linge
     packages/terminal/Terminal/CoreCode/Replay.lean Linger.lean \
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
-    if (mod !~ /^(Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](WorldCode([.]Api)?|CoreSpec|CoreCode[.](Commands|Fields|Wait|Kill|Recovery|Capture|Api))|Std[.]Async[.](System|Signal))$/ \
+    if (mod !~ /^(Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](WorldCode([.]Api)?|CoreSpec|CoreCode[.](Commands|Fields|Wait|Kill|Recovery|Capture|Api|Handover))|Std[.]Async[.](System|Signal))$/ \
         && mod != "SoftwareChallenge.Commands") {
       print "  " $0; bad = 1
     }
@@ -741,7 +741,7 @@ for tie in \
   'def summaryText : IO String := do let rows ← localRows [(]some [(][(]← monotonicMs[)] [+] 250[)][)] [(]statusOnly := true[)] return Linger[.]Display[.]Status[.]summary [(]rows[.]map fun info => [(]Linger[.]Display[.]Listing[.]statusOf info[)][.]attention[)]' \
   '[|] [.]summary => do return [{] found := [.]done, shown := [.]text [(]← summaryText[)] [}]' \
   '[|] [.]list [.]summary => unless text[.]isEmpty do IO[.]println text' \
-  'match ← connectUpsert env s cmd with [|] [.]ok fd => attachSpoken env s[.]name fd mode' \
+  'match ← connectUpsert env s cmd with [|] [.]ok fd => attachSpoken env s fd mode' \
   'if args = [[]"--summary"[]] then some [.]summary' \
   'if porcelain then IO[.]print [(]Linger[.]Display[.]Listing[.]porcelain rows[)] else'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
@@ -778,11 +778,14 @@ printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$COD
 # attach's own connection, within the one-shot reply budget, that it speaks this version's
 # protocol (`admits_level`); the chooser runs `linger attach`. Linger.Session.Suites.Attach checks
 # the refusals against older daemons' answers and against silence.
-tie='let heard ← [(]Inventory[.]readInfo fd [(]some [(][(]← monotonicMs[)] [+] Client[.]replySilenceMs[.]toNatClampNeg[)][)][)][.]toBaseIO let level := [(]heard[.]toOption[.]bind [(]·[.]lookup "protocol"[)][)][.]bind String[.]toNat[?] if Linger[.]Session[.]Wire[.]admits level then return [.]ok [(]← Client[.]attach name fd [(]attentionSample name[)] [(]mode == [.]readOnly[)][)] close fd'
-printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
-  || fail "an attach bypasses its daemon's protocol level (Wire.admits): $tie"
+for tie in \
+  'private def hearInfo [(]fd : UInt32[)] : IO [(]Except IO[.]Error [(]List [(]String × String[)][)][)] := do [(]Inventory[.]readInfo fd [(]some [(][(]← monotonicMs[)] [+] Client[.]replySilenceMs[.]toNatClampNeg[)][)][)][.]toBaseIO' \
+  'let level := [(]heard[.]toOption[.]bind [(]·[.]lookup "protocol"[)][)][.]bind String[.]toNat[?] if Linger[.]Session[.]Wire[.]admits level then return [.]ok [(]← Client[.]attach name fd [(]attentionSample name[)] [(]mode == [.]readOnly[)][)] close fd'; do
+  printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "an attach bypasses its daemon's protocol level (Wire.admits): $tie"
+done
 [ "$(code_count 'Client[.]attach([^[:alnum:]_]|$)' Linger/App/WorldCode.lean Linger/App/WorldCode/Api.lean)" -eq 1 ] \
-  || fail "Client.attach is called outside attachSpoken, which first asks the daemon's protocol level"
+  || fail "Client.attach is called outside attachHeard, which first asks the daemon's protocol level"
 # `linger --help` lists the exit statuses from the vocabulary every command answers in
 # (`code_documented`), one line per answer of linger's own.
 printf '%s\n' "$cli_code" | CG_RE='(^|[[:space:]])Answer[.]legend[.]map [(]" +" [+][+] ·[)][)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
@@ -1488,7 +1491,7 @@ for tie in \
   'private def runHolding [(]s : Names[.]Ref[)] [(]plan : List Linger[.]App[.]Capture[.]Step[)] [(]run : Linger[.]App[.]Capture[.]Step → IO Unit[)] : IO Unit := do for phase in Linger[.]App[.]Capture[.]phases plan do match phase with [|] [.]locked inside => Paths[.]withSessionLock s[.]id [(]inside[.]forM run[)] [|] [.]unlocked step => run step' \
   '[|] none => let file ← IO[.]mkRef [(]none : Option ByteArray[)] let shown ← IO[.]mkRef [(]Captured[.]refusal [.]missing [(]← refusalText s [.]notFound[)][)] let found ← IO[.]mkRef Found[.]unknown runHolding s Linger[.]App[.]Capture[.]plan fun [|] [.]load => do file[.]set [(]← Resume[.]readCkpt s[.]id[)] [|] [.]render => do match Linger[.]App[.]Recovery[.]decide false [(]← file[.]get[)] with [|] [.]resume ck => shown[.]set [(][.]session [(]render ck[.]vt[)][)]' \
   '[|] [.]write => do match ← shown[.]get with [|] [.]session bytes => sink [(]ByteArray[.]mk bytes[.]toArray[)] found[.]set [.]done [|] [.]refusal said why => say env why found[.]set said [|] [.]acquire [|] [.]release => pure [(][)] return [{] found := ← found[.]get, shown := [.]bytes [(]← out[.]get[)] [}]' \
-  'if mode == [.]readOnly then match ← Client[.]connect s[.]id with [|] some fd => attachSpoken env s[.]name fd mode [|] none => match ← visitOffline env s true with' \
+  'if mode == [.]readOnly then match ← Client[.]connect s[.]id with [|] some fd => attachSpoken env s fd mode [|] none => match ← visitOffline env s true with' \
   'let [(]steps, record, file[)] ← Paths[.]withSessionLock s[.]id do let record ← [(]Record[.]load s[.]id[)][.]toBaseIO let steps := Linger[.]App[.]Recovery[.]visit readOnly record[.]toOption[.]join if steps == [[][.]resume[]] then return [(]steps, record, none[)] return [(]steps, record, ← Resume[.]readCkpt s[.]id[)]' \
   'Paths[.]withSessionLock s[.]id do if [(]← Resume[.]readCkpt s[.]id[)][.]map [(]·[.]data[)] == some shown[.]data then Resume[.]dropCkpt s[.]id'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
@@ -2100,13 +2103,43 @@ printf '%s\n' "$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/WorldCode.lean)"
   || fail "help no longer prints the command table"
 # Every one-shot request is given up after replySilenceMs of silence; only `wait` passes its own
 # budget, its deadline's, or none when it has none, since it waits for a program to end, and
-# `upgrade` its own, `upgradeWaitMs`, since the new image answers only once it serves.
+# `upgrade` and an attach that hands its daemon over theirs, `upgradeWaitMs`, since the new image
+# answers only once it serves.
 printf '%s\n' "$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/WorldCode/Client.lean)" \
   | CG_RE='(^|[[:space:]])def oneShot [(]name : String[)] [(]m : Msg[)] [(]sink : ByteArray → IO Unit[)] [(]untilDone : Bool := true[)] [(]silenceMs : Int32 := replySilenceMs[)] : IO [(]Option Drained[)] := do([[:space:]]|$)' \
     awk "$CODE_AWK" >/dev/null \
   || fail "a one-shot request must default to the reply silence budget"
-[ "$(code_count 'silenceMs := ' 'Linger/App/*.lean' 'Linger/Session/WorldCode/*.lean')" -eq 2 ] \
+[ "$(code_count 'silenceMs := ' 'Linger/App/*.lean' 'Linger/Session/WorldCode/*.lean')" -eq 3 ] \
   && code_grep '[(]silenceMs := upgradeWaitMs[)]' Linger/App/WorldCode/Api.lean >/dev/null \
   || fail "only wait and upgrade may choose a one-shot request's silence budget"
+
+# An attach hands its session's daemon over to its own binary exactly as `Handover.plan` decides of
+# the attach's mode, this binary's build and the daemon's `info` answer (`attach_upgrades`), and
+# asks for the upgrade as `upgrade` does; after that it attaches as any attach does. Only `upgrade`
+# and the attach ask a daemon to replace its image, so `ls`, the chooser and `capture` never do.
+for tie in \
+  'let heard ← hearInfo fd match heard with [|] [.]ok fields => if Linger[.]App[.]Handover[.]plan mode Linger[.]Session[.]Build[.]number fields == [.]handOver then close fd if let some why[[:space:]]*← handOver env s then say env s!"kept the older daemon: [{]why[}]" match ← Client[.]connect s[.]id with [|] some fd => attachHeard env s[.]name fd mode [(]← hearInfo fd[)]' \
+  'let request := Msg[.]upgrade env[.]exe[.]toUTF8[.]toList match ← Client[.]oneShot s[.]id request unshown [(]silenceMs := upgradeWaitMs[)] with [|] some [.]done => return none'; do
+  printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "an attach hands its daemon over other than as Handover.plan decides: $tie"
+done
+[ "$(code_count 'Msg[.]upgrade' 'Linger/*.lean' ':!Linger/*/Suites/*')" -eq 2 ] \
+  && [ "$(code_count 'attachSpoken env s fd mode' Linger/App/WorldCode/Api.lean)" -eq 3 ] \
+  || fail "only upgrade and an attach, through attachSpoken, ask a daemon to replace its image"
+# A binary's build number is the step of linger's history it is built at
+# (`Linger.Session.Build.stamp`), so a later step's binary has a higher one, and an attach hands a
+# daemon over only to a higher build: it is the number of the last `step N:` commit, or of the next
+# one while the tree differs from HEAD, as it does while a step is committed.
+build_stamp="$(code_grep '"linger-build:[0-9]+"' Linger/Session/CoreCode/Build.lean \
+  | sed -n 's/.*"linger-build:\([0-9][0-9]*\)".*/\1/p')"
+[ "$(printf '%s\n' "$build_stamp" | grep -c .)" -eq 1 ] \
+  || fail "Linger/Session/CoreCode/Build.lean must hold one stamp, \"linger-build:\" and the step"
+last_step="$(git log --no-color --format=%s | sed -n 's/^step \([0-9][0-9]*\):.*/\1/p' | sort -n | tail -1)"
+if [ -n "$last_step" ]; then
+  want_build="$last_step"
+  git diff --quiet HEAD -- || want_build=$((last_step + 1))
+  [ "$build_stamp" = "$want_build" ] \
+    || fail "the build stamp says $build_stamp, but this tree is step $want_build: write it in Linger/Session/CoreCode/Build.lean"
+fi
 
 printf 'gates OK — purity, the OS and unsafe surfaces, the Vt friend set, the runtime ties, declaration citations, and the ratchets\n'
