@@ -19,6 +19,62 @@ fail() {
   failed=1
 }
 
+# A challenge, linger's `Challenge.lean` or a package's, holds only its statements, the one part
+# of it anything checks, so it holds no comment: no `--` and no `/-` outside its string and
+# character literals. This reads Lean's literals byte by byte; the shell's quotes cannot hold a
+# single quote, so the program spells it `q`.
+challenge_awk='
+BEGIN { q = "\047" }
+function complain() {
+  printf "hygiene: %s:%d: comment in a challenge, which holds only statements\n",
+    ENVIRON["HYGIENE_FILE"], line
+  bad = 1
+}
+# A byte an identifier may end with, so that a quote after it is a prime, not a character.
+function ident(ch) { return ch ~ /[[:alnum:]_!?]/ || ch == q }
+# Move to byte `to`, counting the lines passed.
+function skip(to,    span) {
+  span = substr(src, i + 1, to - i); line += gsub(/\n/, "", span); i = to; prev = " "
+}
+{ src = src $0 "\n" }
+END {
+  n = length(src); line = 1; prev = " "
+  for (i = 1; i <= n; i++) {
+    c = substr(src, i, 1)
+    if (c == "\"") {                         # a string: a backslash escapes the next byte
+      for (j = i + 1; j <= n && substr(src, j, 1) != "\""; j++) if (substr(src, j, 1) == "\\") j++
+      skip(j); continue
+    }
+    if (c == "r" && !ident(prev) && match(substr(src, i + 1, 256), /^#*"/)) {
+      stop = "\"" substr(src, i + 1, RLENGTH - 1)   # a raw string ends at a quote and its hashes
+      k = index(substr(src, i + 1 + RLENGTH), stop)
+      if (k > 0) { skip(i + RLENGTH + k + length(stop) - 1); continue }
+    }
+    if (c == q && !ident(prev)) {            # a character: one escape, or one UTF-8 character
+      if (substr(src, i + 1, 1) == "\\") {
+        k = index(substr(src, i + 3, 10), q); body = substr(src, i + 1, k + 1); j = i + 2 + k
+      } else { k = index(substr(src, i + 2, 4), q); body = substr(src, i + 1, k); j = i + 1 + k }
+      if (k > 0 && body !~ /\n/ &&
+          (length(body) == 1 || body ~ /^\\/ || body !~ /[[:print:][:cntrl:]]/)) {
+        skip(j); continue
+      }
+    }
+    if (c == "-" && substr(src, i + 1, 1) == "-") {   # a line comment
+      complain(); skip(i + index(substr(src, i), "\n") - 2); continue
+    }
+    if (c == "/" && substr(src, i + 1, 1) == "-") {   # a block comment, which nests
+      complain(); depth = 1
+      for (j = i + 2; j <= n && depth > 0; j++)
+        if (substr(src, j, 2) == "/-") { depth++; j++ }
+        else if (substr(src, j, 2) == "-/") { depth--; j++ }
+      skip(j - 1); continue
+    }
+    if (c == "\n") line++
+    prev = c
+  }
+  exit bad
+}'
+
 while IFS= read -r -d '' entry; do
   metadata="${entry%%$'\t'*}"
   file="${entry#*$'\t'}"
@@ -76,6 +132,10 @@ while IFS= read -r -d '' entry; do
     }
     END { exit bad }
   ' < "./$file" >&2; then
+    failed=1
+  fi
+  if [[ "${file##*/}" == Challenge.lean ]] \
+      && ! HYGIENE_FILE="$file" awk "$challenge_awk" < "./$file" >&2; then
     failed=1
   fi
 done < "$inventory"

@@ -3,14 +3,6 @@ module
 public import Fuzzy.CoreSpec
 meta import SoftwareChallenge
 
-/-! # Headline theorems of the fuzzy matcher
-
-What interactive selection's matcher must do: match a target exactly when the query's
-characters, case folded, appear in it in order, and highlight characters that spell the query.
-The theorem is stated over the matcher, declared below as a hole: `sorry` here, which the
-package's code supplies, and `Fuzzy.Solution` proves the same statement
-of it. -/
-
 public section
 
 def Fuzzy.align : String → String → Option Fuzzy.Alignment := sorry

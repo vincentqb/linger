@@ -3,19 +3,6 @@ module
 public import Input.CoreSpec
 meta import SoftwareChallenge
 
-/-! # Headline theorems of the input decoder
-
-What a terminal key decoder must do for the application reading its keys: while a paste is in
-progress, deliver only text, and decode each key sequence linger reads as its standard sends it
-(`decode_conforms`): the cursor keys in their `CSI` and `SS3` forms, Home and End in all four,
-Enter, Backspace as DEL or BS, Tab, the Ctrl-letters, printable ASCII, bracketed paste's start and
-end, and ESC alone as Escape once the wait for a sequence ends, each to exactly the key the
-reference names and the paste state it leaves, and Left, Right, Page Up and Page Down, which linger
-binds none of, to no key. Not claimed: UTF-8 text, modified keys such as `CSI 1 ; 5 A`, function
-keys, Alt as an ESC prefix, which the decoder drops, and sequences split by the wait. The theorem is stated over the decoder, declared below as a hole:
-`sorry` here, which the package's code supplies, and `Input.Solution` proves the same statement
-of it. -/
-
 public section
 
 def Input.feed : Input.State → UInt8 → Input.State × List Input.Key := sorry

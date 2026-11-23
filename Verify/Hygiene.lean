@@ -130,7 +130,35 @@ def run : IO UInt32 := do
       ("nested/SCRATCHPAD.md", "x" ++ atLimit, false, "256 KiB",
         "hygiene applies the size limit to nested work logs"),
       ("SCRATCHPAD.md", "bad \n", false, "trailing whitespace",
-        "hygiene checks whitespace in former work logs")] do
+        "hygiene checks whitespace in former work logs"),
+      ("Challenge.lean",
+        "def a : List String := [\"--\", \"/-\", \"\\\"--\", r#\"say \"-/\" -- \"#]\n\
+         def b : Char × String := ('\"', \"--\")\n\
+         def c : List Char := ['-', '/', '\\'', '\\\\', '…', '\\x1b']\n\
+         theorem t (x' : Nat) : x' = x' := sorry\n",
+        false, "", "hygiene accepts comment markers inside a challenge's literals"),
+      ("NotChallenge.lean", "-- a comment\n/-! a module doc -/\n", false, "",
+        "hygiene leaves comments outside a challenge alone"),
+      ("Challenge.lean", "theorem t : True := by\n  trivial -- why\n", false,
+        "Challenge.lean:2: comment in a challenge",
+        "hygiene rejects a line comment in a challenge"),
+      ("packages/p/Challenge.lean", "module\n\n/-! What is claimed -/\n", false,
+        "packages/p/Challenge.lean:3: comment in a challenge",
+        "hygiene rejects a module doc in a package's challenge"),
+      ("Challenge.lean", "/-- The hole. -/\ndef x : Nat := sorry\n", false,
+        "Challenge.lean:1: comment in a challenge", "hygiene rejects a doc comment in a challenge"),
+      ("Challenge.lean", "def x : Nat := /- a /- nested -/ one -/ sorry\n", false,
+        "Challenge.lean:1: comment in a challenge",
+        "hygiene rejects a block comment in a challenge"),
+      ("Challenge.lean", "def s := \"\\\"\"\n-- after an escaped quote\n", false,
+        "Challenge.lean:2: comment in a challenge",
+        "hygiene ends a challenge's string at its closing quote, not an escaped one"),
+      ("Challenge.lean", "def c := '\"'\n-- after a quote character\n", false,
+        "Challenge.lean:2: comment in a challenge",
+        "hygiene reads a challenge's quote character as a character, not a string"),
+      ("Challenge.lean", "def s := r\"\\\"\n-- after a raw string\n", false,
+        "Challenge.lean:2: comment in a challenge",
+        "hygiene ends a challenge's raw string at its first quote")] do
     fixture script path content executable diagnostic label
   withRepo fun repo => do
       IO.FS.writeFile (repo / "untracked file.txt") "bad \r\n\n"

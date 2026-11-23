@@ -82,11 +82,11 @@ or `WorldCode`, as the Lean Software Challenge reads it, and any other module is
   `WorldSpec` modules and the packages' modules, and the build writes `comparator.json` from it
   for `lake comparator`.
 - `Linger.lean`: the session library's umbrella module.
-- `Theorems/`: the headline proofs, one module for each part of `Challenge.lean` (`Faults.lean`
-  for part 10, `Status.lean` for the status rule), which `Solution.lean` imports for the
-  comparator, and `Coverage.lean`, which checks the pure code's `@[csimp]` replacements and lists
-  its definitions for the emitter check in `Verify/Coverage.lean`; the library names each module
-  of `Theorems/` as a root; `Verify/`: the verifier's harness, runner and own suites.
+- `Theorems/`: the headline proofs, one module for each part, a run of consecutive headlines of
+  `Challenge.lean`, from `Transparency.lean` to `Status.lean`, which `Solution.lean` imports for
+  the comparator, and `Coverage.lean`, which checks the pure code's `@[csimp]` replacements and
+  lists its definitions for the emitter check in `Verify/Coverage.lean`; the library names each
+  module of `Theorems/` as a root; `Verify/`: the verifier's harness, runner and own suites.
 - `packages/`: Lake packages linger requires by path, each with its own `Challenge.lean`,
   solution, audit and `owned.lock`, and laid out by role as a component is: `fuzzy`, the fuzzy
   matcher (namespace `Fuzzy`), `input`, the bounded terminal key decoder (`Input`), `terminal`,
@@ -129,8 +129,8 @@ size: Lean erases proofs regardless of file placement.
   change a claim, never to make a proof pass, and restate a theorem there no weaker than its
   source. Each package root's `owned.lock` records their hashes, and a build fails when one
   drifts: delete the lock to record a changed claim, build twice, and commit the new lock with
-  it. The challenges follow the library's convention: a module doc says what is claimed and
-  what is not, and holes, headlines and kills carry no doc comments.
+  it. A challenge holds only its imports, holes, headlines and kills: no comments, since only
+  statements are checked; `scripts/hygiene.sh` rejects any.
 - Every headline in `Challenge.lean` needs a kill marked `@[kills headline]`: a theorem there
   stating the headline's negation with a wrong part in place of a hole, proved beside its
   headline in its part's module under `Theorems/`. The audit matches a kill against its headline term by term, ignoring

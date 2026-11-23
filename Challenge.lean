@@ -18,71 +18,9 @@ public import Terminal.CoreCode.Vt
 public import Os.WorldSpec
 meta import SoftwareChallenge
 
-/-! # Headline theorems
-
-The guarantees linger must keep, in ten parts and the status rule. Each part's section says what
-its headlines claim and what they do not; the statements say the rest.
-
-1. Transparency: a client that attaches shows the session's terminal, losing only history beyond
-   the replay budget, and then receives the program's output as linger's mediator releases it;
-   a program whose terminal is in raw mode reads exactly what its writers sent and hears focus as
-   a terminal reports it.
-2. Authority and attribution: a connection changes only what its mode allows, a name has one
-   owner, and every value linger reports has one source, which alone can change it.
-3. Exactness: a request takes effect exactly as given, or is refused with a reason and changes
-   nothing.
-4. Program identity: a session runs exactly the program its creation named, from a state its
-   start alone decides, and linger only delivers bytes to it.
-5. Accountability: every session ends once, through one ending, whether its program ends, a kill
-   stops it or a signal stops its daemon, which saves it, with how it ended recorded and reported
-   truthfully to anyone who asks; every request gets a reply or a refusal, and every command
-   exits with the code of an answer true of what happened.
-6. Bounded and clean: input cannot raise any buffer, loop or wait past its cap, and nothing of a
-   session's terminal session that linger's signals reach outlives it.
-7. Recovery: resuming from a checkpoint gives back the saved session, less any half-parsed
-   control sequence, and a checkpoint that does not decode is kept and refused, not replaced. An
-   upgrade carries a running session to a newer binary whole, or leaves it running as it was, and
-   an attach by a newer binary asks for one.
-8. Clean terminal: what linger writes to a terminal on its own account is safe text or one of
-   its fixed sequences, in color only where the caller's environment allows it, and handing a
-   terminal back leaves it canonical.
-9. Work follows events: linger works only in response to an event, a byte, a request, a program
-   ending or a deadline an earlier event set, never in proportion to how many sessions exist, so
-   every linger process goes quiet after the last event; work no event pays for is allowed only
-   where it is named, with its bound.
-10. Graceful under load and faults: a fault in a daemon, a client or a peer costs at most its
-   own session or client, plus a declared bound elsewhere; work a request needs never waits on
-   optional work or on another session, every wait is bounded and says what it missed, and
-   optional work is skipped or coalesced, never queued.
-
-The status rule: a session's row shows its attention, whether there is something for you since
-you looked, and its state, what it is, each a signal's, none a guess from timing.
-
-Each theorem is stated over the components' `CoreSpec` definitions, the world claims of their
-`WorldSpec` modules, the terminal package's parts, which its own challenge claims, and the
-program's parts, declared below as holes, which the program supplies. `Theorems.Solution` proves
-the same statements of the program's parts, and `./lake comparator` checks that it proves exactly
-these, that each part has the declared type, and that no axiom beyond `propext`, `Quot.sound` and
-`Classical.choice` is used. Changing a statement or a hole here changes what linger claims.
-
-Not claimed anywhere: that the IO executors, the C shim and the operating system behave as the
-world claims say, which each claim's check tests on its host and the suites named with the claim
-test through linger, except for power loss, which `Disk.Durable` speaks of and nothing causes;
-scheduling, allocation failure, termination by SIGKILL or power loss and failures of the
-compiler, the runtime or the C shim; memory beyond the logical bytes the buffers retain; ownership
-among processes that do not cooperate or replace the lock files; fidelity beyond linger's own
-terminal model, which stands in for every receiver; the incoming title content and the saved
-cursor slot, which fixtures cover; processes or images, since recovery restores screens; and that
-an exit status tells linger's answers from a program's, since a program may exit with any status,
-as `timeout` and `env` do, so the porcelain output is the exact channel. -/
-
 public section
 
 open Linger.App Linger.Display Linger.Session Linger.Target Terminal
-
-/-! ## The program's parts
-
-### Command line -/
 
 def Linger.App.Entry.route : List String → App.Entry.Route := sorry
 
@@ -156,8 +94,6 @@ def Linger.App.Serve.Screen.render : Vt.Vt → Serve.Screen := sorry
 
 def Linger.App.Serve.Screen.changes : Serve.Screen → Serve.Screen → Serve.Screen.Update := sorry
 
-/-! ### Session targets -/
-
 def Linger.Target.Name.check : String → Option String := sorry
 
 def Linger.Target.Name.accept : String → Option String := sorry
@@ -177,8 +113,6 @@ def Linger.Target.Remote.checkHosts : List String → Except String (List String
 
 def Linger.Target.Remote.targetValid : String → Bool := sorry
 
-/-! ### Environment -/
-
 def Linger.Os.Env.shellOf : Option String → String := sorry
 
 def Linger.Os.Env.remotesFile : Option String → Option String := sorry
@@ -188,8 +122,6 @@ def Linger.Os.Env.detachEnabled : Bool → Option String → Bool := sorry
 def Linger.Os.Env.resumeDir : Option String → String → Bool → Option String := sorry
 
 def Linger.Os.Env.withColor : Bool → Option String → Option String → Bool := sorry
-
-/-! ### Statuses -/
 
 def Linger.Display.Status.classify : Status.Obs → Status.Status := sorry
 
@@ -244,8 +176,6 @@ def Linger.Display.Alert.announce :
       List (String × Status.Attention) → String → List String := sorry
 
 def Linger.Display.Alert.notification : String → String → List UInt8 := sorry
-
-/-! ### Sessions -/
 
 def Linger.Session.State : Type := sorry
 
@@ -374,8 +304,6 @@ def Linger.Session.Buf.owedLen : Buf.Buf → Nat := sorry
 
 def Linger.Session.Buf.writeFrom : Buf.Buf → ByteArray := sorry
 
-/-! ### Selector and import -/
-
 def Linger.Selector.Picker.matchCount : Selector.Picker.State → Nat := sorry
 
 def Linger.Selector.Picker.step : Selector.Picker.State → Selector.Key → Selector.Picker.Outcome :=
@@ -433,22 +361,6 @@ def Linger.Import.Resurrect.checkpoint :
     Import.Resurrect.Pane → Option String → Checkpoint.Ckpt Vt.Vt := sorry
 
 namespace Linger
-
-/-! ## 1. Transparency
-
-The terminal package (`packages/terminal`) claims what a repaint gives a client, of every terminal
-a session can hold, a decoded checkpoint's included (`Checkpoint.live_of_decoded`). Here: an attach
-streams the client that repaint, sending nothing before it but the pty's resize and the focus
-report; program output feeds the terminal and reaches every attached client as the mediator
-releases it; linger writes the program exactly the input it accepted, whole frames or none, which a
-program in raw mode reads as sent when the kernel passes it on (`Pty.Delivers`); and a program that
-enabled focus reporting hears focus follow writable clients. That the daemon does what the session
-asks is part 5's (`run_refines`). Not claimed: which bytes the mediator releases, which
-`Terminal.Mediation` decides, a request still incomplete at a chunk's end waiting for the next; an
-attach a read completes with other messages; that the runtime streams a repaint ahead of the output
-that follows it, which the delivery suite checks; and what a program reads in any mode other than
-raw, such as the cooked mode a terminal starts in, whose line discipline edits lines and turns ^C
-into a signal. -/
 
 theorem step_attach_repaint (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {mode : Mode} {cols rows : UInt32} (hc : s.client? id = some c)
@@ -641,39 +553,6 @@ theorem step_closed_focus_rejects_eager :
                 (fun c => c.attached && c.mode == .writable) =
               false := by
   sorry
-
-/-! ## 2. Authority and attribution
-
-A connection's rights are the mode it attached with and nothing else, and no pty resize has a zero
-dimension. A session's ID, fixed when it is created, keys its files and its `LINGER_SESSION`; its
-name is clean text that leads to the ID, kept exactly as given, so with no entries a name leads to
-itself and files an older linger keyed by name keep their meaning. A name has one owner, and a
-rename moves it to the same ID, so what the session keeps by its ID, its program, terminal,
-clients, waiters, description and status, stays as it was. Each value a session reports has one
-source, which alone changes it: what its program owns, its title, its asks, its declared progress,
-its shell's commands, what the operating system reports of its terminal and what it sent through
-`sd_notify` (`step_owned`); the fields its record keeps from its boot; and each cell of a listing
-row. In the chooser a key does only what it does in a line editor, Up and Down cycle as fzf's do,
-and the view moves only when its person moves it.
-
-Not claimed: which client sizes the session, the newest writable one whose terminal has a size,
-which the session fixtures and the attach suite check; that a command resolves its name once and
-keys everything after by the ID, that the daemon takes the name only while it still leads to its
-ID, holding the ID's locks, and that `rename` holds the names lock and the new name's ID's locks
-while it places the name, which the rename suite checks; that a client attached before a rename
-titles its terminal with the new name, which it does from its next attach; a notification sent
-while a daemon upgrades, which the new image binds its socket afresh for; which bytes the mediator
-hears as a mark, which `Terminal.Mediation` decides and its fixtures and the status suite check;
-what output outside the terminal package's whole tokens tells; a mark inside a full-screen
-program, which the session hears as its shell's; that the daemon reports the title, foreground and
-idle time it read, which the overview suite checks; that a row shows a notification's text after
-its caption while its session asks, and how the last command that finished unseen ended, which the
-listing tests and the status suite check; which key requests which action, which the selector's key
-proofs and the manager suite check; that the chooser sorts exactly when it opens and on Ctrl-L,
-and enters with the session it returns from or `LINGER_SESSION` names, which the manager suite
-checks; that the highlight follows its row, which the selector's picker proofs show; and that a
-cursor on a candidate's index selects it, which holds with an empty query, whose rows are the
-candidates in order. -/
 
 theorem one_owner (grant : Claim.State → Nat → Nat → Bool) (exclusive : Claim.Exclusive grant)
     {s : Claim.State} (reached : Claim.Reachable grant Claim.enters s) {a b resource : Nat}
@@ -1532,45 +1411,6 @@ theorem picker_moves_cycle_rejects_clamped :
                 (if n = 0 then s else { s with cursor := ((s.cursor - k : Int) % n).toNat }) := by
   sorry
 
-/-! ## 3. Exactness
-
-The command line is complete and minimal: every operation of the session model, `Op`, has exactly
-one command, and a command exists only for an `Op`, so adding one changes what linger claims. A
-command line that parses is the typed request of its operation, which takes exactly that
-operation's transition and exits with the answer true of what it found; any other is a usage
-error. The command line and the Lean API reach an operation only through `Api.perform`, the API
-writes to no standard stream (`scripts/gates.sh`), and every field a listing reports has one
-owner, the name the user's alone. `start` runs its program where its caller is, or answers what
-`env -C` would, and an unset or empty variable reads as its standard default (`env_defaults`). A
-command on a `name@host` target runs linger there through the host's transport, its words encoded
-as plain words, which any login shell passes on as they are and POSIX quoting would not: fish reads
-a backslash inside single quotes.
-
-`linger serve` takes the same requests as JSON-RPC 2.0 over pipes, one value a line, as MCP's
-stdio transport frames them: a request that parses is exactly its command line's, and its result
-is that command line's answer and what it shows. Its methods take the shapes leanvim states its
-peers in (`Serve.Shape`), an ask, answered once, or a table or a log, which a subscription keeps,
-and `sessions/list` sends the records linger's own chooser reads. A watch, `session/screen` or
-`session/history`, renders what `attach --read-only` is shown by the renderer `capture` uses, and
-a log counts every line it drops. A tmux-resurrect save is a source linger reads and never writes:
-its panes are rows exactly while linger keeps no record of their names, and an attach, a resume or
-a kill of one never replaces a record.
-
-Not claimed: that what the IO code finds is what happened, which the suites check; that a
-transport reaches its host, which is the transport's, its keys, jumps, latency and authentication
-included; that the remote linger decodes, since an older one refuses the encoded line as a usage
-error; that a command line fits the remote host's argument limit; that the executor of `serve`
-writes each message whole, on one line, reads each line as `Serve.decode` reads it and performs each
-request as the command line does, which the serve suite checks; anything of a remote target
-through `serve`, which reaches no transport for one and refuses it; a mirror across two resizes
-between looks that leave the size as it was, the lines a resize pushes into the history, and a
-terminal repainted inside a control sequence; that the chooser's listing and a client's are taken
-at the same moment, and the remote rows of `ls -r`, which `serve` does not list; that the IO code
-decides a pane's fate holding the name's locks and creates its checkpoint only where no file is,
-and that linger writes, moves or deletes nothing in tmux's directory, which the interop suite
-checks; for a saved pane, captures other than the latest save's archive; and that an imported
-pane's saved command never runs, which a gate checks. -/
-
 theorem route_exact (args : List String) :
     App.Entry.route args =
       if args.head? = some Remote.marker then
@@ -2228,24 +2068,6 @@ theorem metadata_dirs_rejects_silent :
               saved = some d ∧ d ≠ dir := by
   sorry
 
-/-! ## 4. Program identity
-
-A session runs the program its creation named, or the session's shell, which a resume runs again on
-the saved session's last screen (`resume_restores`, in part 7), with the environment of the command
-that asked for it less linger's own variables, those beginning `LINGER_` (`Start.lingers`), but its
-`LINGER_SESSION`, and with the variables that say what its terminal is, `TERM=xterm-256color`,
-`COLORTERM=truecolor` and linger's name and version, and the `NOTIFY_SOCKET` its daemon reads, as
-systemd gives a service (`start_runs`). It starts with every signal at its default action, none
-blocked, and only its terminal open, on descriptors 0, 1 and 2, whatever the command that asked
-ignored, blocked or left open (`start_clean`). What a person types reaches the program and nothing
-else of the session, so no record a session asks for holds it (`input_unrecorded`). Not claimed: the
-rest of what a program inherits as any child does, such as resource limits, the file mode mask,
-scheduling priority and the user and groups it runs as; a read that cuts a frame, whose start the
-session holds until the rest arrives; that the daemon hands a session over only once it holds no
-such start and has written its program every byte it owed it, which the upgrade code decides; and
-that a person's input reaches no file, which the attach suite checks of a line typed with echo
-off. -/
-
 theorem input_unrecorded (vt : Vt.Vt) (fields metadata : List (String × String))
     (evs evs' : List Event) (framed : ∀ ev ∈ evs, Framed Wire.encode ev)
     (typed : Typed Wire.encode evs evs') :
@@ -2370,40 +2192,6 @@ theorem start_clean_rejects_inherited :
                 (∀ sig, started.blocked sig = false) ∧
                 ∀ fd, started.descriptor fd = if fd < 3 then some .terminal else none := by
   sorry
-
-/-! ## 5. Accountability
-
-A session ends through one ending, whatever ends it: its program, a kill, or SIGHUP, SIGINT,
-SIGQUIT or SIGTERM to its daemon, the system stopping linger at logout or shutdown, which saves the
-session instead of ending it (`step_ended_reports`, `step_signal_saves`). Everyone attached or
-waiting hears how it ended before the daemon exits, and its name keeps an end record that says so
-for whoever asks later (`record_answer`). A program's own ending stays until someone has seen it,
-a watcher as a typist (`seenBy`): the first attach to one nobody saw shows the last screen, tells
-the ending and discards the session (`visit_result`). `wait` and `kill` answer what happened, never
-guessing while a daemon may still be ending (`wait_held`, `kill_answers`), and every command exits
-with the code of one answer `Os.Answer` names, a signal's 128 plus its number, as a shell reports
-it, and a chooser cancelled by a key 130, as fzf's (`code_documented`). An attach goes only to a
-daemon that reports this version's protocol level (`infoFields_protocol`). The daemon's driver runs
-the session's trace: when every effect succeeds it executes exactly the trace's effects, in order
-(`run_refines`), and whatever its effects reply it returns and keeps the session within its bounds
-(`run_total_safe`).
-
-Not claimed: that the answer comes within the client's wait and that a refusal names the session
-and the level, which the attach suite checks against a level-2 daemon, one that reports no level
-and one that never answers; that a daemon hears a stop signal, which the operating system delivers
-through the daemon's signal pipe and the resume suite checks, and when it cannot make the pipe
-takes its default action; that an attached client, the chooser and `ls -r`, given SIGTERM, SIGHUP
-or SIGINT, hand their terminal back or retire their transports and answer `stopped` with the first
-that came, and that `main` then ends the process by that signal, which the attach, manager and
-remote suites check, and the resume suite that a client attached when a signal saves its session
-answers `saved`; that a client the model counts as attached when the program ends still reads what
-it is told, and that an attach executes the steps `visit_result` names, discarding only the
-checkpoint it showed and keeping the session when a signal interrupts the view, which the attach
-and watch suites check; that a look of `kill` hears who holds the name, which the identity suite
-checks; that the process exits with the code of its command's answer, or for `stopped` ends by its
-signal, which the type of every executor's result, `main`'s one exit and a gate on the shells keep;
-and which events the driver hands the session and which effects it executes when an effect
-fails. -/
 
 theorem step_kill_stops (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {rest : List Wire.Msg} (hc : s.client? id = some c)
@@ -2950,27 +2738,6 @@ theorem run_stop_exits_rejects_jump :
           (Driver.jump (State.boot (Vt.Vt.init 1 1) [] []) execute r [ev]).exiting = true := by
   sorry
 
-/-! ## 6. Bounded and clean
-
-After every batch of events the driver leaves a session's clients, record fields, frame decoders
-and pty scanner within their caps (`run_total_safe`, in part 5); a read gets at most one rendered
-reply (`step_bytes_one_reply`), a frame of output carries at most 64 KiB, a tmux capture's bytes are
-at most twice its limit (`captureBytes_bounded`), and the queues the daemon keeps owe at most their
-caps (`reachableIn_bound`, `fault_contained`). When a session ends, the daemon signals the program's
-process group and the rest of its terminal session with each signal of `Session.ending`, SIGHUP,
-then SIGKILL at the grace, `Stop.grace`, writes the end record and reaps the program last, so its
-pid stays reserved until then, and none of the group still runs once the ending is over
-(`ending_clean`). Every file in linger's state is one fact, and after any command every lock file
-names a session or an ending (`locks_named`); a lock is kept only of the file its path names (the
-os package's `lock_named`), so a deleted lock file excludes as one kept. End records are not
-bounded: one is kept for each name a session ended under or a kill hid a saved tmux pane under,
-and the lock files are bounded by them. Not claimed: how many pty resizes a read asks for while
-its sender stays attached; the rest of the terminal session, which the attach suite tests; the
-processes linger's signals miss, one that left the group and the terminal session with `setsid`,
-which only a PID namespace would hold, and one of another user; that each command lets its locks
-go as `Locks.release` says, which the identity suite checks; and that a crash or a SIGKILL leaves
-no lock file, which the next command on the name or the next listing deletes. -/
-
 theorem locks_named (records : Session.Records) (name : String)
     (before : ∀ held ∈ records.locks, held = name ∨ records.holds held = true) :
     (Session.Locks.release records name).sockets = records.sockets ∧
@@ -3078,40 +2845,6 @@ theorem ending_clean_rejects_pid :
                     Stop.pidOnly.foldl (Stop.survivors (Stop.reach program reaches) gone) alive =
                       [] := by
   sorry
-
-/-! ## 7. Recovery
-
-Any bytes on disk resume a session the terminal package's claims cover
-(`Checkpoint.live_of_decoded`) or are refused, and a command never takes bytes that do not decode
-for no checkpoint: it leaves them as they are, for `kill` to discard (`recovery_exact`). A resume
-gives back the saved terminal and the saved record's own fields, but no label an older linger saved
-(`resume_restores`), and a record an older linger wrote reads as it meant then
-(`older_record_described`). What a crash costs is part 10's (`fault_contained`). Not claimed: that
-records of formats 1 and 2 read the same way, which the checkpoint proofs state
-(`load_saveV2_live`, `load_saveV1_live`); that a description a user cleared in a record of an
-earlier format stays cleared, since those formats do not tell it from one never given; and a bound
-in bytes or rows on what a crash loses, which is bounded in time, whatever the program wrote, and in
-rows waits for an append-only store of the history.
-
-An upgrade replaces a daemon's image with a newer binary's by an exec, which keeps the daemon's
-process, its program and every descriptor the handoff names (`upgrade_keeps`); the new image
-resumes from the handoff, which carries the session whole, not rebuilt as a resume does
-(`handoff_carries`); a binary decodes the handoff formats it lists and no other
-(`handoff_versioned`), and a daemon hands its session only to a binary whose probe lists the format
-it writes, and serves on otherwise, as when the exec fails (`upgrade_probes`). A writable attach
-asks for that upgrade first, to its own binary, exactly when the daemon writes a handoff format the
-binary reads and reports a lower build than the binary's, or none, as a daemon an older linger
-started does, so the daemon it attaches to has the binary's build or a higher one, unless it
-refused the handoff and serves on as it was; a read-only attach never asks (`attach_upgrades`).
-Not claimed: that the binary the exec starts is the one the probe ran, since the file may be
-replaced between them, nor that it has the resources to decode the handoff; such an image ends,
-and the session's program loses its daemon, with the checkpoint the old image saved just before
-the exec left to resume; that the attach asks as `Handover.plan` decides, reading its own build
-and the daemon's `info`, and says on one line why a daemon kept its image, which a gate ties and
-the upgrade suite checks; that only `upgrade` and the attach ask a daemon to replace its image, so
-`ls`, the chooser and `capture` never do, which a gate ties and the upgrade suite checks of `ls`
-and `capture`; and that a binary's build is the step of linger's history it was built at, which a
-gate ties to the history. -/
 
 theorem handoff_carries (s : State) (w : Handoff.World)
     (h :
@@ -3429,17 +3162,6 @@ theorem older_record_described_rejects_stored :
                     fields := c.fields ++ Checkpoint.importDescription c.fields } := by
   sorry
 
-/-! ## 8. Clean terminal
-
-What linger writes to a terminal on its own account is clean (`Display.Clean`): printable text,
-line breaks, tabs and a short list of control sequences, none of which asks the terminal for a
-reply, resets it or erases its scrollback. A gate lists every write to standard output with what it
-writes: a printer `writes_clean` names, or the session's own bytes, which the terminal package's
-headlines describe. The listings of `ls` and the chooser are in color exactly when they go to a
-terminal, NO_COLOR is unset or empty, as no-color.org reads it, and TERM is not `dumb`
-(`withColor_iff`), each read once. Not claimed: what linger prints as lines of text (help,
-version, `ls --summary`, porcelain records) and its messages on standard error. -/
-
 theorem infoText_text (s : State) :
     ∃ cs : List Char,
       Session.infoText s = cs.flatMap String.utf8EncodeChar ∧
@@ -3533,28 +3255,6 @@ theorem withColor_iff_rejects_presence :
             (noColor = none ∨ noColor = some "") ∧
             ∃ name, term = some name ∧ name ≠ "" ∧ name ≠ "dumb" := by
   sorry
-
-/-! ## 9. Work follows events
-
-A daemon's state holds its own session alone, so no event's work depends on how many sessions
-exist; program output costs work only for the clients attached to its session
-(`step_output_delivered`, in part 1); a session's ticks settle, the third in a row setting none
-(`ticks_settle`); and a daemon's poll that no event ends sleeps until its earliest deadline, or
-for good with none (`poll_wakes`). `scripts/gates.sh` lists every timer the program sets, with its
-bound. The chooser repaints only the rows an event changed (`picker_repaints_changes`), and asks
-remote hosts only when an event asks it to, keeping the rows their last answer gave and saying how
-old they are (`fetch_follows_events`). `serve` holds, for each subscription, what it last told the
-subscriber and the latest, never a queue, and sends an update exactly when the two differ
-(`changed_exactly`, `screen_table_exact`, `history_log_exact`); it lists the sessions once a second
-only while a subscription is open, and a watch looks only after output, so a quiet session costs
-nothing. At most 64 requests are performed, and messages wait to be written, at once, and a line is
-at most 1 MiB, so a client that sends much and reads nothing holds `serve` at a bounded size. Not
-claimed: that the chooser's header gives the age of the remote rows, which the manager suite
-checks; how much later than its deadline a loaded host lets a daemon wake or makes a listing; an
-update over a terminal in insert or origin mode, without autowrap, with a narrower scroll region
-or a DEC line-drawing character set, none of which the picker sets; that a listing's records are
-the sessions' as they stand, which the listing's own claims and the suites cover; and, yet, that an
-event's work follows its size. -/
 
 theorem changed_exactly (s : App.Serve.State) (version : String) (id : Serve.Id)
     (told latest : List Serve.Record) (ready : s.phase = .ready version)
@@ -3760,34 +3460,6 @@ theorem fetch_follows_events_rejects_polling :
               events.reverse.takeWhile Selector.Picker.Event.isKey := by
   sorry
 
-/-! ## 10. Graceful under load and faults
-
-Each fault has its cost (`Fault.cost`), and the claims that bound it at that cost are its case
-(`fault_contained`). A daemon that crashes costs its own session back to its last save: it asks for
-a save within `ckptIntervalMs` of every change no save holds and replaces its checkpoint whole and
-durably (`Disk.Durable`, which the resume suite tests by killing a daemon while it saves). A client
-that dies costs its own client, and so does one that floods its session or stops reading, whose
-frames are refused or whose connection is cut, so every queue owes at most its cap. A daemon or a
-remote host that does not answer costs its own row, which reads `?` with no attention. Optional
-work costs only its declared bound: a daemon saves its checkpoint and writes its end record off its
-loop (`scripts/gates.sh`), so a slow disk holds up no answer and no output, those writes coalesce,
-and a `capture` of a saved session holds the name's locks only while it loads and renders. A command
-waits for its daemon's answer a bounded time, and what it answers when that time runs out is still
-true (`start_answer_true`): every wait sleeps as `Os.Wait.next` decides (`scripts/gates.sh`), so
-it gives up once its deadline has passed, which the os package claims, and reports what it missed,
-and a write that finds its descriptor full waits for the reader, never taken for a reader that is
-gone. Not claimed: shared host resources, CPU, disk bandwidth and memory; a full state directory; a
-daemon's program, which dies with its daemon; `serve`'s cost, which grows with its subscribed
-clients; the IO of three cases, which suites test: that a client's death leaves its daemon serving
-the rest (the attach suite), that a daemon that does not answer by the listing's deadline lists as
-`?` while the rest list (the status and robust suites), and that a remote host that does not answer
-within its wait lists as `?` (the remote suite); and the waits with no deadline, each on something
-that ends without waiting itself, or on purpose: `wait`, which takes no time limit of its own,
-since `timeout(1)` composes with it, an idle daemon's poll, `start` or `resume` once their daemon
-took the request's ticket, a daemon's last disk write, which it reports after a second, and a
-command's write to a reader that does not read, as a blocking write waits too. How long a wait
-takes under load the robust, resume and status suites measure. -/
-
 theorem start_answer_true (r : Start.Request) (h : Start.Reachable Start.proceeds Start.answer r) :
     (r.answer = some .started → r.runs = true) ∧
       (r.answer = some .notStarted → r.runs = false) := by
@@ -3945,27 +3617,6 @@ theorem fault_contained_rejects_eager :
             Serve.State.told Serve.State.latest Serve.Log.push Listing.rowStatus Status.classify
             Capture.phases Capture.plan Offloop.eager Offloop.done afterCrash f f.cost := by
   sorry
-
-/-! ## The status rule
-
-And the titles, listings and selector views that show statuses. A row's first two columns are its
-attention's mark and its state's glyph, each read from its own signals: attention `⚑` for a bell
-or a desktop notification since the last look, `∙` for new lines in its history or an ending
-nobody was attached to see, blank for neither, an ask winning; state `!` for an error its program
-declared, `⣷` working, `⣤` paused, `⣀` running and declaring nothing, `✓` ended with status 0, `✗`
-ended any other way, `~` saved with no daemon and `?` no answer (`icon_glyphs`). A program declares
-progress by ConEmu's OSC `9;4`, which the terminal package's mediator hears (`progress_source`),
-and works, declaring none, while its shell's OSC 133 marks say a command runs. No tick changes a
-status, so a status changes only when a signal does. A view ranks rows by attention, then by where
-the session is in its life, and within a place keeps the listing's order, which orders names as
-people read them; titles and `ls --summary` count attention alone. What makes a session ask and
-what it tells of its shell's commands is part 2's (`step_owned`). Not claimed: that the porcelain
-and a row report the text of the last notification since the last look and an ending's command
-line and status, and the porcelain the declared progress, which the status suite checks; that the
-mediator's `lines` is set exactly when rows enter the terminal's history, which the terminal
-package's tests and the status suite check; repainting the marks after a reattach, which a repaint
-does not carry; and that the daemon publishes what it sees to its name's end record, which the
-quiet and status suites check. -/
 
 theorem classify_iff (o : Status.Obs) (s : Status.Status) :
     Status.classify o = s ↔ Status.Is s o := by sorry
