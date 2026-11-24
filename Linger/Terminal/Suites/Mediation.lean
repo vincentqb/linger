@@ -232,7 +232,7 @@ def runCase (e : Env) (index clients : Nat) (inheritedTerm : Option String)
       c := { c with err := some "probe did not answer" }
     else
       let txt ← IO.FS.readFile (System.FilePath.mk result)
-      let recs := records txt
+      let recs := tabRecords txt
       let field := fun (k : String) => (recs.find? (·.1 == k)).map (·.2)
       let mut outs : List ByteArray := []
       for cl in cls do

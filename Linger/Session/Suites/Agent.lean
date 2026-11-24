@@ -202,7 +202,9 @@ private def checkInfo (e : Env) (mode : String) (failed : Bool) : IO Unit := do
       expect
           (rc == 0 && err.isEmpty &&
             named ==
-              ([("name", name), ("state", "live")] ++ Linger.Display.Listing.statusFields default))
+              Linger.Json.sortMembers
+                ([("name", name), ("state", "live")] ++
+                  Linger.Display.Listing.statusFields default))
           s!"ls {name} lists a {mode} info peer as live/unknown without partial fields"
       expect
           (serverRc == some 0 && lrc == 0 && pathKept && recs.contains ("name", name) &&
@@ -231,8 +233,7 @@ private def startIn (e : Env) (cwd : String) (extra : Array (String × Option St
 
 /-- The names `ls --porcelain` lists. -/
 private def listed (e : Env) : IO (List String) := do
-  return (← e.out #["ls", "--porcelain"]).splitOn "\n" |>.filterMap fun line =>
-      (line.dropPrefix? "name\t").map (·.toString)
+  return (listingRecords (← e.out #["ls", "--porcelain"])).filterMap (·.lookup "name")
 
 /-- `start` runs an exact argv in a new session, in the caller's directory and environment,
 refuses a name a live or saved session holds, and leaves nothing behind when the program cannot

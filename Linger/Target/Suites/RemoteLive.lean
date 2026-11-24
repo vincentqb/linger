@@ -87,11 +87,8 @@ def run : IO UInt32 := do
         c.bye (sendDetach := false)
         -- …and it must still be there, as the far linger's own porcelain says
         let (_, listing, _) ← e.cliEnv env #["ls", "--porcelain", "-r"]
-        let recs := records listing
-        let after := (recs.dropWhile (· != ("name", s!"alpha@{host}"))).drop 1
-        expect
-            (recs.contains ("name", s!"alpha@{host}") &&
-              (after.takeWhile (·.1 != "name")).lookup "state" != some "resumable")
+        let row := (listingRecords listing).find? (·.lookup "name" == some s!"alpha@{host}")
+        expect (row.isSome && (row.bind (·.lookup "state")) != some "resumable")
             "remote session survived detach (still listed live, from its linger's porcelain)"
       finally
         if real.isNone then

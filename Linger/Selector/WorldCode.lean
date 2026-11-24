@@ -37,34 +37,21 @@ inductive Choice where
   as a cancellation does. -/
   | stopped (signal : UInt8)
 
-/-- Each listed target's status, read once per listing in one pass over its records: a name
-record starts a row, a blank record ends it, its `status` record says its state and its
-`attention` record its attention, as `Picker.Snapshot.row` reads them. A target without a state is
-unknown, and one without an attention has none. -/
+/-- Each listed target's status, read once per listing in one pass over its records: a record's
+`status` says its target's state and its `attention` its attention, as `Picker.Snapshot.row` reads
+them. A target without a state is unknown, and one without an attention has none. -/
 private def statusesOf (snapshot : Linger.Selector.Picker.Snapshot) :
     Std.HashMap String Linger.Display.Status.Status :=
   Id.run do
-    let mut current : Option String := none
     let mut statuses := {}
-    for fields in snapshot.records do
-      match fields with
-      | ["name", target] =>
-        current := some target
-      | [""] =>
-        current := none
-      | ["status", name] =>
-        if let some target := current then
+    for record in snapshot.records do
+      if let some target := record.lookup "name" then
+        if !statuses.contains target then
           statuses :=
             statuses.insert target
-              { (statuses.getD target default) with state := Linger.Display.Status.ofName name }
-      | ["attention", name] =>
-        if let some target := current then
-          statuses :=
-            statuses.insert target
-              { (statuses.getD target default) with
-                attention := Linger.Display.Status.ofAttentionName name }
-      | _ =>
-        pure ()
+              { state := Linger.Display.Status.ofName ((record.lookup "status").getD "")
+                attention :=
+                  Linger.Display.Status.ofAttentionName ((record.lookup "attention").getD "") }
     return statuses
 
 /-- Own raw mode and at most one listing for one selection visit. Keys always

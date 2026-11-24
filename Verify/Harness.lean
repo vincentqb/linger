@@ -3,6 +3,7 @@ module
 public import Os.WorldCode
 public import Linger.Display.CoreCode.Status
 public import Linger.Display.CoreCode.Listing
+import Linger.Selector.CoreCode.Picker
 public import Terminal.CoreCode.Render
 
 public section
@@ -574,46 +575,41 @@ def Env.log (e : Env) (name : String) : IO String := do
   catch _ =>
     pure ""
 
-/-- Parse `k<TAB>v` lines into an association list — the shape both
-`linger ls --porcelain` emits (`Session.infoText`). -/
-def records (txt : String) : List (String × String) :=
+/-- Parse `k<TAB>v` lines into an association list: the shape of a probe's report. -/
+def tabRecords (txt : String) : List (String × String) :=
   txt.splitOn "\n" |>.filterMap fun line =>
     match line.splitOn "\t" with
     | [k, v] => some (k, v)
     | _ => none
+
+/-- The records of a listing `linger ls --porcelain` prints: one canonical JSON object of strings a
+line, read as the chooser reads one (`Picker.lineRecord`); a line that is no record is left out. -/
+def listingRecords (txt : String) : List (List (String × String)) :=
+  ((txt.splitOn "\n").filter (!·.isEmpty)).filterMap fun line =>
+    (Linger.Selector.Picker.lineRecord line).toOption
+
+/-- The fields of a listing's records, in order, every record's: what a listing of one session
+holds, or each session's `name` in turn. -/
+def records (txt : String) : List (String × String) := (listingRecords txt).flatten
 
 /-- One field of `linger ls --porcelain -- <name>`. -/
 def Env.info (e : Env) (name field : String) : IO (Option String) := do
   let recs := records (← e.out #["ls", "--porcelain", "--", name])
   return (recs.find? (·.1 == field)).map (·.2)
 
-/-- One field of one session's `ls --porcelain` row. A `name` record opens a
-row; later keys belong to it until the next one. -/
+/-- One field of one session's `ls --porcelain` record. -/
 def Env.field (e : Env) (name field : String) : IO (Option String) := do
-  let mut cur : Option String := none
-  let mut found : Option String := none
-  for (k, v) in records (← e.out #["ls", "--porcelain"]) do
-    if k == "name" then
-      cur := some v
-    else if cur == some name && k == field && found.isNone then
-      found := some v
-  return found
+  let row := (listingRecords (← e.out #["ls", "--porcelain"])).find? (·.lookup "name" == some name)
+  return row.bind (·.lookup field)
 
 /-- The name a human `linger ls` row lists: its first word after the attention's mark, the
 state's glyph and the space after each. -/
 def rowName (row : String) : String := ((String.ofList (row.toList.drop 4)).splitOn " ").headD ""
 
-/-- One session's `ls --porcelain` row, from one listing: its records after its `name` record,
-until the next row's. -/
+/-- One session's `ls --porcelain` record, from one listing: its fields but its `name`. -/
 def Env.row (e : Env) (name : String) : IO (List (String × String)) := do
-  let mut cur : Option String := none
-  let mut row : List (String × String) := []
-  for (k, v) in records (← e.out #["ls", "--porcelain"]) do
-    if k == "name" then
-      cur := some v
-    else if cur == some name then
-      row := row ++ [(k, v)]
-  return row
+  let row := (listingRecords (← e.out #["ls", "--porcelain"])).find? (·.lookup "name" == some name)
+  return (row.getD []).filter (·.1 != "name")
 
 /-- A session's two status columns, its attention and its state, from one listing, parsed with
 `Linger.Display.Listing.statusOf` rather than compared as string literals, so a renamed

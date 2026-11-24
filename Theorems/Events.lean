@@ -108,9 +108,9 @@ theorem changed_exactly_rejects_chatty :
   -- with nothing changed, a free writer would still send an update
   have :=
     (h
-        { stage := .ready "1", open? := some (.number "1"), toldRecords := some [],
+        { stage := .ready "1", open? := some (.number 1), toldRecords := some [],
           latestRecords := some [] }
-        "1" (.number "1") [] [] rfl rfl rfl rfl).1
+        "1" (.number 1) [] [] rfl rfl rfl rfl).1
   simp [App.Serve.chatty, App.Serve.changes, App.Serve.removed] at this
 
 theorem screen_table_exact (s : App.Serve.State) (version : String) (id : App.Serve.Id)
@@ -136,7 +136,7 @@ theorem screen_table_exact_rejects_every_line :
   let line : App.Serve.Line := { text := [], spans := [] }
   let screen : App.Serve.Screen := { lines := [line], cursor := ⟨0, 0, true⟩, title := "" }
   have exact :=
-    (h ({ stage := .ready "1" } : App.Serve.StateRec) "1" (.number "1") screen screen screen {}
+    (h ({ stage := .ready "1" } : App.Serve.StateRec) "1" (.number 1) screen screen screen {}
         rfl).2.2
   have := (exact.2.2.2.1 0 line).mp (by simp [App.Serve.Screen.everyLine, screen])
   simp [screen] at this
@@ -154,8 +154,7 @@ theorem screen_table_exact_rejects_first_change :
   let told : App.Serve.Screen := { lines := [before, before], cursor := ⟨0, 0, true⟩, title := "" }
   let latest : App.Serve.Screen := { lines := [after, after], cursor := ⟨0, 0, true⟩, title := "" }
   have exact :=
-    (h ({ stage := .ready "1" } : App.Serve.StateRec) "1" (.number "1") told latest latest {}
-        rfl).2.2
+    (h ({ stage := .ready "1" } : App.Serve.StateRec) "1" (.number 1) told latest latest {} rfl).2.2
   have := exact.1 1
   simp [App.Serve.Screen.View.line, App.Serve.Screen.firstChange, told, latest, before, after,
     List.lookup] at this

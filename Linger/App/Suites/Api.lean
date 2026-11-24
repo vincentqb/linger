@@ -96,7 +96,7 @@ private def apiChecks (e : Env) : IO Unit := do
   let err ← child.stderr.readToEnd
   let rc ← child.wait
   let out ← IO.ofExcept out.get
-  let found := records (← IO.FS.readFile report)
+  let found := tabRecords (← IO.FS.readFile report)
   let said (key : String) := (found.find? (·.1 == key)).map (·.2)
   expect (rc == 0 && out.isEmpty && err.isEmpty)
       s!"the API writes nothing to standard output or standard error (rc={rc}, {out.length} and \
@@ -105,7 +105,7 @@ private def apiChecks (e : Env) : IO Unit := do
   expect
       (said "start" == some "Linger.App.Api.Found.done" && said "ready" == some "true" &&
         lsRc == 0 &&
-        has ls "name\tapi" &&
+        has ls "\"name\":\"api\"" &&
         (← System.FilePath.readDir wrong).isEmpty)
       s!"start finds done, in the namespace the caller names and not LINGER_DIR's ({said "start"})"
   expect

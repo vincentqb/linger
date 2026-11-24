@@ -1,7 +1,8 @@
 module
 
 public import Linger.App.CoreSpec
-import Linger.App.CoreCode.Json
+import Linger.App.CoreCode.Base64
+import Linger.Os.CoreCode.Json
 import Linger.App.CoreCode.Api
 import Linger.Os.CoreCode.Answer
 import Linger.Session.CoreCode
@@ -18,7 +19,9 @@ public section
 /-! # Linger.App.Serve — linger's operations as JSON-RPC 2.0, one message a line
 
 `linger serve` reads JSON-RPC 2.0 messages from standard input and writes its own to standard
-output, one JSON value a line (`Lines`, `decode`, `line`). A connection is a state machine
+output, one canonical JSON value a line (`Lines`, `decode`, `line`): a line that is not canonical
+gets error -32700, with the reader's reason in its `data`, and changes nothing
+(`serve_refuses_uncanonical`). A connection is a state machine
 (`step`): it answers `initialize` with the version it chooses of those it speaks, and with an
 error any other request until the client says `initialized`; then each request of a method
 `methods` lists is the request of its command line (`Serve.words`, `parse`), which the shell
@@ -191,7 +194,7 @@ def parse (method : String) (params : Json) : Option (Api.Request × List UInt8)
 
 /-- An answer as JSON members: its name and its code. -/
 def answerMembers (answer : Os.Answer) : List (String × Json) :=
-  [("answer", .str (answerName answer)), ("code", .number (toString answer.code))]
+  [("answer", .str (answerName answer)), ("code", .int answer.code.toNat)]
 
 /-- **The result of a performed request**: the answer the command line exits with for what it
 found (`Api.answer`), its name and its code, then the members of what it shows. -/
@@ -346,7 +349,7 @@ def closedMembers (found : Api.Found) : List (String × Json) :=
           | _ => []))]
 
 /-- An update's params with more members after its own. -/
-def Json.withMembers : Json → List (String × Json) → Json
+def _root_.Linger.Json.withMembers : Json → List (String × Json) → Json
   | .obj members, more => .obj (members ++ more)
   | value, _ => value
 
@@ -354,7 +357,7 @@ def Json.withMembers : Json → List (String × Json) → Json
 before them it dropped. -/
 def saidMembers (said : Log String) : List (String × Json) :=
   [("said", .arr (said.tail.map fun text => .str (Linger.Display.Listing.clean text))),
-    ("saidDropped", .number (toString said.dropped))]
+    ("saidDropped", .int said.dropped)]
 
 /-- What a connection does with a watch's look: the first one answers the watch's request, a
 screen's with the screen and a history's with nothing, and holds what it found, and a later one
@@ -480,8 +483,9 @@ def step (s : State) : Event → State × List Effect
   | .received (.invalid id unparsed) =>
     (s,
       [.send
-          (if unparsed then .error none (-32700) "parse error" (refusal)
-          else .error id (-32600) "invalid request" (refusal))])
+          (match unparsed with
+          | some reason => .error none (-32700) "parse error" (refusal [("reason", .str reason)])
+          | none => .error id (-32600) "invalid request" (refusal))])
   | .received (.notification method _) =>
     match s.phase with
     | .negotiated version =>
@@ -519,27 +523,24 @@ def step (s : State) : Event → State × List Effect
 
 /-! ## Messages as lines -/
 
-/-- What a line from the client is: a request, with an id, a notification, without one, or no
-message, a line that is not JSON or JSON that is no JSON-RPC 2.0 request object; none for a line of
-whitespace alone, which is no message at all. -/
-def decode (line : String) : Option Message :=
-  if line.all fun c => c = ' ' ∨ c = '\t' ∨ c = '\r' then none
-  else
-    some
-      (match Json.parse line with
-      | none => .invalid none true
-      | some (.obj members) =>
-        let id := (members.lookup "id").bind Id.of
-        if (members.lookup "jsonrpc").bind Json.text? ≠ some "2.0" then .invalid id false
-        else
-          match (members.lookup "method").bind Json.text?, members.lookup "id" with
-          | none, _ => .invalid id false
-          | some method, none => .notification method ((members.lookup "params").getD (.obj []))
-          | some method, some _ =>
-            match id with
-            | some id => .request id method ((members.lookup "params").getD (.obj []))
-            | none => .invalid none false
-      | some _ => .invalid none false)
+/-- **What a line from the client is**: a request, with an id, a notification, without one, or no
+message: a line that is not canonical JSON, with the reason the reader gives (`Json.parse`), or a
+canonical text that is no JSON-RPC 2.0 request object. -/
+def decode (line : String) : Message :=
+  match Json.parse line with
+  | .error reason => .invalid none (some reason)
+  | .ok (.obj members) =>
+    let id := (members.lookup "id").bind Id.of
+    if (members.lookup "jsonrpc").bind Json.text? ≠ some "2.0" then .invalid id none
+    else
+      match (members.lookup "method").bind Json.text?, members.lookup "id" with
+      | none, _ => .invalid id none
+      | some method, none => .notification method ((members.lookup "params").getD (.obj []))
+      | some method, some _ =>
+        match id with
+        | some id => .request id method ((members.lookup "params").getD (.obj []))
+        | none => .invalid none none
+  | .ok _ => .invalid none none
 
 /-- A message as JSON-RPC 2.0's object. -/
 def Outgoing.json : Outgoing → Json
@@ -547,8 +548,7 @@ def Outgoing.json : Outgoing → Json
   | .error id code message data =>
     .obj
       [("jsonrpc", .str "2.0"), ("id", (id.map Id.json).getD .null),
-        ("error",
-          .obj [("code", .number (toString code)), ("message", .str message), ("data", data)])]
+        ("error", .obj [("code", .int code), ("message", .str message), ("data", data)])]
   | .notify method params =>
     .obj [("jsonrpc", .str "2.0"), ("method", .str method), ("params", params)]
 
@@ -616,11 +616,14 @@ def Lines.feed (l : Lines) (bytes : List UInt8) : Lines × List Received :=
       (l, [])
   (last, ended.reverse)
 
-/-- A line `serve` read as a message: none for a line of whitespace alone. -/
-def Received.message : Received → Option Message
+/-- A line `serve` read as a message: its text's (`decode`), and a line that is not UTF-8 is no
+canonical text. -/
+def Received.message : Received → Message
   | .text bytes =>
-    ((String.fromUTF8? (ByteArray.mk bytes.toArray)).map decode).getD (some (.invalid none true))
-  | .overlong => some (.invalid none false)
+    match String.fromUTF8? (ByteArray.mk bytes.toArray) with
+    | some line => decode line
+    | none => .invalid none (some "a line that is not UTF-8")
+  | .overlong => .invalid none none
 
 /-! ## Remote hosts through `serve`
 
@@ -638,7 +641,7 @@ def Remote.message (members : List (String × Json)) : String :=
 
 /-- A request, with this id, as the line linger writes a host's `serve`. -/
 def Remote.request (id : Nat) (method : String) (params : Json) : String :=
-  Remote.message [("id", .number (toString id)), ("method", .str method), ("params", params)]
+  Remote.message [("id", .int id), ("method", .str method), ("params", params)]
 
 /-- The handshake linger writes a host's `serve`: `initialize`, request 1, asking for the version
 this linger speaks, and `initialized`. -/
@@ -691,11 +694,7 @@ def Remote.call (request : Api.Request) (name : String) (input : List UInt8) :
   | .capture history _ =>
     some ("session/capture", .obj [("name", .str name), ("history", .bool history)])
   | .resize _ cols rows =>
-    some
-      ("session/resize",
-        .obj
-          [("name", .str name), ("cols", .number (toString cols)),
-            ("rows", .number (toString rows))])
+    some ("session/resize", .obj [("name", .str name), ("cols", .int cols), ("rows", .int rows)])
   | .wait _ => some ("session/wait", Remote.named name)
   | .upgrade _ => some ("session/upgrade", Remote.named name)
   | .serve => none
@@ -703,14 +702,13 @@ def Remote.call (request : Api.Request) (name : String) (input : List UInt8) :
 /-- Whether a host's `serve` shook hands (`Remote.Shook`). -/
 def Remote.shook (messages : List Json) : Bool :=
   match
-    ((Remote.answerOf messages "1" "result").bind (·.member? "protocolVersion")).bind
-      Json.text? with
+    ((Remote.answerOf messages 1 "result").bind (·.member? "protocolVersion")).bind Json.text? with
   | some version => versions.contains version
   | none => false
 
 /-- Whether `initialize`'s error, in a host's messages, is the usage answer. -/
 def Remote.refusedUsage (messages : List Json) : Bool :=
-  (((Remote.answerOf messages "1" "error").bind (·.member? "data")).bind (·.member? "answer")).bind
+  (((Remote.answerOf messages 1 "error").bind (·.member? "data")).bind (·.member? "answer")).bind
       Json.text? ==
     some "usage"
 
@@ -729,19 +727,23 @@ def answerNamed (name : String) (code : Nat) : Option Os.Answer :=
         List Os.Answer)).find?
     fun answer => answerName answer == name && answer.code.toNat == code
 
-/-- The answer an object's first two members, `answer` and `code`, give, its code in decimal as
-`serve` writes it, and its other members. -/
+/-- The answer an object's members `answer` and `code` give, by name and code, and its other
+members, in the order it holds them. -/
 def Remote.answerIn : Json → Option (Os.Answer × List (String × Json))
-  | .obj (("answer", .str name) :: ("code", .number code) :: members) =>
-    match code.toNat? with
-    | some n => if toString n = code then (answerNamed name n).map ((·, members)) else none
-    | none => none
+  | .obj all =>
+    match all.lookup "answer", all.lookup "code" with
+    | some (.str name), some (.int code) =>
+      if 0 ≤ code then
+        (answerNamed name code.toNat).map
+          ((·, all.filter fun m => m.1 != "answer" && m.1 != "code"))
+      else none
+    | _, _ => none
   | _ => none
 
 /-- What answered the call, request 2: its result, or, where no result did, its error's `data`. -/
 def Remote.callAnswer (messages : List Json) : Option Json :=
-  (Remote.answerOf messages "2" "result").or
-    ((Remote.answerOf messages "2" "error").bind (·.member? "data"))
+  (Remote.answerOf messages 2 "result").or
+    ((Remote.answerOf messages 2 "error").bind (·.member? "data"))
 
 /-- **What a host's `serve` told linger of its call**, of the messages it wrote and its command's
 exit status: the answer of the call and the result's other members, once it shook hands; a refusal
@@ -883,8 +885,8 @@ most 1000 either way (`Vt.clampDim`). -/
 def Remote.sized (id : Id) (next : Nat) (cols rows : UInt32) : String :=
   Remote.request next "session/resize"
     (.obj
-      [("subscription", id.json), ("cols", .number (toString (Terminal.Vt.clampDim cols.toNat))),
-        ("rows", .number (toString (Terminal.Vt.clampDim rows.toNat)))])
+      [("subscription", id.json), ("cols", .int (Terminal.Vt.clampDim cols.toNat)),
+        ("rows", .int (Terminal.Vt.clampDim rows.toNat))])
 
 /-- What linger writes the host's `serve` of a message an attach client sends the attach `id`,
 `next` the id of the next request: `session/attach` of the session `name`, with its mode and its

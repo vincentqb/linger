@@ -2,7 +2,8 @@ module
 
 public import Linger.App.WorldCode.Api
 import Linger.App.CoreCode.Serve
-import Linger.App.CoreCode.Json
+import Linger.App.CoreCode.Base64
+import Linger.Os.CoreCode.Json
 import Linger.Session.CoreCode
 import Linger.Session.CoreCode.Wire
 import Linger.Session.WorldCode.Client
@@ -614,7 +615,7 @@ def run (env : Api.Env) : IO Api.Found := do
       let (next, ended) := lines.feed chunk.toList
       lines := next
       for line in ended do
-        let some message := line.message | continue
+        let message := line.message
         -- room for what the line asks: the requests performed and the messages waiting below
         -- their cap
         let (performs, relays) ←

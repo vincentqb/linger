@@ -361,9 +361,9 @@ theorem fault_contained_rejects_queued :
   -- a listing would be queued as an update as it comes
   have :=
     (table
-        { stage := .ready "1", open? := some (.number "1"), toldRecords := some [],
+        { stage := .ready "1", open? := some (.number 1), toldRecords := some [],
           latestRecords := some [] }
-        "1" (.number "1") [] [] [] rfl rfl rfl rfl (by simp)).2.2.2.1
+        "1" (.number 1) [] [] [] rfl rfl rfl rfl (by simp)).2.2.2.1
   simp [App.Serve.queued] at this
 
 theorem fault_contained_rejects_keep_all :

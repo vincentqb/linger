@@ -167,7 +167,7 @@ def columns (e : Env) : IO Unit := do
   expect (src == 0 && summary == Linger.Display.Status.summary [.asked, .unread, .unread] ++ "\n")
       s!"the summary counts attention alone: {summary.trimAscii}"
   let fields := (← e.row "c-rang").filter fun kv => kv.1 == "attention" || kv.1 == "status"
-  expect (fields == [("status", "working"), ("attention", "asked")])
+  expect (fields == [("attention", "asked"), ("status", "working")])
       s!"the porcelain gives each column one machine field: {fields}"
   e.killAll #["a-alt", "b-printed", "c-rang", "d-ended"]
 

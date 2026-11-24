@@ -363,8 +363,7 @@ def runLinger (e : Env) (home data : String) (args : Array String)
 /-- The names of the saved tmux panes `ls --porcelain` lists, as their `source` field marks
 them, in its order. -/
 def sourceNames (listing : String) : List String :=
-  (listing.splitOn "\n\n").filterMap fun record =>
-    let fields := records record
+  (listingRecords listing).filterMap fun fields =>
     if fields.lookup "source" == some Linger.Import.Resurrect.sourceName then fields.lookup "name"
     else none
 
@@ -400,7 +399,8 @@ def run : IO UInt32 :=
     let (rrc, _, _) ← resume data.toString "ignored"
     expect
         (drc == 0 && derr.isEmpty && listed == ["ignored"] &&
-          has dout s!"directory\t{defaultDir}" &&
+          (listingRecords dout).any
+            (fun record => (record.lookup "directory").any (·.startsWith defaultDir.toString)) &&
           rrc == 0 &&
           (← savedIn' e.dir "ignored" defaultDir))
         "ls lists the default XDG save's pane with its escaped cwd, and resume runs a shell there"

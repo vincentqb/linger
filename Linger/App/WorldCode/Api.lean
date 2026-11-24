@@ -16,7 +16,8 @@ public import Linger.Os.CoreSpec
 public import Linger.Session.CoreSpec
 public import Linger.App.CoreSpec
 import Linger.App.CoreCode.Api
-import Linger.App.CoreCode.Json
+import Linger.App.CoreCode.Base64
+import Linger.Os.CoreCode.Json
 import Linger.App.CoreCode.Serve
 import Linger.App.CoreCode.Handover
 import Linger.App.CoreCode.Recovery
@@ -634,6 +635,8 @@ private inductive Listed where
   | records (records : List (List (String × String)))
   /-- It refused `serve` with a usage answer. -/
   | refused
+  /-- It wrote lines that are not canonical JSON, the first for this reason, and none linger reads. -/
+  | unread (why : String)
 
 /-- Four transport commands at most share a three-second command deadline, the bounded wait
 linger keeps whatever the transport: a transport's own keepalives alone cannot bound a remote
@@ -685,7 +688,8 @@ private def listRemotes (hosts : Array (String × Linger.Target.Remote.Transport
         for (index, pending) in ← jobs.get do
           try
             if let some output← Command.poll pending then
-              let messages := (output.stdout.splitOn "\n").filterMap Serve.Json.parse
+              let read := ((output.stdout.splitOn "\n").filter (!·.isEmpty)).map Json.parse
+              let messages := read.filterMap (·.toOption)
               match Serve.Remote.heard messages output.exitCode with
               | .answered .done members =>
                 if let some records := Serve.Remote.records members then
@@ -693,7 +697,15 @@ private def listRemotes (hosts : Array (String × Linger.Target.Remote.Transport
               | .refused =>
                 outputs := outputs.set! index (some .refused)
               | _ =>
-                pure ()
+                match
+                  read.findSome? fun line =>
+                    match line with
+                    | .error why => some why
+                    | .ok _ => none with
+                | some why =>
+                  outputs := outputs.set! index (some (.unread why))
+                | none =>
+                  pure ()
           catch _ =>
             pure ()
           if (← pending.get).isSome then
@@ -1053,6 +1065,12 @@ does: the one refusal, which tells what to do. -/
 private def remoteRefusal (host : String) : String :=
   s!"{Linger.Target.Remote.scrub host} runs a linger without serve; install a current linger there"
 
+/-- What linger says of a host whose `serve` wrote lines that are not canonical JSON and none it
+reads, as a linger from before canonical JSON does: the first line's reason, and what to do. -/
+private def remoteUnread (host why : String) : String :=
+  s!"{Linger.Target.Remote.scrub host} runs a linger whose serve does not write canonical JSON \
+    ({Linger.Target.Remote.scrub why}); install a current linger there"
+
 /-- The rows of `ls`: local rows, then each remote host's rows named `name@host`, then the rows of
 the latest tmux-resurrect save's panes no record names (`Source.rows`). A host's rows are the
 records its `sessions/list` returned (`Serve.Remote.rows`); they keep only name, command, state and
@@ -1101,6 +1119,14 @@ private def cmdList (env : Env) (porcelain : Bool)
                 Linger.Display.Listing.statusFields
                   (Linger.Display.Status.classify { known := false }) ++
               [("reason", remoteRefusal host)]]
+    | some (.unread why) =>
+      say env (remoteUnread host why)
+      rows :=
+        rows ++
+          [("host", host) ::
+                Linger.Display.Listing.statusFields
+                  (Linger.Display.Status.classify { known := false }) ++
+              [("reason", remoteUnread host why)]]
   let records : Linger.Session.Records :=
     { sockets := (← Paths.listSocketNames).map (·.name),
       checkpoints := (← Paths.listCkptNames).map (·.name),
@@ -1111,18 +1137,18 @@ private def cmdList (env : Env) (porcelain : Bool)
 /-- What a request shows of a host's answer, of the members of its result: a capture's bytes, a
 listing's records, every field the host gave, each named `name@host` (`Serve.Remote.record`), and
 the sessions an upgrade carried over, named `name@host`. -/
-private def remoteShown (request : Request) (host : String) (members : List (String × Serve.Json)) :
+private def remoteShown (request : Request) (host : String) (members : List (String × Json)) :
     Shown :=
   match request with
   | .capture .. =>
-    match ((members.lookup "data").bind Serve.Json.text?).bind (Serve.Base64.decode ·.toList) with
+    match ((members.lookup "data").bind Json.text?).bind (Serve.Base64.decode ·.toList) with
     | some bytes => .bytes (ByteArray.mk bytes.toArray)
     | none => .nothing
   | .list (.named porcelain _) =>
     .rows porcelain (((Serve.Remote.records members).getD []).filterMap (Serve.Remote.record host))
   | .upgrade _ =>
     .upgraded
-      ((((members.lookup "upgraded").bind Serve.Json.texts?).getD []).map fun name =>
+      ((((members.lookup "upgraded").bind Json.texts?).getD []).map fun name =>
         s!"{Linger.Target.Remote.scrub name}@{Linger.Target.Remote.scrub host}")
   | _ => .nothing
 
@@ -1142,6 +1168,9 @@ private def remoteReply (env : Env) (request : Request) (host : String)
     say env (remoteRefusal host)
     return { found := .refused }
   | .silent =>
+    if let some why := asked.unread then
+      say env (remoteUnread host why)
+      return { found := .refused }
     for line in asked.errors do
       say env s!"{Linger.Target.Remote.scrub host}: {line}"
     say env s!"no answer from linger serve on '{Linger.Target.Remote.scrub host}'"

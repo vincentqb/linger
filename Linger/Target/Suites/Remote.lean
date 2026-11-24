@@ -8,7 +8,8 @@ import Linger.Target.CoreCode.Remote
 import Linger.Session.WorldCode.Client
 import Linger.Session.CoreCode.Checkpoint
 import Linger.App.CoreCode.Api
-import Linger.App.CoreCode.Json
+import Linger.App.CoreCode.Base64
+import Linger.Os.CoreCode.Json
 import Terminal.CoreCode.Render
 import Terminal.CoreCode.Vt
 
@@ -34,6 +35,8 @@ private def deadHost : String := "dead"
 
 private def evilHost : String := "evil"
 
+private def staleHost : String := "stale"
+
 private def userHost : String := s!"me@{devHost}"
 
 private def goodName : String := "remote-work"
@@ -53,8 +56,9 @@ private def dupMsg : String :=
 
 /-- A fake ssh: it writes its words to `log`, then hands the command line after the host to
 `/bin/sh`, as sshd hands it to the login shell of the account; the dead host answers nothing and
-exits 255, and the evil host's `serve` is `evil`'s lines, whatever it is asked. -/
-private def fakeSsh (log evil : String) : String :=
+exits 255, the evil host's `serve` is `evil`'s lines and the stale host's `stale`'s, whatever it
+is asked. -/
+private def fakeSsh (log evil stale : String) : String :=
   "#!/bin/sh\n" ++ s!"printf '%s\\000' \"$@\" > {shellQuote log}\n" ++ "while [ $# -gt 0 ]; do\n" ++
     "  case \"$1\" in\n" ++
     "    -o) shift 2 ;;\n" ++
@@ -69,19 +73,44 @@ private def fakeSsh (log evil : String) : String :=
     "  exit 255\n" ++
     "fi\n" ++
     s!"if [ \"$host\" = \"{evilHost}\" ]; then exec cat {shellQuote evil}; fi\n" ++
+    s!"if [ \"$host\" = \"{staleHost}\" ]; then exec cat {shellQuote stale}; fi\n" ++
     "exec /bin/sh -c \"$*\"\n"
 
 /-- The `linger` a fake ssh's shell finds: this checkout's binary under the far state directory. -/
 private def farLinger (bin far : String) : String :=
   s!"#!/bin/sh\nLINGER_DIR={shellQuote far} exec {shellQuote bin} \"$@\"\n"
 
+/-- A JSON-RPC result, with this id, as the line a host's `serve` writes: canonical JSON. -/
+private def resultLine (id : Int) (result : Linger.Json) : String :=
+  Linger.Json.render (.obj [("jsonrpc", .str "2.0"), ("id", .int id), ("result", result)]) ++ "\n"
+
+/-- The `initialize` result a host's `serve` writes. -/
+private def welcomeLine : String := resultLine 1 (.obj [("protocolVersion", .str "1")])
+
+/-- A `sessions/list` result of these records, as a host's `serve` writes it. -/
+private def listLine (records : List (List (String × String))) : String :=
+  resultLine 2
+    (.obj
+      [("answer", .str "done"), ("code", .int 0),
+        ("records", .arr (records.map fun record => .obj (record.map fun (k, v) => (k, .str v))))])
+
 /-- A host's `serve` that answers the handshake and then lists a session whose command holds an
 escape sequence and a session whose name holds a path and a control character. -/
 private def evilLines : String :=
+  welcomeLine ++
+    listLine
+      [[("name", goodName), ("state", "live"), ("clients", "1"), ("cmd", "vim\x1b[31mINJECT")],
+        [("name", "../../etc/passwd\x01"), ("state", "resumable")]]
+
+/-- What a linger from before canonical JSON, steps 235 to 238, writes as its `serve`: JSON-RPC
+lines whose keys are in the order it built them, `jsonrpc` before `id`. -/
+private def staleLines : String :=
   "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"1\"}}\n" ++
-    "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"answer\":\"done\",\"code\":0,\"records\":[" ++
-    s!"\{\"name\":\"{goodName}\",\"state\":\"live\",\"clients\":\"1\",\"cmd\":\"vim\\u001b[31mINJECT\"}," ++
-    "{\"name\":\"../../etc/passwd\\u0001\",\"state\":\"resumable\"}]}}\n"
+    "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"answer\":\"done\",\"code\":0,\"records\":[]}}\n"
+
+/-- What a host whose linger writes other JSON than canonical is told, after its name. -/
+private def withoutCanonical : String :=
+  "runs a linger whose serve does not write canonical JSON (at character 20: the key \"id\" after \"jsonrpc\", where canonical JSON lists keys in increasing order); install a current linger there"
 
 /-- A transport for the checks: a script that writes the words it is given to `log`, then runs
 them, `linger` first, as this checkout's `linger` under `state`, the state directory of a far
@@ -99,12 +128,13 @@ private def olderLinger (log : String) : String :=
     "echo 'usage: linger <command>' >&2\n" ++
     "exit 2\n"
 
-/-- One field of the row a porcelain listing names `name`: a `name` record opens a row, and
-later keys belong to it until the next one. -/
-private def rowField (recs : List (String × String)) (name field : String) : Option String :=
-  ((((recs.dropWhile (· != ("name", name))).drop 1).takeWhile (·.1 != "name")).find?
-        (·.1 == field)).map
-    (·.2)
+/-- One field of the record a porcelain listing names `name`. -/
+private def rowField (listing : String) (name field : String) : Option String :=
+  ((listingRecords listing).find? (·.lookup "name" == some name)).bind (·.lookup field)
+
+/-- One field of the record a porcelain listing has of the host `host`, which names no session. -/
+private def hostField (listing : String) (host field : String) : Option String :=
+  ((listingRecords listing).find? (·.lookup "host" == some host)).bind (·.lookup field)
 
 /-- NUL framing preserves empty arguments, embedded spaces and newlines. -/
 def readArgs (path : System.FilePath) : IO (List String) := do
@@ -125,9 +155,7 @@ def discoveryLeaf (root host : String) : IO UInt32 := do
 /-- What a host's `serve` writes for `ls -r` when it lists one session, `name`, running `cmd`: its
 `initialize` result, then its `sessions/list` result, one JSON-RPC message a line. -/
 def servedRows (name cmd : String) : String :=
-  "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"1\"}}\n" ++
-    "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"answer\":\"done\",\"code\":0,\"records\":" ++
-    s!"[\{\"name\":\"{name}\",\"state\":\"live\",\"cmd\":\"{cmd}\"}]}}\n"
+  welcomeLine ++ listLine [[("name", name), ("state", "live"), ("cmd", cmd)]]
 
 /-- Re-entered through a minimal fake SSH executable. The first host waits for
 the second and a local info request, so serial discovery cannot pass. Stalled
@@ -384,10 +412,10 @@ private def listingChecks (e : Env) (h : Hosts) : IO Unit := do
   let status ← h.far.field "alpha" "status"
   expect (rrc == 0 && has out "localsess" && has out s!"alpha@{devHost}")
       "remote listing exits cleanly, local sessions alongside the remote ones"
-  expect (status.isSome && rowField recs s!"alpha@{devHost}" "status" == status)
+  expect (status.isSome && rowField pout s!"alpha@{devHost}" "status" == status)
       "a host's session is listed as name@host, with the status its linger reports"
   expect
-      (has out s!"? @{deadHost}" && has pout s!"host\t{deadHost}\nstatus\tunknown\n" &&
+      (has out s!"? @{deadHost}" && hostField pout deadHost "status" == some "unknown" &&
         !recs.any (fun kv => kv.1 == "name" && kv.2.endsWith s!"@{deadHost}"))
       "an unreachable host lists as ?, with no session rows"
   IO.FS.writeFile h.sshLog ""
@@ -403,14 +431,14 @@ private def listingChecks (e : Env) (h : Hosts) : IO Unit := do
           [("name", "localsess"), ("name", s!"{goodName}@{evilHost}")])
       "invalid remote names are dropped without manufacturing another target"
   expect
-      (!has eout "\x1b" && rowField erecs s!"{goodName}@{evilHost}" "cmd" == some "vim[31mINJECT")
+      (!has eout "\x1b" && rowField epout s!"{goodName}@{evilHost}" "cmd" == some "vim[31mINJECT")
       "remote display escape sequences are scrubbed"
   IO.FS.writeFile h.olderLog ""
   let (orc, oout, oerr) ← e.cliEnv h.procPath #["ls", "-r", "old"]
   let (_, opout, _) ← e.cliEnv h.procPath #["ls", "--porcelain", "-r", "old"]
   expect
-      (orc == 0 && has oout "? @old" && has opout "host\told\n" &&
-        has opout s!"reason\told {withoutServe}\n" &&
+      (orc == 0 && has oout "? @old" && (hostField opout "old" "status").isSome &&
+        hostField opout "old" "reason" == some s!"old {withoutServe}" &&
         has oerr s!"old {withoutServe}" &&
         (← readArgs h.olderLog) == served)
       "a host whose linger does not speak serve lists as ?, its porcelain row saying why"
@@ -438,8 +466,7 @@ private def verbChecks (e : Env) (h : Hosts) : IO Unit := do
   let cmd ← h.far.field "work" "cmd"
   let (humanRc, human, _) ← e.cliEnv h.procPath #["ls", "work@far"]
   expect
-      (listRc == 0 && listServed && cmd.isSome &&
-        rowField (records listed) "work@far" "cmd" == cmd &&
+      (listRc == 0 && listServed && cmd.isSome && rowField listed "work@far" "cmd" == cmd &&
         humanRc == 0 &&
         has human "work@far")
       "ls name@host gives the far session's record, named name@host"
@@ -625,17 +652,16 @@ private def attachChecks (e : Env) (h : Hosts) : IO Unit := do
 private def outputOf (lines : Array String) : ByteArray :=
   lines.foldl
     (fun acc line =>
-      match Linger.App.Serve.Json.parse line with
-      | some message =>
-        if (message.member? "method").bind Linger.App.Serve.Json.text? == some "session/output" then
+      match Linger.Json.parse line with
+      | .ok message =>
+        if (message.member? "method").bind Linger.Json.text? == some "session/output" then
           match
-            (((message.member? "params").bind (·.member? "data")).bind
-                  Linger.App.Serve.Json.text?).bind
+            (((message.member? "params").bind (·.member? "data")).bind Linger.Json.text?).bind
               (Linger.App.Serve.Base64.decode ·.toList) with
           | some bytes => acc ++ ByteArray.mk bytes.toArray
           | none => acc
         else acc
-      | none => acc)
+      | .error _ => acc)
     ByteArray.empty
 
 /-- `serve` reaches a remote session as the command line does: its `session/attach` of
@@ -659,7 +685,7 @@ private def serveChecks (e : Env) (h : Hosts) : IO Unit := do
             if line.isEmpty then
               reading := false
             else
-              lines.modify (·.push line))
+              lines.modify (·.push (line.dropSuffix "\n").copy))
         Task.Priority.dedicated
   let say (line : String) : IO Unit := do
     if let some handle← input.get then
@@ -669,18 +695,18 @@ private def serveChecks (e : Env) (h : Hosts) : IO Unit := do
     waitFor patienceMs (return hasText (outputOf (← lines.get)) text)
   try
     say
-        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"1\"}}"
+        "{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"1\"}}"
     say "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}"
     say
-        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"session/attach\",\"params\":{\"name\":\"served@far\"}}"
+        "{\"id\":2,\"jsonrpc\":\"2.0\",\"method\":\"session/attach\",\"params\":{\"name\":\"served@far\"}}"
     say
-        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"session/resize\",\"params\":{\"subscription\":2,\"cols\":80,\"rows\":24}}"
+        "{\"id\":3,\"jsonrpc\":\"2.0\",\"method\":\"session/resize\",\"params\":{\"cols\":80,\"rows\":24,\"subscription\":2}}"
     let prompted ← sees "$ "
     say
-        s!"\{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"session/input\",\"params\":\{\"subscription\":2,\"data\":\"{Linger.App.Serve.Base64.encode "echo SERVED-$((5*5))\r".toUTF8.toList}\"}}"
+        s!"\{\"id\":4,\"jsonrpc\":\"2.0\",\"method\":\"session/input\",\"params\":\{\"data\":\"{Linger.App.Serve.Base64.encode "echo SERVED-$((5*5))\r".toUTF8.toList}\",\"subscription\":2}}"
     let typed ← sees "SERVED-25"
     say
-        "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"session/detach\",\"params\":{\"subscription\":2}}"
+        "{\"id\":5,\"jsonrpc\":\"2.0\",\"method\":\"session/detach\",\"params\":{\"subscription\":2}}"
     let detached ←
       waitFor patienceMs do
           return (← lines.get).any fun line => has line "\"id\":5" && has line "\"done\""
@@ -705,6 +731,13 @@ private def refusalChecks (e : Env) (h : Hosts) : IO Unit := do
       (killRc == 1 && has killErr s!"linger: old {withoutServe}" &&
         (← readArgs h.olderLog) == served)
       s!"a command on a host whose linger does not speak serve is refused, saying so ({killRc})"
+  let (staleRc, _, staleErr) ← e.cliEnv h.procPath #["kill", s!"x@{staleHost}"]
+  let (staleListRc, staleListed, _) ← e.cliEnv h.procPath #["ls", "--porcelain", "-r", staleHost]
+  expect
+      (staleRc == 1 && has staleErr s!"linger: {staleHost} {withoutCanonical}" &&
+        staleListRc == 0 &&
+        hostField staleListed staleHost "reason" == some s!"{staleHost} {withoutCanonical}")
+      s!"a host whose linger writes other JSON than canonical, as one from before canonical JSON, is refused with the reader's reason, for a command and as its ls -r row ({staleRc})"
   let a ← e.spawnEnv h.ptyPath #["attach", "x@old"] 100 24
   let reply ← drain a.fd hangMs
   let attachRc ← a.reap patienceMs
@@ -759,8 +792,8 @@ private def fileChecks (e : Env) (h : Hosts) (remotes : System.FilePath) (query 
       pure false
   expect
       (code == some 0 && has human "? @slow" && has human "? @down" &&
-        has porcelain "host\tslow\nstatus\tunknown\n" &&
-        has porcelain "host\tdown\nstatus\tunknown\n" &&
+        hostField porcelain "slow" "status" == some "unknown" &&
+        hostField porcelain "down" "status" == some "unknown" &&
         has human "alpha@far" &&
         !(records porcelain).any
             (fun kv => kv.1 == "name" && (kv.2.endsWith "@slow" || kv.2.endsWith "@down")) &&
@@ -769,7 +802,9 @@ private def fileChecks (e : Env) (h : Hosts) (remotes : System.FilePath) (query 
   IO.FS.writeFile remotes s!"far {query} | extra\n"
   IO.FS.writeFile h.queryLog ""
   let (_, piped, _) ← e.cliEnv h.procPath #["ls", "--porcelain", "-r"]
-  expect ((← readArgs h.queryLog) == ["|", "extra"] ++ served && has piped "host\tfar\n")
+  expect
+      ((← readArgs h.queryLog) == ["|", "extra"] ++ served &&
+        (hostField piped "far" "status").isSome)
       "a remotes line's command is every word after its host, a | among them"
   for (shape, bad) in
     [("HOST COMMAND, then HOST COMMAND", s!"far {query}\nfar {query}"),
@@ -844,7 +879,9 @@ def run : IO UInt32 :=
     let sshLog := root / "ssh.log"
     let evil := root / "evil.json"
     IO.FS.writeFile evil evilLines
-    discard <| script (fakebin / "ssh") (fakeSsh sshLog.toString evil.toString)
+    let stale := root / "stale.json"
+    IO.FS.writeFile stale staleLines
+    discard <| script (fakebin / "ssh") (fakeSsh sshLog.toString evil.toString stale.toString)
     discard <| script (fakebin / "linger") (farLinger e.bin far.dir)
     let queryLog := transport / "query.log"
     let olderLog := transport / "older.log"

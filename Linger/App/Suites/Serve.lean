@@ -2,7 +2,8 @@ module
 
 public import Verify.Harness
 public import Linger.App.CoreSpec
-public import Linger.App.CoreCode.Json
+public import Linger.App.CoreCode.Base64
+public import Linger.Os.CoreCode.Json
 import Linger.Selector.CoreCode.Picker
 import Linger.Session.CoreCode.Checkpoint
 import Terminal.CoreCode.Vt
@@ -27,7 +28,10 @@ scrolled off, as `capture --history` prints them. It attaches to a session as a 
 does: the stream's bytes, base64 in each update, open with the synchronized repaint, then carry
 what the session prints; it types into the session, sizes it, detaches, and hears the session's
 end in the stream's last update. A method `serve` does not answer, params it does not take and a
-line that is no JSON get JSON-RPC's errors. Once its standard input ends, `serve` exits 0. -/
+line that is no JSON get JSON-RPC's errors; every line the client writes is canonical JSON, and a
+request that is not, one with a space, keys out of order or `1.0` for an integer, gets -32700 with
+the reason and changes nothing; and `ls --porcelain` prints exactly the records `sessions/list`
+returns, one canonical JSON line each. Once its standard input ends, `serve` exits 0. -/
 
 namespace Linger.App.Suites.Serve
 
@@ -64,7 +68,7 @@ def Peer.start (e : Env) : IO Peer := do
             if line.isEmpty then
               reading := false
             else
-              lines.modify (·.push line))
+              lines.modify (·.push (line.dropSuffix "\n").copy))
         Task.Priority.dedicated
   return { child, input, lines }
 
@@ -74,12 +78,10 @@ def Peer.say (p : Peer) (line : String) : IO Unit := do
     handle.putStr (line ++ "\n")
     handle.flush
 
-/-- A request, as JSON-RPC 2.0's object. -/
+/-- A request, as JSON-RPC 2.0's object, in canonical text. -/
 def request (id : Nat) (method : String) (params : Json) : String :=
   Json.render
-    (.obj
-      [("jsonrpc", .str "2.0"), ("id", .number (toString id)), ("method", .str method),
-        ("params", params)])
+    (.obj [("jsonrpc", .str "2.0"), ("id", .int id), ("method", .str method), ("params", params)])
 
 /-- A notification, as JSON-RPC 2.0's object. -/
 def notification (method : String) : String :=
@@ -90,10 +92,10 @@ def at? : Json → List String → Option Json
   | value, [] => some value
   | value, key :: rest => (value.member? key).bind (at? · rest)
 
-/-- The text of the number or string at a path. -/
+/-- The text of the integer or string at a path. -/
 def textAt? (value : Json) (path : List String) : Option String :=
   match at? value path with
-  | some (.number text) => some text
+  | some (.int n) => some (toString n)
   | some (.str text) => some text
   | _ => none
 
@@ -103,7 +105,7 @@ def Peer.answer (p : Peer) (id : Nat) (ms : Nat := patienceMs) : IO (Option Json
   discard <|
       waitFor ms do
         for line in ← p.lines.get do
-          if let some message := Json.parse line then
+          if let .ok message := Json.parse line then
             if textAt? message ["id"] == some (toString id) then
               found.set (some message)
               return true
@@ -205,7 +207,8 @@ private def captureUntil (p : Peer) (name text : String) (first : Nat) : IO (Opt
 /-- The `sessions/changed` notifications the peer wrote so far. -/
 def Peer.changes (p : Peer) : IO (List Json) := do
   return (← p.lines.get).toList.filterMap fun line =>
-      (Json.parse line).filter fun message => textAt? message ["method"] == some "sessions/changed"
+      (Json.parse line).toOption.filter fun message =>
+        textAt? message ["method"] == some "sessions/changed"
 
 /-- The names of the records a notification carries. -/
 def recordsOf (message : Json) : List String :=
@@ -250,7 +253,7 @@ private def table (p : Peer) : IO Unit := do
         return (← p.changes).length != before
   expect (!restless)
       s!"a quiet session sends no sessions/changed in 3.5 s, three listings, though its idle ticks ({(← p.changes).length - before} more)"
-  p.say (request 22 "sessions/unsubscribe" (.obj [("subscription", .number "20")]))
+  p.say (request 22 "sessions/unsubscribe" (.obj [("subscription", .int 20)]))
   let closed ← p.answer 22
   let after := (← p.changes).length
   p.say (request 23 "session/kill" (named "watched"))
@@ -314,7 +317,7 @@ private def operations (e : Env) (p : Peer) : IO Unit := do
   discard <|
       waitFor patienceMs do
         for line in ← p.lines.get do
-          if let some message := Json.parse line then
+          if let .ok message := Json.parse line then
             if errorOf (some message) == some "-32700" then
               unparsed.set (some message)
               return true
@@ -355,10 +358,99 @@ private def sameList (e : Env) (p : Peer) : IO Unit := do
   expect same
       s!"the chooser reads from ls --porcelain, under each name and in order, the records sessions/list sends ({served.map name})"
 
+/-- The `-32700` error the peer wrote since it had written `before` lines, within `ms`. -/
+def Peer.unparsed (p : Peer) (before : Nat) (ms : Nat := patienceMs) : IO (Option Json) := do
+  let found ← IO.mkRef (none : Option Json)
+  discard <|
+      waitFor ms do
+        for line in (← p.lines.get).toList.drop before do
+          if let .ok message := Json.parse line then
+            if errorOf (some message) == some "-32700" then
+              found.set (some message)
+              return true
+        return false
+  found.get
+
+/-- Lines that are not canonical JSON, each a request that would change a session: one with a
+space after a member's colon, one whose keys are out of order and one with `1.0` where an integer
+belongs, each answered -32700, with no id, its `data` linger's usage answer and the reader's reason,
+and each changing nothing: no session starts, and none is resized. -/
+private def refusals (e : Env) (p : Peer) : IO Unit := do
+  p.say
+      (request 35 "session/start"
+        (.obj
+          [("name", .str "fixed"), ("program", .str "/bin/sleep"), ("args", .arr [.str "300"])]))
+  let started ← p.answer 35
+  let cols ← e.info "fixed" "cols"
+  let refused (line : String) : IO (Option Json × Option String) := do
+    let before := (← p.lines.get).size
+    p.say line
+    let answer ← p.unparsed before
+    return (answer, answer.bind (textAt? · ["error", "data", "reason"]))
+  let unchanged (answer : Option Json) :=
+    answer.bind (at? · ["id"]) matches some .null &&
+      answer.bind (textAt? · ["error", "data", "answer"]) == some "usage"
+  let (spaced, spacedWhy) ←
+    refused
+        "{\"id\":36,\"jsonrpc\": \"2.0\",\"method\":\"session/start\",\"params\":{\"args\":[\"300\"],\"name\":\"spaced\",\"program\":\"/bin/sleep\"}}"
+  let (rc, _, _) ← e.cli #["ls", "spaced", "--porcelain"]
+  expect
+      (answerOf started == some ("done", "0") && unchanged spaced &&
+        (spacedWhy.getD "").startsWith "at character 19: whitespace" &&
+        rc == 127)
+      s!"a request with a space outside its strings gets -32700, data naming the whitespace, and starts nothing ({spacedWhy}, ls exit {rc})"
+  let (unsorted, unsortedWhy) ←
+    refused
+        "{\"jsonrpc\":\"2.0\",\"id\":37,\"method\":\"session/start\",\"params\":{\"args\":[\"300\"],\"name\":\"unsorted\",\"program\":\"/bin/sleep\"}}"
+  let (rc, _, _) ← e.cli #["ls", "unsorted", "--porcelain"]
+  expect
+      (unchanged unsorted &&
+        (unsortedWhy.getD "").startsWith
+          "at character 20: the key \"id\" after \"jsonrpc\", where canonical JSON lists keys in increasing order" &&
+        rc == 127)
+      s!"a request whose keys are out of order gets -32700, data naming the key, and starts nothing ({unsortedWhy}, ls exit {rc})"
+  let (fractional, fractionalWhy) ←
+    refused
+        "{\"id\":38,\"jsonrpc\":\"2.0\",\"method\":\"session/resize\",\"params\":{\"cols\":1.0,\"name\":\"fixed\",\"rows\":1}}"
+  let after ← e.info "fixed" "cols"
+  expect
+      (unchanged fractional &&
+        (fractionalWhy.getD "").startsWith
+          "at character 69: a fraction or an exponent: linger's JSON numbers are integers" &&
+        cols.isSome &&
+        after == cols)
+      s!"a request with 1.0 for an integer gets -32700, data naming the fraction, and resizes nothing ({fractionalWhy}, cols {cols} then {after})"
+  let _ ← e.cli #["kill", "fixed"]
+
+/-- `ls --porcelain` prints exactly the records `sessions/list` returns: a line for each, in order,
+each the record's canonical JSON text, read without `idle` and `lastout`, which a second listing may
+read a second later. -/
+private def porcelainLines (e : Env) (p : Peer) : IO Unit := do
+  p.say (request 39 "sessions/list" (.obj []))
+  let listed ← p.answer 39
+  let (rc, printed, _) ← e.cli #["ls", "--porcelain"]
+  let lines := (printed.splitOn "\n").filter (!·.isEmpty)
+  let served : List Json :=
+    match listed.bind (at? · ["result", "records"]) with
+    | some (.arr records) => records
+    | _ => []
+  let unticked (record : Json) : String :=
+    match record with
+    | .obj members => Json.render (.obj (members.filter fun m => m.1 != "idle" && m.1 != "lastout"))
+    | other => Json.render other
+  let exact :=
+    rc == 0 && printed.endsWith "\n" && !served.isEmpty && lines.length == served.length &&
+      (lines.zip served).all fun (line, record) =>
+        match Json.parse line with
+        | .ok got => Json.render got == line && unticked got == unticked record
+        | .error _ => false
+  expect exact
+      s!"ls --porcelain prints a canonical JSON line for each record sessions/list returns, in order, the same object ({lines.length} lines, {served.length} records)"
+
 /-- The notifications of `method` the peer wrote so far. -/
 def Peer.notes (p : Peer) (method : String) : IO (List Json) := do
   return (← p.lines.get).toList.filterMap fun line =>
-      (Json.parse line).filter fun message => textAt? message ["method"] == some method
+      (Json.parse line).toOption.filter fun message => textAt? message ["method"] == some method
 
 /-- A screen as a client with no terminal keeps one: each line's row object under its number, the
 cursor, and how many updates it applied, of which how many carried a line it held already. -/
@@ -604,7 +696,7 @@ def Peer.stream (p : Peer) (id : Nat) : IO ByteArray := do
 
 /-- The params of a conversation request on the attach `id`, with `more` members. -/
 def onAttach (id : Nat) (more : List (String × Json) := []) : Json :=
-  .obj (("subscription", .number (toString id)) :: more)
+  .obj (("subscription", .int id) :: more)
 
 /-- The byte stream of a terminal client: `session/attach` answers done and its updates carry the
 session's output as base64, the synchronized repaint first; `session/input` types into the session,
@@ -628,8 +720,7 @@ private def attachStream (e : Env) (p : Peer) : IO Unit := do
   let echoed ← waitFor patienceMs (return hasText (← p.stream 80) "hi-42")
   expect (answerOf typed == some ("done", "0") && echoed)
       s!"session/input types into the session, and what it runs streams back: hi-42 ({answerOf typed})"
-  p.say
-      (request 82 "session/resize" (onAttach 80 [("cols", .number "100"), ("rows", .number "30")]))
+  p.say (request 82 "session/resize" (onAttach 80 [("cols", .int 100), ("rows", .int 30)]))
   let resized ← p.answer 82
   let sized ←
     waitFor patienceMs do
@@ -702,7 +793,7 @@ private def everySession (e : Env) (p : Peer) : IO Unit := do
       (startRc == 0 && waitRc == 7 && kept && answerOf opened == some ("done", "0") && final &&
         closed &&
         discarded &&
-        has record "exit\t7")
+        has record "\"exit\":\"7\"")
       s!"session/attach of an ended session shows its final screen, closes with how it ended and discards it ({answerOf opened})"
   saved "glimpsed" "GLIMPSED-MARK"
   p.say (request 94 "session/attach" (named "glimpsed" [("readOnly", .bool true)]))
@@ -729,6 +820,8 @@ def run : IO UInt32 :=
       table p
       operations e p
       sameList e p
+      refusals e p
+      porcelainLines e p
       screenTable p
       historyLog p
       attachStream e p

@@ -64,8 +64,8 @@ includes metadata, so a status-only change still invalidates the displayed frame
 structure Snapshot where
   /-- The listing's exact targets, in order and without duplicates. -/
   candidates : List String := []
-  /-- Tab-split listing lines, from which the picker reads each target's metadata. -/
-  records : List (List String) := []
+  /-- The listing's records, a line each, from which the picker reads each target's metadata. -/
+  records : List (List (String × String)) := []
   /-- The columns the picker lays rows out in, fixed while a visit keeps its view; none lays them
   out for these rows. -/
   layout : Option Linger.Display.Listing.Layout := none
@@ -130,6 +130,6 @@ def due (next : Bool → Event → Bool) (events : List Event) : Bool := events.
 it runs prints. -/
 @[expose]
 def ownList (_ : String) : Except String Snapshot :=
-  .ok { candidates := ["mine"], records := [["name", "mine"]] }
+  .ok { candidates := ["mine"], records := [[("name", "mine")]] }
 
 end Linger.Selector.Picker

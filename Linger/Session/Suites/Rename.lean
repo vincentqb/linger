@@ -224,7 +224,7 @@ private def layoutChecks (e : Env) : IO Unit := do
         freshId.length == 17 &&
         (← e.info "g" "pid") != (← e.info "h" "pid") &&
         (← e.info "g" "name") == some "g" &&
-        !has porcelain s!"\t{freshId}" &&
+        !has porcelain s!"\"{freshId}\"" &&
         (← contents s!"{e.dir}/names/g") == some freshId)
       s!"LINGER_SESSION holds the session's ID, which a rename keeps; a name a renamed session's \
         ID holds gets a fresh one, which no listing shows ({freshId})"

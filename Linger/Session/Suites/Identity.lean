@@ -313,7 +313,7 @@ private def lockChecks (e : Env) : IO Unit := do
   let kept := !(← locksGone e "orphan")
   let (killRc, _, _) ← e.cli #["kill", "orphan"]
   expect
-      (has listed "name\torphan" && kept && killRc == 0 &&
+      (has listed "\"name\":\"orphan\"" && kept && killRc == 0 &&
         !(← System.FilePath.pathExists s!"{e.dir}/orphan.ckpt") &&
         (← locksGone e "orphan"))
       "a saved session's lock files stay while its checkpoint does, and go with the kill that discards it"

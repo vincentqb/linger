@@ -6,7 +6,8 @@ import all Linger.App.CoreCode.Serve
 import all Linger.Os.CoreCode.Answer
 import all Linger.App.CoreCode.Api
 import all Linger.App.CoreCode.Commands
-import all Linger.App.CoreCode.Json
+import all Linger.App.CoreCode.Base64
+import all Linger.Os.CoreCode.Json
 import all Linger.App.Proofs.Stream
 import all Linger.App.Proofs.Serve
 import all Linger.Session.Proofs.Wire
@@ -37,7 +38,7 @@ theorem Remote.shook_iff (messages : List Json) :
   split
   · rename_i version found
     rw [Option.bind_assoc] at found
-    cases answered : Remote.answerOf messages "1" "result" with
+    cases answered : Remote.answerOf messages 1 "result" with
     | none => simp [answered] at found
     | some result =>
       simp only [answered, Option.bind_some] at found
@@ -57,7 +58,7 @@ theorem Remote.usage_iff (messages : List Json) (status : UInt32) :
     beq_iff_eq, beq_iff_eq]
   apply and_congr Iff.rfl
   apply or_congr Iff.rfl
-  cases answered : Remote.answerOf messages "1" "error" with
+  cases answered : Remote.answerOf messages 1 "error" with
   | none => simp
   | some error =>
     cases data : error.member? "data" with
@@ -126,35 +127,37 @@ theorem answerNamed_eq_some {name : String} {code : Nat} {answer : Os.Answer}
   have found := List.find?_some read
   simpa using found
 
-/-- **An answer and members read back as exactly the object a result gives them as**: its name,
-its code in decimal, then the members. -/
+/-- **An answer and members read back as exactly an object a result gives them as**: one whose
+`answer` and `code` are its name and code, and whose other members are the members. -/
 theorem Remote.answerIn_eq_some (value : Json) (answer : Os.Answer)
     (members : List (String × Json)) :
     Remote.answerIn value = some (answer, members) ↔
-      value =
-        .obj
-          (("answer", .str (answerName answer)) ::
-            ("code", .number (toString answer.code)) :: members) := by
+      ∃ all,
+        value = .obj all ∧
+          all.lookup "answer" = some (.str (answerName answer)) ∧
+          all.lookup "code" = some (.int answer.code.toNat) ∧
+          members = all.filter fun m => m.1 != "answer" && m.1 != "code" := by
   constructor
   · intro read
     unfold Remote.answerIn at read
     split at read
-    · rename_i name code rest
+    · rename_i all
       split at read
-      · rename_i n parsed
+      · rename_i name code named coded
         split at read
-        · rename_i canonical
+        · rename_i nonneg
           simp only [Option.map_eq_some_iff, Prod.mk.injEq] at read
-          obtain ⟨found, named, rfl, rfl⟩ := read
-          obtain ⟨rfl, coded⟩ := answerNamed_eq_some named
-          rw [← canonical, ← coded]
-          rfl
+          obtain ⟨found, inNames, rfl, rfl⟩ := read
+          obtain ⟨rfl, codeOf⟩ := answerNamed_eq_some inNames
+          refine ⟨all, rfl, named, ?_, rfl⟩
+          rw [coded, codeOf]
+          congr 2
+          omega
         · simp at read
       · simp at read
     · simp at read
-  · rintro rfl
-    simp only [Remote.answerIn]
-    rw [show toString answer.code = Nat.repr answer.code.toNat from rfl, Nat.toNat?_repr]
+  · rintro ⟨all, rfl, named, coded, rfl⟩
+    simp only [Remote.answerIn, named, coded]
     simp [answerNamed_answerName]
 
 /-- **A host's answer reads as an answer exactly when it shook hands and answered the call with
@@ -165,19 +168,19 @@ theorem Remote.heard_answered (messages : List Json) (status : UInt32) (answer :
       Remote.Shook messages ∧ Remote.Answered Linger.Os.Answer.code messages answer members := by
   have bound :
     (Remote.callAnswer messages).bind Remote.answerIn = some (answer, members) ↔
-      Remote.callAnswer messages =
-        some
-          (.obj
-            (("answer", .str (answerName answer)) ::
-              ("code", .number (toString answer.code)) :: members)) := by
+      ∃ all,
+        Remote.callAnswer messages = some (.obj all) ∧
+          all.lookup "answer" = some (.str (answerName answer)) ∧
+          all.lookup "code" = some (.int answer.code.toNat) ∧
+          members = all.filter fun m => m.1 != "answer" && m.1 != "code" := by
     cases Remote.callAnswer messages with
     | none => simp
-    | some value => simp [Remote.answerIn_eq_some]
+    | some value => simp only [Option.bind_some, Remote.answerIn_eq_some, Option.some.injEq]
   rw [← Remote.shook_iff]
   unfold Remote.Answered
   rw [show
-      (Remote.answerOf messages "2" "result").or
-          ((Remote.answerOf messages "2" "error").bind (·.member? "data")) =
+      (Remote.answerOf messages 2 "result").or
+          ((Remote.answerOf messages 2 "error").bind (·.member? "data")) =
         Remote.callAnswer messages
       from rfl,
     ← bound]
@@ -223,16 +226,7 @@ theorem texts_cons (text : String) (rest : List Json) :
 
 theorem texts_one (text : String) : Json.texts? (.arr [.str text]) = some [text] := rfl
 
-theorem nat_number (n : Nat) : Json.nat? (.number (toString n)) = some n := by
-  have digits : (toString n).toList.all Char.isDigit = true := by
-    simp only [List.all_eq_true]
-    intro c member
-    rw [Nat.toString_eq_repr, Nat.toList_repr] at member
-    exact Nat.isDigit_of_mem_toDigits (b := 10) (by decide) (by decide) member
-  simp only [Json.nat?, digits, ↓reduceIte]
-  rw [show toString n = Nat.repr n from rfl, Nat.toNat?_repr]
-
-theorem nat_repr (n : Nat) : Json.nat? (.number n.repr) = some n := nat_number n
+theorem nat_int (n : Nat) : Json.nat? (.int n) = some n := by simp [Json.nat?]
 
 attribute [local simp] Remote.named Json.need Json.opt Json.member? List.lookup Json.text?
   Json.flag? Api.parse Commands.lookup Commands.table Api.parseOp parse words operands input
@@ -259,7 +253,7 @@ theorem Remote.call_parse (request : Api.Request) (name : String) (input : List 
         Api.parseLs.go]
   | resize t cols
     rows =>
-    simp (config := { decide := true }) [methods, nat_repr, Api.parseSize, Nat.toNat?_repr]
+    simp (config := { decide := true }) [methods, nat_int, Api.parseSize, Nat.toNat?_repr]
     by_cases c : Terminal.Vt.clampDim cols = cols <;>
       by_cases r : Terminal.Vt.clampDim rows = rows <;>
       simp [c, r]
@@ -390,10 +384,10 @@ theorem Remote.shows_rejects_undecoded :
     ¬∀ (id : Id) (stream : List (Json × List UInt8)) (typed : List UInt8),
         Remote.Shows Remote.undecoded Remote.keys id stream typed := by
   intro h
-  have carried : Carries (.number "2") [0] (Remote.keys (.number "2") [0]) :=
-    (Remote.shows (.number "2") [] [0]).2.2
+  have carried : Carries (.number 2) [0] (Remote.keys (.number 2) [0]) :=
+    (Remote.shows (.number 2) [] [0]).2.2
   have shown :=
-    ((h (.number "2") [(Remote.keys (.number "2") [0], [0])] []).1
+    ((h (.number 2) [(Remote.keys (.number 2) [0], [0])] []).1
         (fun update member => by
           simp at member; subst member; exact carried)
         (by simp)).2

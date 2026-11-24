@@ -44,6 +44,9 @@ import all Linger.Import.Proofs.Resurrect
 import all Linger.Selector.Proofs.Picker
 import all Linger.Selector.Proofs.Fetch
 import Linger.Selector.Proofs.Porcelain
+public import Linger.Os.CoreCode.Json
+import all Linger.Os.Proofs.Json
+import all Linger.Os.CoreCode.Json
 import all Linger.Display.Proofs.Title
 import all Linger.Os.Proofs.Answer
 import all Linger.Os.Proofs.Env
@@ -192,8 +195,8 @@ theorem commands_minimal_rejects_aliased :
   have short : "a" = word := unique "a" (by decide)
   exact absurd (long.trans short.symm) (by decide)
 
-theorem serve_renders_api (method : String) (params : App.Serve.Json) (found : App.Api.Found)
-    (members : List (String × App.Serve.Json)) :
+theorem serve_renders_api (method : String) (params : Json) (found : App.Api.Found)
+    (members : List (String × Json)) :
     App.Serve.parse method params =
         (App.Serve.words method params).bind
           (fun argv =>
@@ -205,14 +208,13 @@ theorem serve_renders_api (method : String) (params : App.Serve.Json) (found : A
       App.Serve.result found members =
         .obj
           (("answer", .str (App.Serve.answerName (App.Api.answer found))) ::
-            ("code", .number (toString (App.Api.answer found).code)) :: members) :=
+            ("code", .int (App.Api.answer found).code.toNat) :: members) :=
   ⟨App.Serve.parse_eq method params, fun _ _ parsed => App.Serve.parse_op parsed,
     App.Serve.result_eq found members⟩
 
 theorem serve_renders_api_rejects_crossed :
-    ¬∀ (method : String) (params : App.Serve.Json) (found : App.Api.Found)
-        (members : List (String × App.Serve.Json)),
-        (fun (method : String) (params : App.Serve.Json) =>
+    ¬∀ (method : String) (params : Json) (found : App.Api.Found) (members : List (String × Json)),
+        (fun (method : String) (params : Json) =>
                 App.Serve.parse (if method = "session/detach" then "session/kill" else method)
                   params)
               method params =
@@ -221,7 +223,7 @@ theorem serve_renders_api_rejects_crossed :
                 (App.Api.parse argv).bind fun request =>
                   (App.Serve.input method params).map fun bytes => (request, bytes)) ∧
           (∀ request bytes,
-            (fun (method : String) (params : App.Serve.Json) =>
+            (fun (method : String) (params : Json) =>
                     App.Serve.parse (if method = "session/detach" then "session/kill" else method)
                       params)
                   method params =
@@ -230,7 +232,7 @@ theorem serve_renders_api_rejects_crossed :
           App.Serve.result found members =
             .obj
               (("answer", .str (App.Serve.answerName (App.Api.answer found))) ::
-                ("code", .number (toString (App.Api.answer found).code)) :: members) := by
+                ("code", .int (App.Api.answer found).code.toNat) :: members) := by
   intro h
   -- `session/detach x` would take `kill x`'s request
   have := (h "session/detach" (.obj [("name", .str "x")]) .done []).1
@@ -238,8 +240,7 @@ theorem serve_renders_api_rejects_crossed :
   decide
 
 theorem serve_renders_api_rejects_outside :
-    ¬∀ (method : String) (params : App.Serve.Json) (found : App.Api.Found)
-        (members : List (String × App.Serve.Json)),
+    ¬∀ (method : String) (params : Json) (found : App.Api.Found) (members : List (String × Json)),
         App.Serve.parse method params =
             (App.Serve.words method params).bind
               (fun argv =>
@@ -248,24 +249,141 @@ theorem serve_renders_api_rejects_outside :
           (∀ request bytes,
             App.Serve.parse method params = some (request, bytes) →
               (App.Serve.methods.lookup method).map (·.1) = some request.op) ∧
-          (fun (_ : App.Api.Found) (members : List (String × App.Serve.Json)) =>
-                App.Serve.Json.obj (("answer", .str "done") :: ("code", .number "0") :: members))
+          (fun (_ : App.Api.Found) (members : List (String × Json)) =>
+                Json.obj (("answer", .str "done") :: ("code", .int 0) :: members))
               found members =
             .obj
               (("answer", .str (App.Serve.answerName (App.Api.answer found))) ::
-                ("code", .number (toString (App.Api.answer found).code)) :: members) := by
+                ("code", .int (App.Api.answer found).code.toNat) :: members) := by
   intro h
   -- a request that found no session would answer that it did what was asked
   have := (h "" .null .missing []).2.2
   simp [App.Serve.answerName, App.Api.answer, App.Api.Found.answer] at this
 
+theorem json_written (v : Json) :
+    Json.Canonical (Json.render v) ∧ Json.render v = Json.render v.sorted :=
+  ⟨Json.render_canonical v, Json.render_sorted v⟩
+
+theorem json_written_rejects_spaced :
+    ¬∀ (v : Json),
+        Json.Canonical (Json.spaced Json.render v) ∧
+          Json.spaced Json.render v = Json.spaced Json.render v.sorted := by
+  intro h
+  -- `[null, null]`, as `json.dumps` writes it, has a space outside any string
+  have canonical := (h (.arr [.null, .null])).1
+  have text :
+    (Json.spaced Json.render (.arr [.null, .null])).toList =
+      ['[', 'n', 'u', 'l', 'l', ',', ' ', 'n', 'u', 'l', 'l', ']'] := by
+    simp [Json.spaced, String.intercalate_cons_cons, String.intercalate_singleton, Json.render,
+      Json.chars]
+  unfold Json.Canonical at canonical
+  rw [text] at canonical
+  exact Json.text_no_space canonical (by decide) (by decide)
+
+theorem json_written_rejects_unsorted :
+    ¬∀ (v : Json),
+        Json.Canonical (Json.unsorted Json.render v) ∧
+          Json.unsorted Json.render v = Json.unsorted Json.render v.sorted := by
+  intro h
+  -- `{"b":null,"a":null}` is not the text of the object it spells, `{"a":null,"b":null}`
+  have same := congrArg String.toList (h (.obj [("b", .null), ("a", .null)])).2
+  have sorted :
+    (Json.obj [("b", .null), ("a", .null)]).sorted = .obj [("a", .null), ("b", .null)] := rfl
+  rw [sorted] at same
+  simp [Json.unsorted, String.intercalate_cons_cons, String.intercalate_singleton, Json.render,
+    Json.chars, Json.quote, Json.escape] at same
+
+theorem json_read (text : String) (v : Json) :
+    (Json.parse text = .ok v ↔ v.Valid ∧ Json.render v = text) ∧
+      ((∃ w, Json.parse text = .ok w) ↔ Json.Canonical text) :=
+  ⟨Json.parse_eq_ok_iff text v, Json.parse_ok_iff_canonical text⟩
+
+theorem json_read_rejects_spacious :
+    ¬∀ (text : String) (v : Json),
+        (Json.spacious Json.parse text = .ok v ↔ v.Valid ∧ Json.render v = text) ∧
+          ((∃ w, Json.spacious Json.parse text = .ok w) ↔ Json.Canonical text) := by
+  intro h
+  -- ` null` would read as `null`, whose text has no space before it
+  have read : Json.spacious Json.parse " null" = .ok .null := by
+    have dropped : String.ofList (" null".toList.dropWhile (· = ' ')) = Json.render .null := by
+      decide
+    unfold Json.spacious
+    rw [dropped]
+    exact Json.parse_complete trivial
+  have rendered := ((h " null" .null).1.mp read).2
+  exact absurd rendered (by decide)
+
+theorem json_read_rejects_unordered :
+    ¬∀ (text : String) (v : Json),
+        (Json.unordered Json.parse text = .ok v ↔ v.Valid ∧ Json.render v = text) ∧
+          ((∃ w, Json.unordered Json.parse text = .ok w) ↔ Json.Canonical text) := by
+  intro h
+  -- the object `{"b":null,"a":null}` spells lists its keys decreasing, so no canonical text holds it
+  have read :
+    Json.unordered Json.parse "{\"b\":null,\"a\":null}" =
+      .ok (.obj [("b", .null), ("a", .null)]) := by
+    simp [Json.unordered]
+  have valid := ((h "{\"b\":null,\"a\":null}" (.obj [("b", .null), ("a", .null)])).1.mp read).1
+  simp [Json.Valid] at valid
+
+theorem serve_refuses_uncanonical (s : App.Serve.State) (line reason : String)
+    (refused : Json.parse line = .error reason) :
+    App.Serve.decode line = .invalid none (some reason) ∧
+      App.Serve.step s (.received (.invalid none (some reason))) =
+        (s,
+          [.send
+              (.error none (-32700) "parse error"
+                (.obj
+                  [("answer", .str (App.Serve.answerName .usage)),
+                    ("code", .int (Os.Answer.code .usage).toNat), ("reason", .str reason)]))]) :=
+  ⟨App.Serve.decode_uncanonical refused, App.Serve.step_uncanonical s reason⟩
+
+theorem serve_refuses_uncanonical_rejects_unreasoned :
+    ¬∀ (s : App.Serve.State) (line reason : String),
+        Json.parse line = .error reason →
+          App.Serve.unreasoned App.Serve.decode line = .invalid none (some reason) ∧
+            App.Serve.step s (.received (.invalid none (some reason))) =
+              (s,
+                [.send
+                    (.error none (-32700) "parse error"
+                      (.obj
+                        [("answer", .str (App.Serve.answerName .usage)),
+                          ("code", .int (Os.Answer.code .usage).toNat),
+                          ("reason", .str reason)]))]) := by
+  intro h
+  -- the empty line is no canonical text, and its reason would go unsaid
+  obtain ⟨reason, refused⟩ : ∃ reason, Json.parse "" = .error reason := by
+    cases parsed : Json.parse "" with
+    | error e => exact ⟨e, rfl⟩
+    | ok v =>
+      have rendered := congrArg String.toList (Json.parse_sound parsed).2
+      simp only [Json.render, String.toList_ofList] at rendered
+      exact absurd rendered (by simpa using Json.chars_ne_nil v)
+  have read := (h App.Serve.State.init "" reason refused).1
+  simp [App.Serve.unreasoned, App.Serve.decode_uncanonical refused] at read
+
+theorem porcelain_records (rows : List (List (String × String))) :
+    Listing.porcelain rows =
+      String.join
+        ((App.Serve.records rows).map fun record =>
+          (Json.render (App.Serve.Record.json record)).push '\n') := by
+  simp only [Listing.porcelain, Listing.recordJson, App.Serve.records, App.Serve.Record.json]
+
+theorem porcelain_records_rejects_tsv :
+    ¬∀ (rows : List (List (String × String))),
+        Listing.tsv rows =
+          String.join
+            ((App.Serve.records rows).map fun record =>
+              (Json.render (App.Serve.Record.json record)).push '\n') := by
+  intro h
+  -- a session `a`'s porcelain opens with `{`, where the tab-separated block opens with `name`
+  have same := congrArg (fun text : String => text.toList.head?) (h [[("name", "a")]])
+  simp [Listing.tsv, App.Serve.records, Listing.records, Json.render, App.Serve.Record.json,
+    Json.chars] at same
+
 theorem chooser_same_list (rows : List (List (String × String)))
     (named :
-      ∀ record ∈ App.Serve.records rows,
-        ∃ rest,
-          record = ("name", App.Serve.Record.key record) :: rest ∧
-            Remote.targetValid (App.Serve.Record.key record) = true ∧
-            ∀ field ∈ rest, field.1 ≠ "name")
+      ∀ record ∈ App.Serve.records rows, Remote.targetValid (App.Serve.Record.key record) = true)
     (distinct : ((App.Serve.records rows).map App.Serve.Record.key).Nodup) :
     ∃ snapshot,
       Selector.Picker.parseSnapshot (Listing.porcelain rows) = .ok snapshot ∧
@@ -277,10 +395,7 @@ theorem chooser_same_list (rows : List (List (String × String)))
 theorem chooser_same_list_rejects_own :
     ¬∀ (rows : List (List (String × String))),
         (∀ record ∈ App.Serve.records rows,
-            ∃ rest,
-              record = ("name", App.Serve.Record.key record) :: rest ∧
-                Remote.targetValid (App.Serve.Record.key record) = true ∧
-                ∀ field ∈ rest, field.1 ≠ "name") →
+            Remote.targetValid (App.Serve.Record.key record) = true) →
           ((App.Serve.records rows).map App.Serve.Record.key).Nodup →
           ∃ snapshot,
             Selector.Picker.ownList (Listing.porcelain rows) = .ok snapshot ∧
@@ -322,8 +437,7 @@ theorem serve_negotiated_rejects_eager :
           App.Serve.State.watching (App.Serve.eager App.Serve.step) s ev := by
   intro h
   -- a fresh connection would answer `sessions/list` before its handshake
-  have heard :=
-    h App.Serve.State.init (.received (.request (.number "1") "sessions/list" (.obj [])))
+  have heard := h App.Serve.State.init (.received (.request (.number 1) "sessions/list" (.obj [])))
   unfold App.Serve.Negotiated at heard
   have := heard.2.1 (fun _ ready => by simp [App.Serve.State.init, App.Serve.State.phase] at ready)
   simp [App.Serve.eager, App.Serve.Effect.Negotiating, App.Serve.welcome] at this
@@ -340,7 +454,7 @@ theorem serve_negotiated_rejects_chatty :
     heard.2.2.2.2.2.1 (.send (.notify "sessions/changed" (.obj []))) (by simp [App.Serve.chatty])
       "sessions/changed" (.obj []) rfl
   obtain ⟨id, names, -⟩ := this
-  simp [App.Serve.Json.member?] at names
+  simp [Json.member?] at names
 
 theorem one_renderer (v : Vt.Vt) (row : Vt.Row)
     (hv : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v) :
@@ -409,8 +523,8 @@ theorem history_log_exact_rejects_uncounted :
   -- a connection that forgets a look's count of drops reads no gap where the look dropped a line
   let screen : App.Serve.Screen := { lines := [], cursor := ⟨0, 0, true⟩, title := "" }
   have held :=
-    (h ({ stage := .ready "1", watches := [(.number "1", .history {})] } : App.Serve.StateRec) "1"
-          (.number "1") {} { tail := [], dropped := 1 } screen rfl).2
+    (h ({ stage := .ready "1", watches := [(.number 1, .history {})] } : App.Serve.StateRec) "1"
+          (.number 1) {} { tail := [], dropped := 1 } screen rfl).2
       (by simp [App.Serve.State.watching])
   obtain ⟨kept, holds, masks⟩ := held.2.1
   simp [App.Serve.uncounted, App.Serve.step, App.Serve.watched, App.Serve.State.phase,
@@ -445,8 +559,8 @@ theorem serve_attach_exact_rejects_unpainted :
   have quiet : Wire.Decoder.feed {} [] = ({ buf := [], errored := false }, []) := by
     simpa [Wire.decode] using Wire.decode_encode_stream [] (by simp)
   obtain ⟨rest, sent, streamed⟩ :=
-    ((h ({ stage := .ready "1", watches := [(.number "1", .attaching)] } : App.Serve.StateRec) "1"
-            (.number "1") {} [] (Wire.encode (.output [65])) [] .done {} rfl).1
+    ((h ({ stage := .ready "1", watches := [(.number 1, .attaching)] } : App.Serve.StateRec) "1"
+            (.number 1) {} [] (Wire.encode (.output [65])) [] .done {} rfl).1
         (by simp [App.Serve.State.watching])).1
   simp [App.Serve.unpainted, App.Serve.State.watching, App.Serve.step, App.Serve.readAttach,
     App.Serve.State.phase, App.Serve.streamed, quiet, App.Serve.State.setWatch] at sent streamed
@@ -470,8 +584,8 @@ theorem serve_attach_exact_rejects_unframed :
       Wire.decode_encode_stream [.input [66]]
         (by simpa using Wire.fits_wf _ (by simp [Wire.Msg.Fits, Wire.maxPayload]))
   obtain ⟨_, _, shown, _⟩ :=
-    (h ({ stage := .ready "1", watches := [(.number "1", .attaching)] } : App.Serve.StateRec) "1"
-          (.number "1") {} [] [] (Wire.encode (.input [66])) .done {} rfl).1
+    (h ({ stage := .ready "1", watches := [(.number 1, .attaching)] } : App.Serve.StateRec) "1"
+          (.number 1) {} [] [] (Wire.encode (.input [66])) .done {} rfl).1
       (by simp [App.Serve.State.watching])
   simp [App.Serve.unframed, App.Serve.State.watching, App.Serve.step, App.Serve.readAttach,
     App.Serve.State.phase, App.Serve.streamed, framed, Wire.shown, Wire.Msg.ends,
@@ -488,17 +602,17 @@ theorem serve_attach_exact_rejects_done_anyway :
   intro h
   -- the last update of an attach that found no session says `notFound`, not `done`
   obtain ⟨_, _, _, _, ⟨params, rest, last, _, closed⟩, _⟩ :=
-    (h ({ stage := .ready "1", watches := [(.number "1", .stream {} [])] } : App.Serve.StateRec) "1"
-          (.number "1") {} [] [] [] .missing {} rfl).2
+    (h ({ stage := .ready "1", watches := [(.number 1, .stream {} [])] } : App.Serve.StateRec) "1"
+          (.number 1) {} [] [] [] .missing {} rfl).2
       (by simp [App.Serve.State.watching])
   simp [App.Serve.State.watching, App.Serve.step, App.Serve.unwatched,
     App.Serve.State.phase] at last
   subst last
-  simp [App.Serve.Output.update, App.Serve.Json.withMembers, App.Serve.Json.member?, List.lookup,
+  simp [App.Serve.Output.update, Json.withMembers, Json.member?, List.lookup,
     App.Serve.closedMembers, App.Serve.answerMembers, App.Serve.doneAnyway, App.Api.answer,
     App.Api.Found.answer, App.Serve.answerName] at closed
 
-theorem remote_rows_exact (host : String) (messages : List App.Serve.Json) (status : UInt32)
+theorem remote_rows_exact (host : String) (messages : List Json) (status : UInt32)
     (records : List App.Serve.Record) :
     App.Serve.Remote.Rows App.Serve.Remote.heard App.Serve.Remote.rows Name.accept Os.Answer.code
       host messages status records := by
@@ -516,8 +630,7 @@ theorem remote_rows_exact (host : String) (messages : List App.Serve.Json) (stat
         listed, read⟩
 
 theorem remote_rows_exact_rejects_unshaken :
-    ¬∀ (host : String) (messages : List App.Serve.Json) (status : UInt32)
-        (records : List App.Serve.Record),
+    ¬∀ (host : String) (messages : List Json) (status : UInt32) (records : List App.Serve.Record),
         App.Serve.Remote.Rows App.Serve.Remote.unshaken App.Serve.Remote.rows Name.accept
           Os.Answer.code host messages status records := by
   intro h
@@ -526,23 +639,21 @@ theorem remote_rows_exact_rejects_unshaken :
   have listed :=
     (h "far"
         [.obj
-            [("id", .number "2"),
-              ("result",
-                .obj [("answer", .str "done"), ("code", .number "0"), ("records", .arr [])])]]
+            [("id", .int 2),
+              ("result", .obj [("answer", .str "done"), ("code", .int 0), ("records", .arr [])])]]
         0 []).1
   have shook :=
     (listed.mp
         ⟨[("records", .arr [])], [], by
-          simp [App.Serve.Remote.unshaken, App.Serve.Remote.answerOf, App.Serve.Json.member?,
-            App.Serve.Id.of, List.lookup],
+          simp [App.Serve.Remote.unshaken, App.Serve.Remote.answerOf, Json.member?, App.Serve.Id.of,
+            List.lookup],
           by simp [List.lookup], rfl⟩).1
   obtain ⟨result, version, found, -⟩ := shook
-  simp [App.Serve.Remote.answerOf, App.Serve.Json.member?, App.Serve.Id.of, List.lookup] at found
+  simp [App.Serve.Remote.answerOf, Json.member?, App.Serve.Id.of, List.lookup] at found
 
 theorem remote_exact (request : App.Api.Request) (name : String) (input : List UInt8)
-    (messages : List App.Serve.Json) (status : UInt32) (answer : Os.Answer)
-    (members : List (String × App.Serve.Json)) (host : String) (t : Remote.Transport)
-    (carry : List String → List UInt8 → Option (List UInt8))
+    (messages : List Json) (status : UInt32) (answer : Os.Answer) (members : List (String × Json))
+    (host : String) (t : Remote.Transport) (carry : List String → List UInt8 → Option (List UInt8))
     (delivers : Remote.Transport.Delivers carry t) (bytes : List UInt8) :
     App.Serve.Remote.Exact App.Serve.Remote.call App.Serve.parse App.Serve.Remote.heard
         Os.Answer.code App.Serve.Remote.found App.Api.answer App.Serve.Remote.said Remote.scrub
@@ -559,10 +670,9 @@ theorem remote_exact (request : App.Api.Request) (name : String) (input : List U
   exact delivers bytes
 
 theorem remote_exact_rejects_crossed :
-    ¬∀ (request : App.Api.Request) (name : String) (input : List UInt8)
-        (messages : List App.Serve.Json) (status : UInt32) (answer : Os.Answer)
-        (members : List (String × App.Serve.Json)) (host : String) (t : Remote.Transport)
-        (carry : List String → List UInt8 → Option (List UInt8)),
+    ¬∀ (request : App.Api.Request) (name : String) (input : List UInt8) (messages : List Json)
+        (status : UInt32) (answer : Os.Answer) (members : List (String × Json)) (host : String)
+        (t : Remote.Transport) (carry : List String → List UInt8 → Option (List UInt8)),
         Remote.Transport.Delivers carry t →
           ∀ (bytes : List UInt8),
             App.Serve.Remote.Exact
@@ -583,13 +693,13 @@ theorem remote_exact_rejects_crossed :
   rw [App.Serve.Remote.call_parse] at crossed
   simp [App.Serve.Remote.asked] at crossed
 
-theorem remote_attach_exact (id : App.Serve.Id) (stream : List (App.Serve.Json × List UInt8))
+theorem remote_attach_exact (id : App.Serve.Id) (stream : List (Json × List UInt8))
     (typed : List UInt8) :
     App.Serve.Remote.Shows App.Serve.Remote.relay App.Serve.Remote.keys id stream typed :=
   App.Serve.Remote.shows id stream typed
 
 theorem remote_attach_exact_rejects_undecoded :
-    ¬∀ (id : App.Serve.Id) (stream : List (App.Serve.Json × List UInt8)) (typed : List UInt8),
+    ¬∀ (id : App.Serve.Id) (stream : List (Json × List UInt8)) (typed : List UInt8),
         App.Serve.Remote.Shows App.Serve.Remote.undecoded App.Serve.Remote.keys id stream typed :=
   App.Serve.Remote.shows_rejects_undecoded
 

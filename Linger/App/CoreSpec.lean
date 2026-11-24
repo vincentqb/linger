@@ -548,69 +548,6 @@ end Linger.App.Capture
 
 namespace Linger.App.Serve
 
-/-- A JSON value (RFC 8259), as `serve` reads and writes one. A number keeps the text it was
-written in, so that a request's id goes back exactly as it came. -/
-inductive Json where
-  /-- `null`. -/
-  | null
-  /-- `true` or `false`. -/
-  | bool (value : Bool)
-  /-- A number, as written. -/
-  | number (text : String)
-  /-- A string. -/
-  | str (value : String)
-  /-- An array. -/
-  | arr (items : List Json)
-  /-- An object, its members in order. -/
-  | obj (members : List (String × Json))
-  deriving Inhabited
-
-/-- The member of an object under `key`, the first one when it has several, and none of any other
-value. -/
-@[expose]
-def Json.member? (key : String) : Json → Option Json
-  | .obj members => members.lookup key
-  | _ => none
-
-/-- A string's text. -/
-@[expose]
-def Json.text? : Json → Option String
-  | .str value => some value
-  | _ => none
-
-/-- A number written as a natural number, in decimal digits alone. -/
-@[expose]
-def Json.nat? : Json → Option Nat
-  | .number text => if text.toList.all Char.isDigit then text.toNat? else none
-  | _ => none
-
-/-- A boolean. -/
-@[expose]
-def Json.flag? : Json → Option Bool
-  | .bool value => some value
-  | _ => none
-
-/-- An array of strings, their texts. -/
-@[expose]
-def Json.texts? : Json → Option (List String)
-  | .arr items => items.mapM Json.text?
-  | _ => none
-
-/-- The member `key` of `params`, as `read` takes it: none when it is missing, `null` or not
-what `read` takes. -/
-@[expose]
-def Json.need {α : Type} (params : Json) (key : String) (read : Json → Option α) : Option α :=
-  (params.member? key).bind read
-
-/-- The member `key` of `params`, as `read` takes it, or `default` when it is missing or `null`;
-none when it is something `read` does not take. -/
-@[expose]
-def Json.opt {α : Type} (params : Json) (key : String) (read : Json → Option α) (default : α) :
-    Option α :=
-  match params.member? key with
-  | none | some .null => some default
-  | some value => read value
-
 /-- The value of a base64 digit, in RFC 4648's alphabet: `A`–`Z`, `a`–`z`, `0`–`9`, `+` and `/`. -/
 @[expose]
 def Base64.digit (c : Char) : Option Nat :=
@@ -770,10 +707,10 @@ def words (method : String) (params : Json) : Option (List String) :=
 @[expose]
 def versions : List String := ["1"]
 
-/-- A request's id: a number, as written, or a string. -/
+/-- A request's id: an integer or a string. -/
 inductive Id where
-  /-- A number, as written. -/
-  | number (text : String)
+  /-- An integer. -/
+  | number (value : Int)
   /-- A string. -/
   | str (text : String)
   deriving Repr, DecidableEq
@@ -781,13 +718,13 @@ inductive Id where
 /-- An id as JSON. -/
 @[expose]
 def Id.json : Id → Json
-  | .number text => .number text
+  | .number value => .int value
   | .str text => .str text
 
-/-- A JSON value as a request id: a number or a string. -/
+/-- A JSON value as a request id: an integer or a string. -/
 @[expose]
 def Id.of : Json → Option Id
-  | .number text => some (.number text)
+  | .int value => some (.number value)
   | .str text => some (.str text)
   | _ => none
 
@@ -1036,7 +973,7 @@ as `null`. -/
 @[expose]
 def colorJson : Terminal.Vt.Color → Json
   | .default => .null
-  | .idx i => .number (toString i.toNat)
+  | .idx i => .int i.toNat
   | .rgb r g b => .str ("#" ++ hexByte r ++ hexByte g ++ hexByte b)
 
 /-- **A pen as JSON**, compactly: an object with `fg` and `bg` when they are not the default, and
@@ -1054,7 +991,7 @@ def penJson (p : Terminal.Vt.Pen) : Json :=
 
 /-- A run as JSON: `[length, pen]`. -/
 @[expose]
-def Span.json (s : Span) : Json := .arr [.number (toString s.length), penJson s.pen]
+def Span.json (s : Span) : Json := .arr [.int s.length, penJson s.pen]
 
 /-- A line's members: its `text`, a string, and its `spans`. -/
 @[expose]
@@ -1064,13 +1001,12 @@ def Line.members (line : Line) : List (String × Json) :=
 
 /-- A line under its number as JSON: `{line, text, spans}`. -/
 @[expose]
-def Line.numbered (y : Nat) (line : Line) : Json :=
-  .obj (("line", .number (toString y)) :: line.members)
+def Line.numbered (y : Nat) (line : Line) : Json := .obj (("line", .int y) :: line.members)
 
 /-- The cursor as JSON: `{x, y, visible}`. -/
 @[expose]
 def Cursor.json (c : Cursor) : Json :=
-  .obj [("x", .number (toString c.x)), ("y", .number (toString c.y)), ("visible", .bool c.visible)]
+  .obj [("x", .int c.x), ("y", .int c.y), ("visible", .bool c.visible)]
 
 /-- **A screen as the result of `session/screen` shows it**: its `rows`, each line under its
 number, top first, its `cursor` and its `title`. -/
@@ -1086,7 +1022,7 @@ went, `removed`, and the `cursor` and the `title` when they changed. -/
 def Screen.update (id : Id) (u : Screen.Update) : Json :=
   .obj
     ([("subscription", id.json), ("rows", .arr (u.lines.map fun (y, line) => Line.numbered y line)),
-        ("removed", .arr (u.removed.map fun y => .number (toString y)))] ++
+        ("removed", .arr (u.removed.map fun (y : Nat) => .int y))] ++
       (u.cursor.map fun c => ("cursor", c.json)).toList ++
       (u.title.map fun t => ("title", .str t)).toList)
 
@@ -1097,7 +1033,7 @@ before them it `dropped`. -/
 def Log.update (id : Id) (log : Log Line) : Json :=
   .obj
     [("subscription", id.json), ("lines", .arr (log.tail.map fun line => .obj line.members)),
-      ("dropped", .number (toString log.dropped))]
+      ("dropped", .int log.dropped)]
 
 /-- What one line from the client is, as `serve` reads it. -/
 inductive Message where
@@ -1105,9 +1041,17 @@ inductive Message where
   | request (id : Id) (method : String) (params : Json)
   /-- A notification, which nothing answers. -/
   | notification (method : String) (params : Json)
-  /-- No message: a line that is not JSON, when `unparsed`, or JSON that is no request, with the
-  id it carried, if any. -/
-  | invalid (id : Option Id) (unparsed : Bool)
+  /-- No message: a line that is not canonical JSON, with the reason the reader gave, or a
+  canonical text that is no request, with the id it carried, if any. -/
+  | invalid (id : Option Id) (unparsed : Option String)
+
+/-- A wrong part: a reading of lines that takes one that is not canonical JSON as JSON that is no
+request, without the reader's reason, and reads any other line as `decode` does. -/
+@[expose]
+def unreasoned (decode : String → Message) (line : String) : Message :=
+  match decode line with
+  | .invalid id (some _) => .invalid id none
+  | message => message
 
 /-- What `serve` writes, one line each. -/
 inductive Outgoing where
@@ -1454,7 +1398,7 @@ def AttachStream {σ : Type} (watching : σ → Id → Option Watch) (step : σ 
               some
                 (.obj
                   (("answer", .str (answerName (answerOf found))) ::
-                    ("code", .number (toString (code (answerOf found)))) :: rest))) ∧
+                    ("code", .int (code (answerOf found)).toNat) :: rest))) ∧
         watching (step s (.unwatched id found said)).1 id = none)
 
 /-- A wrong part: a shown screen read as its bytes, unframed, which an attach client's decoder
@@ -1520,10 +1464,10 @@ def Remote.asked (request : Api.Request) (name : String) (input : List UInt8) :
   | .upgrade _ => some (.upgrade [name], [])
   | .serve => none
 
-/-- The member `key` of the first message among `messages` whose `id` is the number `n`, and that
+/-- The member `key` of the first message among `messages` whose `id` is the integer `n`, and that
 has one. -/
 @[expose]
-def Remote.answerOf (messages : List Json) (n key : String) : Option Json :=
+def Remote.answerOf (messages : List Json) (n : Int) (key : String) : Option Json :=
   (messages.find? fun message =>
         (message.member? "id").bind Id.of == some (.number n) && (message.member? key).isSome).bind
     (·.member? key)
@@ -1533,22 +1477,23 @@ linger speaks. -/
 @[expose]
 def Remote.Shook (messages : List Json) : Prop :=
   ∃ result version,
-    Remote.answerOf messages "1" "result" = some result ∧
+    Remote.answerOf messages 1 "result" = some result ∧
       result.member? "protocolVersion" = some (.str version) ∧ version ∈ versions
 
 /-- **What a host answered the call**, request 2, of the answers whose codes `code` gives: its
-result, `answer` by name and code, then the result's other members; or, where no result answered
-it, the `data` of the error that did, in the same form, as a method a `serve` does not answer or
-params it does not take get. -/
+result, an object whose `answer` and `code` are the answer's name and code, and whose other members,
+in the order it holds them, are `members`; or, where no result answered it, the `data` of the error
+that did, in the same form, as a method a `serve` does not answer or params it does not take get. -/
 @[expose]
 def Remote.Answered (code : Os.Answer → UInt32) (messages : List Json) (answer : Os.Answer)
     (members : List (String × Json)) : Prop :=
-  (Remote.answerOf messages "2" "result").or
-      ((Remote.answerOf messages "2" "error").bind (·.member? "data")) =
-    some
-      (.obj
-        (("answer", .str (answerName answer)) ::
-          ("code", .number (toString (code answer))) :: members))
+  ∃ all,
+    (Remote.answerOf messages 2 "result").or
+          ((Remote.answerOf messages 2 "error").bind (·.member? "data")) =
+        some (.obj all) ∧
+      all.lookup "answer" = some (.str (answerName answer)) ∧
+      all.lookup "code" = some (.int (code answer).toNat) ∧
+      members = all.filter fun m => m.1 != "answer" && m.1 != "code"
 
 /-- A record as a host's `sessions/list` gives one: an object each of whose members is a string. -/
 @[expose]
@@ -1574,7 +1519,7 @@ def Remote.Usage (messages : List Json) (status : UInt32) : Prop :=
   ¬Remote.Shook messages ∧
     (status = 2 ∨
       ∃ error data,
-        Remote.answerOf messages "1" "error" = some error ∧
+        Remote.answerOf messages 1 "error" = some error ∧
           error.member? "data" = some data ∧ data.member? "answer" = some (.str "usage"))
 
 /-- What a host's `serve` told linger of its call. -/
@@ -1635,12 +1580,15 @@ def Remote.Rows (heard : List Json → UInt32 → Remote.Heard)
       (records.filter fun record => accept record.key == some record.key).map fun record =>
         record.key ++ "@" ++ host
 
-/-- A wrong part: a reading that takes request 2's result as `done`, whatever request 1 got, and
-reads any other answer as silent. -/
+/-- A wrong part: a reading that takes request 2's result as `done` when its `answer` says so,
+whatever request 1 got, with its other members, and reads any other answer as silent. -/
 @[expose]
 def Remote.unshaken (messages : List Json) (_ : UInt32) : Remote.Heard :=
-  match Remote.answerOf messages "2" "result" with
-  | some (.obj (("answer", .str "done") :: (_, _) :: members)) => .answered .done members
+  match Remote.answerOf messages 2 "result" with
+  | some (.obj all) =>
+    match all.lookup "answer" with
+    | some (.str "done") => .answered .done (all.filter fun m => m.1 != "answer" && m.1 != "code")
+    | _ => .silent
   | _ => .silent
 
 /-- The notification that carries an update of an attach's stream, `session/output`, with these

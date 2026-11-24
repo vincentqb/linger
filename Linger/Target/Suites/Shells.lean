@@ -2,7 +2,8 @@ module
 
 public import Verify.Harness
 import Linger.App.CoreCode.Serve
-import Linger.App.CoreCode.Json
+import Linger.App.CoreCode.Base64
+import Linger.Os.CoreCode.Json
 import Linger.Target.WorldCode.Checks
 
 public section
@@ -69,7 +70,8 @@ def run : IO UInt32 :=
       through root real ["sh", "-c", "linger serve"]
           (Linger.App.Serve.Remote.lines "sessions/list" (.obj [])).toUTF8.toList
     let messages :=
-      ((String.fromUTF8? wrote).getD "").splitOn "\n" |>.filterMap Linger.App.Serve.Json.parse
+      ((String.fromUTF8? wrote).getD "").splitOn "\n" |>.filterMap fun line =>
+        (Linger.Json.parse line).toOption
     expect (Linger.App.Serve.Remote.heard messages 0 matches .answered .done _)
         "this linger, run as linger serve through a shell, shakes hands and answers sessions/list"
 

@@ -53,7 +53,18 @@ reply.
 ## JSON-RPC
 
 `linger serve` speaks linger's operations as JSON-RPC 2.0 on its standard input and output, one
-JSON value a line, for a client that runs it as a child with pipes. The client sends `initialize`
+JSON value a line, for a client that runs it as a child with pipes. Every line either way is
+canonical JSON, the format of [ExactJSON](https://github.com/vincentqb/lean-toml-json): no
+whitespace outside strings, object keys in increasing code-point order, each key once, integers
+in decimal with no leading zero, no `+` and no `-0`, and a string's characters as themselves but
+`"`, `\` and those below U+0020, each with its one escape (`\"`, `\\`, `\b`, `\t`, `\n`, `\f`,
+`\r`, otherwise `\u00` and two lowercase hexadecimal digits). linger's values hold no float, so a
+number with a fraction or an exponent is none of its texts. A request reads
+`{"id":1,"jsonrpc":"2.0","method":"sessions/list","params":{}}`; a line that is not canonical,
+such as `{"jsonrpc":"2.0","id":1,…}`, gets error -32700 with no id and changes nothing, its `data`
+linger's usage answer and the reason, at the character it stops being canonical:
+`{"answer":"usage","code":2,"reason":"at character 20: the key \"id\" after \"jsonrpc\", where
+canonical JSON lists keys in increasing order"}`. The client sends `initialize`
 with the `protocolVersion` it speaks (`"1"`), gets the version, `serverInfo` and the methods in
 `capabilities`, and sends the `initialized` notification; before that every other request gets
 error -32002. Each method is one command's request: `sessions/list` (optional `names`),
@@ -67,12 +78,12 @@ without `idle` and `lastout`, the clock's readings, sends `sessions/changed` wit
 records that differ and the names that
 went, the latest when the client reads late, never a backlog; `sessions/unsubscribe`
 (`subscription`) closes it. A result carries the answer the command would exit with, as
-`{"answer": "done", "code": 0}`, then what it shows: a listing's `records`, a capture's bytes in
+`{"answer":"done","code":0}`, with what it shows: a listing's `records`, a capture's bytes in
 base64 as `data`, how a session ended as `ending`, and what the command said as `said`, its last
-32 lines, with `saidDropped` counting the rest. A
-malformed line, an unknown method and wrong params get JSON-RPC's errors, with linger's answer in
-their `data`. linger's own chooser reads the same records: it runs `ls --porcelain`, which prints
-the listing `sessions/list` sends, each key and value clean text. A `name@host` session reaches its
+32 lines, with `saidDropped` counting the rest. An
+unknown method and wrong params get JSON-RPC's errors, with linger's answer in their `data`.
+`ls --porcelain` prints exactly the records `sessions/list` sends, one canonical JSON object a line,
+each key and value clean text, and linger's own chooser reads them so. A `name@host` session reaches its
 host's `serve`, as on the command line. Once its standard input ends, it answers the requests it
 read and exits.
 
@@ -165,6 +176,8 @@ repaint and the handback are the same as for a local session, and the far end ne
 `ls -r` calls `sessions/list` of each host and lists the records it returns, each named
 `name@host`. A host that does not answer within 3 s lists as `?`; a host whose linger does not
 speak `serve` is refused, `HOST runs a linger without serve; install a current linger there`, and
-lists as `?` with that `reason` in `ls -r --porcelain`. The chooser lists remote hosts when it
+lists as `?` with that `reason` in `ls -r --porcelain`; so is one whose `serve` writes other JSON than
+canonical, as a linger from before canonical JSON does, `HOST runs a linger whose serve does not
+write canonical JSON (REASON); install a current linger there`. The chooser lists remote hosts when it
 opens and when you press Ctrl-L, which also redraws the screen, and its header says how long ago
 it listed them, as `remote 12s`.

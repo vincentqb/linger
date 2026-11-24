@@ -3,6 +3,8 @@ module
 import all Linger.Selector.CoreCode.Picker
 meta import Linger.Selector.CoreCode.Picker
 import Linger.Display.CoreCode.Status
+import Linger.Os.CoreCode.Json
+meta import Linger.Os.CoreCode.Json
 
 /-! Concrete selector fixtures. General contracts live in `Linger.Selector.Proofs.Picker`. -/
 
@@ -29,98 +31,97 @@ namespace Linger.Selector.Picker.Tests
   visible ["work", "wk", "a-w-k", "Work", "other", "work"] "WK" ==
     ["work", "wk", "a-w-k", "Work", "work"]
 
-#guard
-  match parseListing "name\tmy work ✓\npid\t123\n\nname\t+work\nname\twork@me@dev-a\n" with
-  | .ok targets => targets == ["my work ✓", "+work", "work@me@dev-a"]
-  | .error _ => false
+/-- A listing of these records, one canonical JSON line each, as `ls --porcelain` prints them. -/
+def listing (records : List (List (String × String))) : String :=
+  String.join
+    (records.map fun record =>
+      (Json.render (.obj (record.map fun (key, value) => (key, .str value)))).push '\n')
+
+/-- The targets a listing's text gives, or none when the chooser refuses it. -/
+def listed (text : String) : Option (List String) :=
+  (parseSnapshot text).toOption.map (·.candidates)
 
 #guard
-  match parseListing "unknown\tmetadata\tfields\nnames\tnot-a-name\nname\twork@世界" with
-  | .ok targets => targets == ["work@世界"]
-  | .error _ => false
+  listed
+      (listing
+        [[("name", "my work ✓"), ("pid", "123")], [("name", "+work")],
+          [("name", "work@me@dev-a")]]) ==
+    some ["my work ✓", "+work", "work@me@dev-a"]
+
+-- a record without a name is no target, whatever else it holds
+#guard
+  listed (listing [[("unknown", "metadata")], [("names", "not-a-name")], [("name", "work@世界")]]) ==
+    some ["work@世界"]
 
 #guard
-  ["", "\n", "pid\t123\nstate\trunning\n"].all fun text =>
-    match parseListing text with
-    | .ok targets => targets.isEmpty
-    | .error _ => false
+  ["", "\n", listing [[("pid", "123"), ("state", "running")]]].all fun text =>
+    listed text == some []
 
+-- a line that is not a canonical object of strings refuses the whole listing
 #guard
-  ["name", "name\t", "name\twork\textra", "name\t\twork", "name\twork\t"].all fun text =>
-    match parseListing text with
-    | .error _ => true
-    | .ok _ => false
+  ["name\twork\n", "{\"name\": \"work\"}\n", "{\"name\":\"work\",\"pid\":5}\n", "[\"work\"]\n",
+        "{\"pid\":\"1\",\"name\":\"work\"}\n", "{\"name\":\"work\"}\n{\"name\":\"other\"\n"].all
+    fun text => listed text == none
 
 #guard
   ["\x00", "\x01", "\r", "\x1b", "\x7f", "\u0085", "\u009b"].all fun control =>
-    match parseListing ("name\twork@" ++ control ++ "host") with
-    | .error _ => true
-    | .ok _ => false
+    listed (listing [[("name", "work@" ++ control ++ "host")]]) == none
 
 #guard
-  ["-a b", "   ", "@host", "a\tb", String.ofList (List.replicate 121 'a')].all fun target =>
-    match parseListing ("name\t" ++ target) with
-    | .error _ => true
-    | .ok _ => false
+  ["-a b", "   ", "@host", "a\tb", String.ofList (List.replicate 121 'a'), "work@"].all
+    fun target => listed (listing [[("name", target)]]) == none
 
 #guard
-  match parseListing "name\twork@" with
-  | .error _ => true
-  | .ok _ => false
+  listed (listing [[("name", "work"), ("pid", "123")], [("name", "work")], [("name", "other")]]) ==
+    none
 
 #guard
-  match parseListing "name\twork\npid\t123\nname\twork\nname\tother\n" with
-  | .error _ => true
-  | .ok _ => false
-
-#guard
-  match parseListing "name\twork@host\nname\twork\nname\twork@other\n" with
-  | .ok targets => targets == ["work@host", "work", "work@other"]
-  | .error _ => false
+  listed (listing [[("name", "work@host")], [("name", "work")], [("name", "work@other")]]) ==
+    some ["work@host", "work", "work@other"]
 
 -- A malformed later record rejects the entire listing, including its valid prefix.
-#guard
-  match parseListing "name\twork\nname\tother\textra" with
-  | .error _ => true
-  | .ok _ => false
+#guard listed (listing [[("name", "work")]] ++ "{\"name\":\"other\",\"x\":[]}\n") == none
 
+-- the diagnostics name no text of the listing
 #guard
-  ["name\twork@\x1b[2J", "name\t-a b", "name\twork\nname\twork"].all fun text =>
-    match parseListing text with
+  [listing [[("name", "work@\x1b[2J")]], listing [[("name", "-a b")]],
+        listing [[("name", "work")], [("name", "work")]], "{\"name\":\"\\u001b[2J\" }\n"].all
+    fun text =>
+    match parseSnapshot text with
     | .error error => error.toList.all fun char => char.toNat ≥ 32 && char.toNat < 127
     | .ok _ => false
 
 #guard
   match
     parseSnapshot
-      "name\twork@host\nstatus\tworking\ncmd\tvim\npid\t42\nlabel.project\tdemo\nclients\t2\nname\tother\n" with
+      (listing
+        [[("name", "work@host"), ("status", "working"), ("cmd", "vim"), ("pid", "42"),
+            ("label.project", "demo"), ("clients", "2")],
+          [("name", "other")]]) with
   | .ok snapshot =>
     snapshot.candidates == ["work@host", "other"] &&
       snapshot.row "work@host" ==
-        [("name", "work@host"), ("status", "working"), ("cmd", "vim"), ("pid", "42"),
-          ("label.project", "demo"), ("clients", "2")] &&
+        [("clients", "2"), ("cmd", "vim"), ("label.project", "demo"), ("name", "work@host"),
+          ("pid", "42"), ("status", "working")] &&
       snapshot.row "other" == [("name", "other")]
   | .error _ => false
 
 #guard
-  match parseSnapshot "name\twork\ncmd\tvim\n\ncmd\toutside\nname\tother\npid\t5\n" with
+  match
+    parseSnapshot
+      (listing
+        [[("name", "work"), ("cmd", "vim")], [("cmd", "outside")],
+          [("name", "other"), ("pid", "5")]]) with
   | .ok snapshot =>
-    snapshot.row "work" == [("name", "work"), ("cmd", "vim")] &&
-      snapshot.row "other" == [("name", "other"), ("pid", "5")]
+    snapshot.row "work" == [("cmd", "vim"), ("name", "work")] &&
+      snapshot.row "other" == [("name", "other"), ("pid", "5")] &&
+      snapshot.row "missing" == [("name", "missing")]
   | .error _ => false
 
 #guard
-  ["name\twork\nstatus\tidle\nname\t-a b", "name\twork\ncmd\tvim\nname\twork",
-        "name\twork\nstatus\tworking\nname\tother\textra"].all
-    fun text =>
-    match parseSnapshot text with
-    | .error _ => true
-    | .ok _ => false
-
-#guard
   ["status", "cmd", "pid", "label.project", "clients"].all fun key =>
-    match parseSnapshot s!"name\twork\n{key}\tbefore\n",
-      parseSnapshot s!"name\twork\n{key}\tafter\n" with
+    match parseSnapshot (listing [[("name", "work"), (key, "before")]]),
+      parseSnapshot (listing [[("name", "work"), (key, "after")]]) with
     | .ok old, .ok fresh =>
       old.candidates == fresh.candidates && old != fresh &&
         (fresh.row "work").lookup key == some "after"
@@ -130,8 +131,11 @@ namespace Linger.Selector.Picker.Tests
 
 -- A local-only listing replaces the local rows and keeps the last full listing's remote ones.
 #guard
-  match parseSnapshot "name\twork\nstatus\tidle\n\nname\tdev@host\nstatus\tworking\n\n",
-    parseSnapshot "name\tfresh\nstatus\tidle\n\n" with
+  match
+    parseSnapshot
+      (listing
+        [[("name", "work"), ("status", "idle")], [("name", "dev@host"), ("status", "working")]]),
+    parseSnapshot (listing [[("name", "fresh"), ("status", "idle")]]) with
   | .ok full, .ok latest =>
     let merged := latest.withRemote full
     merged.candidates == ["fresh", "dev@host"] &&
@@ -142,14 +146,16 @@ namespace Linger.Selector.Picker.Tests
 
 -- `ls -r` lists local rows first, so a full listing merged with itself is unchanged.
 #guard
-  match parseSnapshot "name\twork\ncmd\tvim\nname\tdev@host\ncmd\tsh\n" with
+  match
+    parseSnapshot
+      (listing [[("name", "work"), ("cmd", "vim")], [("name", "dev@host"), ("cmd", "sh")]]) with
   | .ok full =>
     full.withRemote full == full && (full.withRemote {}).candidates == ["work"] &&
       (({} : Snapshot).withRemote full).candidates == ["dev@host"]
   | .error _ => false
 
 #guard
-  match parseSnapshot "name\twork\ncmd\tvi\x1b[31m\u009b31m\n" with
+  match parseSnapshot (listing [[("name", "work"), ("cmd", "vi\x1b[31m\u009b31m")]]) with
   | .ok snapshot =>
     let pieces := presentation snapshot snapshot.laidOut (.existing "work")
     pieces == Linger.Display.Listing.rowPieces snapshot.laidOut (snapshot.row "work") &&
@@ -157,7 +163,7 @@ namespace Linger.Selector.Picker.Tests
   | .error _ => false
 
 #guard
-  match parseSnapshot "name\twork\nname\tother\n" with
+  match parseSnapshot (listing [[("name", "work")], [("name", "other")]]) with
   | .ok snapshot =>
     String.ofList ((presentation snapshot snapshot.laidOut (.existing "work")).flatMap (·.text)) ==
         "  ? work  (busy)" &&
@@ -170,7 +176,11 @@ namespace Linger.Selector.Picker.Tests
 -- the command and the description repeat the query; the description, which names the command,
 -- hides it.
 #guard
-  match parseSnapshot "name\taxab\nstatus\tworking\ncmd\tab\ndescription\tab\nclients\t2\n" with
+  match
+    parseSnapshot
+      (listing
+        [[("name", "axab"), ("status", "working"), ("cmd", "ab"), ("description", "ab"),
+            ("clients", "2")]]) with
   | .ok snapshot =>
     let chars :=
       highlightedPresentation snapshot { snapshot.laidOut with nameCol := 8 } "ab"
@@ -184,7 +194,9 @@ namespace Linger.Selector.Picker.Tests
 
 -- The query finds a row by its description as by its name, and the snapshot carries each row's.
 #guard
-  match parseSnapshot "name\twork\ndescription\tfixing the parser\nname\tother\n" with
+  match
+    parseSnapshot
+      (listing [[("name", "work"), ("description", "fixing the parser")], [("name", "other")]]) with
   | .ok snapshot =>
     snapshot.descriptions == [("work", "fixing the parser")] &&
       items snapshot.candidates "parser" false snapshot.descriptions == [.existing "work"] &&
@@ -321,8 +333,11 @@ def lineText (line : List (String × List (List Nat))) : String := String.join (
 -- The header says how long ago the listing that fetched the remote rows started, in a row's age
 -- format, only when the snapshot holds remote rows; the footer names Ctrl-L as the refresh key.
 #guard
-  match parseSnapshot "name\twork\nstatus\tidle\nname\tdev@host\nstatus\tworking\n",
-    parseSnapshot "name\twork\nstatus\tidle\n" with
+  match
+    parseSnapshot
+      (listing
+        [[("name", "work"), ("status", "idle")], [("name", "dev@host"), ("status", "working")]]),
+    parseSnapshot (listing [[("name", "work"), ("status", "idle")]]) with
   | .ok remote, .ok localOnly =>
     let statusOf := fun (_ : String) =>
       ({ attention := .none, state := .idle } : Linger.Display.Status.Status)
@@ -341,7 +356,11 @@ def lineText (line : List (String × List (List Nat))) : String := String.join (
 
 -- Only the header carries the age, so a new age changes that one row of the frame.
 #guard
-  match parseSnapshot "name\twork\nstatus\tidle\nname\tdev@host\nstatus\tworking\n" with
+  match
+    parseSnapshot
+      (listing
+        [[("name", "work"), ("status", "idle")],
+          [("name", "dev@host"), ("status", "working")]]) with
   | .ok snapshot =>
     let statusOf := fun (_ : String) =>
       ({ attention := .none, state := .idle } : Linger.Display.Status.Status)
@@ -483,11 +502,14 @@ def lineText (line : List (String × List (List Nat))) : String := String.join (
 #guard
   match
     parseSnapshot
-      "source\t/tmp/save file\nsaved\t2026-10-03T10:15:00Z\n\nname\twork\nstatus\tresumable\ncmd\tpane command\ndirectory\t\"/tmp/exact\\tpath\\n\\\"quoted\\\"\"\nline\t4\n" with
+      (listing
+        [[("source", "/tmp/save file"), ("saved", "2026-10-03T10:15:00Z")],
+          [("name", "work"), ("status", "resumable"), ("cmd", "pane command"),
+            ("directory", "\"/tmp/exact\\tpath\\n\\\"quoted\\\"\""), ("line", "4")]]) with
   | .ok snapshot =>
     snapshot.candidates == ["work"] &&
-      snapshot.records.take 2 ==
-        [["source", "/tmp/save file"], ["saved", "2026-10-03T10:15:00Z"]] &&
+      snapshot.records.take 1 ==
+        [[("saved", "2026-10-03T10:15:00Z"), ("source", "/tmp/save file")]] &&
       (snapshot.row "work").lookup "directory" == some "\"/tmp/exact\\tpath\\n\\\"quoted\\\"\"" &&
       (snapshot.row "work").lookup "line" == some "4" &&
       String.ofList
@@ -497,8 +519,8 @@ def lineText (line : List (String × List (List Nat))) : String := String.join (
 
 -- A changed directory changes the snapshot even if its pane identity stays put.
 #guard
-  match parseSnapshot "name\twork\ndirectory\t\"/tmp/old\"\n",
-    parseSnapshot "name\twork\ndirectory\t\"/tmp/new\"\n" with
+  match parseSnapshot (listing [[("name", "work"), ("directory", "\"/tmp/old\"")]]),
+    parseSnapshot (listing [[("name", "work"), ("directory", "\"/tmp/new\"")]]) with
   | .ok old, .ok fresh =>
     old.candidates == fresh.candidates && old != fresh &&
       (old.row "work").lookup "directory" == some "\"/tmp/old\"" &&

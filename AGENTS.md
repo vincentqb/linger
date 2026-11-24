@@ -56,9 +56,10 @@ or `WorldCode`, as the Lean Software Challenge reads it, and any other module is
   `WorldCode.lean` and `WorldCode/` its IO, and `WorldCode/Checks.lean` the checks of its world
   claims; then `Proofs/`, `Tests/` (elaboration-time unit tests) and `Suites/` (executable
   suites).
-- `Linger/Os/`: the answers every command gives (`CoreSpec.lean`, `CoreCode/Answer.lean`),
-  linger's environment policies (`CoreCode/Env.lean`) and the shim's smoke tests
-  (`Suites/Shim.lean`, `./lake exe lingertest`).
+- `Linger/Os/`: the answers every command gives (`CoreSpec.lean`, `CoreCode/Answer.lean`), the
+  canonical JSON linger writes and reads, `serve`'s lines, a host's replies and `ls --porcelain`
+  (`CoreSpec.lean`, `CoreCode/Json.lean`), linger's environment policies (`CoreCode/Env.lean`)
+  and the shim's smoke tests (`Suites/Shim.lean`, `./lake exe lingertest`).
 - `Linger/Target/`: session names, remote targets and the transports that reach their hosts, and
   the world claim of transports.
 - `Linger/Display/`: session status, titles and listings.

@@ -12,6 +12,7 @@ import Input.Proofs
 import all Linger.Display.Proofs.View
 import all Linger.Display.Proofs.Listing
 public import Linger.Selector.CoreSpec
+import Linger.Os.CoreCode.Json
 
 /-! Selection contracts within and between listing snapshots.
 
@@ -41,165 +42,215 @@ theorem matches_length_le (query target : String)
   simpa only [List.length_map, String.length_toList] using
     ((matches_iff_sublist query target).mp h).length_le
 
-theorem parseRow_some (fields : List String) (target : String)
-    (h : parseRow fields = .ok (some target)) :
-    fields = ["name", target] ∧ Linger.Target.Remote.targetValid target = true := by
-  unfold parseRow at h
-  repeat' (split at h <;> (try simp_all))
+/-- A listing field is read only as a string. -/
+theorem fieldText_error (member : String × Json) (error : String)
+    (h : fieldText member = .error error) : error = "a listing field that is not a string" := by
+  unfold fieldText at h
+  split at h
+  · cases h
+  · cases h; rfl
 
-theorem parseRow_none (fields : List String) (h : parseRow fields = .ok none) :
-    fields.head? ≠ some "name" := by
-  unfold parseRow at h
-  repeat' (split at h <;> (try simp_all))
+/-- A listing line's diagnostics use a fixed vocabulary, naming no text of the line. -/
+theorem lineRecord_error (line error : String) (h : lineRecord line = .error error) :
+    error = "a listing line that is not canonical JSON" ∨
+      error = "a listing field that is not a string" ∨
+      error = "a listing line that is not an object" := by
+  unfold lineRecord at h
+  split at h
+  · cases h; exact .inl rfl
+  · rename_i members _
+    suffices
+      ∀ (ms : List (String × Json)),
+        ms.mapM fieldText = .error error → error = "a listing field that is not a string"
+      from .inr (.inl (this members h))
+    intro ms
+    induction ms with
+    | nil =>
+      intro h; cases h
+    | cons m rest ih =>
+      intro h
+      simp only [List.mapM_cons] at h
+      cases hm : fieldText m with
+      | error e =>
+        simp only [hm, bind, Except.bind] at h
+        cases h
+        exact fieldText_error m _ hm
+      | ok field =>
+        simp only [hm, bind, Except.bind] at h
+        cases hr : rest.mapM fieldText with
+        | error e =>
+          simp only [hr] at h
+          cases h
+          exact ih hr
+        | ok more => simp [hr, pure, Except.pure] at h
+  · cases h; exact .inr (.inr rfl)
 
-theorem parseRow_error (fields : List String) (error : String)
-    (h : parseRow fields = .error error) :
-    error = "invalid session target in listing" ∨ error = "malformed name record in listing" := by
-  unfold parseRow at h
-  repeat' (split at h <;> (try simp_all))
-
-theorem parseRows_sound (seen rows targets : List String) (h : parseRows seen rows = .ok targets) :
-    (∀ target ∈ targets, Linger.Target.Remote.targetValid target = true) ∧
-      targets.Nodup ∧
-      (∀ target ∈ targets, target ∉ seen) ∧
-      targets.map (fun target => ["name", target]) =
-        (rows.map lineFields).filter (fun fields => fields.head? == some "name") := by
-  induction rows generalizing seen targets with
+/-- **The targets of records**: each record's name, in order, each a valid target that no record
+before it, nor any of `seen`, names. -/
+theorem targets_sound (seen : List String) (records : List (List (String × String)))
+    (ts : List String) (h : targets seen records = .ok ts) :
+    (∀ t ∈ ts, Linger.Target.Remote.targetValid t = true) ∧
+      ts.Nodup ∧ (∀ t ∈ ts, t ∉ seen) ∧ ts = records.filterMap (·.lookup "name") := by
+  induction records generalizing seen ts with
   | nil =>
-    simp only [parseRows, Except.ok.injEq] at h
-    subst targets
+    simp only [targets, Except.ok.injEq] at h
+    subst ts
     simp
-  | cons row rows ih =>
-    simp only [parseRows] at h
-    cases hrow : parseRow (lineFields row) with
-    | error error => simp [hrow] at h
-    | ok result =>
-      cases result with
-      | none =>
-        simp only [hrow] at h
-        obtain ⟨valid, distinct, fresh, records⟩ := ih seen targets h
-        refine ⟨valid, distinct, fresh, ?_⟩
-        simpa [parseRow_none _ hrow] using records
-      | some target =>
-        simp only [hrow] at h
+  | cons record rest ih =>
+    simp only [targets] at h
+    cases hname : record.lookup "name" with
+    | none =>
+      simp only [hname] at h
+      obtain ⟨valid, distinct, fresh, eq⟩ := ih seen ts h
+      exact ⟨valid, distinct, fresh, by simp [hname, eq]⟩
+    | some target =>
+      simp only [hname] at h
+      split at h
+      · cases h
+      · rename_i valid
         split at h
         · cases h
-        · rename_i hskip
-          cases hrest : parseRows (target :: seen) rows with
-          | error error => simp [hrest, Except.map] at h
-          | ok rest =>
+        · rename_i fresh
+          cases hrest : targets (target :: seen) rest with
+          | error e => simp [hrest, Except.map] at h
+          | ok more =>
             simp only [hrest, Except.map, Except.ok.injEq] at h
-            subst targets
-            obtain ⟨valid, distinct, fresh, records⟩ := ih (target :: seen) rest hrest
-            obtain ⟨fields, targetValid⟩ := parseRow_some _ target hrow
-            refine ⟨?_, ?_, ?_, ?_⟩
-            · intro t ht
-              rcases List.mem_cons.mp ht with rfl | ht
-              · exact targetValid
-              · exact valid t ht
-            · exact List.nodup_cons.mpr ⟨fun ht => fresh target ht (by simp), distinct⟩
-            · intro t ht
-              rcases List.mem_cons.mp ht with rfl | ht
-              · simpa using hskip
-              · intro hs
-                exact fresh t ht (List.mem_cons_of_mem _ hs)
-            · simp [fields, records]
+            subst ts
+            obtain ⟨valids, distinct, freshes, eq⟩ := ih (target :: seen) more hrest
+            refine ⟨?_, ?_, ?_, by simp [hname, eq]⟩
+            · intro t member
+              rcases List.mem_cons.mp member with rfl | member
+              · simpa using valid
+              · exact valids t member
+            · exact List.nodup_cons.mpr ⟨fun inMore => freshes target inMore (by simp), distinct⟩
+            · intro t member
+              rcases List.mem_cons.mp member with rfl | member
+              · simpa using fresh
+              · exact fun inSeen => freshes t member (List.mem_cons_of_mem _ inSeen)
 
-theorem parseRows_error (seen rows : List String) (error : String)
-    (h : parseRows seen rows = .error error) :
+/-- The targets' diagnostics use a fixed vocabulary, naming no target. -/
+theorem targets_error (seen : List String) (records : List (List (String × String)))
+    (error : String) (h : targets seen records = .error error) :
     error = "invalid session target in listing" ∨
-      error = "malformed name record in listing" ∨
       error = "duplicate session target in listing" := by
-  induction rows generalizing seen with
-  | nil => simp [parseRows] at h
-  | cons row rows ih =>
-    simp only [parseRows] at h
-    cases hrow : parseRow (lineFields row) with
-    | error reason =>
-      simp only [hrow, Except.error.injEq] at h
-      subst reason
-      rcases parseRow_error _ error hrow with invalid | malformed
-      · exact Or.inl invalid
-      · exact Or.inr (Or.inl malformed)
-    | ok result =>
-      cases result with
-      | none =>
-        simp only [hrow] at h
-        exact ih seen h
-      | some target =>
-        simp only [hrow] at h
-        split at h
-        · cases h
-          exact Or.inr (Or.inr rfl)
-        · cases hrest : parseRows (target :: seen) rows with
-          | error reason =>
+  induction records generalizing seen with
+  | nil => simp [targets] at h
+  | cons record rest ih =>
+    simp only [targets] at h
+    cases hname : record.lookup "name" with
+    | none =>
+      simp only [hname] at h; exact ih seen h
+    | some target =>
+      simp only [hname] at h
+      split at h
+      · cases h; exact .inl rfl
+      · split at h
+        · cases h; exact .inr rfl
+        · cases hrest : targets (target :: seen) rest with
+          | error e =>
             simp only [hrest, Except.map, Except.error.injEq] at h
-            subst reason
+            subst e
             exact ih (target :: seen) hrest
-          | ok rest => simp [hrest, Except.map] at h
+          | ok more => simp [hrest, Except.map] at h
 
-/-- Successful parsing retains every name record, in order, with its exact target.
-The equality also excludes silently dropping valid records or accepting partial ones. -/
-theorem parseListing_records (text : String) (targets : List String)
-    (h : parseListing text = .ok targets) :
-    targets.map (fun target => ["name", target]) =
-      ((listingLines text).map lineFields).filter
-        (fun fields => fields.head? == some "name") := (parseRows_sound [] _ targets h).2.2.2
+/-- Metadata publication is conditional on complete exact-target validation: a snapshot holds
+every line's record, and its targets are their names. -/
+theorem parseSnapshot_complete (text : String) (snapshot : Snapshot)
+    (h : Linger.Selector.Picker.parseSnapshot text = .ok snapshot) :
+    (listingLines text).mapM lineRecord = .ok snapshot.records ∧
+      targets [] snapshot.records = .ok snapshot.candidates := by
+  unfold parseSnapshot at h
+  cases hr : (listingLines text).mapM lineRecord with
+  | error e => simp [hr, bind, Except.bind] at h
+  | ok records =>
+    simp only [hr, bind, Except.bind] at h
+    cases ht : targets [] records with
+    | error e => simp [ht] at h
+    | ok candidates =>
+      simp only [ht, pure, Except.pure, Except.ok.injEq] at h
+      subst h
+      exact ⟨rfl, ht⟩
 
 /-- Parsing supplies unique identities, canonical local names, and printable exact
 targets. A present remote suffix is nonempty; additional `@` characters are retained. -/
-theorem parseListing_valid (text : String) (targets : List String)
-    (h : parseListing text = .ok targets) :
-    targets.Nodup ∧
-      ∀ target ∈ targets,
+theorem parseSnapshot_valid (text : String) (snapshot : Snapshot)
+    (h : Linger.Selector.Picker.parseSnapshot text = .ok snapshot) :
+    snapshot.candidates.Nodup ∧
+      ∀ target ∈ snapshot.candidates,
         target ≠ "" ∧
           Linger.Target.Name.Accepted ((target.splitOn "@").headD "") ∧
           (∀ char ∈ target.toList, 32 ≤ char.toNat ∧ (char.toNat < 127 ∨ 160 ≤ char.toNat)) ∧
           ((target.splitOn "@").tail = [] ∨
             String.intercalate "@" (target.splitOn "@").tail ≠ "") := by
-  obtain ⟨valid, distinct, -⟩ := parseRows_sound [] _ targets h
+  obtain ⟨valid, distinct, -⟩ := targets_sound [] _ _ (parseSnapshot_complete text snapshot h).2
   refine ⟨distinct, ?_⟩
   intro target ht
   obtain ⟨nonempty, nameValid, clean, host⟩ :=
     (Linger.Target.Remote.targetValid_iff target).mp (valid target ht)
   exact ⟨nonempty, nameValid, clean, host⟩
 
-theorem parseListing_provenance (text : String) (targets : List String)
-    (h : parseListing text = .ok targets) (target : String) (ht : target ∈ targets) :
-    ∃ row ∈ listingLines text, lineFields row = ["name", target] := by
-  have hm : ["name", target] ∈ targets.map (fun target => ["name", target]) :=
-    List.mem_map.mpr ⟨target, ht, rfl⟩
-  rw [parseListing_records text targets h] at hm
-  exact List.mem_map.mp (List.mem_filter.mp hm).1
+/-- Every target is the name of a record the listing holds. -/
+theorem parseSnapshot_provenance (text : String) (snapshot : Snapshot)
+    (h : Linger.Selector.Picker.parseSnapshot text = .ok snapshot) (target : String)
+    (ht : target ∈ snapshot.candidates) :
+    ∃ record ∈ snapshot.records, record.lookup "name" = some target := by
+  obtain ⟨-, -, -, eq⟩ := targets_sound [] _ _ (parseSnapshot_complete text snapshot h).2
+  rw [eq] at ht
+  obtain ⟨record, member, named⟩ := List.mem_filterMap.mp ht
+  exact ⟨record, member, named⟩
 
-/-- Diagnostics use a fixed vocabulary; untrusted target text is never echoed. -/
-theorem parseListing_error_safe (text error : String) (h : parseListing text = .error error) :
+/-- A line's records, all of whose diagnostics use the fixed vocabulary. -/
+theorem mapM_lineRecord_error (lines : List String) (error : String)
+    (h : lines.mapM lineRecord = .error error) :
+    error = "a listing line that is not canonical JSON" ∨
+      error = "a listing field that is not a string" ∨
+      error = "a listing line that is not an object" := by
+  induction lines with
+  | nil => cases h
+  | cons line rest ih =>
+    simp only [List.mapM_cons] at h
+    cases hl : lineRecord line with
+    | error e =>
+      simp only [hl, bind, Except.bind] at h
+      cases h
+      exact lineRecord_error line _ hl
+    | ok record =>
+      simp only [hl, bind, Except.bind] at h
+      cases hr : rest.mapM lineRecord with
+      | error e =>
+        simp only [hr] at h
+        cases h
+        exact ih hr
+      | ok more => simp [hr, pure, Except.pure] at h
+
+/-- Diagnostics use a fixed vocabulary; untrusted listing text is never echoed. -/
+theorem parseSnapshot_error_safe (text error : String)
+    (h : Linger.Selector.Picker.parseSnapshot text = .error error) :
     ∀ char ∈ error.toList, 32 ≤ char.toNat ∧ char.toNat < 127 := by
-  rcases parseRows_error [] _ error h with rfl | rfl | rfl <;> decide
-
-/-- Metadata publication is conditional on complete exact-target validation, and
-retains every original record rather than synthesizing missing observations. -/
-theorem parseSnapshot_complete (text : String) (snapshot : Snapshot)
-    (h : Linger.Selector.Picker.parseSnapshot text = .ok snapshot) :
-    parseListing text = .ok snapshot.candidates ∧
-      snapshot.records = (listingLines text).map lineFields := by
   unfold parseSnapshot at h
-  cases hp : parseListing text with
-  | error error => simp [hp, Except.map] at h
-  | ok candidates =>
-    simp only [hp, Except.map, Except.ok.injEq] at h
+  cases hr : (listingLines text).mapM lineRecord with
+  | error e =>
+    simp only [hr, bind, Except.bind] at h
     cases h
-    exact ⟨rfl, rfl⟩
-
-/-- Any malformed target anywhere rejects the metadata snapshot too. -/
-theorem parseSnapshot_rejects (text error : String) (h : parseListing text = .error error) :
-    Linger.Selector.Picker.parseSnapshot text = .error error := by
-  simp [parseSnapshot, h, Except.map]
+    rcases mapM_lineRecord_error _ _ hr with rfl | rfl | rfl <;> decide
+  | ok records =>
+    simp only [hr, bind, Except.bind] at h
+    cases ht : targets [] records with
+    | error e =>
+      simp only [ht] at h
+      cases h
+      rcases targets_error [] records _ ht with rfl | rfl <;> decide
+    | ok candidates => simp [ht, pure, Except.pure] at h
 
 /-- The identity comes from the validated selection; metadata cannot rename it. -/
 theorem snapshot_row_name (snapshot : Snapshot) (target : String) :
     (Linger.Selector.Picker.Snapshot.row snapshot target).lookup "name" = some target := by
-  simp [Snapshot.row]
+  unfold Snapshot.row
+  cases found : snapshot.records.find? (fun record => record.lookup "name" == some target) with
+  | none => simp
+  | some record =>
+    have := List.find?_some found
+    simpa using this
 
 /-! Remote rows refresh from the latest listing that queried remote hosts, and local
 rows from the latest listing; each row keeps exactly the metadata its source reported. -/
@@ -215,165 +266,38 @@ theorem remoteTarget_check (name : String) (h : Linger.Target.Name.check name = 
     have hmem : '@' ∈ name.toList := by simpa using hc
     exact absurd rfl (Linger.Target.Name.okChar_no_at '@' (hvalid.2.2.1 '@' hmem))
 
-/-- The metadata records `Snapshot.row` reads for `target`. -/
-def rowMeta (records : List (List String)) (target : String) : List (List String) :=
-  (records.dropWhile (· != ["name", target])).tail.takeWhile fun fields =>
-    fields != [""] && fields.head? != some "name"
-
-theorem row_congr (a b : Snapshot) (target : String)
-    (h : rowMeta a.records target = rowMeta b.records target) : a.row target = b.row target := by
-  simp only [rowMeta] at h
-  simp only [Snapshot.row]
-  rw [h]
-
-theorem rowRecords_cons (keep : String → Bool) (current : Bool) (fields : List String)
-    (rest : List (List String)) :
-    rowRecords keep current (fields :: rest) =
-      let next := if fields.head? == some "name" then keep (fields[1]?.getD "") else current
-      if next then fields :: rowRecords keep next rest else rowRecords keep next rest := rfl
-
-theorem takeWhile_rowRecords_false (keep : String → Bool) (records : List (List String)) :
-    (rowRecords keep false records).takeWhile
-        (fun fields => fields != [""] && fields.head? != some "name") =
-      [] := by
-  induction records with
-  | nil => rfl
-  | cons fields rest ih =>
-    rw [rowRecords_cons]
-    by_cases hname : fields.head? = some "name"
-    · simp only [hname, beq_self_eq_true, ↓reduceIte]
-      cases keep (fields[1]?.getD "") with
-      | true => simp [hname]
-      | false => exact ih
-    · have : (fields.head? == some "name") = false := by simpa using hname
-      simp only [this]
-      exact ih
-
-theorem takeWhile_rowRecords_true (keep : String → Bool) (records : List (List String)) :
-    (rowRecords keep true records).takeWhile
-        (fun fields => fields != [""] && fields.head? != some "name") =
-      records.takeWhile (fun fields => fields != [""] && fields.head? != some "name") := by
-  induction records with
-  | nil => rfl
-  | cons fields rest ih =>
-    rw [rowRecords_cons]
-    by_cases hname : fields.head? = some "name"
-    · simp only [hname, beq_self_eq_true, ↓reduceIte]
-      cases keep (fields[1]?.getD "") with
-      | true => simp [hname]
-      | false =>
-        simp only [Bool.false_eq_true, ↓reduceIte]
-        rw [takeWhile_rowRecords_false]
-        simp [hname]
-    · have : (fields.head? == some "name") = false := by simpa using hname
-      simp only [this, Bool.false_eq_true, ↓reduceIte, List.takeWhile_cons]
-      rw [ih]
-
-/-- A kept row reads the same metadata as in the listing it came from. -/
-theorem rowMeta_rowRecords (keep : String → Bool) (current : Bool) (records : List (List String))
-    (target : String) (hkeep : keep target = true) :
-    rowMeta (rowRecords keep current records) target = rowMeta records target := by
-  induction records generalizing current with
-  | nil => rfl
-  | cons fields rest ih =>
-    rw [rowRecords_cons]
-    by_cases hfields : fields = ["name", target]
-    · subst hfields
-      simp only [List.head?_cons, beq_self_eq_true, ↓reduceIte, List.getElem?_cons_succ,
-        List.getElem?_cons_zero, Option.getD_some, hkeep]
-      simp only [rowMeta, List.dropWhile_cons, bne_self_eq_false, Bool.false_eq_true, ↓reduceIte,
-        List.tail_cons]
-      exact takeWhile_rowRecords_true keep rest
-    · have hne : (fields != ["name", target]) = true := by simpa using hfields
-      generalize (if fields.head? == some "name" then keep (fields[1]?.getD "") else current) = next
-      cases next with
-      | true =>
-        simp only [↓reduceIte]
-        simp only [rowMeta, List.dropWhile_cons, hne, ↓reduceIte] at ih ⊢
-        exact ih true
-      | false =>
-        simp only [Bool.false_eq_true, ↓reduceIte]
-        rw [ih false]
-        simp only [rowMeta, List.dropWhile_cons, hne, ↓reduceIte]
-
-/-- Every name record a filter keeps names a row it keeps. -/
-theorem rowRecords_name (keep : String → Bool) (current : Bool) (records : List (List String))
-    (target : String) (h : ["name", target] ∈ rowRecords keep current records) :
-    keep target = true := by
-  induction records generalizing current with
-  | nil => simp [rowRecords] at h
-  | cons fields rest ih =>
-    rw [rowRecords_cons] at h
-    by_cases hfields : fields = ["name", target]
-    · subst hfields
-      simp only [List.head?_cons, beq_self_eq_true, ↓reduceIte, List.getElem?_cons_succ,
-        List.getElem?_cons_zero, Option.getD_some] at h
-      cases hk : keep target with
-      | true => rfl
-      | false =>
-        rw [hk] at h
-        simp only [Bool.false_eq_true, ↓reduceIte] at h
-        have := ih false h
-        rw [hk] at this
-        exact this
-    · generalize (if fields.head? == some "name" then keep (fields[1]?.getD "") else current) =
-        next at h
-      cases next with
-      | true =>
-        simp only [↓reduceIte, List.mem_cons] at h
-        rcases h with h | h
-        · exact absurd h.symm hfields
-        · exact ih true h
-      | false =>
-        simp only [Bool.false_eq_true, ↓reduceIte] at h
-        exact ih false h
-
-theorem takeWhile_append_stop (p : List String → Bool) (xs ys : List (List String))
-    (h : ys.takeWhile p = []) : (xs ++ ys).takeWhile p = xs.takeWhile p := by
-  induction xs with
-  | nil => simpa using h
-  | cons x xs ih =>
-    simp only [List.cons_append, List.takeWhile_cons]
-    split <;> simp_all
-
-theorem dropWhile_absent (xs ys : List (List String)) (target : String)
-    (h : ["name", target] ∉ xs) :
-    (xs ++ ys).dropWhile (· != ["name", target]) = ys.dropWhile (· != ["name", target]) := by
+/-- A search that every match of keeps passes a filter finds what it finds without the filter. -/
+theorem find?_filter_of_imp {α : Type} (p q : α → Bool) (xs : List α)
+    (imp : ∀ x, p x = true → q x = true) : (xs.filter q).find? p = xs.find? p := by
   induction xs with
   | nil => rfl
-  | cons x xs ih =>
-    have hx : x ≠ ["name", target] := fun hx => h (hx ▸ List.mem_cons_self)
-    have hrest : ["name", target] ∉ xs := fun hm => h (List.mem_cons_of_mem _ hm)
-    simp only [List.cons_append, List.dropWhile_cons, bne_iff_ne, ne_eq, hx, not_false_eq_true,
-      ↓reduceIte]
-    exact ih hrest
+  | cons x rest ih =>
+    by_cases hp : p x = true
+    · simp [imp x hp, hp]
+    · by_cases hq : q x = true
+      · simp [hq, hp, ih]
+      · simp [hq, hp, ih]
 
-/-- Records after a list that holds no row for `target` and stops every metadata
-read leave that list's metadata for `target` unchanged. -/
-theorem rowMeta_append_stop (xs ys : List (List String)) (target : String)
-    (hstop : ys.takeWhile (fun fields => fields != [""] && fields.head? != some "name") = [])
-    (habsent : ["name", target] ∉ ys) : rowMeta (xs ++ ys) target = rowMeta xs target := by
+/-- A search that no element a filter keeps matches finds nothing there. -/
+theorem find?_filter_none {α : Type} (p q : α → Bool) (xs : List α)
+    (none' : ∀ x, p x = true → q x = false) : (xs.filter q).find? p = none := by
   induction xs with
-  | nil =>
-    have := dropWhile_absent ys [] target habsent
-    simp only [List.append_nil, List.dropWhile_nil] at this
-    simp [rowMeta, this]
-  | cons x xs ih =>
-    by_cases hx : x = ["name", target]
-    · subst hx
-      simp only [rowMeta, List.cons_append, List.dropWhile_cons, bne_self_eq_false,
-        Bool.false_eq_true, ↓reduceIte, List.tail_cons]
-      exact takeWhile_append_stop _ xs ys hstop
-    · have hne : (x != ["name", target]) = true := by simpa using hx
-      simp only [rowMeta, List.cons_append, List.dropWhile_cons, hne, ↓reduceIte] at ih ⊢
-      exact ih
+  | nil => rfl
+  | cons x rest ih =>
+    by_cases hq : q x = true
+    · have hp : p x = false := by
+        cases h : p x with
+        | false => rfl
+        | true => exact absurd hq (by simp [none' x h])
+      simp [hq, hp, ih]
+    · simp [hq, ih]
 
-/-- A row keeps its metadata through a filter that keeps it. -/
-theorem rowRecords_row (keep : String → Bool) (current : Bool) (snapshot : Snapshot)
-    (candidates : List String) (target : String) (hkeep : keep target = true) :
-    Snapshot.row { candidates, records := rowRecords keep current snapshot.records } target =
-      snapshot.row target :=
-  row_congr _ _ target (rowMeta_rowRecords keep current snapshot.records target hkeep)
+/-- A record named `target` is a remote host's exactly when the target is remote. -/
+theorem remoteRecord_named (record : List (String × String)) (target : String)
+    (named : (record.lookup "name" == some target) = true) :
+    remoteRecord record = remoteTarget target := by
+  have : record.lookup "name" = some target := by simpa using named
+  simp [remoteRecord, this]
 
 /-- The merged targets are the latest listing's local targets and the full listing's
 remote ones. -/
@@ -399,28 +323,23 @@ theorem withRemote_nodup (latest full : Snapshot) (hlatest : latest.candidates.N
 theorem withRemote_row_local (latest full : Snapshot) (target : String)
     (hlocal : remoteTarget target = false) :
     (latest.withRemote full).row target = latest.row target := by
-  apply row_congr
-  have habsent : ["name", target] ∉ rowRecords remoteTarget false full.records := fun h => by
-    have := rowRecords_name remoteTarget false full.records target h
-    rw [hlocal] at this
-    exact Bool.false_ne_true this
-  simp only [Snapshot.withRemote]
-  rw [rowMeta_append_stop _ _ target (takeWhile_rowRecords_false _ _) habsent]
-  exact rowMeta_rowRecords _ true latest.records target (by simp [hlocal])
+  simp only [Snapshot.row, Snapshot.withRemote, List.find?_append]
+  rw [find?_filter_of_imp _ _ _ fun record named => by
+      simp [remoteRecord_named record target named, hlocal],
+    find?_filter_none _ _ _ fun record named => by
+      simp [remoteRecord_named record target named, hlocal]]
+  simp
 
 /-- A remote row reads exactly what the latest full listing reported. -/
 theorem withRemote_row_remote (latest full : Snapshot) (target : String)
     (hremote : remoteTarget target = true) :
     (latest.withRemote full).row target = full.row target := by
-  apply row_congr
-  have habsent : ["name", target] ∉ rowRecords (!remoteTarget ·) true latest.records := fun h => by
-    have := rowRecords_name (!remoteTarget ·) true latest.records target h
-    simp [hremote] at this
-  simp only [Snapshot.withRemote]
-  have hdrop := dropWhile_absent _ (rowRecords remoteTarget false full.records) target habsent
-  simp only [rowMeta] at ⊢
-  rw [hdrop]
-  exact rowMeta_rowRecords remoteTarget false full.records target hremote
+  simp only [Snapshot.row, Snapshot.withRemote, List.find?_append]
+  rw [find?_filter_none _ _ _ fun record named => by
+      simp [remoteRecord_named record target named, hremote],
+    find?_filter_of_imp _ _ _ fun record named => by
+      simp [remoteRecord_named record target named, hremote]]
+  simp
 
 /-- The selected existing row has precisely the listing's badge, aligned name,
 details, labels and watchers, with the same style boundaries. -/

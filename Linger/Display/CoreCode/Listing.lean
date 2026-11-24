@@ -2,6 +2,8 @@ module
 
 public import Linger.Display.CoreSpec
 import Linger.Display.CoreCode.Status
+public import Linger.Os.CoreSpec
+import Linger.Os.CoreCode.Json
 import Terminal.CoreCode.Render
 import Terminal.CoreCode.Vt
 
@@ -381,17 +383,18 @@ def terminalListing (withColor : Bool) (width : Option Nat) (rows : List (List (
 (`Render.textChar`), so that no key or value holds the tab or the newline that frame records. -/
 def clean (text : String) : String := text.map Terminal.Render.textChar
 
-/-- Listing rows as records: each key and value clean text (`clean`). -/
+/-- **Listing rows as records**: each key and value clean text (`clean`), and the first field of each
+key by increasing key, as a canonical object lists its members (`Json.sortMembers`). -/
 def records (rows : List (List (String × String))) : List (List (String × String)) :=
-  rows.map fun row => row.map fun (key, value) => (clean key, clean value)
+  rows.map fun row => Json.sortMembers (row.map fun (key, value) => (clean key, clean value))
 
-/-- A field's line of a listing: its key, a tab, its value. -/
-def fieldLine (field : String × String) : List Char := field.1.toList ++ '\t' :: field.2.toList
+/-- A record as JSON: an object, a string member for each field. -/
+def recordJson (record : List (String × String)) : Json :=
+  .obj (record.map fun (key, value) => (key, .str value))
 
-/-- **What `ls --porcelain` prints for listing rows**: each of their records (`records`), a line
-for each field, then a blank line. -/
+/-- **What `ls --porcelain` prints for listing rows**: each of their records (`records`) as one line
+of canonical JSON (`Json.render`), an object of its fields' strings. -/
 def porcelain (rows : List (List (String × String))) : String :=
-  String.ofList
-    (((records rows).flatMap fun record => record.map fieldLine ++ [[]]).flatMap (· ++ ['\n']))
+  String.join ((records rows).map fun record => (Json.render (recordJson record)).push '\n')
 
 end Linger.Display.Listing

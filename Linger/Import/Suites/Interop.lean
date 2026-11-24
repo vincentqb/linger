@@ -241,12 +241,11 @@ private def field (row : List (String × String)) (key : String) : String := (ro
 
 /-- The source rows of a porcelain listing, as records. -/
 private def sourceRecords (listing : String) : List (List (String × String)) :=
-  ((listing.splitOn "\n\n").map records).filter
-    (·.lookup "source" == some Linger.Import.Resurrect.sourceName)
+  (listingRecords listing).filter (·.lookup "source" == some Linger.Import.Resurrect.sourceName)
 
 /-- The porcelain rows of the saved panes `ls` lists match the save's panes `expected`, by name
 order, each with its source, its status and state, the window's name as its description, its
-directory and the provenance an import records. -/
+directory and the provenance an import records, by increasing key. -/
 private def Fixture.rowsMatch (f : Fixture) (text out : String) (expected : List String) : Bool :=
   match Linger.Import.Resurrect.parseSave (f.root / "home").toString text with
   | .error _ => false
@@ -263,11 +262,12 @@ private def Fixture.rowsMatch (f : Fixture) (text out : String) (expected : List
             if pane.dir.isEmpty || (System.FilePath.mk pane.dir).isAbsolute then pane.dir
             else (f.root / pane.dir).toString
           let shown := Linger.Import.Resurrect.diagnostic
+          -- a canonical object lists its keys in increasing order
           row.map (·.1) ==
-              ["name", "state", "status", "source"] ++
-                (if pane.details.windowTitle.isEmpty then [] else ["description"]) ++
-                ["directory", "tmux.session", "tmux.window", "tmux.pane", "tmux.title",
-                  "tmux.command", "tmux.saved-command", "tmux.window-title"] &&
+              (if pane.details.windowTitle.isEmpty then [] else ["description"]) ++
+                ["directory", "name", "source", "state", "status", "tmux.command", "tmux.pane",
+                  "tmux.saved-command", "tmux.session", "tmux.title", "tmux.window",
+                  "tmux.window-title"] &&
             field row "status" == Linger.Display.Status.name .resumable &&
             field row "state" == "resumable" &&
             field row "description" == shown pane.details.windowTitle &&
@@ -345,7 +345,7 @@ private def sourceControls (f : Fixture) : IO Bool := do
       humanRc == 0 &&
       humanErr.isEmpty &&
       human.toList.all (fun c => c == '\n' || printable c) &&
-      (out.splitOn "\n").all (fun row => row.toList.all (fun c => c == '\t' || printable c)) &&
+      (out.splitOn "\n").all (fun row => row.toList.all printable) &&
       has out (Linger.Import.Resurrect.diagnostic command) &&
       (← namesIn (System.FilePath.mk f.env.dir)).isEmpty
 
@@ -356,7 +356,7 @@ private def sourceRelativeCwd (f : Fixture) : IO Bool := do
   f.writeSave text
   let (rc, out, err) ← f.cli #["ls", "--porcelain"]
   return rc == 0 && err.isEmpty && f.rowsMatch text out ["relative-w0-p0"] &&
-      has out s!"directory\t{f.root / "alias" / ".."}\n" &&
+      (listingRecords out).any (·.lookup "directory" == some s!"{f.root / "alias" / ".."}") &&
       !has out (f.root / "physical").toString &&
       (← namesIn (System.FilePath.mk f.env.dir)).isEmpty
 
@@ -412,7 +412,7 @@ private def listedUnrecorded (f : Fixture) : IO Bool := do
       sourceNames named == ["fresh-w0-p0"] &&
       endedRc == 0 &&
       sourceNames ended == [] &&
-      has ended "name\tended-w0-p0" &&
+      has ended "\"name\":\"ended-w0-p0\"" &&
       (← (System.FilePath.mk f.env.dir / "ended-w0-p0.end").pathExists)
 
 /-- The saved panes sort last within `~`: after a saved session whose name sorts after theirs. -/
@@ -448,7 +448,7 @@ private def attachPane (f : Fixture) : IO Bool := do
     let _ ← client.reap
     let (_, out, _) ← f.cli #["ls", "--porcelain"]
     return shown && attached && here && description == some "Pty window" && sourceNames out == [] &&
-        has out "name\tPty_window" &&
+        has out "\"name\":\"Pty_window\"" &&
         !(← marker.pathExists)
   finally
     client.bye (sendDetach := false)
@@ -570,7 +570,7 @@ private def discoveryTimeout (f : Fixture) : IO Bool := do
   f.writeSave (paneLine "fallback" "0" "0" (f.root / "home").toString "")
   f.seed "native" (f.root / "home").toString
   let (rc, out, err) ← f.cli #["ls", "--porcelain"] #[("LINGER_TMUX_WAIT", some "1")]
-  return rc == 0 && sourceNames out == [] && has out "name\tnative" &&
+  return rc == 0 && sourceNames out == [] && has out "\"name\":\"native\"" &&
       has err "tmux configuration query timed out" &&
       (← f.queries) == queryCall
 

@@ -58,7 +58,22 @@ theorem result_eq (found : Api.Found) (members : List (String × Json)) :
     result found members =
       .obj
         (("answer", .str (answerName (Api.answer found))) ::
-          ("code", .number (toString (Api.answer found).code)) :: members) := rfl
+          ("code", .int (Api.answer found).code.toNat) :: members) := rfl
+
+/-- **A line that is not canonical JSON is no message**, with the reader's reason. -/
+theorem decode_uncanonical {line reason : String} (refused : Json.parse line = .error reason) :
+    decode line = .invalid none (some reason) := by simp [decode, refused]
+
+/-- **A line that is not canonical JSON is answered -32700**, its `data` the usage answer and the
+reader's reason, and changes nothing. -/
+theorem step_uncanonical (s : State) (reason : String) :
+    step s (.received (.invalid none (some reason))) =
+      (s,
+        [.send
+            (.error none (-32700) "parse error"
+              (.obj
+                [("answer", .str (answerName .usage)), ("code", .int (Os.Answer.code .usage).toNat),
+                  ("reason", .str reason)]))]) := rfl
 
 /-- A connection starts before its handshake. -/
 theorem init_phase : State.init.phase = .fresh := rfl

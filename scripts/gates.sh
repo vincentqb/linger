@@ -403,7 +403,7 @@ import_closure Linger/Selector/CoreCode/Fetch.lean 'public import Linger.Selecto
 import_closure Linger/Selector/CoreSpec.lean 'public import Linger.Display.CoreSpec;'
 import_closure packages/fuzzy/Fuzzy/CoreCode.lean 'public import Fuzzy.CoreSpec;'
 import_closure packages/fuzzy/Fuzzy/CoreSpec.lean ''
-import_closure Linger/Selector/CoreCode/Picker.lean 'import Input.CoreCode;public import Linger.Selector.CoreSpec;import Fuzzy.CoreCode;import Linger.Target.CoreCode.Name;import Linger.Display.CoreCode.Listing;public import Linger.Display.CoreSpec;import Linger.Target.CoreCode.Remote;import Terminal.CoreCode.Vt;import Terminal.CoreCode.Render;import Linger.Display.CoreCode.View;'
+import_closure Linger/Selector/CoreCode/Picker.lean 'import Input.CoreCode;public import Linger.Selector.CoreSpec;import Fuzzy.CoreCode;import Linger.Target.CoreCode.Name;import Linger.Display.CoreCode.Listing;public import Linger.Display.CoreSpec;import Linger.Target.CoreCode.Remote;import Terminal.CoreCode.Vt;import Terminal.CoreCode.Render;import Linger.Display.CoreCode.View;public import Linger.Os.CoreSpec;import Linger.Os.CoreCode.Json;'
 import_closure Linger/Display/CoreCode/View.lean 'public import Linger.Display.CoreSpec;import Linger.Display.CoreCode.Status;'
 import_closure Linger/Display/CoreSpec.lean 'public import Terminal.CoreSpec;'
 import_closure Linger/Display/CoreCode/Status.lean 'public import Linger.Display.CoreSpec;'
@@ -459,7 +459,7 @@ module_imports ':(glob)Linger/Session/*.lean' 'Linger/Session/CoreCode/*' 'Linge
     packages/terminal/Terminal/CoreCode/Replay.lean Linger.lean \
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
-    if (mod !~ /^(Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](WorldCode([.](Api|Remote))?|CoreSpec|CoreCode[.](Commands|Fields|Wait|Kill|Recovery|Capture|Api|Handover|Serve|Json))|Std[.](Async[.](System|Signal)|Sync[.]Mutex))$/ \
+    if (mod !~ /^(Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](WorldCode([.](Api|Remote))?|CoreSpec|CoreCode[.](Commands|Fields|Wait|Kill|Recovery|Capture|Api|Handover|Serve|Base64))|Std[.](Async[.](System|Signal)|Sync[.]Mutex))$/ \
         && mod != "SoftwareChallenge.Commands") {
       print "  " $0; bad = 1
     }
@@ -861,7 +861,7 @@ for tie in \
   'while next < hosts[.]size [|][|] ![(]← jobs[.]get[)][.]isEmpty do if let some signal[[:space:]]*← [(][{] waiters := ← signals[.]get [}] : Watched[)][.]came then return [.]error signal if [(]← monotonicMs[)] ≥ deadline then break' \
   'while next < hosts[.]size && [(]← jobs[.]get[)][.]size < remoteQueryLimit && [(]← monotonicMs[)] < deadline do' \
   'if let cmd :: args := Linger[.]Target[.]Remote[.]argv hosts[[]index[]]![.]2 then pending[.]set [(]some [(]← Command[.]startFeeding cmd args[.]toArray [(]Serve[.]Remote[.]lines "sessions/list" [(][.]obj [[][]][)][)][.]toUTF8[)][)]' \
-  'Serve[.]Json[.]parse match Serve[.]Remote[.]heard messages output[.]exitCode with [|] [.]answered [.]done members => if let some records := Serve[.]Remote[.]records members then outputs := outputs[.]set! index [(]some [(][.]records records[)][)] [|] [.]refused => outputs := outputs[.]set! index [(]some [.]refused[)]' \
+  'let messages := read[.]filterMap [(]·[.]toOption[)] match Serve[.]Remote[.]heard messages output[.]exitCode with [|] [.]answered [.]done members => if let some records := Serve[.]Remote[.]records members then outputs := outputs[.]set! index [(]some [(][.]records records[)][)] [|] [.]refused => outputs := outputs[.]set! index [(]some [.]refused[)]' \
   'finally for [(]_, pending[)] in ← jobs[.]get do try Command[.]stop pending catch _ => pure [(][)] for [(]waiter, _[)] in ← signals[.]get do waiter[.]stop if let some signal[[:space:]]*← [(][{] waiters := ← signals[.]get [}] : Watched[)][.]came then return [.]error signal return [.]ok listed' \
   'let task ← IO[.]asTask localRows Task[.]Priority[.]dedicated try let remote ← listRemotes remotes[.]toArray let locals ← IO[.]ofExcept [(]← IO[.]wait task[)] pure [(]locals, remote[)] finally discard <[|] IO[.]wait task'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
@@ -1356,9 +1356,9 @@ done
 remote_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/WorldCode/Remote.lean)"
 for tie in \
   'match Linger[.]Target[.]Remote[.]argv transport with [|] cmd :: args => return some [(]← Command[.]talk cmd args[.]toArray [(]isolated := !terminal[)][)]' \
-  'discard <[|] talk[.]say [(]Serve[.]Remote[.]lines method params[)] finish talk [[][]]' \
-  'return [{] heard := Serve[.]Remote[.]heard [(]before [+][+] rest[)] status, errors := errorLines [(]← talk[.]errors[)] [}]' \
-  'let some answered ← answerTo talk "2" [|] return ← finish talk [[]hello[]]' \
+  'discard <[|] talk[.]say [(]Serve[.]Remote[.]lines method params[)] finish talk unread [[][]]' \
+  'return [{] heard := Serve[.]Remote[.]heard [(]before [+][+] rest[)] status, errors := errorLines [(]← talk[.]errors[)], unread := ← unread[.]get [}]' \
+  'let some answered ← answerTo talk unread 2 [|] return ← finish talk unread [[]hello[]]' \
   'let frames := Serve[.]Remote[.]relay id message if !frames[.]isEmpty && !ended then tell lock ours frames' \
   'lock[.]atomically do try writeAll ours [(]ByteArray[.]mk [(]messages[.]flatMap Linger[.]Session[.]Wire[.]encode[)][.]toArray[)]' \
   'for message in messages do if message == [.]info then tell lock ours [[][.]infoReply [[][]], [.]done[]] for line in Serve[.]Remote[.]up id name command next message do discard <[|] talk[.]say line next := next [+] 1 discard <[|] talk[.]say [(]Serve[.]Remote[.]leave id next[)] talk[.]hangUp'; do

@@ -2,7 +2,8 @@ module
 
 public import Linger.App.CoreSpec
 import all Linger.App.CoreSpec
-import all Linger.App.CoreCode.Json
+import all Linger.App.CoreCode.Base64
+import all Linger.Os.CoreCode.Json
 import all Linger.App.CoreCode.Serve
 import all Linger.App.Proofs.Serve
 import all Linger.Session.Proofs.Wire
@@ -263,14 +264,14 @@ theorem update_closed_members (id : Id) (bytes : List UInt8) (found : Api.Found)
         some
           (.obj
             (("answer", .str (answerName (Api.answer found))) ::
-              ("code", .number (toString (Os.Answer.code (Api.answer found)))) :: rest)) := by
+              ("code", .int (Os.Answer.code (Api.answer found)).toNat) :: rest)) := by
   obtain ⟨rest, members⟩ :
     ∃ rest,
       closedMembers found =
         [("closed",
             .obj
               (("answer", .str (answerName (Api.answer found))) ::
-                ("code", .number (toString (Os.Answer.code (Api.answer found)))) :: rest))] :=
+                ("code", .int (Os.Answer.code (Api.answer found)).toNat) :: rest))] :=
     ⟨_, rfl⟩
   exact ⟨rest, by simp [Output.update, Json.withMembers, Json.member?, List.lookup, members]⟩
 

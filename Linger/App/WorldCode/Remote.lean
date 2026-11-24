@@ -3,7 +3,8 @@ module
 public import Linger.App.CoreSpec
 public import Linger.Target.CoreSpec
 import Linger.App.CoreCode.Serve
-import Linger.App.CoreCode.Json
+import Linger.App.CoreCode.Base64
+import Linger.Os.CoreCode.Json
 import Linger.Target.CoreCode.Remote
 import Linger.Session.CoreCode.Wire
 import Os.WorldCode
@@ -39,6 +40,9 @@ structure Asked where
   heard : Serve.Remote.Heard
   /-- The lines the transport wrote to its standard error. -/
   errors : List String
+  /-- Why the first line the host's `serve` wrote that is not canonical JSON is not, if one is not:
+  a linger whose `serve` writes other JSON, which linger reads none of. -/
+  unread : Option String := none
 
 /-- The lines of what a transport wrote to its standard error, as clean text, empty ones left out. -/
 private def errorLines (text : String) : List String :=
@@ -54,40 +58,53 @@ private def start (transport : Linger.Target.Remote.Transport) (terminal : Bool)
   | [] =>
     return none
 
-/-- The messages a host's `serve` writes until its output ends, each line read as JSON; a line that
-is not JSON is no message. -/
-private def readAll (talk : Command.Talk) : IO (List Json) := do
+/-- A line a host's `serve` wrote, read as canonical JSON (`Json.parse`); a line that is not is no
+message, and the first such line's reason is kept in `unread`. -/
+private def readLine (unread : IO.Ref (Option String)) (line : String) : IO (Option Json) := do
+  match Json.parse line with
+  | .ok message =>
+    return some message
+  | .error why =>
+    if (← unread.get).isNone then
+      unread.set (some why)
+    return none
+
+/-- The messages a host's `serve` writes until its output ends, each line read as canonical JSON
+(`readLine`). -/
+private def readAll (talk : Command.Talk) (unread : IO.Ref (Option String)) : IO (List Json) := do
   let mut messages := #[]
   repeat
     match ← talk.line with
     | none =>
       break
     | some line =>
-      if let some message := Json.parse line then
+      if let some message← readLine unread line then
         messages := messages.push message
   return messages.toList
 
 /-- The message a host's `serve` writes next that answers the request with the number `n`, the
 messages before it skipped; none once its output ends first. -/
-private def answerTo (talk : Command.Talk) (n : String) : IO (Option Json) := do
+private def answerTo (talk : Command.Talk) (unread : IO.Ref (Option String)) (n : Int) :
+    IO (Option Json) := do
   repeat
     match ← talk.line with
     | none =>
       return none
     | some line =>
-      if let some message := Json.parse line then
+      if let some message← readLine unread line then
         if (message.member? "id").bind Id.of == some (.number n) then
           return some message
   return none
 
 /-- End the conversation: end the host's input, read what it still writes, wait for its transport
 to end, and read what it told linger, `before` the messages it wrote first. -/
-private def finish (talk : Command.Talk) (before : List Json) : IO Asked := do
+private def finish (talk : Command.Talk) (unread : IO.Ref (Option String)) (before : List Json) :
+    IO Asked := do
   talk.hangUp
-  let rest ← readAll talk
+  let rest ← readAll talk unread
   let status ← talk.finish
   return { heard := Serve.Remote.heard (before ++ rest) status,
-           errors := errorLines (← talk.errors) }
+           errors := errorLines (← talk.errors), unread := ← unread.get }
 
 /-- **Ask a host's `serve`** of a call: write the handshake and the call (`Serve.Remote.lines`),
 end its input, read what it writes until it ends, and read what it told linger
@@ -95,9 +112,10 @@ end its input, read what it writes until it ends, and read what it told linger
 def ask (transport : Linger.Target.Remote.Transport) (terminal : Bool) (method : String)
     (params : Json) : IO Asked := do
   let some talk ← start transport terminal | return { heard := .silent, errors := [] }
+  let unread ← IO.mkRef none
   try
     discard <| talk.say (Serve.Remote.lines method params)
-    finish talk []
+    finish talk unread []
   catch err =>
     talk.stop
     throw err
@@ -109,11 +127,12 @@ last, or the first that was not `done`. -/
 def stream (transport : Linger.Target.Remote.Transport) (terminal : Bool) (name : String)
     (read : IO (Option ByteArray)) : IO Asked := do
   let some talk ← start transport terminal | return { heard := .silent, errors := [] }
+  let unread ← IO.mkRef none
   try
     discard <| talk.say Serve.Remote.handshake
-    let some hello ← answerTo talk "1" | finish talk []
+    let some hello ← answerTo talk unread 1 | finish talk unread []
     unless Serve.Remote.shook [hello] do
-      return ← finish talk [hello]
+      return ← finish talk unread [hello]
     let mut last : List Json := [hello]
     let mut sent := false
     repeat
@@ -129,13 +148,13 @@ def stream (transport : Linger.Target.Remote.Transport) (terminal : Bool) (name 
           talk.say
             (Serve.Remote.request 2 "session/send"
               (.obj [("name", .str name), ("data", .str (Base64.encode bytes.toList))]))
-      let some answered ← answerTo talk "2" | return ← finish talk [hello]
+      let some answered ← answerTo talk unread 2 | return ← finish talk unread [hello]
       last := [hello, answered]
       unless Serve.Remote.heard last 0 matches .answered .done _ do
         break
       if chunk.isNone then
         break
-    let asked ← finish talk []
+    let asked ← finish talk unread []
     if asked.heard matches .refused then
       return asked
     return { asked with heard := Serve.Remote.heard last 0 }
@@ -170,12 +189,12 @@ private def tell (lock : Std.Mutex Unit) (ours : UInt32) (messages : List Linger
 `ours`, as frames (`Serve.Remote.relay`), keeping in `final` the host's answer of the attach, its
 request's and then its stream's `closed`, until the host's output ends; a stream that ends without
 ending the attach tells the client its connection was lost. -/
-private def relayDown (talk : Command.Talk) (lock : Std.Mutex Unit) (ours : UInt32) (id : Id)
-    (final : IO.Ref (Option Json)) : IO Unit := do
+private def relayDown (talk : Command.Talk) (unread : IO.Ref (Option String))
+    (lock : Std.Mutex Unit) (ours : UInt32) (id : Id) (final : IO.Ref (Option Json)) : IO Unit := do
   let mut ended := false
   repeat
     let some line ← talk.line | break
-    let some message := Json.parse line | continue
+    let some message ← readLine unread line | continue
     if (message.member? "id").bind Id.of == some id then
       match message.member? "result", (message.member? "error").bind (·.member? "data") with
       | some result, _ =>
@@ -233,16 +252,17 @@ what it told linger. -/
 def bridge (transport : Linger.Target.Remote.Transport) (terminal : Bool) (name : String)
     (command : List String) : IO (Except Asked Bridge) := do
   let some talk ← start transport terminal | return .error { heard := .silent, errors := [] }
+  let unread ← IO.mkRef none
   try
     discard <| talk.say Serve.Remote.handshake
-    let some hello ← answerTo talk "1" | return .error (← finish talk [])
+    let some hello ← answerTo talk unread 1 | return .error (← finish talk unread [])
     unless Serve.Remote.shook [hello] do
-      return .error (← finish talk [hello])
+      return .error (← finish talk unread [hello])
     let (ours, theirs) ← socketPair
-    let id : Id := .number "2"
+    let id : Id := .number 2
     let final ← IO.mkRef (none : Option Json)
     let lock ← Std.Mutex.new ()
-    let down ← IO.asTask (relayDown talk lock ours id final) .dedicated
+    let down ← IO.asTask (relayDown talk unread lock ours id final) .dedicated
     let up ← IO.asTask (relayUp talk lock ours id name command) .dedicated
     let join : IO Asked := do
       discard <| IO.wait up
@@ -259,7 +279,8 @@ def bridge (transport : Linger.Target.Remote.Transport) (terminal : Bool) (name 
         match ← final.get with
         | some value => [hello, .obj [("id", id.json), ("result", value)]]
         | none => [hello]
-      return { heard := Serve.Remote.heard answered status, errors := errorLines (← talk.errors) }
+      return { heard := Serve.Remote.heard answered status, errors := errorLines (← talk.errors),
+               unread := ← unread.get }
     return .ok { fd := theirs, join }
   catch err =>
     talk.stop

@@ -10,6 +10,8 @@ import Linger.Target.CoreCode.Remote
 import Terminal.CoreCode.Vt
 import Terminal.CoreCode.Render
 import Linger.Display.CoreCode.View
+public import Linger.Os.CoreSpec
+import Linger.Os.CoreCode.Json
 
 public section
 
@@ -28,55 +30,48 @@ exactly the targets `Fuzzy.align` can align (`align_isSome_iff_matches`). -/
 private def «matches» (query target : String) : Bool :=
   (query.toList.map Char.toLower).isSublist (target.toList.map Char.toLower)
 
-private def parseRow (fields : List String) : Except String (Option String) :=
-  if fields.head? != some "name" then .ok none
-  else
-    match fields with
-    | [_, target] =>
-      if Linger.Target.Remote.targetValid target then .ok (some target)
-      else .error "invalid session target in listing"
-    | _ => .error "malformed name record in listing"
+/-- A listing's lines: its text between newlines, the empty end after the last left out. -/
+def listingLines (text : String) : List String :=
+  ((text.toList.splitOn '\n').map String.ofList).filter fun line => !line.isEmpty
 
-/-- A listing line's fields: its text between tabs. -/
-def lineFields (line : String) : List String := (line.toList.splitOn '\t').map String.ofList
+/-- A listing field's value: its string. -/
+def fieldText (member : String × Json) : Except String (String × String) :=
+  match member.2 with
+  | .str text => .ok (member.1, text)
+  | _ => .error "a listing field that is not a string"
 
-/-- A listing's lines: its text between newlines. -/
-def listingLines (text : String) : List String := (text.toList.splitOn '\n').map String.ofList
+/-- **A listing line as a record**: a canonical JSON object (`Json.parse`) each of whose members is a
+string, its fields in the order the line lists them. A diagnostic names no text of the line. -/
+def lineRecord (line : String) : Except String (List (String × String)) :=
+  match Json.parse line with
+  | .error _ => .error "a listing line that is not canonical JSON"
+  | .ok (.obj members) => members.mapM fieldText
+  | .ok _ => .error "a listing line that is not an object"
 
-private def parseRows (seen rows : List String) : Except String (List String) :=
-  match rows with
+/-- The targets of records, in order: each record's name, which must be a valid target no record
+before it has; a record without a name is no target. -/
+def targets (seen : List String) : List (List (String × String)) → Except String (List String)
   | [] => .ok []
-  | row :: rows =>
-    match parseRow (lineFields row) with
-    | .error error => .error error
-    | .ok none => parseRows seen rows
-    | .ok (some target) =>
-      if seen.contains target then .error "duplicate session target in listing"
-      else (parseRows (target :: seen) rows).map (target :: ·)
+  | record :: rest =>
+    match record.lookup "name" with
+    | none => targets seen rest
+    | some target =>
+      if !Linger.Target.Remote.targetValid target then .error "invalid session target in listing"
+      else
+        if seen.contains target then .error "duplicate session target in listing"
+        else (targets (target :: seen) rest).map (target :: ·)
 
-/-- Validate the complete successful command output before presenting any target.
-Metadata is ignored; malformed name records or duplicates reject the whole snapshot. -/
-private def parseListing (text : String) : Except String (List String) :=
-  parseRows [] (listingLines text)
+/-- **The chooser's reading of a listing**: every line a record (`lineRecord`), and the targets
+their names, validated before any is published. -/
+def parseSnapshot (text : String) : Except String Snapshot := do
+  let records ← (listingLines text).mapM lineRecord
+  let candidates ← targets [] records
+  pure { candidates, records }
 
-/-- The target parser validates the whole output before metadata is published.
-Consecutive name records and blank-separated records both delimit sessions. -/
-def parseSnapshot (text : String) : Except String Snapshot :=
-  (parseListing text).map fun candidates =>
-    { candidates, records := (listingLines text).map lineFields }
-
-/-- A listing line's fields as a field of a row: a key and a value, or none. -/
-def fieldPair : List String → Option (String × String)
-  | [key, value] => some (key, value)
-  | _ => none
-
-/-- Locate one validated identity without reinterpreting or normalizing its host.
-The next name or blank record ends its metadata; missing status remains unknown. -/
+/-- **The row of a target**: the record that names it, or its name alone; missing status remains
+unknown. -/
 def Snapshot.row (snapshot : Snapshot) (target : String) : List (String × String) :=
-  let records := snapshot.records.dropWhile (· != ["name", target])
-  ("name", target) ::
-    (records.tail.takeWhile fun fields => fields != [""] && fields.head? != some "name").filterMap
-      fieldPair
+  (snapshot.records.find? fun record => record.lookup "name" == some target).getD [("name", target)]
 
 /-- The columns of a view of the snapshot's rows (`Listing.layoutOf`). -/
 def Snapshot.laidOut (snapshot : Snapshot) : Linger.Display.Listing.Layout :=
@@ -103,31 +98,27 @@ it. -/
 def Snapshot.atHome (home : String) (snapshot : Snapshot) : Snapshot :=
   { snapshot with
     records :=
-      snapshot.records.map fun fields =>
-        if fields.head? == some "fgdir" then
-          ["fgdir", Linger.Display.Listing.tilde home (fields[1]?.getD "")]
-        else fields }
+      snapshot.records.map fun record =>
+        record.map fun (key, value) =>
+          if key == "fgdir" then (key, Linger.Display.Listing.tilde home value) else (key, value) }
 
 /-- Remote rows are named `name@host`. A local session name never contains `@`
 (`Name.okChar`), so the character partitions every listing's rows. -/
 private def remoteTarget (target : String) : Bool := target.toList.contains '@'
 
-/-- The records of the rows whose target satisfies `keep`, in order. A name record
-governs itself and the records after it up to the next name record; records before
-every name record follow `current`. -/
-private def rowRecords (keep : String → Bool) : Bool → List (List String) → List (List String)
-  | _, [] => []
-  | current, fields :: rest =>
-    let current := if fields.head? == some "name" then keep (fields[1]?.getD "") else current
-    if current then fields :: rowRecords keep current rest else rowRecords keep current rest
+/-- Whether a record is a remote host's: a row named `name@host`, or a host's own row, which names
+no session. -/
+private def remoteRecord (record : List (String × String)) : Bool :=
+  match record.lookup "name" with
+  | some target => remoteTarget target
+  | none => (record.lookup "host").isSome
 
 /-- Local rows from `latest` and remote rows from `full`, the latest listing that
 queried remote hosts, so a local-only listing refreshes local rows without
 discarding remote ones. Local rows come first, as `ls -r` lists them. -/
 def Snapshot.withRemote (latest full : Snapshot) : Snapshot where
   candidates := latest.candidates.filter (!remoteTarget ·) ++ full.candidates.filter remoteTarget
-  records :=
-    rowRecords (!remoteTarget ·) true latest.records ++ rowRecords remoteTarget false full.records
+  records := latest.records.filter (!remoteRecord ·) ++ full.records.filter remoteRecord
 
 /-- Whether the query finds a target: it matches the target, or the target's description. -/
 private def found (descriptions : List (String × String)) (query target : String) : Bool :=
@@ -347,14 +338,15 @@ def frameLines (state : State) (snapshot : Snapshot)
               Linger.Display.View.headerParts labels (snapshot.candidates.map statusOf) ++
                 ageParts snapshot remoteAge
             else "linger" :: labels)
-      let globals := snapshot.records.takeWhile (fun fields => fields.head? != some "name")
+      let globals := snapshot.records.takeWhile fun record => (record.lookup "name").isNone
       let metadata : List String :=
         if savedTmux then
-          (globals.filterMap fun fields =>
-                match fields with
-                | ["source", value] => some s!"  source  {value}"
-                | ["saved", value] => some s!"  saved   {value}"
-                | _ => none).take
+          (globals.flatMap fun record =>
+                record.filterMap fun field =>
+                  match field with
+                  | ("source", value) => some s!"  source  {value}"
+                  | ("saved", value) => some s!"  saved   {value}"
+                  | _ => none).take
             (height - 7)
         else []
       [[(header, [])]] ++ metadata.map (fun text => [(text, [[2]])]) ++ [[]]

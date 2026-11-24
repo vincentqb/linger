@@ -297,7 +297,7 @@ cleanup_sentinel() {
 trap cleanup_sentinel EXIT HUP TERM
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger start "$sentinel_name" sleep 600
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger ls "$sentinel_name" --porcelain \
-  | grep -qx 'state	live' || fail "sentinel session did not start"
+  | grep -q '"state":"live"' || fail "sentinel session did not start"
 # A suite changes only the directories it creates, never one a plain `linger` here uses, which
 # holds the user's own sessions, whose lock files only their holder removes. linger names those
 # directories itself, with LINGER_DIR unset and with every variable they follow unset, as a
@@ -342,10 +342,10 @@ else
 fi
 # shellcheck disable=SC2086  # each skip count is a number
 ./.lake/build/bin/suites --suites \
-  manager:158 delivery:38 attach:94 agent:69:$agent_skips \
+  manager:161 delivery:38 attach:94 agent:69:$agent_skips \
   resume:44:$resume_skips watch:52 title:18:$title_skips graphics:9 robust:35:$robust_skips \
-  interop:66 recipes:35 status:47 terminal:16 overview:32 remote:72 shells:3 identity:35 \
-  quiet:7:$quiet_skips upgrade:21:$upgrade_skips rename:16 api:9 serve:34 \
+  interop:66 recipes:35 status:47 terminal:16 overview:32 remote:73 shells:3 identity:35 \
+  quiet:7:$quiet_skips upgrade:21:$upgrade_skips rename:16 api:9 serve:38 \
   || fail "live suites (see $logs/linger-*.out)"
 defaults_after="$(default_listing)"
 if [ "$defaults_after" != "$defaults_before" ]; then
@@ -356,7 +356,7 @@ if [ "$defaults_after" != "$defaults_before" ]; then
 fi
 
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger ls "$sentinel_name" --porcelain \
-  | grep -qx 'state	live' || fail "a suite terminated the unrelated sentinel session"
+  | grep -q '"state":"live"' || fail "a suite terminated the unrelated sentinel session"
 cleanup_sentinel
 trap - EXIT HUP TERM
 finish_phase

@@ -251,6 +251,14 @@ def cellSources : List (List String) :=
 @[expose]
 def command (line : String) : String := (((line.splitOn " ").headD "").splitOn "/").getLast?.getD ""
 
+/-- A wrong part: the porcelain linger printed before canonical JSON, each row a line for each
+field, its key, a tab and its value, then a blank line. -/
+@[expose]
+def tsv (rows : List (List (String × String))) : String :=
+  String.join
+    (rows.map fun row =>
+      String.join (row.map fun (key, value) => key ++ "\t" ++ value ++ "\n") ++ "\n")
+
 end Linger.Display.Listing
 
 namespace Linger.Display

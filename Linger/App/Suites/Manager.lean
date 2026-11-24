@@ -6,6 +6,7 @@ import Linger.Selector.WorldCode
 import Linger.Selector.CoreCode.Picker
 import Linger.Import.WorldCode
 import Linger.Display.CoreCode.Listing
+import Linger.Os.CoreCode.Json
 import Linger.Display.CoreCode.View
 import Linger.Target.CoreCode.Name
 import Linger.Target.CoreCode.Remote
@@ -64,6 +65,16 @@ private def rowText (vt : Vt) (row : Nat) : String :=
 
 private def call (args : List String) : String :=
   "CALL\x00linger\x00" ++ String.intercalate "\x00" args ++ "\x00\n"
+
+/-- A listing of these records, one canonical JSON line each, as `ls --porcelain` prints them. -/
+private def jsonListing (records : List (List (String × String))) : String :=
+  String.join
+    (records.map fun record =>
+      (Linger.Json.render (.obj (record.map fun (key, value) => (key, .str value)))).push '\n')
+
+/-- A listing of sessions with these names and no other field. -/
+private def namesListing (names : List String) : String :=
+  jsonListing (names.map fun name => [("name", name)])
 
 /-- The full listing a selection visit starts with, and repeats on return. -/
 private def listed : String := call ["ls", "-r", "--porcelain"]
@@ -297,7 +308,7 @@ private def Fixture.make (e : Env) (slug : String) : IO Fixture := do
     throw (IO.userError "tty is required to observe the manager terminal path")
   IO.FS.writeFile executable s!"#!/bin/sh\nexec {quote self} --manager-probe command \"$@\"\n"
   chmod executable 0o755
-  IO.FS.writeFile (root / "listing") "name\tAlpha\nname\tBeta\nname\tGamma\n"
+  IO.FS.writeFile (root / "listing") (namesListing ["Alpha", "Beta", "Gamma"])
   IO.FS.writeFile (root / "listing-rc") "0"
   IO.FS.writeFile (root / "attach-rc") "7"
   IO.FS.writeFile (root / "term") "xterm-256color"
@@ -641,7 +652,7 @@ private def acceptThenCancel (s : Session) (keys : String := "\r") (visits : Nat
   do
   -- rows no visit lists before an attach, so the return enters with them alone, the first
   -- selected
-  s.fixture.afterAttach "name\tFresh\nname\tLater\n"
+  s.fixture.afterAttach (namesListing ["Fresh", "Later"])
   s.text keys
   unless ← returned s "Fresh" do
     return false
@@ -723,14 +734,13 @@ private def usageChecks (e : Env) : IO Unit := do
       let (twoRc, _, _) ← f.piped #["start", "named-two", "/bin/cat"]
       let titled ←
         waitFor patienceMs do
-            return has (← f.piped #["ls", "named-one", "--porcelain"]).2.1 "title\tfirst one"
+            return has (← f.piped #["ls", "named-one", "--porcelain"]).2.1 "\"title\":\"first one\""
       let (rc, out, err) ← f.piped #["ls", "named-two", "named-one", "--porcelain"]
       let (allRc, all, _) ← f.piped #["ls", "--porcelain"]
       let (humanRc, human, _) ← f.piped #["ls", "named-one"]
       let (missingRc, missingOut, missingErr) ← f.piped #["ls", "--porcelain", "named-missing"]
       IO.FS.writeFile (f.root / "named-observation") s!"{rc} {repr out} {repr err}\n{repr human}\n"
-      let blocks := fun (text : String) =>
-        ((text.splitOn "\n\n").filter (!·.trimAscii.isEmpty)).map records
+      let blocks := listingRecords
       let named := blocks out
       let field := fun (row : List (String × String)) (key : String) => row.lookup key
       let listed := blocks all
@@ -764,7 +774,8 @@ private def usageChecks (e : Env) : IO Unit := do
           killRc == 0 &&
           twoKilled == 0 &&
           endedRc == 0 &&
-          endedRow.head? == some ("name", "named-one") &&
+          (listingRecords ended).length == 1 &&
+          endedRow.lookup "name" == some "named-one" &&
           (endedRow.lookup "exit").isSome
   check e "usage" "linger rejects unknown commands and conflicting listing options" fun f => do
       let mut ok := true
@@ -906,7 +917,7 @@ private def usageChecks (e : Env) : IO Unit := do
           return waiting && noSession && (← restored s 130)
 
 private def failureChecks (e : Env) : IO Unit := do
-  for (slug, listing) in [("empty", ""), ("partial", "name\tAlpha\n")] do
+  for (slug, listing) in [("empty", ""), ("partial", (namesListing ["Alpha"]))] do
     check e s!"listing-{slug}"
         s!"picker probe preserves initial listing failure status and reports it after restoration ({slug})"
         fun f => do
@@ -915,12 +926,14 @@ private def failureChecks (e : Env) : IO Unit := do
             let clean ← failureRestored s 7 "linger: could not list sessions (exit 7)"
             return clean && (← f.visits) == listed && !hasText (← s.output.get) "Alpha"
   let invalid :=
-    [("empty-name", "name\t\n"), ("missing-field", "name\n"), ("extra-field", "name\tbad\textra\n"),
-      ("duplicate", "name\tAlpha\n"), ("cr", "name\tbad\r\n"), ("escape", "name\tbad\x1b[2J\n"),
-      ("nul", "name\tbad\x00name\n")]
+    [("empty-name", namesListing [""]), ("null-field", "{\"name\":null}\n"),
+      ("extra-field", "{\"extra\":[],\"name\":\"bad\"}\n"), ("duplicate", namesListing ["Alpha"]),
+      ("cr", namesListing ["bad\r"]), ("escape", namesListing ["bad\x1b[2J"]),
+      ("nul", namesListing ["bad\x00name"]), ("spaced", "{\"name\": \"bad\"}\n"),
+      ("unsorted", "{\"pid\":\"1\",\"name\":\"bad\"}\n"), ("crlf", "{\"name\":\"bad\"}\r\n")]
   for (slug, bad) in invalid do
     check e s!"bad-{slug}" s!"picker probe rejects the whole malformed listing ({slug})" fun f => do
-        f.listing ("name\tAlpha\n" ++ bad)
+        f.listing (namesListing ["Alpha"] ++ bad)
         withSession f.picker #[] fun s => do
             let clean ← failureRestored s 1 "picker probe:"
             return clean && (← f.visits) == listed && !hasText (← s.output.get) "Alpha"
@@ -977,7 +990,7 @@ private def selectionChecks (e : Env) : IO Unit := do
       ("shell-text", "work@host with 'spaces' $TERM")] do
     check e s!"exact-{slug}"
         s!"picker probe attaches the original target as one argument ({target})" fun f => do
-        f.listing s!"name\t{target}\n"
+        f.listing (namesListing [target])
         withPrompt f.picker #[] fun s => do
             let shown ← s.until target
             let clean ← acceptThenCancel s
@@ -1033,7 +1046,7 @@ private def selectionChecks (e : Env) : IO Unit := do
             (← f.visits) == attachVisit ["Beta"]
   check e "subsequence" "picker probe filtering is case-insensitive, subsequence-based and stable"
       fun f => do
-      f.listing "name\tPrefix\nname\tWork\nname\tweak\n"
+      f.listing (namesListing ["Prefix", "Work", "weak"])
       withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "WK" "WK" do
             return false
@@ -1054,8 +1067,8 @@ private def selectionChecks (e : Env) : IO Unit := do
           return false
         return (← acceptThenCancel s) && (← f.visits) == attachVisit ["Gamma"]
   for (slug, listing, query, target) in
-    [("no-match", "name\tAlpha\n", "new-session", "new-session"), ("empty-list", "", "", "main"),
-      ("create-leading", "", "-leading+name", "-leading+name"),
+    [("no-match", (namesListing ["Alpha"]), "new-session", "new-session"),
+      ("empty-list", "", "", "main"), ("create-leading", "", "-leading+name", "-leading+name"),
       ("create-remote", "", "work@me@dev-a", "work@me@dev-a"),
       ("create-shell-text", "", "work@host with 'spaces' $TERM", "work@host with 'spaces' $TERM"),
       ("create-unicode-host", "", "work@界é", "work@界é"),
@@ -1080,7 +1093,7 @@ private def selectionChecks (e : Env) : IO Unit := do
     check e slug
         s!"picker probe lists existing prefix matches first and attaches only the highlighted row ({slug})"
         fun f => do
-        f.listing "name\tworkshop\nname\tworkbench\nname\tOther\n"
+        f.listing (namesListing ["workshop", "workbench", "Other"])
         withPrompt f.picker #[] fun s => do
             unless ← s.typeQuery "work" "work" do
               return false
@@ -1101,8 +1114,8 @@ private def selectionChecks (e : Env) : IO Unit := do
             let clean ← acceptThenCancel s
             return orderedRows && noAttach && clean && (← f.visits) == attachVisit [target]
   for (slug, listing, query, absent, target) in
-    [("exact-suppression", "name\tAlpha\nname\tAlphabet\n", "Alpha", "Alpha", "Alphabet"),
-      ("default-suppression", "name\tmain\nname\tOther\n", "", "main", "Other")] do
+    [("exact-suppression", (namesListing ["Alpha", "Alphabet"]), "Alpha", "Alpha", "Alphabet"),
+      ("default-suppression", (namesListing ["main", "Other"]), "", "main", "Other")] do
     check e slug s!"picker probe suppresses creation for exact snapshot members ({slug})" fun f =>
         do
         f.listing listing
@@ -1119,7 +1132,7 @@ private def selectionChecks (e : Env) : IO Unit := do
   check e "case-distinct"
       "picker probe permits explicit case-distinct creation beside a folded existing match" fun f =>
       do
-      f.listing "name\tAlpha\n"
+      f.listing (namesListing ["Alpha"])
       withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "alpha" "alpha" do
             return false
@@ -1184,7 +1197,7 @@ private def inputChecks (e : Env) : IO Unit := do
   check e "ctrl-d-query"
       "picker Ctrl-D after a query deletes nothing and keeps the chooser open with its query and highlight, unrepainted"
       fun f => do
-      f.listing "name\tBeta\nname\tBravo\n"
+      f.listing (namesListing ["Beta", "Bravo"])
       withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "B" "B" do
             return false
@@ -1225,7 +1238,7 @@ private def inputChecks (e : Env) : IO Unit := do
         return (← acceptThenCancel s "B\r") && (← f.visits) == attachVisit ["Beta"]
   check e "split-utf8" "picker probe retains split UTF-8 query characters" fun f => do
       let target := "work@界é"
-      f.listing s!"name\tother\nname\t{target}\n"
+      f.listing (namesListing ["other", target])
       withPrompt f.picker #[] fun s => do
           s.send (ByteArray.mk #[0xE7])
           s.observe 50
@@ -1241,7 +1254,7 @@ private def inputChecks (e : Env) : IO Unit := do
   check e "paste"
       "picker probe paste survives idle, suppresses newlines and handles a split end marker"
       fun f => do
-      f.listing "name\talphabeta\nname\tother\n"
+      f.listing (namesListing ["alphabeta", "other"])
       withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "\x1b[200~alpha" "alpha" do
             return false
@@ -1316,10 +1329,7 @@ private def statusChecks (e : Env) : IO Unit := do
           statuses.zipIdx |>.map fun (status, index) =>
             [("name", s!"case{index}")] ++ Linger.Display.Listing.statusFields status ++
               [("cmd", "editor"), ("pid", "123"), ("label.project", "demo"), ("clients", "2")]
-        f.listing
-            (String.intercalate "\n"
-              (fields.map fun row =>
-                String.join (row.map fun (key, value) => s!"{key}\t{value}\n")))
+        f.listing (jsonListing fields)
         f.colorEnv noColor term
         -- the picker lists them as `ls` does, what has something for you first (`View.sort`),
         -- each with its state badge's color and dimness, and its mark's
@@ -1377,14 +1387,20 @@ private def statusChecks (e : Env) : IO Unit := do
       "picker redraws changed metadata with unchanged names and preserves query, target and all details"
       fun f => do
       f.listing
-          "name\tbeta\nstatus\tworking\ncmd\tother\nname\talpha\nstatus\tidle\ncmd\tsh\npid\t1\nfg\told\nfgpid\t7\ndescription\tbefore\nclients\t1\n"
+          (jsonListing
+            [[("name", "beta"), ("status", "working"), ("cmd", "other")],
+              [("name", "alpha"), ("status", "idle"), ("cmd", "sh"), ("pid", "1"), ("fg", "old"),
+                ("fgpid", "7"), ("description", "before"), ("clients", "1")]])
       withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "a" "a" do
             return false
           let before ← s.capture "metadata-before"
           let start ← s.mark
           f.listing
-              "name\tbeta\nstatus\tworking\ncmd\tother\nname\talpha\nstatus\texited-bad\ncmd\tsh\npid\t2\nfg\tnew\nfgpid\t8\ndescription\tafter\nclients\t3\n"
+              (jsonListing
+                [[("name", "beta"), ("status", "working"), ("cmd", "other")],
+                  [("name", "alpha"), ("status", "exited-bad"), ("cmd", "sh"), ("pid", "2"),
+                    ("fg", "new"), ("fgpid", "8"), ("description", "after"), ("clients", "3")]])
           unless ← s.until "after   new" start do
             return false
           let after ← s.capture "metadata-after"
@@ -1404,7 +1420,10 @@ private def statusChecks (e : Env) : IO Unit := do
       "picker keeps hostile metadata out of terminal controls while retaining ordinary details"
       fun f => do
       f.listing
-          "name\talpha\nstatus\tworking\ncmd\tvi\x1b[31m\u009b31m\ndescription\tok\x07\nclients\t2\nname\tbeta\n"
+          (jsonListing
+            [[("name", "alpha"), ("status", "working"), ("cmd", "vi\x1b[31m\u009b31m"),
+                ("description", "ok\x07"), ("clients", "2")],
+              [("name", "beta")]])
       withPrompt f.picker #[] fun s => do
           let vt ← s.capture "metadata-controls"
           -- beta reports no status, so linger could not read it, and it comes after the running alpha
@@ -1425,7 +1444,7 @@ private def fuzzyChecks (e : Env) : IO Unit := do
       let fields :=
         [("name", "axab"), ("status", "idle"), ("attention", "unread"), ("cmd", "ab"),
           ("pid", "123"), ("label.project", "ab"), ("clients", "2")]
-      f.listing (String.join (fields.map fun (key, value) => s!"{key}\t{value}\n"))
+      f.listing (jsonListing [fields])
       withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "AB" "AB" do
             return false
@@ -1457,7 +1476,7 @@ private def fuzzyChecks (e : Env) : IO Unit := do
       fun f => do
       let targets := ["a---b", "axab", "ab-z"]
       let fields := targets.map fun target => [("name", target)]
-      f.listing (String.join (targets.map fun target => s!"name\t{target}\n"))
+      f.listing (namesListing targets)
       withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "ab" "ab" do
             return false
@@ -1481,7 +1500,7 @@ private def fuzzyChecks (e : Env) : IO Unit := do
       "picker highlights accent-only and wide matches, clips whole cells, and attaches the untruncated target"
       fun f => do
       let target := "work@e\u0301界éZ"
-      f.listing s!"name\t{target}\n"
+      f.listing (namesListing [target])
       withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "界é" "界é" do
             return false
@@ -1623,7 +1642,7 @@ private def displayChecks (e : Env) : IO Unit := do
       "picker sums up the rows its window leaves out by typeable groups whose counts add up"
       fun f => do
       let names := (List.range 4).map (s!"ag-build-{·}") ++ (List.range 6).map (s!"ag-test-{·}")
-      f.listing (String.join (names.map (s!"name\t{·}\n")))
+      f.listing (namesListing names)
       withPrompt f.picker #[] fun s => do
           let vt ← s.capture "hidden-groups"
           -- five rows fit with the summary below them; the five left out share one group
@@ -1701,7 +1720,7 @@ private def refreshChecks (e : Env) : IO Unit := do
         unless ← s.selected "Beta" selection do
           return false
         let start ← s.mark
-        f.listing "name\tGamma\nname\tDelta\nname\tAlpha\nname\tBeta\n"
+        f.listing (namesListing ["Gamma", "Delta", "Alpha", "Beta"])
         unless ← s.untilRow "Delta" start do
           return false
         unless ← s.selected "Beta" start do
@@ -1713,7 +1732,9 @@ private def refreshChecks (e : Env) : IO Unit := do
   check e "refresh-activity"
       "automatic refresh keeps each running session's row where it was when it starts or stops saying it works"
       fun f => do
-      f.listing "name\talpha\nstatus\tworking\nname\tbeta\nstatus\tidle\n"
+      f.listing
+          (jsonListing
+            [[("name", "alpha"), ("status", "working")], [("name", "beta"), ("status", "idle")]])
       withPrompt f.picker #[] fun s => do
           unless ← s.untilRow "⣷ alpha" do
             return false
@@ -1721,7 +1742,10 @@ private def refreshChecks (e : Env) : IO Unit := do
             return false
           let before ← s.capture "activity-before"
           let start ← s.mark
-          f.listing "name\talpha\nstatus\tidle\nname\tbeta\nstatus\tworking\n"
+          f.listing
+              (jsonListing
+                [[("name", "alpha"), ("status", "idle")],
+                  [("name", "beta"), ("status", "working")]])
           unless ← s.untilRow "⣀ alpha" start do
             return false
           unless ← s.untilRow "⣷ beta" start do
@@ -1739,7 +1763,10 @@ private def refreshChecks (e : Env) : IO Unit := do
   check e "refresh-keeps-order"
       "automatic refresh keeps the rows a visit shows where they are, a vanished row closing up and a new one last, until Ctrl-L sorts them again"
       fun f => do
-      f.listing "name\talpha\nstatus\tidle\nname\tbeta\nstatus\tidle\nname\tgamma\nstatus\tidle\n"
+      f.listing
+          (jsonListing
+            [[("name", "alpha"), ("status", "idle")], [("name", "beta"), ("status", "idle")],
+              [("name", "gamma"), ("status", "idle")]])
       withPrompt f.picker #[] fun s => do
           unless ← s.untilRow "⣀ gamma" do
             return false
@@ -1749,7 +1776,10 @@ private def refreshChecks (e : Env) : IO Unit := do
           -- gamma starts asking, beta ends and delta, which asks, is new: a fresh view would
           -- list gamma and delta first
           f.listing
-              "name\talpha\nstatus\tidle\nname\tgamma\nstatus\tidle\nattention\tasked\nname\tdelta\nstatus\tidle\nattention\tasked\n"
+              (jsonListing
+                [[("name", "alpha"), ("status", "idle")],
+                  [("name", "gamma"), ("status", "idle"), ("attention", "asked")],
+                  [("name", "delta"), ("status", "idle"), ("attention", "asked")]])
           unless ← s.untilRow "⚑ ⣀ delta" start do
             return false
           let kept ← s.capture "kept-order"
@@ -1779,13 +1809,17 @@ private def refreshChecks (e : Env) : IO Unit := do
       "automatic refresh keeps each column's width, cutting a longer value, until Ctrl-L lays the rows out again"
       fun f => do
       f.listing
-          "name\talpha\npid\t1\ncmd\tsh\ndescription\tab\nname\tbeta\npid\t1\ncmd\tsh\ndescription\tcd\n"
+          (jsonListing
+            [[("name", "alpha"), ("pid", "1"), ("cmd", "sh"), ("description", "ab")],
+              [("name", "beta"), ("pid", "1"), ("cmd", "sh"), ("description", "cd")]])
       withPrompt f.picker #[] fun s => do
           unless ← s.untilRow "? alpha ab" do
             return false
           let start ← s.mark
           f.listing
-              "name\talpha\npid\t1\ncmd\tsh\ndescription\tabcdefgh\nname\tbeta\npid\t1\ncmd\tsh\ndescription\tcd\n"
+              (jsonListing
+                [[("name", "alpha"), ("pid", "1"), ("cmd", "sh"), ("description", "abcdefgh")],
+                  [("name", "beta"), ("pid", "1"), ("cmd", "sh"), ("description", "cd")]])
           let kept ← s.untilRow "? alpha a…" start
           let pressed ← s.mark
           s.text "\x0c"
@@ -1796,7 +1830,7 @@ private def refreshChecks (e : Env) : IO Unit := do
   check e "refresh-removed"
       "automatic refresh clamps a removed selection while preserving an invalid creation query"
       fun f => do
-      f.listing "name\tone -. x\nname\ttwo -. x\nname\tthree -. x\n"
+      f.listing (namesListing ["one -. x", "two -. x", "three -. x"])
       withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "-. " "-. " do
             return false
@@ -1805,7 +1839,7 @@ private def refreshChecks (e : Env) : IO Unit := do
           unless ← s.selected "three -. x" selection do
             return false
           let start ← s.mark
-          f.listing "name\tfirst -. x\nname\tlast -. x\n"
+          f.listing (namesListing ["first -. x", "last -. x"])
           unless ← s.selected "last -. x" start do
             return false
           let vt ← s.capture "removed-frame"
@@ -1815,7 +1849,7 @@ private def refreshChecks (e : Env) : IO Unit := do
   check e "refresh-created"
       "automatic refresh turns a highlighted creation into the same existing target and attach help"
       fun f => do
-      f.listing "name\tworkshop\nname\tworkbench\n"
+      f.listing (namesListing ["workshop", "workbench"])
       withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "work" "work" do
             return false
@@ -1824,7 +1858,7 @@ private def refreshChecks (e : Env) : IO Unit := do
           unless ← s.selected "+ Create work" selection do
             return false
           let start ← s.mark
-          f.listing "name\twork\nname\tworkshop\nname\tworkbench\n"
+          f.listing (namesListing ["work", "workshop", "workbench"])
           unless ← s.selected "work" start do
             return false
           let vt ← s.capture "created-frame"
@@ -1837,7 +1871,7 @@ private def refreshChecks (e : Env) : IO Unit := do
   check e "ctrl-l-refresh"
       "picker Ctrl-L clears and redraws the whole screen, keeps query and highlight and lists remote hosts again at once"
       fun f => do
-      f.listing "name\tBeta\nname\tBravo\n"
+      f.listing (namesListing ["Beta", "Bravo"])
       withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "B" "B" do
             return false
@@ -1874,7 +1908,7 @@ private def refreshChecks (e : Env) : IO Unit := do
   check e "ctrl-r-ignored"
       "picker Ctrl-R preserves query and highlight without repaint or a listing of its own" fun f =>
       do
-      f.listing "name\tBeta\nname\tBravo\n"
+      f.listing (namesListing ["Beta", "Bravo"])
       withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "B" "B" do
             return false
@@ -1926,12 +1960,17 @@ private def refreshChecks (e : Env) : IO Unit := do
   check e "remote-on-events"
       "picker lists local rows every second and queries remote hosts only when it opens and on Ctrl-L"
       fun f => do
-      f.listing "name\tAlpha\nstatus\tidle\nname\twork@host\nstatus\tidle\n"
+      f.listing
+          (jsonListing
+            [[("name", "Alpha"), ("status", "idle")], [("name", "work@host"), ("status", "idle")]])
       withPrompt f.picker #[] fun s => do
           unless ← f.waitListing 1 true do
             return false
           let start ← s.mark
-          f.listing "name\tBeta\nstatus\tidle\nname\tnext@host\nstatus\tidle\n"
+          f.listing
+              (jsonListing
+                [[("name", "Beta"), ("status", "idle")],
+                  [("name", "next@host"), ("status", "idle")]])
           unless ← s.untilRow "Beta" start do
             return false
           -- six seconds of listings, longer than the cadence the chooser once queried hosts at:
@@ -1968,7 +2007,10 @@ private def refreshChecks (e : Env) : IO Unit := do
   check e "remote-age"
       "picker header says how long ago it listed the remote rows, as a row says its last output's age, updates it with each listing by repainting that row alone, and gives no age once no remote row is left"
       fun f => do
-      f.listing "name\tAlpha\nstatus\tidle\nname\twork@host\nstatus\tworking\n"
+      f.listing
+          (jsonListing
+            [[("name", "Alpha"), ("status", "idle")],
+              [("name", "work@host"), ("status", "working")]])
       withPrompt f.picker #[] fun s => do
           let parts := Linger.Display.View.headerParts [] [⟨.none, .idle⟩, ⟨.none, .working⟩]
           -- the header's age, in the format a row gives the time since its session last printed
@@ -1992,7 +2034,7 @@ private def refreshChecks (e : Env) : IO Unit := do
             hasText written "\x1b[1;1H" && !hasText written "\x1b[H" &&
               (List.range (newer.rowCount - 1)).all fun k => !hasText written s!"\x1b[{k + 2};1H"
           -- once a listing of remote hosts finds no remote row, the header gives no age
-          f.listing "name\tAlpha\nstatus\tidle\n"
+          f.listing (jsonListing [[("name", "Alpha"), ("status", "idle")]])
           let cleared ← s.mark
           s.text "\x0c"
           let plain :=
@@ -2009,9 +2051,10 @@ private def refreshChecks (e : Env) : IO Unit := do
               (← restored s 130) &&
               (← f.visits) == listed
   for (slug, text, rc, error) in
-    [("failure", "name\tPartial\n", 9, "could not list sessions (exit 9)"),
-      ("duplicate", "name\tFresh\nname\tFresh\n", 1, "duplicate session target"),
-      ("malformed", "name\tFresh\nname\tbad\textra\n", 1, "malformed name record")] do
+    [("failure", (namesListing ["Partial"]), 9, "could not list sessions (exit 9)"),
+      ("duplicate", (namesListing ["Fresh", "Fresh"]), 1, "duplicate session target"),
+      ("malformed", namesListing ["Fresh"] ++ "{\"extra\":[],\"name\":\"bad\"}\n", 1,
+        "a listing field that is not a string")] do
     check e s!"refresh-{slug}"
         s!"automatic refresh rejects the entire bad snapshot and prints an error after restoration ({slug})"
         fun f =>
@@ -2027,11 +2070,11 @@ private def refreshChecks (e : Env) : IO Unit := do
   check e "refresh-partial"
       "incomplete listing output cannot replace displayed rows and keyboard editing stays responsive"
       fun f => do
-      f.listing "name\talpha.x\nname\tbeta.x\nname\tgamma.x\n"
+      f.listing (namesListing ["alpha.x", "beta.x", "gamma.x"])
       IO.FS.writeFile (f.root / "hold-listing-from") "2"
       withPrompt f.picker #[] fun s => do
-          IO.FS.writeFile (f.root / "listing-prefix") "name\tready.x\n"
-          f.listing "name\tbeta.x\nname\tnew.x\n"
+          IO.FS.writeFile (f.root / "listing-prefix") (namesListing ["ready.x"])
+          f.listing (namesListing ["beta.x", "new.x"])
           unless ← f.waitListing 2 do
             return false
           unless ← s.typeQuery "." "." do
@@ -2059,12 +2102,12 @@ private def refreshChecks (e : Env) : IO Unit := do
   check e "refresh-input-order"
       "completed refresh follows displayed navigation and paints before the next accepted key"
       fun f => do
-      f.listing "name\talpha.x\nname\tbeta.x\nname\tgamma.x\n"
+      f.listing (namesListing ["alpha.x", "beta.x", "gamma.x"])
       IO.FS.writeFile (f.root / "hold-listing-from") "2"
       withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "." "." do
             return false
-          f.listing "name\tbeta.x\nname\tdelta.x\nname\tgamma.x\nname\talpha.x\n"
+          f.listing (namesListing ["beta.x", "delta.x", "gamma.x", "alpha.x"])
           unless ← f.waitListing 2 do
             return false
           let start ← s.mark
@@ -2123,7 +2166,7 @@ private def refreshChecks (e : Env) : IO Unit := do
       "picker probe redraw fits a resized terminal and clips wide text without changing its target"
       fun f => do
       let target := "wide@界界界界Z"
-      f.listing s!"name\t{target}\nname\tsecond\nname\tthird\nname\tfourth\n"
+      f.listing (namesListing [target, "second", "third", "fourth"])
       withPrompt f.picker #[]
           (fun s => do
             unless ← s.until target do
@@ -2197,7 +2240,7 @@ private def defaultChecks (e : Env) : IO Unit := do
             (shellText, "host", 255, "Fresh")] do
           unless ← s.typeQuery query query do
             return false
-          f.afterAttach s!"name\t{next}\nname\tOther{count}\n"
+          f.afterAttach (namesListing [next, s!"Other{count}"])
           IO.FS.writeFile (f.root / "attach-rc") (toString rc)
           s.text "\r"
           count := count + 1
@@ -2216,7 +2259,7 @@ private def defaultChecks (e : Env) : IO Unit := do
         s.text "\x1b[B"
         unless ← s.selected "Beta" selection do
           return false
-        f.afterAttach "name\tGamma\nname\tBeta\nname\tAlpha\nname\tDelta\n"
+        f.afterAttach (namesListing ["Gamma", "Beta", "Alpha", "Delta"])
         s.text "\r"
         unless ← returned s "Beta" do
           return false
@@ -2249,7 +2292,7 @@ private def defaultChecks (e : Env) : IO Unit := do
       "picker probe preserves a failed listing status after attach and restores the terminal"
       fun f =>
       withPrompt f.picker #[] fun s => do
-        f.afterAttach "name\tPartial\n" 9
+        f.afterAttach (namesListing ["Partial"]) 9
         s.text "\r"
         let clean ← failureRestored s 9 "linger: could not list sessions (exit 9)" 1
         return clean && (← beforeAttach s) && (← attachNormal f) &&
@@ -2257,7 +2300,7 @@ private def defaultChecks (e : Env) : IO Unit := do
   check e "return-malformed"
       "picker probe rejects a malformed listing after attach before another picker visit" fun f =>
       withPrompt f.picker #[] fun s => do
-        f.afterAttach "name\tNext\nname\tNext\n"
+        f.afterAttach (namesListing ["Next", "Next"])
         s.text "\r"
         let clean ← failureRestored s 1 "picker probe:" 1
         return clean && (← beforeAttach s) && (← attachNormal f) &&
@@ -2365,8 +2408,7 @@ private def Fixture.nativeNames (f : Fixture) : IO (List String) := do
   let (rc, out, err) ← f.piped #["ls", "--porcelain"]
   unless rc == 0 do
     throw (IO.userError s!"native fixture listing failed: {err}")
-  return (out.splitOn "\n\n").filterMap fun record =>
-      let fields := records record
+  return (listingRecords out).filterMap fun fields =>
       if (fields.lookup "source").isSome then none else fields.lookup "name"
 
 private def checkSaved (e : Env) (slug label : String) (body : Fixture → Env → IO Bool) : IO Unit :=
