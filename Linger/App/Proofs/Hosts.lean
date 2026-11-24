@@ -297,30 +297,10 @@ theorem Remote.said_eq (host : String) (members : List (String × Json)) :
 
 /-! ## A remote attach -/
 
-/-- An attach client writes all of the bytes output frames carry, then what follows. -/
-theorem shown_outputFrames (bytes : List UInt8) (rest : List Session.Wire.Msg) :
-    Session.Wire.shown (Remote.outputFrames bytes ++ rest) = bytes ++ Session.Wire.shown rest := by
-  unfold Remote.outputFrames
-  conv =>
-    rhs; rw [← Session.Wire.inputChunks_flatten bytes]
-  induction Session.Wire.inputChunks bytes with
-  | nil => simp
-  | cons chunk chunks ih => simp [Session.Wire.shown, ih]
-
 /-- An attach client writes nothing of a message that ends the attach, nor of what follows it. -/
 theorem shown_ends {m : Session.Wire.Msg} (ends : m.ends = true) (rest : List Session.Wire.Msg) :
     Session.Wire.shown (m :: rest) = [] := by
   cases m <;> simp_all [Session.Wire.shown, Session.Wire.Msg.ends]
-
-/-- Output frames fit a frame. -/
-theorem outputFrames_fit (bytes : List UInt8) : ∀ m ∈ Remote.outputFrames bytes, m.Fits := by
-  intro m member
-  simp only [Remote.outputFrames, List.mem_map] at member
-  obtain ⟨chunk, inChunks, rfl⟩ := member
-  have short := Session.Wire.inputChunks_length_le bytes chunk inChunks
-  simp only [Session.Wire.Msg.Fits, Session.Wire.maxPayload]
-  simp only [Session.Wire.inputChunk] at short
-  omega
 
 /-- The message that ends an attach as `closed` says ends it, and fits a frame. -/
 theorem ending_ends (closed : Json) :

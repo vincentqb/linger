@@ -5,6 +5,8 @@ import all Linger.App.CoreSpec
 import all Linger.App.CoreCode.Json
 import all Linger.App.CoreCode.Serve
 import all Linger.App.Proofs.Serve
+import all Linger.Session.Proofs.Wire
+import all Linger.Session.CoreCode.Wire
 
 /-! # A session's terminal as bytes: the stream carries exactly what an attach client writes
 
@@ -12,7 +14,11 @@ What `serve`'s base64 encoder writes, its decoder reads back. A read of an attac
 to what waits for the subscriber exactly the bytes an attach client writes of the messages the
 read's bytes end, the first read answers the attach's request, and once a message ends the attach,
 or the framing breaks, the stream's last update carries what waited and `closed`; a free writer
-sends what waits, as one update whose `data` decodes to it, and then nothing waits. -/
+sends what waits, as one update whose `data` decodes to it, and then nothing waits. A screen an
+attach shows, an ended session's or a read-only attach's of a saved one, is read as its output
+frames (`paint`), which leave exactly its bytes waiting; and when the attach ends, one not yet
+opened answers its request with what it found, and an open one's last update carries what waits
+and `closed`, with the answer and code of what it found. -/
 
 namespace Linger.App.Serve
 
@@ -179,17 +185,119 @@ theorem read_stream (s : State) (version : String) (id : Id) (dec : Session.Wire
     step s (.read id bytes) = streamed s id dec pending bytes := by
   simp [step, readAttach, ready, holds]
 
-/-- **An attach's stream is exact**: every read is `Streamed`, the first answering the attach's
-request, and a free writer sends what waits, as one update without `closed`. -/
+/-! ## A shown screen -/
+
+/-- An attach client writes all of the bytes output frames carry, then what follows. -/
+theorem shown_outputFrames (bytes : List UInt8) (rest : List Session.Wire.Msg) :
+    Session.Wire.shown (Remote.outputFrames bytes ++ rest) = bytes ++ Session.Wire.shown rest := by
+  unfold Remote.outputFrames
+  conv =>
+    rhs; rw [← Session.Wire.inputChunks_flatten bytes]
+  induction Session.Wire.inputChunks bytes with
+  | nil => simp
+  | cons chunk chunks ih => simp [Session.Wire.shown, ih]
+
+/-- Output frames fit a frame. -/
+theorem outputFrames_fit (bytes : List UInt8) : ∀ m ∈ Remote.outputFrames bytes, m.Fits := by
+  intro m member
+  simp only [Remote.outputFrames, List.mem_map] at member
+  obtain ⟨chunk, inChunks, rfl⟩ := member
+  have short := Session.Wire.inputChunks_length_le bytes chunk inChunks
+  simp only [Session.Wire.Msg.Fits, Session.Wire.maxPayload]
+  simp only [Session.Wire.inputChunk] at short
+  omega
+
+/-- No output frame ends an attach. -/
+theorem outputFrames_ends (bytes : List UInt8) :
+    (Remote.outputFrames bytes).any Session.Wire.Msg.ends = false := by
+  simp [Remote.outputFrames, Session.Wire.Msg.ends]
+
+/-- **A shown screen's read decodes to the screen's output frames**, as an attach client decodes
+it, and leaves the decoder as it started. -/
+theorem feed_paint (screen : List UInt8) :
+    Session.Wire.Decoder.feed {} (paint screen) =
+      ({ buf := [], errored := false }, Remote.outputFrames screen) := by
+  have decoded :=
+    Session.Wire.decode_encode_stream (Remote.outputFrames screen)
+      (fun m member => Session.Wire.fits_wf m (outputFrames_fit screen m member))
+  exact decoded
+
+/-- **A shown screen's read answers the attach's request `done`**, and leaves exactly the
+screen's bytes waiting for its subscriber. -/
+theorem read_paint (s : State) (version : String) (id : Id) (screen : List UInt8)
+    (ready : s.phase = .ready version) (asked : s.watching id = some .attaching) :
+    (step s (.read id (paint screen))).2 = [.send (.result id (result .done []))] ∧
+      (step s (.read id (paint screen))).1.watching id = some (.stream {} screen) := by
+  have shown := shown_outputFrames screen []
+  simp only [Session.Wire.shown, List.append_nil] at shown
+  rw [read_attaching s version id (paint screen) ready asked]
+  simp [streamed, feed_paint, outputFrames_ends, shown, setWatch_watching, asked]
+
+/-! ## The attach's end -/
+
+/-- **An attach that ends before it opened answers its request** with what it found and what it
+said, and is held no more. -/
+theorem unwatched_attaching (s : State) (version : String) (id : Id) (found : Api.Found)
+    (said : Log String) (ready : s.phase = .ready version)
+    (asked : s.watching id = some .attaching) :
+    (step s (.unwatched id found said)).2 = [.send (.result id (result found (saidMembers said)))] ∧
+      (step s (.unwatched id found said)).1.watching id = none := by
+  refine ⟨?_, ?_⟩ <;> simp [step, unwatched, ready, asked, dropWatch_watching]
+
+/-- **An open attach that ends sends its last update**, what waits and `closed` with what it found,
+and is held no more. -/
+theorem unwatched_stream (s : State) (version : String) (id : Id) (dec : Session.Wire.Decoder)
+    (pending : List UInt8) (found : Api.Found) (said : Log String)
+    (ready : s.phase = .ready version) (holds : s.watching id = some (.stream dec pending)) :
+    (step s (.unwatched id found said)).2 =
+        [.send
+            (.notify "session/output"
+              ((Output.update id pending).withMembers (closedMembers found)))] ∧
+      (step s (.unwatched id found said)).1.watching id = none := by
+  refine ⟨?_, ?_⟩ <;> simp [step, unwatched, ready, holds, dropWatch_watching]
+
+/-- The last update's `closed` opens with the answer of what the attach found, and its code. -/
+theorem update_closed_members (id : Id) (bytes : List UInt8) (found : Api.Found) :
+    ∃ rest,
+      ((Output.update id bytes).withMembers (closedMembers found)).member? "closed" =
+        some
+          (.obj
+            (("answer", .str (answerName (Api.answer found))) ::
+              ("code", .number (toString (Os.Answer.code (Api.answer found)))) :: rest)) := by
+  obtain ⟨rest, members⟩ :
+    ∃ rest,
+      closedMembers found =
+        [("closed",
+            .obj
+              (("answer", .str (answerName (Api.answer found))) ::
+                ("code", .number (toString (Os.Answer.code (Api.answer found)))) :: rest))] :=
+    ⟨_, rfl⟩
+  exact ⟨rest, by simp [Output.update, Json.withMembers, Json.member?, List.lookup, members]⟩
+
+/-- **An attach's stream is exact, for every session an attach reaches**: every read is
+`Streamed`, the first answering the attach's request; a shown screen's read leaves exactly the
+screen waiting; a free writer sends what waits, as one update without `closed`; and the attach's
+end answers a request not yet answered with what it found, or sends the last update, which carries
+what waits and `closed` with the answer and code of what it found. -/
 theorem attach_stream (s : State) (version : String) (id : Id) (dec : Session.Wire.Decoder)
-    (pending bytes : List UInt8) (ready : s.phase = .ready version) :
-    AttachStream State.watching step result Session.Wire.Decoder.feed s id dec pending bytes := by
+    (pending bytes screen : List UInt8) (found : Api.Found) (said : Log String)
+    (ready : s.phase = .ready version) :
+    AttachStream State.watching step result Api.answer Os.Answer.code paint
+      Session.Wire.Decoder.feed s id dec pending bytes screen found said := by
   refine ⟨fun asked => ?_, fun holds => ?_⟩
-  · rw [read_attaching s version id bytes ready asked]
-    exact ⟨_, rfl, streamed_spec s id {} [] bytes (by simp [asked])⟩
-  · rw [read_stream s version id dec pending bytes ready holds]
+  · obtain ⟨answered, dropped⟩ := unwatched_attaching s version id found said ready asked
+    obtain ⟨painted, shown⟩ := read_paint s version id screen ready asked
+    rw [read_attaching s version id bytes ready asked]
+    exact
+      ⟨⟨_, rfl, streamed_spec s id {} [] bytes (by simp [asked])⟩, painted, shown, ⟨_, answered⟩,
+        dropped⟩
+  · obtain ⟨last, dropped⟩ := unwatched_stream s version id dec pending found said ready holds
+    obtain ⟨rest, closed⟩ := update_closed_members id pending found
+    rw [read_stream s version id dec pending bytes ready holds]
     obtain ⟨sent, after⟩ := flush_stream s version id dec pending ready holds
-    refine ⟨streamed_spec s id dec pending bytes (by simp [holds]), ?_, ?_, after⟩
+    refine
+      ⟨streamed_spec s id dec pending bytes (by simp [holds]), ?_, ?_, after,
+        ⟨_, rest, last, Output.update_carries id pending (closedMembers found), closed⟩, dropped⟩
     · intro empty
       simp [sent, empty]
     · intro waiting

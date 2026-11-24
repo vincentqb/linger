@@ -97,11 +97,15 @@ structure Remote where
 `session/attach`: given the connection to a session's daemon once its `info` answer admitted the
 attach, it converses with the daemon as the attach client does, taking the daemon's output to
 whoever reads it and the keys and the size whoever writes give it, and closes the connection when
-it is done; how the attach ended. It shows no saved session's screen, which only a terminal of
-this process's can. -/
+it is done; how the attach ended. It shows a saved session's screen, as the attach client shows
+one, to whoever reads it, and, when nothing follows the showing (`hold`), keeps showing it until
+whoever reads it lets the attach go. -/
 structure Tty where
   /-- Converse over the connection, as an attach in this mode, about the session of this name. -/
   attach : (name : String) → (fd : UInt32) → Linger.Session.Mode → IO Client.Outcome
+  /-- Show the saved screen of the session of this name, and, with `hold`, keep it shown until
+  whoever reads it lets the attach go. -/
+  view : (name : String) → Terminal.Vt.Vt → (hold : Bool) → IO Client.Outcome
 
 /-- Where and how the API works: the namespace its sessions live in, the linger executable that
 runs their daemons, the source of saved sessions, the remote hosts it may reach, and where what a
@@ -916,13 +920,14 @@ private def runVisit (env : Env) (s : Names.Ref) (shown : ByteArray) (vt : Termi
     | .resume =>
       return none
     | .show =>
-      if env.tty.isSome then
-        -- a terminal `Env.tty` gives shows no saved screen, so the session stays as it is
-        return some
-            (.refused
-              s!"session '{s.name}' is saved, and only a terminal shows its screen; attach on \
-                one, or capture it")
-      let viewed ← Client.viewSaved s.name vt status
+      -- a terminal `Env.tty` gives shows the saved screen and goes on at once to tell how the
+      -- program ended, or, when nothing follows, keeps it shown until the attach is let go
+      let viewed ←
+        match env.tty with
+        | some tty =>
+          tty.view s.name vt (hold := steps == [.show])
+        | none =>
+          Client.viewSaved s.name vt status
       if let .detached := viewed then
         pure ()
       else

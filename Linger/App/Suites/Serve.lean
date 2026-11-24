@@ -4,6 +4,8 @@ public import Verify.Harness
 public import Linger.App.CoreSpec
 public import Linger.App.CoreCode.Json
 import Linger.Selector.CoreCode.Picker
+import Linger.Session.CoreCode.Checkpoint
+import Terminal.CoreCode.Vt
 
 public section
 
@@ -661,6 +663,63 @@ private def attachStream (e : Env) (p : Peer) : IO Unit := do
               textAt? params ["closed", "code"] == some "7"
   expect closed "an attached session's end sends a last update that carries closed, program 7"
 
+/-- `session/attach` covers every session `attach` does: a saved session resumes and streams; an
+ended one's stream shows its final screen, then closes with how it ended, and the session is
+discarded; and a read-only attach of a saved one shows its screen until the subscriber detaches,
+leaving it saved. -/
+private def everySession (e : Env) (p : Peer) : IO Unit := do
+  let saved (name text : String) : IO Unit :=
+    IO.FS.writeBinFile s!"{e.dir}/{name}.ckpt"
+      (Linger.Session.Checkpoint.saveBytes
+        ⟨(Terminal.Vt.Vt.init 40 5).feed text.toUTF8.toList, e.dir, []⟩)
+  saved "kept" "KEPT-MARK"
+  p.say (request 90 "session/attach" (named "kept"))
+  let resumed ← p.answer 90
+  let shown ← waitFor patienceMs (return hasText (← p.stream 90) "KEPT-MARK")
+  p.say
+      (request 91 "session/input"
+        (onAttach 90 [("data", .str (Base64.encode "echo resumed-$((2+3))\r".toUTF8.toList))]))
+  let typed ← waitFor patienceMs (return hasText (← p.stream 90) "resumed-5")
+  p.say (request 92 "session/detach" (onAttach 90))
+  let _ ← p.answer 92
+  let live ← waitFor patienceMs (return (← e.info "kept" "pid").isSome)
+  expect (answerOf resumed == some ("done", "0") && shown && typed && live)
+      s!"session/attach of a saved session resumes it, as attach does, and streams it ({answerOf resumed})"
+  let (startRc, _, _) ← e.cli #["start", "over", "/bin/sh", "-c", "echo final-$((6*7)); exit 7"]
+  let (waitRc, _, _) ← e.cli #["wait", "over"]
+  let kept ← System.FilePath.pathExists s!"{e.dir}/over.ckpt"
+  p.say (request 93 "session/attach" (named "over"))
+  let opened ← p.answer 93
+  let final ← waitFor patienceMs (return hasText (← p.stream 93) "final-42")
+  let closed ←
+    waitFor patienceMs do
+        return (← p.outputs 93).any fun params =>
+            textAt? params ["closed", "answer"] == some "program" &&
+              textAt? params ["closed", "code"] == some "7"
+  let discarded ← waitFor patienceMs (return !(← System.FilePath.pathExists s!"{e.dir}/over.ckpt"))
+  let (_, record, _) ← e.cli #["ls", "--porcelain", "over"]
+  expect
+      (startRc == 0 && waitRc == 7 && kept && answerOf opened == some ("done", "0") && final &&
+        closed &&
+        discarded &&
+        has record "exit\t7")
+      s!"session/attach of an ended session shows its final screen, closes with how it ended and discards it ({answerOf opened})"
+  saved "glimpsed" "GLIMPSED-MARK"
+  p.say (request 94 "session/attach" (named "glimpsed" [("readOnly", .bool true)]))
+  let viewing ← p.answer 94
+  let painted ← waitFor patienceMs (return hasText (← p.stream 94) "GLIMPSED-MARK")
+  let stayed := !(← p.outputs 94).any fun params => (at? params ["closed"]).isSome
+  p.say (request 95 "session/detach" (onAttach 94))
+  let left ← p.answer 95
+  let still ← System.FilePath.pathExists s!"{e.dir}/glimpsed.ckpt"
+  let unstarted := (← e.info "glimpsed" "pid").isNone
+  expect
+      (answerOf viewing == some ("done", "0") && painted && stayed &&
+        answerOf left == some ("done", "0") &&
+        still &&
+        unstarted)
+      s!"a read-only session/attach of a saved session shows its screen until the subscriber detaches, and keeps it saved ({answerOf viewing})"
+
 /-- The suite. -/
 def run : IO UInt32 :=
   Env.suite "serve" fun e => do
@@ -673,6 +732,7 @@ def run : IO UInt32 :=
       screenTable p
       historyLog p
       attachStream e p
+      everySession e p
       let rc ← p.close
       expect (rc == some 0) s!"once its standard input ends, serve exits 0 ({rc})"
     finally

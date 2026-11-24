@@ -7,6 +7,7 @@ import Linger.Session.CoreCode
 import Linger.Session.CoreCode.Wire
 import Linger.Session.WorldCode.Client
 import Terminal.CoreCode.Vt
+import Terminal.CoreCode.Replay
 import Os.WorldCode
 import Std.Sync.Mutex
 
@@ -43,8 +44,10 @@ at the new size. The writer sends each watch's update when nothing else waits (`
 watch ends with its session, its connection or its subscription: an `info` request on its
 connection wakes it when the step closes it, and when standard input ends.
 
-An attach, `session/attach`, attaches to the session writable on a thread of its own, through
-`Api.perform`, as `attach` does, on a terminal that is its subscriber (`Api.Tty`): it hands the
+An attach, `session/attach`, attaches to the session, writable unless asked to be read-only, on a
+thread of its own, through `Api.perform`, as `attach` does, a saved session resumed, on a terminal
+that is its subscriber (`Api.Tty`); the saved screen an attach shows, an ended session's or a
+read-only attach's of a saved one, is the stream's first read, its repaint (`showOn`). It hands the
 step each read of the daemon's connection, which decodes it as the attach client does and keeps
 what the client would write for the writer to send (`Event.read`), and reads no further while
 `attachHold` bytes wait, so that a subscriber that does not read holds back the daemon, which cuts
@@ -492,6 +495,41 @@ private def converseOn (conn : Std.Mutex Shared) (wake : Std.Condvar) (id : Id)
         (modify fun s => { s with watchers := s.watchers.filter (·.1 != id) })
     close fd
 
+/-- The bytes of a saved terminal's repaint, as its daemon would send an attach of it: one
+synchronized update of the screen, its title and its modes (`Replay.start`). -/
+private def repaintOf (vt : Terminal.Vt.Vt) : IO (List UInt8) := do
+  let mut plan := Terminal.Replay.start vt
+  let mut bytes : Array UInt8 := #[]
+  repeat
+    match Terminal.Replay.next 65536 plan with
+    | none =>
+      break
+    | some (chunk, next) =>
+      bytes := bytes ++ chunk.toArray
+      plan := next
+  return bytes.toList
+
+/-- Show a saved session's screen to the attach `id`'s subscriber as the attach's stream, its
+first read (`Event.read`) the screen's repaint (`repaintOf`) as output frames (`paint`), as its
+daemon would send them, which answers the attach's request; with `hold`, keep it shown until the
+step holds the attach no more, its subscriber having let it go or input having ended. -/
+private def showOn (conn : Std.Mutex Shared) (wake : Std.Condvar) (id : Id) (opened : IO.Ref Bool)
+    (vt : Terminal.Vt.Vt) (hold : Bool) : IO Linger.Session.Shell.Client.Outcome := do
+  let shown := paint (← repaintOf vt)
+  conn.atomically do
+      let asked :=
+        match (← get).state.watching id with
+        | some .attaching => true
+        | _ => false
+      discard <| stepShared (.read id shown)
+      if asked then
+        modify fun s => { s with inFlight := s.inFlight - 1 }
+        opened.set true
+  wake.notifyAll
+  if hold then
+    conn.atomicallyOnce wake (watchClosed id) (pure ())
+  return .detached
+
 /-- Follow an attach, `session/attach`, of the session its request names, as `attach` attaches to
 it (`Api.perform`), on a terminal that is the attach's subscriber (`Api.Tty`, `converseOn`), with
 what it says kept for its result, then tell the step how it ended (`Event.unwatched`). -/
@@ -503,7 +541,10 @@ private def followAttach (env : Api.Env) (conn : Std.Mutex Shared) (wake : Std.C
   let env :=
     { env with
       say := fun s => said.modify (Log.push saidCap · s.text)
-      tty := some { attach := fun _ fd mode => converseOn conn wake id opened fd mode } }
+      tty :=
+        some
+          { attach := fun _ fd mode => converseOn conn wake id opened fd mode
+            view := fun _ vt hold => showOn conn wake id opened vt hold } }
   let found ←
     try
       (·.found) <$> Api.perform env request

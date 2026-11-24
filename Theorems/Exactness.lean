@@ -419,18 +419,20 @@ theorem history_log_exact_rejects_uncounted :
   simp [App.Serve.Log.reads, App.Serve.Log.Masks] at masks
 
 theorem serve_attach_exact (s : App.Serve.State) (version : String) (id : App.Serve.Id)
-    (dec : Wire.Decoder) (pending bytes : List UInt8) (ready : s.phase = .ready version) :
-    App.Serve.AttachStream App.Serve.State.watching App.Serve.step App.Serve.result
-      Wire.Decoder.feed s id dec pending bytes :=
-  App.Serve.attach_stream s version id dec pending bytes ready
+    (dec : Wire.Decoder) (pending bytes screen : List UInt8) (found : App.Api.Found)
+    (said : App.Serve.Log String) (ready : s.phase = .ready version) :
+    App.Serve.AttachStream App.Serve.State.watching App.Serve.step App.Serve.result App.Api.answer
+      Os.Answer.code App.Serve.paint Wire.Decoder.feed s id dec pending bytes screen found said :=
+  App.Serve.attach_stream s version id dec pending bytes screen found said ready
 
 theorem serve_attach_exact_rejects_unpainted :
     ¬∀ (s : App.Serve.State) (version : String) (id : App.Serve.Id) (dec : Wire.Decoder)
-        (pending bytes : List UInt8),
+        (pending bytes screen : List UInt8) (found : App.Api.Found) (said : App.Serve.Log String),
         s.phase = .ready version →
           App.Serve.AttachStream App.Serve.State.watching
             (App.Serve.unpainted App.Serve.State.watching App.Serve.step) App.Serve.result
-            Wire.Decoder.feed s id dec pending bytes := by
+            App.Api.answer Os.Answer.code App.Serve.paint Wire.Decoder.feed s id dec pending bytes
+            screen found said := by
   intro h
   -- a stream that drops its first read's bytes, which open the repaint, leaves its subscriber
   -- waiting for none of them
@@ -443,13 +445,58 @@ theorem serve_attach_exact_rejects_unpainted :
   have quiet : Wire.Decoder.feed {} [] = ({ buf := [], errored := false }, []) := by
     simpa [Wire.decode] using Wire.decode_encode_stream [] (by simp)
   obtain ⟨rest, sent, streamed⟩ :=
-    (h ({ stage := .ready "1", watches := [(.number "1", .attaching)] } : App.Serve.StateRec) "1"
-          (.number "1") {} [] (Wire.encode (.output [65])) rfl).1
-      (by simp [App.Serve.State.watching])
+    ((h ({ stage := .ready "1", watches := [(.number "1", .attaching)] } : App.Serve.StateRec) "1"
+            (.number "1") {} [] (Wire.encode (.output [65])) [] .done {} rfl).1
+        (by simp [App.Serve.State.watching])).1
   simp [App.Serve.unpainted, App.Serve.State.watching, App.Serve.step, App.Serve.readAttach,
     App.Serve.State.phase, App.Serve.streamed, quiet, App.Serve.State.setWatch] at sent streamed
   subst sent
   simp [App.Serve.Streamed, painted, Wire.shown, Wire.Msg.ends] at streamed
+
+theorem serve_attach_exact_rejects_unframed :
+    ¬∀ (s : App.Serve.State) (version : String) (id : App.Serve.Id) (dec : Wire.Decoder)
+        (pending bytes screen : List UInt8) (found : App.Api.Found) (said : App.Serve.Log String),
+        s.phase = .ready version →
+          App.Serve.AttachStream App.Serve.State.watching App.Serve.step App.Serve.result
+            App.Api.answer Os.Answer.code App.Serve.unframed Wire.Decoder.feed s id dec pending
+            bytes screen found said := by
+  intro h
+  -- a screen read as its bytes, unframed, is read as frames: the bytes of an input frame leave
+  -- nothing waiting for the subscriber, where the screen should
+  have framed :
+    Wire.Decoder.feed {} (Wire.encode (.input [66])) =
+      ({ buf := [], errored := false }, [.input [66]]) := by
+    simpa [Wire.decode] using
+      Wire.decode_encode_stream [.input [66]]
+        (by simpa using Wire.fits_wf _ (by simp [Wire.Msg.Fits, Wire.maxPayload]))
+  obtain ⟨_, _, shown, _⟩ :=
+    (h ({ stage := .ready "1", watches := [(.number "1", .attaching)] } : App.Serve.StateRec) "1"
+          (.number "1") {} [] [] (Wire.encode (.input [66])) .done {} rfl).1
+      (by simp [App.Serve.State.watching])
+  simp [App.Serve.unframed, App.Serve.State.watching, App.Serve.step, App.Serve.readAttach,
+    App.Serve.State.phase, App.Serve.streamed, framed, Wire.shown, Wire.Msg.ends,
+    App.Serve.State.setWatch] at shown
+  simp [Wire.encode] at shown
+
+theorem serve_attach_exact_rejects_done_anyway :
+    ¬∀ (s : App.Serve.State) (version : String) (id : App.Serve.Id) (dec : Wire.Decoder)
+        (pending bytes screen : List UInt8) (found : App.Api.Found) (said : App.Serve.Log String),
+        s.phase = .ready version →
+          App.Serve.AttachStream App.Serve.State.watching App.Serve.step App.Serve.result
+            App.Serve.doneAnyway Os.Answer.code App.Serve.paint Wire.Decoder.feed s id dec pending
+            bytes screen found said := by
+  intro h
+  -- the last update of an attach that found no session says `notFound`, not `done`
+  obtain ⟨_, _, _, _, ⟨params, rest, last, _, closed⟩, _⟩ :=
+    (h ({ stage := .ready "1", watches := [(.number "1", .stream {} [])] } : App.Serve.StateRec) "1"
+          (.number "1") {} [] [] [] .missing {} rfl).2
+      (by simp [App.Serve.State.watching])
+  simp [App.Serve.State.watching, App.Serve.step, App.Serve.unwatched,
+    App.Serve.State.phase] at last
+  subst last
+  simp [App.Serve.Output.update, App.Serve.Json.withMembers, App.Serve.Json.member?, List.lookup,
+    App.Serve.closedMembers, App.Serve.answerMembers, App.Serve.doneAnyway, App.Api.answer,
+    App.Api.Found.answer, App.Serve.answerName] at closed
 
 theorem remote_rows_exact (host : String) (messages : List App.Serve.Json) (status : UInt32)
     (records : List App.Serve.Record) :

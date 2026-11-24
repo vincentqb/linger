@@ -101,9 +101,14 @@ sends an attach client: the synchronized repaint, then the output as it comes. `
 (`subscription`, `data` in base64) types into the session, `session/resize` (`subscription`,
 `cols`, `rows`) gives it the client's size, and `session/detach` (`subscription`) ends the attach;
 the session runs on. When the session ends, the last update carries `closed` with the answer its
-ending gives. A client that stops reading is cut off as an attach client is: `serve` stops reading
-the daemon while 64 KiB wait for the client, the daemon closes the connection once it owes the
-client its cap, and the last update carries `closed`.
+ending gives. Every session `linger attach` reaches, `session/attach` reaches as it does: a saved
+session is resumed and streams; an ended one's stream is its final screen's repaint, then `closed`
+with how its program ended, and the session is discarded, its ending kept for `wait` and `ls`; a
+read-only attach of a saved one shows its screen until the client detaches, and keeps it saved;
+and a `name@host` session streams from its host's `session/attach`. A client that stops reading is
+cut off as an attach client is: `serve` stops reading the daemon while 64 KiB wait for the client,
+the daemon closes the connection once it owes the client its cap, and the last update carries
+`closed`.
 
 ## Upgrades
 

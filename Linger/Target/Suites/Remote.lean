@@ -566,6 +566,21 @@ private def attachChecks (e : Env) (h : Hosts) : IO Unit := do
   k.bye (sendDetach := false)
   expect (made && madeRc == 0)
       "an attach on name@host that starts the session runs exactly its command's words"
+  -- a far session that ended shows its final screen, then ends as its program did, and is gone
+  let (overRc, _, _) ←
+    e.cliEnv h.procPath #["start", "over@far", "/bin/sh", "-c", "echo FAR-FINAL-$((6*7)); exit 7"]
+  let (overWaitRc, _, _) ← e.cliEnv h.procPath #["wait", "over@far"]
+  let farCkpt := s!"{h.far.dir}/over.ckpt"
+  let kept ← System.FilePath.pathExists farCkpt
+  let o ← e.spawnEnv h.ptyPath #["attach", "over@far"] 100 24
+  let oacc ← IO.mkRef ByteArray.empty
+  let final ← o.awaitText oacc (fun out => hasText out "FAR-FINAL-42")
+  let overAttachRc ← o.reap patienceMs
+  o.bye (sendDetach := false)
+  let discarded ← waitFor patienceMs (return !(← System.FilePath.pathExists farCkpt))
+  expect (overRc == 0 && overWaitRc == 7 && kept && final && overAttachRc == 7 && discarded)
+      s!"an attach on name@host of a far session that ended shows its final screen, ends as its \
+        program did and is discarded there ({overWaitRc}, {overAttachRc})"
   IO.FS.writeFile h.sshLog ""
   let s ← e.spawnEnv h.ptyPath #["attach", s!"term@{devHost}"] 100 24
   let sacc ← IO.mkRef ByteArray.empty

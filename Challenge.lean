@@ -94,6 +94,8 @@ def Linger.App.Serve.Screen.render : Vt.Vt → Serve.Screen := sorry
 
 def Linger.App.Serve.Screen.changes : Serve.Screen → Serve.Screen → Serve.Screen.Update := sorry
 
+def Linger.App.Serve.paint : List UInt8 → List UInt8 := sorry
+
 def Linger.App.Serve.Remote.heard : List Serve.Json → UInt32 → Serve.Remote.Heard := sorry
 
 def Linger.App.Serve.Remote.rows : String → List Serve.Record → List Serve.Record := sorry
@@ -1671,19 +1673,42 @@ theorem history_log_exact_rejects_uncounted :
   sorry
 
 theorem serve_attach_exact (s : App.Serve.State) (version : String) (id : Serve.Id)
-    (dec : Wire.Decoder) (pending bytes : List UInt8) (ready : s.phase = .ready version) :
-    Serve.AttachStream App.Serve.State.watching App.Serve.step App.Serve.result Wire.Decoder.feed s
-      id dec pending bytes := by
+    (dec : Wire.Decoder) (pending bytes screen : List UInt8) (found : App.Api.Found)
+    (said : Serve.Log String) (ready : s.phase = .ready version) :
+    Serve.AttachStream App.Serve.State.watching App.Serve.step App.Serve.result App.Api.answer
+      Os.Answer.code App.Serve.paint Wire.Decoder.feed s id dec pending bytes screen found
+      said := by
   sorry
 
 @[kills serve_attach_exact]
 theorem serve_attach_exact_rejects_unpainted :
     ¬∀ (s : App.Serve.State) (version : String) (id : Serve.Id) (dec : Wire.Decoder)
-        (pending bytes : List UInt8),
+        (pending bytes screen : List UInt8) (found : App.Api.Found) (said : Serve.Log String),
         s.phase = .ready version →
           Serve.AttachStream App.Serve.State.watching
             (Serve.unpainted App.Serve.State.watching App.Serve.step) App.Serve.result
-            Wire.Decoder.feed s id dec pending bytes := by
+            App.Api.answer Os.Answer.code App.Serve.paint Wire.Decoder.feed s id dec pending bytes
+            screen found said := by
+  sorry
+
+@[kills serve_attach_exact]
+theorem serve_attach_exact_rejects_unframed :
+    ¬∀ (s : App.Serve.State) (version : String) (id : Serve.Id) (dec : Wire.Decoder)
+        (pending bytes screen : List UInt8) (found : App.Api.Found) (said : Serve.Log String),
+        s.phase = .ready version →
+          Serve.AttachStream App.Serve.State.watching App.Serve.step App.Serve.result App.Api.answer
+            Os.Answer.code Serve.unframed Wire.Decoder.feed s id dec pending bytes screen found
+            said := by
+  sorry
+
+@[kills serve_attach_exact]
+theorem serve_attach_exact_rejects_done_anyway :
+    ¬∀ (s : App.Serve.State) (version : String) (id : Serve.Id) (dec : Wire.Decoder)
+        (pending bytes screen : List UInt8) (found : App.Api.Found) (said : Serve.Log String),
+        s.phase = .ready version →
+          Serve.AttachStream App.Serve.State.watching App.Serve.step App.Serve.result
+            Serve.doneAnyway Os.Answer.code App.Serve.paint Wire.Decoder.feed s id dec pending bytes
+            screen found said := by
   sorry
 
 theorem remote_rows_exact (host : String) (messages : List Serve.Json) (status : UInt32)

@@ -344,8 +344,8 @@ fi
 ./.lake/build/bin/suites --suites \
   manager:158 delivery:38 attach:94 agent:69:$agent_skips \
   resume:44:$resume_skips watch:52 title:18:$title_skips graphics:9 robust:35:$robust_skips \
-  interop:66 recipes:35 status:47 terminal:16 overview:32 remote:71 shells:3 identity:35 \
-  quiet:7:$quiet_skips upgrade:21:$upgrade_skips rename:16 api:9 serve:31 \
+  interop:66 recipes:35 status:47 terminal:16 overview:32 remote:72 shells:3 identity:35 \
+  quiet:7:$quiet_skips upgrade:21:$upgrade_skips rename:16 api:9 serve:34 \
   || fail "live suites (see $logs/linger-*.out)"
 defaults_after="$(default_listing)"
 if [ "$defaults_after" != "$defaults_before" ]; then

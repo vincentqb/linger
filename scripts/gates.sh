@@ -764,13 +764,17 @@ done
 # connection `Api.watch` opened, once its daemon said in an info answer on it that it speaks this
 # version's protocol (`Wire.admits`), as every attach does; an attach's stream is what the step
 # decodes of each read of its connection (`serve_attach_exact`), which attaches, with no size of its
-# own, over the connection `attachHeard` admitted.
+# own, over the connection `attachHeard` admitted, and a saved screen an attach shows, an ended
+# session's or a read-only attach's of a saved one, is its stream's first read, the screen's
+# repaint as `Serve.paint` frames it (`serve_attach_exact`).
 for tie in \
   'discard <[|] stepShared [(][.]watched id [(]Screen[.]render mirror[)] left[)]' \
   'Linger[.]Session[.]Shell[.]Client[.]sendMsg fd [(][.]attach [.]readOnly [(]UInt32[.]ofNat cols[)] [(]UInt32[.]ofNat rows[)][)]' \
   'let some [(]fd, fields[)] ← watched[.]connect [|] return [.]refused' \
   'Linger[.]Session[.]Shell[.]Client[.]sendMsg fd [(][.]attach mode 0 0[)]' \
   'discard <[|] stepShared [(][.]read id bytes[.]toList[)]' \
+  'let shown := paint [(]← repaintOf vt[)]' \
+  'discard <[|] stepShared [(][.]read id shown[)]' \
   'let [(]fed, kept[)] := feedLeaving mirror live left'; do
   printf '%s\n' "$serve_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "a watch looks or attaches otherwise than through its renderer and its checked connection: $tie"

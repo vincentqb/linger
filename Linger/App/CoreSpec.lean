@@ -1407,23 +1407,37 @@ def Streamed
       sent = [] ∧
         after = some (.stream (feed dec bytes).1 (pending ++ Session.Wire.shown (feed dec bytes).2))
 
-/-- **An attach's stream is exact**, of the connection whose states read as `watching`, whose
-transition is `step` and whose results are `result`, at `s` for the attach `id`, where `feed`
-decodes what a daemon sends as an attach client decodes it: the first read of the attach's
-connection answers its request, and every read is `Streamed`, so its subscriber gets the bytes an
-attach client writes of what the daemon sent, the repaint and the output after it, in order, every
-one and nothing else, and the last update, once the attach ends, carries `closed`; and a free
+/-- **An attach's stream is exact, for every session an attach reaches**, of the connection whose
+states read as `watching`, whose transition is `step` and whose results are `result`, at `s` for
+the attach `id`, where `feed` decodes what a daemon sends as an attach client decodes it, `paint`
+frames a screen an attach shows, `answerOf` gives the answer of what an attach found and `code` an
+answer's code. A live session's reads are its daemon's, a saved one's those of the daemon that
+resumes it, as `attach` resumes it (`Recovery.visit`), and a remote one's the frames its host's
+stream is relayed as (`Remote.Shows`); an ended one shows its final screen as one read, and then
+ends, having found how its program ended. The first read of the attach's connection answers its
+request, and every read is `Streamed`, so its subscriber gets the bytes an attach client writes of
+what the daemon sent, the repaint and the output after it, in order, every one and nothing else; a
+shown screen's read answers the request and leaves exactly the screen's bytes waiting; a free
 writer sends what waits, as one update without `closed`, when anything waits, and then nothing
-waits. -/
+waits; and when the attach ends, having found `found`, one not yet opened answers its request with
+what it found, and an open one sends one last update, which carries what waits and `closed`, whose
+answer and code are those of what it found, and the connection holds it no more. -/
 @[expose]
 def AttachStream {σ : Type} (watching : σ → Id → Option Watch) (step : σ → Event → σ × List Effect)
-    (result : Api.Found → List (String × Json) → Json)
+    (result : Api.Found → List (String × Json) → Json) (answerOf : Api.Found → Os.Answer)
+    (code : Os.Answer → UInt32) (paint : List UInt8 → List UInt8)
     (feed : Session.Wire.Decoder → List UInt8 → Session.Wire.Decoder × List Session.Wire.Msg)
-    (s : σ) (id : Id) (dec : Session.Wire.Decoder) (pending bytes : List UInt8) : Prop :=
+    (s : σ) (id : Id) (dec : Session.Wire.Decoder) (pending bytes screen : List UInt8)
+    (found : Api.Found) (said : Log String) : Prop :=
   (watching s id = some .attaching →
-      ∃ rest,
-        (step s (.read id bytes)).2 = .send (.result id (result .done [])) :: rest ∧
-          Streamed feed id {} [] bytes rest (watching (step s (.read id bytes)).1 id)) ∧
+      (∃ rest,
+          (step s (.read id bytes)).2 = .send (.result id (result .done [])) :: rest ∧
+            Streamed feed id {} [] bytes rest (watching (step s (.read id bytes)).1 id)) ∧
+        (step s (.read id (paint screen))).2 = [.send (.result id (result .done []))] ∧
+        watching (step s (.read id (paint screen))).1 id = some (.stream {} screen) ∧
+        (∃ members,
+          (step s (.unwatched id found said)).2 = [.send (.result id (result found members))]) ∧
+        watching (step s (.unwatched id found said)).1 id = none) ∧
     (watching s id = some (.stream dec pending) →
       Streamed feed id dec pending bytes (step s (.read id bytes)).2
           (watching (step s (.read id bytes)).1 id) ∧
@@ -1432,7 +1446,25 @@ def AttachStream {σ : Type} (watching : σ → Id → Option Watch) (step : σ 
           ∃ params,
             (step s (.flush id)).2 = [.send (.notify "session/output" params)] ∧
               Carries id pending params ∧ params.member? "closed" = none) ∧
-        watching (step s (.flush id)).1 id = some (.stream dec []))
+        watching (step s (.flush id)).1 id = some (.stream dec []) ∧
+        (∃ params rest,
+          (step s (.unwatched id found said)).2 = [.send (.notify "session/output" params)] ∧
+            Carries id pending params ∧
+            params.member? "closed" =
+              some
+                (.obj
+                  (("answer", .str (answerName (answerOf found))) ::
+                    ("code", .number (toString (code (answerOf found)))) :: rest))) ∧
+        watching (step s (.unwatched id found said)).1 id = none)
+
+/-- A wrong part: a shown screen read as its bytes, unframed, which an attach client's decoder
+reads as frames. -/
+@[expose]
+def unframed (screen : List UInt8) : List UInt8 := screen
+
+/-- A wrong part: the answer `done`, whatever an attach found. -/
+@[expose]
+def doneAnyway (_ : Api.Found) : Os.Answer := .done
 
 /-- A wrong part: a connection whose attach drops what its first read took, the bytes that open
 the daemon's repaint, and otherwise steps as `step` does. -/

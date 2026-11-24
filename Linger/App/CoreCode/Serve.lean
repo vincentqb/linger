@@ -410,6 +410,12 @@ def streamed (s : State) (id : Id) (dec : Session.Wire.Decoder) (pending bytes :
               ((Output.update id waiting).withMembers (closedMembers (stopFound decoded.2))))])
     else (s.setWatch id (.stream decoded.1 waiting), [])
 
+/-- **The read a screen an attach shows is**, as a daemon sends an attach its repaint: the screen's
+bytes as output frames, each holding at most a frame's worth (`Wire.inputChunks`), in order. -/
+def paint (screen : List UInt8) : List UInt8 :=
+  ((Linger.Session.Wire.inputChunks screen).map Linger.Session.Wire.Msg.output).flatMap
+    Linger.Session.Wire.encode
+
 /-- What a connection does with a read of an attach's connection: the first answers the attach's
 request `done`, and each is `streamed`. -/
 def readAttach (s : State) (id : Id) (bytes : List UInt8) : State × List Effect :=
