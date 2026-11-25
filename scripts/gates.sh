@@ -205,19 +205,20 @@ awk '
     }
     exit failed
   }' packages/os/c/shim.c >&2 || fail "fork child call boundary changed"
-# The only external Lean dependency is the Lean Software Challenge library, pinned to a commit;
-# the others are this checkout's own packages, each required by path from packages/<name>, and
-# `first`, which linger requires first and whose build directory is linger's own: a workspace
-# looks for a module in its dependencies' builds, the first required last, before its own, and
-# each package names its challenge `Challenge`, as linger does, so once a package was built on its
-# own, its `Challenge` would otherwise stand in for linger's in linger's audit and comparator.
+# The only external Lean dependencies are the Lean Software Challenge library and ExactJSON, each
+# pinned to a commit; the others are this checkout's own packages, each required by path from
+# packages/<name>, and `first`, which linger requires first and whose build directory is linger's
+# own: a workspace looks for a module in its dependencies' builds, the first required last, before
+# its own, and each package names its challenge `Challenge`, as linger and ExactJSON do, so once a
+# package was built on its own, its `Challenge` would otherwise stand in for linger's in linger's
+# audit and comparator.
 checkout_packages="$(git ls-files 'packages/*/lakefile.lean' | awk -F/ '{ print $2 }' | sort -u)"
 [ -n "$checkout_packages" ] || fail "no package under packages/"
 [ "$(code_grep '^[[:space:]]*require ' 'lakefile.lean' | sed 's/^[^:]*:[0-9]*:[[:space:]]*//' | sort)" \
-    = "$( { printf 'require first from "first"\nrequire software_challenge from git\n'
+    = "$( { printf 'require first from "first"\nrequire software_challenge from git\nrequire exactjson from git\n'
             for p in $checkout_packages; do printf 'require %s from "packages/%s"\n' "$p" "$p"; done; } \
           | sort)" ] \
-  || fail "lakefile.lean may require only first, the challenge library, from git, and each package under packages/, by path"
+  || fail "lakefile.lean may require only first, the challenge library and ExactJSON, from git, and each package under packages/, by path"
 [ "$(code_grep '^[[:space:]]*require ' 'lakefile.lean' | sed -n '1s/^[^:]*:[0-9]*:[[:space:]]*//p')" \
     = 'require first from "first"' ] \
   || fail "lakefile.lean must require first before anything else, so that linger's build comes first on its search path"
@@ -227,21 +228,24 @@ checkout_packages="$(git ls-files 'packages/*/lakefile.lean' | awk -F/ '{ print 
   || fail "first/lakefile.lean must declare only a package whose build directory is linger's"
 lake_packages="$(tr -d ' \n' < lake-manifest.json | grep -o '"packages":\[[^]]*\]')"
 [ "$(printf '%s' "$lake_packages" | grep -o '"name":"[^"]*"' | sort | tr '\n' ' ')" \
-    = "$( { printf '"name":"first"\n"name":"software_challenge"\n'
+    = "$( { printf '"name":"first"\n"name":"software_challenge"\n"name":"exactjson"\n'
             for p in $checkout_packages; do printf '"name":"%s"\n' "$p"; done; } | sort | tr '\n' ' ')" ] \
   && printf '%s' "$lake_packages" | grep -q '"url":"https://github.com/vincentqb/lean-software-challenge"' \
-  && printf '%s' "$lake_packages" | grep -qE '"inputRev":"[0-9a-f]{40}"' \
+  && printf '%s' "$lake_packages" | grep -q '"url":"https://github.com/vincentqb/exact-json"' \
+  && [ "$(printf '%s' "$lake_packages" | grep -oE '"inputRev":"[0-9a-f]{40}"' | wc -l)" -eq 2 ] \
   && printf '%s' "$lake_packages" \
     | grep -qF '"type":"path","scope":"","name":"first","manifestFile":"lake-manifest.json","inherited":false,"dir":"first"' \
-  || fail "lake-manifest may list only first, by path, software_challenge, pinned to a commit, and this checkout's packages"
+  || fail "lake-manifest may list only first, by path, software_challenge and exactjson, each pinned to a commit, and this checkout's packages"
 for p in $checkout_packages; do
   printf '%s' "$lake_packages" \
     | grep -qF "\"type\":\"path\",\"scope\":\"\",\"name\":\"$p\",\"manifestFile\":\"lake-manifest.json\",\"inherited\":false,\"dir\":\"packages/$p\"" \
     || fail "lake-manifest.json must take package $p by path from packages/$p"
 done
+challenge_rev="$(printf '%s' "$lake_packages" | grep -oE '[{][^{}]*"name":"software_challenge"[^{}]*[}]' | grep -o '"rev":"[0-9a-f]*"')"
+[ -n "$challenge_rev" ] || fail "lake-manifest.json pins no software_challenge"
 for manifest in packages/*/lake-manifest.json; do
   pkg_packages="$(tr -d ' \n' < "$manifest" | grep -o '"packages":\[[^]]*\]')"
-  [ "$(printf '%s' "$pkg_packages" | grep -o '"rev":"[0-9a-f]*"')" = "$(printf '%s' "$lake_packages" | grep -o '"rev":"[0-9a-f]*"')" ] \
+  [ "$(printf '%s' "$pkg_packages" | grep -o '"rev":"[0-9a-f]*"')" = "$challenge_rev" ] \
     && tr -d ' \n' < "$manifest" | grep -q '"packagesDir":"../../.lake/packages"' \
     || fail "$manifest must pin software_challenge to linger's commit, in linger's packages"
 done
@@ -420,9 +424,9 @@ import_closure Linger/Selector/CoreCode/Fetch.lean 'public import Linger.Selecto
 import_closure Linger/Selector/CoreSpec.lean 'public import Linger.Display.CoreSpec;'
 import_closure packages/fuzzy/Fuzzy/CoreCode.lean 'public import Fuzzy.CoreSpec;'
 import_closure packages/fuzzy/Fuzzy/CoreSpec.lean ''
-import_closure Linger/Selector/CoreCode/Picker.lean 'import Input.CoreCode;public import Linger.Selector.CoreSpec;import Fuzzy.CoreCode;import Linger.Target.CoreCode.Name;import Linger.Display.CoreCode.Listing;public import Linger.Display.CoreSpec;import Linger.Target.CoreCode.Remote;import Terminal.CoreCode.Vt;import Terminal.CoreCode.Render;import Linger.Display.CoreCode.View;public import Linger.Os.CoreSpec;import Linger.Os.CoreCode.Json;'
+import_closure Linger/Selector/CoreCode/Picker.lean 'import Input.CoreCode;public import Linger.Selector.CoreSpec;import Fuzzy.CoreCode;import Linger.Target.CoreCode.Name;import Linger.Display.CoreCode.Listing;public import Linger.Display.CoreSpec;import Linger.Target.CoreCode.Remote;import Terminal.CoreCode.Vt;import Terminal.CoreCode.Render;import Linger.Display.CoreCode.View;import ExactJSON.Codec;'
 import_closure Linger/Display/CoreCode/View.lean 'public import Linger.Display.CoreSpec;import Linger.Display.CoreCode.Status;'
-import_closure Linger/Display/CoreSpec.lean 'public import Terminal.CoreSpec;'
+import_closure Linger/Display/CoreSpec.lean 'public import Terminal.CoreSpec;public import ExactJSON.Value;'
 import_closure Linger/Display/CoreCode/Status.lean 'public import Linger.Display.CoreSpec;'
 import_closure packages/input/Input/CoreCode.lean 'public import Input.CoreSpec;'
 import_closure packages/input/Input/CoreSpec.lean ''
@@ -430,7 +434,7 @@ import_closure packages/input/Input/Proofs.lean 'public import Input.CoreCode;im
 import_closure packages/os/Os/CoreSpec.lean ''
 import_closure packages/os/Os/CoreCode/Wait.lean ''
 import_closure Linger/App/CoreCode/Entry.lean 'public import Linger.App.CoreSpec;'
-import_closure Linger/App/CoreSpec.lean 'public import Linger.Os.CoreSpec;public import Linger.Session.CoreSpec;public import Linger.Display.CoreSpec;'
+import_closure Linger/App/CoreSpec.lean 'public import Linger.Os.CoreSpec;public import Linger.Session.CoreSpec;public import Linger.Display.CoreSpec;public import ExactJSON.Value;'
 import_closure Linger/Target/CoreCode/Name.lean 'import Linger.Target.CoreSpec;'
 import_closure Linger/Target/CoreCode/Remote.lean 'import Linger.Target.CoreCode.Name;public import Linger.Target.CoreSpec;'
 import_closure Linger/Display/CoreCode/Title.lean 'import Linger.Target.CoreCode.Name;'
@@ -476,7 +480,7 @@ module_imports ':(glob)Linger/Session/*.lean' 'Linger/Session/CoreCode/*' 'Linge
     packages/terminal/Terminal/CoreCode/Replay.lean Linger.lean \
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
-    if (mod !~ /^(Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](WorldCode([.](Api|Remote))?|CoreSpec|CoreCode[.](Commands|Fields|Wait|Kill|Recovery|Capture|Api|Handover|Serve|Base64))|Std[.](Async[.](System|Signal)|Sync[.]Mutex))$/ \
+    if (mod !~ /^(Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](WorldCode([.](Api|Remote))?|CoreSpec|CoreCode[.](Commands|Fields|Wait|Kill|Recovery|Capture|Api|Handover|Serve|Base64|Codec))|ExactJSON[.](Codec|Value)|Std[.](Async[.](System|Signal)|Sync[.]Mutex))$/ \
         && mod != "SoftwareChallenge.Attributes") {
       print "  " $0; bad = 1
     }
@@ -507,7 +511,8 @@ layer_bad="$(module_imports 'Linger/*' ':!Linger/*/Suites/*' \
 # a hypothesis is about a hole, and writes comparator.json, and `./lake comparator` checks that
 # Theorems.Solution proves the same statements. What the library does not see is outside linger,
 # which it trusts: so a statement's meaning rests on no package's code either, as a spec module
-# imports, from anywhere, only spec modules, a CoreSpec or WorldSpec one, and none of them all of
+# imports, from anywhere, only spec modules, a CoreSpec or WorldSpec one, or `ExactJSON.Value`,
+# the values and classes ExactJSON's own challenge states its laws over, and none of them all of
 # one.
 spec_imports_bad="$(module_imports 'Linger/*/CoreSpec*.lean' 'Linger/*/WorldSpec*.lean' \
 | awk -F: "$IMPORT_AWK"'
@@ -517,15 +522,17 @@ spec_imports_bad="$(module_imports 'Linger/*/CoreSpec*.lean' 'Linger/*/WorldSpec
     return "" }
   { mod = import_mod($3); r = role(mod)
     if ($3 ~ /import[[:space:]]+all[[:space:]]/ \
-        || (r != "CoreSpec" && r != "WorldSpec"))
+        || (r != "CoreSpec" && r != "WorldSpec" && mod != "ExactJSON.Value"))
       print "  " $0 }')"
 [ -z "$spec_imports_bad" ] || {
   printf '%s\n' "$spec_imports_bad" >&2
-  fail "a spec module imports code: it may import only CoreSpec and WorldSpec modules"; }
+  fail "a spec module imports code: it may import only CoreSpec and WorldSpec modules and ExactJSON.Value"; }
 # The roles' rules, which the challenge library no longer reads from a module's name: a CoreSpec
 # module imports only CoreSpec modules, a WorldSpec module only CoreSpec and WorldSpec ones and a
 # CoreCode module only CoreSpec and CoreCode ones, linger's or a package's, and pure code, CoreSpec
-# and CoreCode, names no IO, initializer or `dbg` tracing.
+# and CoreCode, names no IO, initializer or `dbg` tracing. ExactJSON, whose modules have no role,
+# is pure code: a CoreSpec module may import its values and classes, `ExactJSON.Value`, and a
+# CoreCode module any of its modules.
 role_imports_bad="$(module_imports '*/CoreSpec*.lean' '*/CoreCode*.lean' '*/WorldSpec*.lean' \
 | awk -F: "$IMPORT_AWK"'
   function role(name, sep,    n, i, part) {
@@ -534,7 +541,9 @@ role_imports_bad="$(module_imports '*/CoreSpec*.lean' '*/CoreCode*.lean' '*/Worl
       p = part[i]; sub(/[.]lean$/, "", p)
       if (p ~ /^(CoreSpec|CoreCode|WorldSpec|WorldCode)$/) return p }
     return "" }
-  { own = role($1, "/"); r = role(import_mod($3), ".")
+  { own = role($1, "/"); mod = import_mod($3); r = role(mod, ".")
+    if (mod == "ExactJSON.Value") r = "CoreSpec"
+    else if (mod ~ /^ExactJSON([.]|$)/) r = "CoreCode"
     if (own == "CoreSpec" && r != "CoreSpec" \
         || own == "WorldSpec" && r != "CoreSpec" && r != "WorldSpec" \
         || own == "CoreCode" && r != "CoreSpec" && r != "CoreCode")
@@ -777,7 +786,7 @@ done
 cli_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/WorldCode.lean Linger/App/WorldCode/Api.lean Linger/App/CoreCode/Api.lean)"
 for tie in \
   'match Linger[.]Target[.]Remote[.]checkHosts hosts with [|] [.]ok l => return some [(]l[.]map fun host => [(]host, Linger[.]Target[.]Remote[.]transportFor config host[)][)] [|] [.]error e => throw [(]IO[.]userError e[)]' \
-  'for [(][(]host, _[)], output[)] in remotes[.]zip remote[.]toList do match output with [|] none => rows := rows [+][+] [[][(]"host", host[)] :: Linger[.]Display[.]Listing[.]statusFields [(]Linger[.]Display[.]Status[.]classify [{] known := false [}][)][]] [|] some [(][.]records records[)] => rows := rows [+][+] Serve[.]Remote[.]rows host records [|] some [.]refused => say env [(]remoteRefusal host[)]' \
+  'for [(][(]host, _[)], output[)] in remotes[.]zip remote[.]toList do match output with [|] none => rows := rows [+][+] [[][(]"host", host[)] :: Linger[.]Display[.]Listing[.]statusFields [(]Linger[.]Display[.]Status[.]classify [{] known := false [}][)][]] [|] some [(][.]records records[)] => rows := rows [+][+] [(]Serve[.]Remote[.]rows host records[)][.]map Linger[.]Display[.]Listing[.]Record[.]fields [|] some [.]refused => say env [(]remoteRefusal host[)]' \
   '[|] some [(]porcelain, hosts, [[][]][)] => some [(][.]every porcelain hosts[)]' \
   '[|] [.]every porcelain hosts => do match ← resolveRemotes env hosts with [|] some remotes => cmdList env porcelain remotes' \
   'let withColor := Linger[.]Os[.]Env[.]withColor [(]← [(]← IO[.]getStdout[)][.]isTty[)] [(]← IO[.]getEnv "NO_COLOR"[)] [(]← IO[.]getEnv "TERM"[)] let named := rows[.]map fun info => [(]match info[.]lookup "name", info[.]lookup "host" with [|] none, some host => [(]"name", "@" [+][+] host[)] :: info [|] _, _ => info[)][.]filter fun kv => [(]Linger[.]App[.]Fields[.]table[.]map Linger[.]App[.]Fields[.]Field[.]key[)][.]contains kv[.]1 let ordered := Linger[.]Display[.]View[.]sort Linger[.]Display[.]Listing[.]statusOf named let width ← humanWidth let home ← accountHome writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor width [(]ordered[.]map [(]Linger[.]Display[.]Listing[.]atHome home[)][)][)][.]toArray[)]' \
@@ -794,7 +803,7 @@ done
 # prints and the chooser reads back (`chooser_same_list`), in a result and in every sample.
 serve_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/WorldCode/Serve.lean)"
 for tie in \
-  '[|] [.]rows _ rows => [[][(]"records", [.]arr [(][(]Serve[.]records rows[)][.]map Record[.]json[)][)][]]' \
+  '[|] [.]rows _ rows => [{] base with records[?] := some [(]Serve[.]records rows[)] [}]' \
   'discard <[|] stepShared [(][.]opened id [(]Serve[.]records rows[)][)]' \
   'discard <[|] conn[.]atomically [(]stepShared [(][.]sampled [(]Serve[.]records rows[)][)][)]'; do
   printf '%s\n' "$serve_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
@@ -901,8 +910,8 @@ for tie in \
   'for signal in [[]Std[.]Async[.]Signal[.]sigterm, [.]sigint, [.]sighup[]] do let waiter ← Std[.]Async[.]Signal[.]Waiter[.]mk signal true try let task ← waiter[.]wait signals[.]modify [(]·[.]push [(]waiter, task[)][)] catch e => waiter[.]stop throw e let deadline := [(]← monotonicMs[)] [+] remoteQueryTimeoutMs' \
   'while next < hosts[.]size [|][|] ![(]← jobs[.]get[)][.]isEmpty do if let some signal[[:space:]]*← [(][{] waiters := ← signals[.]get [}] : Watched[)][.]came then return [.]error signal if [(]← monotonicMs[)] ≥ deadline then break' \
   'while next < hosts[.]size && [(]← jobs[.]get[)][.]size < remoteQueryLimit && [(]← monotonicMs[)] < deadline do' \
-  'if let cmd :: args := Linger[.]Target[.]Remote[.]argv hosts[[]index[]]![.]2 then pending[.]set [(]some [(]← Command[.]startFeeding cmd args[.]toArray [(]Serve[.]Remote[.]lines "sessions/list" [(][.]obj [[][]][)][)][.]toUTF8[)][)]' \
-  'let messages := read[.]filterMap [(]·[.]toOption[)] match Serve[.]Remote[.]heard messages output[.]exitCode with [|] [.]answered [.]done members => if let some records := Serve[.]Remote[.]records members then outputs := outputs[.]set! index [(]some [(][.]records records[)][)] [|] [.]refused => outputs := outputs[.]set! index [(]some [.]refused[)]' \
+  'if let cmd :: args := Linger[.]Target[.]Remote[.]argv hosts[[]index[]]![.]2 then pending[.]set [(]some [(]← Command[.]startFeeding cmd args[.]toArray [(]Serve[.]Remote[.]lines "sessions/list" [(]ExactJSON[.]toValue [(][{] names[?] := none [}] : Serve[.]Listed[)][)][)][.]toUTF8[)][)]' \
+  'let messages := read[.]filterMap [(]·[.]toOption[)] match Serve[.]Remote[.]heard messages output[.]exitCode with [|] [.]answered [.]done shows => if let some records := shows[.]records[?] then outputs := outputs[.]set! index [(]some [(][.]records records[)][)] [|] [.]refused => outputs := outputs[.]set! index [(]some [.]refused[)]' \
   'finally for [(]_, pending[)] in ← jobs[.]get do try Command[.]stop pending catch _ => pure [(][)] for [(]waiter, _[)] in ← signals[.]get do waiter[.]stop if let some signal[[:space:]]*← [(][{] waiters := ← signals[.]get [}] : Watched[)][.]came then return [.]error signal return [.]ok listed' \
   'let task ← IO[.]asTask localRows Task[.]Priority[.]dedicated try let remote ← listRemotes remotes[.]toArray let locals ← IO[.]ofExcept [(]← IO[.]wait task[)] pure [(]locals, remote[)] finally discard <[|] IO[.]wait task'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
@@ -1377,7 +1386,7 @@ for tie in \
   '[|] [.]attach readOnly _ command, _ => return [{] found := ← remoteAttach env remote transport readOnly name host command [}]' \
   '[|] [.]send _ [.]stdin, none => remoteReply env request host [(]← Linger[.]App[.]Remote[.]stream transport remote[.]terminal name [(]read stdinFd 65536[)][)]' \
   '[|] _, input => match Serve[.]Remote[.]call request name [(][(]input[.]map [(]·[.]toList[)][)][.]getD [[][]][)] with [|] some [(]method, params[)] => remoteReply env request host [(]← Linger[.]App[.]Remote[.]ask transport remote[.]terminal method params[)]' \
-  '[|] [.]answered answer members => for line in Serve[.]Remote[.]said host members do say env line return [{] found := Serve[.]Remote[.]found answer members, shown := remoteShown request host members [}]' \
+  '[|] [.]answered answer shows => for line in Serve[.]Remote[.]said host shows do say env line return [{] found := Serve[.]Remote[.]found answer shows, shown := remoteShown request host shows [}]' \
   '[|] [.]refused => say env [(]remoteRefusal host[)] return [{] found := [.]refused [}]' \
   'match ← Linger[.]App[.]Remote[.]bridge transport remote[.]terminal name command with' \
   'match env[.]tty with [|] some tty => tty[.]attach target bridge[.]fd mode [|] none => Client[.]attach target bridge[.]fd [(]attentionSample target[)] readOnly catch err => discard bridge[.]join throw err let asked ← bridge[.]join' \
@@ -1881,12 +1890,13 @@ layout_bad="$( { git ls-files -- 'Linger/*.lean' | awk -F/ '{ print $3 "\t" $0 }
 # basename too. CamelCase names (types, structures) and file/section names are skipped:
 # the target here is the `snake_case` claim names, which is what a reader would try to
 # look up. Two lists hold names cited but not declared in Lean here: claims a comment states
-# are absent, which must stay undeclared, and names from C, the Lean toolchain or GitHub,
-# plus one lemma-name prefix. Every listed name must still be cited, so an extraction that
+# are absent, which must stay undeclared, and names from C, the Lean toolchain, GitHub or
+# ExactJSON, plus one lemma-name prefix. Every listed name must still be cited, so an extraction that
 # finds nothing fails too.
 cite_absent='mmap_id_gridAnsi sb_csiDispatch_any load_legacy_save save_no_legacy'
 cite_foreign="lean_chmod lean_io_process_get_pid pid_t tty_do_resize close_range \
-  native_decide lean_exe workflow_dispatch org_ foldl_append sd_notify status_text"
+  native_decide lean_exe workflow_dispatch org_ foldl_append sd_notify status_text codec_extTreeMap \
+  render_no_control"
 cite_scan() {                                # file:line:basename per backticked snake_case name
   git grep -noE '`[A-Za-z][A-Za-z0-9_.]*`' -- '*.lean' \
   | awk -F: '{ name = $3; gsub(/`/, "", name); base = name; sub(/.*[.]/, "", base)

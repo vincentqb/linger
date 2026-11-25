@@ -54,17 +54,21 @@ reply.
 
 `linger serve` speaks linger's operations as JSON-RPC 2.0 on its standard input and output, one
 JSON value a line, for a client that runs it as a child with pipes. Every line either way is
-canonical JSON, the format of [ExactJSON](https://github.com/vincentqb/lean-toml-json): no
-whitespace outside strings, object keys in increasing code-point order, each key once, integers
-in decimal with no leading zero, no `+` and no `-0`, and a string's characters as themselves but
-`"`, `\` and those below U+0020, each with its one escape (`\"`, `\\`, `\b`, `\t`, `\n`, `\f`,
-`\r`, otherwise `\u00` and two lowercase hexadecimal digits). linger's values hold no float, so a
-number with a fraction or an exponent is none of its texts. A request reads
+canonical JSON, written and read by [ExactJSON](https://github.com/vincentqb/exact-json), whose
+reader takes exactly the texts its writer writes: no whitespace outside strings, object keys in
+increasing code-point order, each key once, integers in decimal with no leading zero, no `+` and
+no `-0`, and a string's characters as themselves but `"`, `\`, the C0 controls (below U+0020), DEL
+and the C1 controls (U+007F to U+009F), U+2028 and U+2029, each with its one escape (`\"`, `\\`,
+`\b`, `\t`, `\n`, `\f`, `\r`, otherwise `\u` and four lowercase hexadecimal digits), so a raw
+U+2028 and `\u007F` are not canonical. A request reads
 `{"id":1,"jsonrpc":"2.0","method":"sessions/list","params":{}}`; a line that is not canonical,
 such as `{"jsonrpc":"2.0","id":1,…}`, gets error -32700 with no id and changes nothing, its `data`
-linger's usage answer and the reason, at the character it stops being canonical:
-`{"answer":"usage","code":2,"reason":"at character 20: the key \"id\" after \"jsonrpc\", where
-canonical JSON lists keys in increasing order"}`. The client sends `initialize`
+linger's usage answer and ExactJSON's reason, at the character it stops being canonical:
+`{"answer":"usage","code":2,"reason":"at character 17: keys must increase: \"id\" comes before
+\"jsonrpc\""}`. A request with a member JSON-RPC does not define gets -32600, and one whose
+`params` hold a member its method does not define, a value of another type, such as `1.0` where
+an integer belongs, or `null` for a member it leaves out gets -32602, each changing nothing.
+The client sends `initialize`
 with the `protocolVersion` it speaks (`"1"`), gets the version, `serverInfo` and the methods in
 `capabilities`, and sends the `initialized` notification; before that every other request gets
 error -32002. Each method is one command's request: `sessions/list` (optional `names`),
@@ -83,7 +87,9 @@ base64 as `data`, how a session ended as `ending`, and what the command said as 
 32 lines, with `saidDropped` counting the rest. An
 unknown method and wrong params get JSON-RPC's errors, with linger's answer in their `data`.
 `ls --porcelain` prints exactly the records `sessions/list` sends, one canonical JSON object a line,
-each key and value clean text, and linger's own chooser reads them so. A `name@host` session reaches its
+each flag, such as `running`, a JSON boolean, each count, such as `pid`, a JSON integer, every
+other field a string, and each key and string clean text, printable, so it holds no character
+ExactJSON escapes but `"`, `\`, U+2028 and U+2029; linger's own chooser reads them so. A `name@host` session reaches its
 host's `serve`, as on the command line. Once its standard input ends, it answers the requests it
 read and exits.
 

@@ -3,6 +3,7 @@ module
 public import Linger.Os.CoreSpec
 public import Linger.Session.CoreSpec
 public import Linger.Display.CoreSpec
+public import ExactJSON.Value
 
 public section
 
@@ -548,6 +549,8 @@ end Linger.App.Capture
 
 namespace Linger.App.Serve
 
+open ExactJSON (Value ToValue FromValue toValue)
+
 /-- The value of a base64 digit, in RFC 4648's alphabet: `A`–`Z`, `a`–`z`, `0`–`9`, `+` and `/`. -/
 @[expose]
 def Base64.digit (c : Char) : Option Nat :=
@@ -642,66 +645,28 @@ def methods : List (String × Commands.Op × String × Shape) :=
     ("session/resize", .resize, "resize", .ask), ("session/wait", .wait, "wait", .ask),
     ("session/upgrade", .upgrade, "upgrade", .ask)]
 
-/-- The standard input a method's command line reads: the bytes `session/send`'s `data` encodes
-in base64 (`Base64.decode`), and none for any other method. -/
-@[expose]
-def input (method : String) (params : Json) : Option (List UInt8) :=
-  if method = "session/send" then
-    (params.need "data" Json.text?).bind fun data => Base64.decode data.toList
-  else some []
+/-! ## JSON
 
-/-- The words of a method's command line after its command's: its options from the params'
-members and its target last, after `--` where the command reads one, so that a name that starts
-with `-` stays a name; none for params the method does not take. `session/send` is `send NAME -`,
-whose standard input is `input`'s, a watch is `attach --read-only -- NAME` and an attach
-`attach -- NAME`, read-only on request (`readOnly`), its `command` after the name. -/
-@[expose]
-def operands (method : String) (params : Json) : Option (List String) :=
-  if method = "sessions/list" then
-    (params.opt "names" Json.texts? []).map fun names => ["--porcelain", "--"] ++ names
-  else
-    if method = "sessions/subscribe" then some ["--porcelain"]
-    else
-      if method = "session/screen" ∨ method = "session/history" then
-        (params.need "name" Json.text?).map fun name => ["--read-only", "--", name]
-      else
-        if method = "session/attach" then do
-          let name ← params.need "name" Json.text?
-          let readOnly ← params.opt "readOnly" Json.flag? false
-          let command ← params.opt "command" Json.texts? []
-          pure ((if readOnly then ["--read-only"] else []) ++ ["--", name] ++ command)
-        else
-          if method = "session/start" then do
-            let name ← params.need "name" Json.text?
-            let program ← params.need "program" Json.text?
-            let args ← params.opt "args" Json.texts? []
-            pure ([name, program] ++ args)
-          else
-            if method = "session/rename" then do
-              let name ← params.need "name" Json.text?
-              let new ← params.need "new" Json.text?
-              pure [name, new]
-            else
-              if method = "session/capture" then do
-                let name ← params.need "name" Json.text?
-                let history ← params.opt "history" Json.flag? false
-                pure ((if history then ["--history"] else []) ++ ["--", name])
-              else
-                if method = "session/resize" then do
-                  let name ← params.need "name" Json.text?
-                  let cols ← params.need "cols" Json.nat?
-                  let rows ← params.need "rows" Json.nat?
-                  pure [name, toString cols, toString rows]
-                else
-                  if method = "session/send" then
-                    (params.need "name" Json.text?).map fun name => [name, "-"]
-                  else (params.need "name" Json.text?).map fun name => [name]
+Every value `serve` writes or reads is ExactJSON's (`Value`), and its text ExactJSON's canonical
+text. A method's params, a result, a session's record and each update are typed values, whose JSON
+is the object of their members by increasing key, each of its type, an optional member left out
+when absent, as ExactJSON's derived codecs write them; this section states each such object. -/
 
-/-- **The command line a method and its params are**: its operation's command word (`methods`),
-then its `operands`; none for a method `methods` does not list or params it does not take. -/
+/-- The member `key` of an object, the first under it, and none of any other value. -/
 @[expose]
-def words (method : String) (params : Json) : Option (List String) :=
-  (methods.lookup method).bind fun (_, word, _) => (operands method params).map (word :: ·)
+def member? (key : String) : Value → Option Value
+  | .table members => members.toList.lookup key
+  | _ => none
+
+/-- Strings as a JSON array. -/
+@[expose]
+def strings (texts : List String) : Value := .array (texts.map Value.string).toArray
+
+/-- A member `key` that is present with this value, and none when it is absent: an optional member
+as JSON writes it. -/
+@[expose]
+def optional {α : Type} (key : String) (json : α → Value) (o : Option α) : List (String × Value) :=
+  (o.map fun a => (key, json a)).toList
 
 /-- The protocol versions `serve` speaks. -/
 @[expose]
@@ -715,36 +680,343 @@ inductive Id where
   | str (text : String)
   deriving Repr, DecidableEq
 
-/-- An id as JSON. -/
+/-- An id as JSON: an integer, or a string. -/
 @[expose]
-def Id.json : Id → Json
-  | .number value => .int value
-  | .str text => .str text
+def Id.json : Id → Value
+  | .number value => .integer value
+  | .str text => .string text
 
 /-- A JSON value as a request id: an integer or a string. -/
 @[expose]
-def Id.of : Json → Option Id
-  | .int value => some (.number value)
-  | .str text => some (.str text)
+def Id.of : Value → Option Id
+  | .integer value => some (.number value)
+  | .string text => some (.str text)
   | _ => none
 
-/-- A record of the sessions table: a session's fields, as `ls --porcelain` gives them. -/
-abbrev Record : Type := List (String × String)
+/-- **An id as JSON**: an integer as an integer and a string as a string. -/
+instance : ToValue Id := ⟨Id.json⟩
+
+/-- **An id read from JSON**: an integer or a string, and no other value. -/
+instance : FromValue Id where
+  fromValue? value :=
+    match Id.of value with
+    | some id => .ok id
+    | none => .error "an id that is neither an integer nor a string"
+
+/-! ## A method's params
+
+Each method `methods` lists takes one typed value as its params (`Call`), and each of the
+requests of an attach's conversation, `initialize` and `sessions/unsubscribe` its own: a member
+the method does not define, a member of another type and `null` for a member left out are no params
+of it, which `serve` refuses as invalid. -/
+
+/-- The params of a method that takes none: `{}`. -/
+structure NoParams where
+  deriving DecidableEq, Repr
+
+/-- The params of a method that names a session: its name. -/
+structure Named where
+  /-- The session's name. -/
+  name : String
+  deriving DecidableEq, Repr
+
+/-- `sessions/list`'s params: the names it lists, every session when none. -/
+structure Listed where
+  /-- The names, in order. -/
+  names? : Option (List String)
+  deriving DecidableEq, Repr
+
+/-- `session/attach`'s params: the session, the command a new session under the name runs, the
+shell when none, and whether the attach is read-only. -/
+structure Attaching where
+  /-- The command's words. -/
+  command? : Option (List String)
+  /-- The session's name. -/
+  name : String
+  /-- Whether the attach is read-only. -/
+  readOnly? : Option Bool
+  deriving DecidableEq, Repr
+
+/-- `session/start`'s params: the session's name, its program and the program's arguments. -/
+structure Starting where
+  /-- The program's arguments. -/
+  args? : Option (List String)
+  /-- The session's name. -/
+  name : String
+  /-- The program. -/
+  program : String
+  deriving DecidableEq, Repr
+
+/-- `session/send`'s params: the bytes in base64, and the session. -/
+structure Sending where
+  /-- The bytes, in base64. -/
+  data : String
+  /-- The session's name. -/
+  name : String
+  deriving DecidableEq, Repr
+
+/-- `session/rename`'s params: the session's name, and its new one. -/
+structure Renaming where
+  /-- The session's name. -/
+  name : String
+  /-- Its new name. -/
+  new : String
+  deriving DecidableEq, Repr
+
+/-- `session/capture`'s params: whether with the history, and the session. -/
+structure Capturing where
+  /-- Whether the capture holds the history. -/
+  history? : Option Bool
+  /-- The session's name. -/
+  name : String
+  deriving DecidableEq, Repr
+
+/-- `session/resize`'s params of a session by name: its columns, its name and its rows. -/
+structure Resizing where
+  /-- The columns. -/
+  cols : Nat
+  /-- The session's name. -/
+  name : String
+  /-- The rows. -/
+  rows : Nat
+  deriving DecidableEq, Repr
+
+/-- The params that name a subscription: `sessions/unsubscribe`'s, and `session/detach`'s of an
+attach. -/
+structure Subscription where
+  /-- The id of the request that opened the subscription. -/
+  subscription : Id
+  deriving DecidableEq, Repr
+
+/-- `session/input`'s params: the keys in base64, and the attach they go to. -/
+structure Keys where
+  /-- The keys, in base64. -/
+  data : String
+  /-- The attach, by the id of the request that opened it. -/
+  subscription : Id
+  deriving DecidableEq, Repr
+
+/-- `session/resize`'s params of an attach: its terminal's columns and rows, and the attach. -/
+structure Sized where
+  /-- The columns. -/
+  cols : Nat
+  /-- The rows. -/
+  rows : Nat
+  /-- The attach, by the id of the request that opened it. -/
+  subscription : Id
+  deriving DecidableEq, Repr
+
+/-- Who a client or a server is: its name, and its version when it gives one. -/
+structure Info where
+  /-- The name. -/
+  name : String
+  /-- The version. -/
+  version? : Option String
+  deriving DecidableEq, Repr
+
+/-- `initialize`'s params: what the client can do, none of which `serve` reads, who it is and the
+protocol version it speaks. -/
+structure Initialize where
+  /-- What the client can do: `{}`. -/
+  capabilities? : Option NoParams
+  /-- Who the client is. -/
+  clientInfo? : Option Info
+  /-- The protocol version the client speaks. -/
+  protocolVersion : String
+  deriving DecidableEq, Repr
+
+/-- `{}`. -/
+@[expose]
+def NoParams.json (_ : NoParams) : Value := .table #[]
+
+/-- A name as params: `{"name"}`. -/
+@[expose]
+def Named.json (p : Named) : Value := .table #[("name", .string p.name)]
+
+/-- `sessions/list`'s params as JSON. -/
+@[expose]
+def Listed.json (p : Listed) : Value := .table (optional "names" strings p.names?).toArray
+
+/-- `session/attach`'s params as JSON. -/
+@[expose]
+def Attaching.json (p : Attaching) : Value :=
+  .table
+    (optional "command" strings p.command? ++ [("name", Value.string p.name)] ++
+        optional "readOnly" Value.boolean p.readOnly?).toArray
+
+/-- `session/start`'s params as JSON. -/
+@[expose]
+def Starting.json (p : Starting) : Value :=
+  .table
+    (optional "args" strings p.args? ++
+        [("name", Value.string p.name), ("program", Value.string p.program)]).toArray
+
+/-- `session/send`'s params as JSON. -/
+@[expose]
+def Sending.json (p : Sending) : Value :=
+  .table #[("data", .string p.data), ("name", .string p.name)]
+
+/-- `session/rename`'s params as JSON. -/
+@[expose]
+def Renaming.json (p : Renaming) : Value :=
+  .table #[("name", .string p.name), ("new", .string p.new)]
+
+/-- `session/capture`'s params as JSON. -/
+@[expose]
+def Capturing.json (p : Capturing) : Value :=
+  .table (optional "history" Value.boolean p.history? ++ [("name", Value.string p.name)]).toArray
+
+/-- `session/resize`'s params of a session by name as JSON. -/
+@[expose]
+def Resizing.json (p : Resizing) : Value :=
+  .table #[("cols", .integer p.cols), ("name", .string p.name), ("rows", .integer p.rows)]
+
+/-- The params that name a subscription as JSON. -/
+@[expose]
+def Subscription.json (p : Subscription) : Value := .table #[("subscription", p.subscription.json)]
+
+/-- `session/input`'s params as JSON. -/
+@[expose]
+def Keys.json (p : Keys) : Value :=
+  .table #[("data", .string p.data), ("subscription", p.subscription.json)]
+
+/-- `session/resize`'s params of an attach as JSON. -/
+@[expose]
+def Sized.json (p : Sized) : Value :=
+  .table
+    #[("cols", .integer p.cols), ("rows", .integer p.rows), ("subscription", p.subscription.json)]
+
+/-- Who a client or a server is, as JSON. -/
+@[expose]
+def Info.json (p : Info) : Value :=
+  .table ([("name", Value.string p.name)] ++ optional "version" Value.string p.version?).toArray
+
+/-- `initialize`'s params as JSON. -/
+@[expose]
+def Initialize.json (p : Initialize) : Value :=
+  .table
+    (optional "capabilities" NoParams.json p.capabilities? ++
+        optional "clientInfo" Info.json p.clientInfo? ++
+        [("protocolVersion", Value.string p.protocolVersion)]).toArray
+
+/-- **A request of a method `methods` lists**: the method, as one constructor each, and its typed
+params. -/
+inductive Call where
+  /-- `sessions/list`. -/
+  | list (params : Listed)
+  /-- `sessions/subscribe`. -/
+  | subscribe (params : NoParams)
+  /-- `session/screen`. -/
+  | screen (params : Named)
+  /-- `session/history`. -/
+  | history (params : Named)
+  /-- `session/attach`. -/
+  | attach (params : Attaching)
+  /-- `session/start`. -/
+  | start (params : Starting)
+  /-- `session/resume`. -/
+  | resume (params : Named)
+  /-- `session/send`. -/
+  | send (params : Sending)
+  /-- `session/detach` of a session by name. -/
+  | detach (params : Named)
+  /-- `session/kill`. -/
+  | kill (params : Named)
+  /-- `session/rename`. -/
+  | rename (params : Renaming)
+  /-- `session/capture`. -/
+  | capture (params : Capturing)
+  /-- `session/resize` of a session by name. -/
+  | resize (params : Resizing)
+  /-- `session/wait`. -/
+  | wait (params : Named)
+  /-- `session/upgrade`. -/
+  | upgrade (params : Named)
+  deriving DecidableEq, Repr
+
+/-- A call's method. -/
+@[expose]
+def Call.method : Call → String
+  | .list _ => "sessions/list"
+  | .subscribe _ => "sessions/subscribe"
+  | .screen _ => "session/screen"
+  | .history _ => "session/history"
+  | .attach _ => "session/attach"
+  | .start _ => "session/start"
+  | .resume _ => "session/resume"
+  | .send _ => "session/send"
+  | .detach _ => "session/detach"
+  | .kill _ => "session/kill"
+  | .rename _ => "session/rename"
+  | .capture _ => "session/capture"
+  | .resize _ => "session/resize"
+  | .wait _ => "session/wait"
+  | .upgrade _ => "session/upgrade"
+
+/-- **A call's params as JSON**: its typed params' object. -/
+@[expose]
+def Call.params : Call → Value
+  | .list p => p.json
+  | .subscribe p => p.json
+  | .screen p | .history p | .resume p | .detach p | .kill p | .wait p | .upgrade p => p.json
+  | .attach p => p.json
+  | .start p => p.json
+  | .send p => p.json
+  | .rename p => p.json
+  | .capture p => p.json
+  | .resize p => p.json
+
+/-- The words of a call's command line after its command's: its options from its params and its
+target last, after `--` where the command reads one, so that a name that starts with `-` stays a
+name. `session/send` is `send NAME -`, whose standard input is `input`'s, a watch is
+`attach --read-only -- NAME` and an attach `attach -- NAME`, read-only on request, its command after
+the name. -/
+@[expose]
+def Call.operands : Call → List String
+  | .list p => ["--porcelain", "--"] ++ p.names?.getD []
+  | .subscribe _ => ["--porcelain"]
+  | .screen p | .history p => ["--read-only", "--", p.name]
+  | .attach p =>
+    (if p.readOnly?.getD false then ["--read-only"] else []) ++ ["--", p.name] ++ p.command?.getD []
+  | .start p => [p.name, p.program] ++ p.args?.getD []
+  | .resume p | .detach p | .kill p | .wait p | .upgrade p => [p.name]
+  | .send p => [p.name, "-"]
+  | .rename p => [p.name, p.new]
+  | .capture p => (if p.history?.getD false then ["--history"] else []) ++ ["--", p.name]
+  | .resize p => [p.name, toString p.cols, toString p.rows]
+
+/-- **The command line a call is**: its method's command word (`methods`), then its operands. -/
+@[expose]
+def Call.words (call : Call) : List String :=
+  ((methods.lookup call.method).map fun (_, word, _) => word).getD "" :: call.operands
+
+/-- The standard input a call's command line reads: the bytes `session/send`'s `data` encodes in
+base64 (`Base64.decode`), none for text that is no base64, and nothing for any other method. -/
+@[expose]
+def Call.input : Call → Option (List UInt8)
+  | .send p => Base64.decode p.data.toList
+  | _ => some []
+
+/-! ## The sessions table -/
+
+/-- A record of the sessions table: a session's record, as `ls --porcelain` gives it. -/
+abbrev Record : Type := Linger.Display.Listing.Record
 
 /-- The key a record is kept under: its session's name. -/
 @[expose]
-def Record.key (record : Record) : String := (record.lookup "name").getD ""
+def Record.key (record : Record) : String := Linger.Display.Listing.Record.key record
 
 /-- A record as an update reads it: without the two fields that read the clock, `idle`, which
 changes each second a session is quiet, and `lastout`, the wall clock less `idle`, which two
 listings of a quiet session may read a second apart, since the two clocks tick apart. -/
 @[expose]
-def Record.reading (record : Record) : Record :=
-  record.filter fun field => field.1 != "idle" && field.1 != "lastout"
+def Record.reading (record : Record) : Record := (record.erase "idle").erase "lastout"
 
-/-- A record as JSON: an object, a string member for each field. -/
+/-- **A record as JSON**: an object of its fields by increasing key, each as its kind writes it, as
+ExactJSON writes a dictionary (`codec_extTreeMap`). -/
 @[expose]
-def Record.json (record : Record) : Json := .obj (record.map fun (key, value) => (key, .str value))
+def Record.json (record : Record) : Value :=
+  .table (record.toList.map fun (key, field) => (key, toValue field)).toArray
 
 /-- The records of `latest` that `told` holds no record of under their key, or holds otherwise,
 read without the clock (`Record.reading`). -/
@@ -758,13 +1030,28 @@ def changes (told latest : List Record) : List Record :=
 def removed (told latest : List Record) : List String :=
   (told.map Record.key).filter fun key => !latest.any (·.key == key)
 
-/-- The params of `sessions/changed`: the subscription it updates, the request id that opened it,
-the records that replace those under their keys and the keys that go. -/
+/-- The params of `sessions/changed`: the records that replace those under their keys, the keys
+that go, and the subscription it updates, by the id of the request that opened it. -/
+structure Changed where
+  /-- The records that replace those under their keys. -/
+  records : List Record
+  /-- The keys that go. -/
+  removed : List String
+  /-- The subscription, by the id of the request that opened it. -/
+  subscription : Id
+
+/-- `sessions/changed`'s params as JSON. -/
 @[expose]
-def update (id : Id) (records : List Record) (gone : List String) : Json :=
-  .obj
-    [("subscription", id.json), ("records", .arr (records.map Record.json)),
-      ("removed", .arr (gone.map .str))]
+def Changed.json (c : Changed) : Value :=
+  .table
+    #[("records", .array (c.records.map Record.json).toArray), ("removed", strings c.removed),
+      ("subscription", c.subscription.json)]
+
+/-- **The params of `sessions/changed`**: the records that replace those under their keys, the
+keys that go, and the subscription it updates, the request id that opened it. -/
+@[expose]
+def update (id : Id) (records : List Record) (gone : List String) : Value :=
+  Changed.json { records, removed := gone, subscription := id }
 
 /-- A table as a reader holds it, the record under each key: here the first of `records` under
 it. -/
@@ -968,79 +1255,304 @@ def hexByte (b : UInt8) : String :=
   let digit (n : Nat) : Char := if n < 10 then Char.ofNat (48 + n) else Char.ofNat (87 + n)
   String.ofList [digit (b.toNat / 16), digit (b.toNat % 16)]
 
-/-- A colour as JSON: a palette index as a number, a 24-bit colour as `#rrggbb`, and the default
-as `null`. -/
-@[expose]
-def colorJson : Terminal.Vt.Color → Json
-  | .default => .null
-  | .idx i => .int i.toNat
-  | .rgb r g b => .str ("#" ++ hexByte r ++ hexByte g ++ hexByte b)
+/-- A colour a pen draws with as its JSON holds it: a palette index, or a 24-bit colour as
+`#rrggbb`. -/
+inductive Hue where
+  /-- A palette index. -/
+  | index (value : Nat)
+  /-- A 24-bit colour, `#rrggbb`. -/
+  | rgb (text : String)
+  deriving DecidableEq, Repr
 
-/-- **A pen as JSON**, compactly: an object with `fg` and `bg` when they are not the default, and
-each of `bold`, `dim`, `italic`, `underline`, `blink`, `reverse` and `strike` that is set, as
-`true`; the default pen is `{}`. -/
+/-- A colour as JSON: a palette index as an integer and a 24-bit colour as a string. -/
 @[expose]
-def penJson (p : Terminal.Vt.Pen) : Json :=
-  .obj
-    ((if p.fg = .default then [] else [("fg", colorJson p.fg)]) ++
-      (if p.bg = .default then [] else [("bg", colorJson p.bg)]) ++
-      ([("bold", p.bold), ("dim", p.dim), ("italic", p.italic), ("underline", p.underline),
-                ("blink", p.blink), ("reverse", p.reverse), ("strike", p.strike)].filter
-            (·.2)).map
-        fun (key, _) => (key, .bool true))
+def Hue.json : Hue → Value
+  | .index value => .integer value
+  | .rgb text => .string text
 
-/-- A run as JSON: `[length, pen]`. -/
+/-- **A colour as JSON**: a palette index an integer, a 24-bit colour its `#rrggbb` string. -/
+instance : ToValue Hue := ⟨Hue.json⟩
+
+/-- **A colour read from JSON**: a natural integer a palette index and a string a 24-bit
+colour. -/
+instance : FromValue Hue where
+  fromValue?
+    | .integer value =>
+      if 0 ≤ value then .ok (.index value.toNat) else .error "a palette index below 0"
+    | .string text => .ok (.rgb text)
+    | _ => .error "a colour that is neither an index nor a string"
+
+/-- A terminal's colour as its pen's JSON holds it: none for the default. -/
 @[expose]
-def Span.json (s : Span) : Json := .arr [.int s.length, penJson s.pen]
+def Hue.of : Terminal.Vt.Color → Option Hue
+  | .default => none
+  | .idx i => some (.index i.toNat)
+  | .rgb r g b => some (.rgb ("#" ++ hexByte r ++ hexByte g ++ hexByte b))
 
-/-- A line's members: its `text`, a string, and its `spans`. -/
+/-- A pen as JSON holds it: its colours, `fg` and `bg`, when not the default, and each attribute
+it sets. -/
+structure Style where
+  /-- The background colour. -/
+  bg? : Option Hue := none
+  /-- Whether it blinks. -/
+  blink? : Option Bool := none
+  /-- Whether it is bold. -/
+  bold? : Option Bool := none
+  /-- Whether it is dim. -/
+  dim? : Option Bool := none
+  /-- The foreground colour. -/
+  fg? : Option Hue := none
+  /-- Whether it is italic. -/
+  italic? : Option Bool := none
+  /-- Whether it is reversed. -/
+  reverse? : Option Bool := none
+  /-- Whether it strikes its text through. -/
+  strike? : Option Bool := none
+  /-- Whether it underlines. -/
+  underline? : Option Bool := none
+  deriving DecidableEq, Repr
+
+/-- A pen's style as JSON. -/
 @[expose]
-def Line.members (line : Line) : List (String × Json) :=
-  [("text", .str ((String.fromUTF8? (ByteArray.mk line.text.toArray)).getD "")),
-    ("spans", .arr (line.spans.map Span.json))]
+def Style.json (p : Style) : Value :=
+  .table
+    (optional "bg" Hue.json p.bg? ++ optional "blink" Value.boolean p.blink? ++
+        optional "bold" Value.boolean p.bold? ++
+        optional "dim" Value.boolean p.dim? ++
+        optional "fg" Hue.json p.fg? ++
+        optional "italic" Value.boolean p.italic? ++
+        optional "reverse" Value.boolean p.reverse? ++
+        optional "strike" Value.boolean p.strike? ++
+        optional "underline" Value.boolean p.underline?).toArray
 
-/-- A line under its number as JSON: `{line, text, spans}`. -/
+/-- An attribute as a style holds it: `true` when set, and left out otherwise. -/
 @[expose]
-def Line.numbered (y : Nat) (line : Line) : Json := .obj (("line", .int y) :: line.members)
+def setFlag (set : Bool) : Option Bool := if set then some true else none
 
-/-- The cursor as JSON: `{x, y, visible}`. -/
+/-- **A pen as JSON holds it**, compactly: `fg` and `bg` when they are not the default, and each of
+`bold`, `dim`, `italic`, `underline`, `blink`, `reverse` and `strike` that is set, as `true`; the
+default pen is `{}`. -/
 @[expose]
-def Cursor.json (c : Cursor) : Json :=
-  .obj [("x", .int c.x), ("y", .int c.y), ("visible", .bool c.visible)]
+def Style.of (p : Terminal.Vt.Pen) : Style :=
+  { bg? := Hue.of p.bg, blink? := setFlag p.blink, bold? := setFlag p.bold, dim? := setFlag p.dim,
+    fg? := Hue.of p.fg, italic? := setFlag p.italic, reverse? := setFlag p.reverse,
+    strike? := setFlag p.strike, underline? := setFlag p.underline }
 
-/-- **A screen as the result of `session/screen` shows it**: its `rows`, each line under its
+/-- A run as JSON holds it: its length and its pen's style. -/
+@[expose]
+def Span.wire (s : Span) : Nat × Style := (s.length, Style.of s.pen)
+
+/-- A run as JSON: `[length, style]`. -/
+@[expose]
+def spanJson (s : Nat × Style) : Value := .array #[.integer s.1, s.2.json]
+
+/-- A line's text as JSON holds it: its UTF-8, `""` for bytes that are not. -/
+@[expose]
+def Line.textOf (line : Line) : String :=
+  (String.fromUTF8? (ByteArray.mk line.text.toArray)).getD ""
+
+/-- A screen's line as JSON holds it: its number, its runs and its text. -/
+structure Numbered where
+  /-- The line's number, from 0 at the top. -/
+  line : Nat
+  /-- Its runs, each `[length, style]`. -/
+  spans : List (Nat × Style)
+  /-- Its text. -/
+  text : String
+  deriving DecidableEq, Repr
+
+/-- A screen's line as JSON: `{line, spans, text}`. -/
+@[expose]
+def Numbered.json (r : Numbered) : Value :=
+  .table
+    #[("line", .integer r.line), ("spans", .array (r.spans.map spanJson).toArray),
+      ("text", .string r.text)]
+
+/-- A line under its number as JSON holds it. -/
+@[expose]
+def Line.row (y : Nat) (line : Line) : Numbered :=
+  { line := y, spans := line.spans.map Span.wire, text := line.textOf }
+
+/-- A line that left a screen as JSON holds it: its runs and its text. -/
+structure Scrolled where
+  /-- Its runs, each `[length, style]`. -/
+  spans : List (Nat × Style)
+  /-- Its text. -/
+  text : String
+  deriving DecidableEq, Repr
+
+/-- A line that left a screen as JSON: `{spans, text}`. -/
+@[expose]
+def Scrolled.json (r : Scrolled) : Value :=
+  .table #[("spans", .array (r.spans.map spanJson).toArray), ("text", .string r.text)]
+
+/-- A line that left a screen as JSON holds it. -/
+@[expose]
+def Line.scrolled (line : Line) : Scrolled :=
+  { spans := line.spans.map Span.wire, text := line.textOf }
+
+/-- The cursor as JSON: `{visible, x, y}`. -/
+@[expose]
+def Cursor.json (c : Cursor) : Value :=
+  .table #[("visible", .boolean c.visible), ("x", .integer c.x), ("y", .integer c.y)]
+
+/-- What a result shows beside its answer, each member only when it shows it: a screen's `cursor`,
+`rows` and `title`, a capture's bytes in base64, `data`, how a session ended, `ending`, why a line
+or params were refused, `reason`, a listing's `records`, the last lines a request said, `said`, and
+how many before them it dropped, `saidDropped`, the versions `serve` speaks, `supported`, any other
+text, `text`, and the sessions an upgrade carried over, `upgraded`. -/
+structure Shows where
+  /-- A screen's cursor. -/
+  cursor? : Option Cursor := none
+  /-- A capture's bytes, in base64. -/
+  data? : Option String := none
+  /-- How a session ended, as `ls` gives it. -/
+  ending? : Option Record := none
+  /-- Why a line or params were refused. -/
+  reason? : Option String := none
+  /-- A listing's records. -/
+  records? : Option (List Record) := none
+  /-- A screen's lines, top first. -/
+  rows? : Option (List Numbered) := none
+  /-- The last lines a request said. -/
+  said? : Option (List String) := none
+  /-- How many lines before them it dropped. -/
+  saidDropped? : Option Nat := none
+  /-- The protocol versions `serve` speaks. -/
+  supported? : Option (List String) := none
+  /-- Any other text. -/
+  text? : Option String := none
+  /-- A screen's window title. -/
+  title? : Option String := none
+  /-- The sessions an upgrade carried over. -/
+  upgraded? : Option (List String) := none
+
+/-- What a result shows as its members, by increasing key. -/
+@[expose]
+def Shows.members (s : Shows) : List (String × Value) :=
+  optional "cursor" Cursor.json s.cursor? ++ optional "data" Value.string s.data? ++
+    optional "ending" Record.json s.ending? ++
+    optional "reason" Value.string s.reason? ++
+    optional "records" (fun records => .array (records.map Record.json).toArray) s.records? ++
+    optional "rows" (fun rows => .array (rows.map Numbered.json).toArray) s.rows? ++
+    optional "said" strings s.said? ++
+    optional "saidDropped" (fun (n : Nat) => Value.integer n) s.saidDropped? ++
+    optional "supported" strings s.supported? ++
+    optional "text" Value.string s.text? ++
+    optional "title" Value.string s.title? ++
+    optional "upgraded" strings s.upgraded?
+
+/-- **What answers a request**: the answer its command line would exit with, by name and code, and
+what it shows. -/
+structure Result extends Shows where
+  /-- The answer's name (`answerName`). -/
+  answer : String
+  /-- The answer's code. -/
+  code : Nat
+
+/-- **A result as JSON**: `answer` and `code`, then what it shows, by increasing key. -/
+@[expose]
+def Result.json (r : Result) : Value :=
+  .table
+    ([("answer", Value.string r.answer), ("code", Value.integer r.code)] ++
+        r.toShows.members).toArray
+
+/-- **What the result of `session/screen` shows of a screen**: its `rows`, each line under its
 number, top first, its `cursor` and its `title`. -/
 @[expose]
-def Screen.members (screen : Screen) : List (String × Json) :=
-  [("rows", .arr (screen.lines.zipIdx.map fun (line, y) => Line.numbered y line)),
-    ("cursor", screen.cursor.json), ("title", .str screen.title)]
+def Screen.shows (screen : Screen) : Shows :=
+  { cursor? := some screen.cursor,
+    rows? := some (screen.lines.zipIdx.map fun (line, y) => line.row y),
+    title? := some screen.title }
+
+/-- The params of `session/screen/changed`: how the watch ended, on its last update, the cursor and
+the title when they changed, the numbers of the lines that went, the lines that changed, each under
+its number, and the subscription it updates, by the id of the request that opened it. -/
+structure ScreenChanged where
+  /-- How the watch ended, on its last update. -/
+  closed? : Option Result := none
+  /-- The cursor, when it changed. -/
+  cursor? : Option Cursor := none
+  /-- The numbers of the lines that went. -/
+  removed : List Nat
+  /-- The lines that changed, each under its number. -/
+  rows : List Numbered
+  /-- The subscription, by the id of the request that opened it. -/
+  subscription : Id
+  /-- The window title, when it changed. -/
+  title? : Option String := none
+
+/-- `session/screen/changed`'s params as JSON. -/
+@[expose]
+def ScreenChanged.json (u : ScreenChanged) : Value :=
+  .table
+    (optional "closed" Result.json u.closed? ++ optional "cursor" Cursor.json u.cursor? ++
+        [("removed", .array (u.removed.map fun (y : Nat) => .integer y).toArray),
+          ("rows", .array (u.rows.map Numbered.json).toArray),
+          ("subscription", u.subscription.json)] ++
+        optional "title" Value.string u.title?).toArray
 
 /-- **The params of `session/screen/changed`**: the subscription it updates, the id of the request
 that opened it, the `rows` that changed, each under its number, the numbers of the lines that
 went, `removed`, and the `cursor` and the `title` when they changed. -/
 @[expose]
-def Screen.update (id : Id) (u : Screen.Update) : Json :=
-  .obj
-    ([("subscription", id.json), ("rows", .arr (u.lines.map fun (y, line) => Line.numbered y line)),
-        ("removed", .arr (u.removed.map fun (y : Nat) => .int y))] ++
-      (u.cursor.map fun c => ("cursor", c.json)).toList ++
-      (u.title.map fun t => ("title", .str t)).toList)
+def Screen.update (id : Id) (u : Screen.Update) : Value :=
+  ScreenChanged.json
+    { cursor? := u.cursor, removed := u.removed, rows := u.lines.map fun (y, line) => line.row y,
+      subscription := id, title? := u.title }
+
+/-- The params of `session/history/changed`: how the watch ended, on its last update, how many
+lines it dropped before those it carries, the lines that left the screen, oldest first, and the
+subscription it updates, by the id of the request that opened it. -/
+structure HistoryChanged where
+  /-- How the watch ended, on its last update. -/
+  closed? : Option Result := none
+  /-- How many lines it dropped before those it carries. -/
+  dropped : Nat
+  /-- The lines that left the screen, oldest first. -/
+  lines : List Scrolled
+  /-- The subscription, by the id of the request that opened it. -/
+  subscription : Id
+
+/-- `session/history/changed`'s params as JSON. -/
+@[expose]
+def HistoryChanged.json (u : HistoryChanged) : Value :=
+  .table
+    (optional "closed" Result.json u.closed? ++
+        [("dropped", .integer u.dropped), ("lines", .array (u.lines.map Scrolled.json).toArray),
+          ("subscription", u.subscription.json)]).toArray
 
 /-- **The params of `session/history/changed`**: the subscription it updates, the id of the request
 that opened it, the `lines` that left the screen since the last update, oldest first, and how many
 before them it `dropped`. -/
 @[expose]
-def Log.update (id : Id) (log : Log Line) : Json :=
-  .obj
-    [("subscription", id.json), ("lines", .arr (log.tail.map fun line => .obj line.members)),
-      ("dropped", .int log.dropped)]
+def Log.update (id : Id) (log : Log Line) : Value :=
+  HistoryChanged.json
+    { dropped := log.dropped, lines := log.tail.map Line.scrolled, subscription := id }
+
+/-- The params of `session/output`: how the attach ended, on its last update, the bytes it carries
+in base64, and the subscription it updates, by the id of the request that opened the attach. -/
+structure Output where
+  /-- How the attach ended, on its last update. -/
+  closed? : Option Result := none
+  /-- The bytes, in base64. -/
+  data : String
+  /-- The subscription, by the id of the request that opened the attach. -/
+  subscription : Id
+
+/-- `session/output`'s params as JSON. -/
+@[expose]
+def Output.json (u : Output) : Value :=
+  .table
+    (optional "closed" Result.json u.closed? ++
+        [("data", .string u.data), ("subscription", u.subscription.json)]).toArray
 
 /-- What one line from the client is, as `serve` reads it. -/
 inductive Message where
   /-- A request, which one response answers, by its id. -/
-  | request (id : Id) (method : String) (params : Json)
+  | request (id : Id) (method : String) (params : Value)
   /-- A notification, which nothing answers. -/
-  | notification (method : String) (params : Json)
+  | notification (method : String) (params : Value)
   /-- No message: a line that is not canonical JSON, with the reason the reader gave, or a
   canonical text that is no request, with the id it carried, if any. -/
   | invalid (id : Option Id) (unparsed : Option String)
@@ -1056,12 +1568,12 @@ def unreasoned (decode : String → Message) (line : String) : Message :=
 /-- What `serve` writes, one line each. -/
 inductive Outgoing where
   /-- The result of the request with this id. -/
-  | result (id : Id) (value : Json)
+  | result (id : Id) (value : Value)
   /-- The error that answers the request with this id, or a line whose id it could not read, with
   a JSON-RPC code, a message and linger's answer in `data`. -/
-  | error (id : Option Id) (code : Int) (message : String) (data : Json)
+  | error (id : Option Id) (code : Int) (message : String) (data : Value)
   /-- A notification. -/
-  | notify (method : String) (params : Json)
+  | notify (method : String) (params : Value)
 
 /-- Where a connection stands in its handshake: before `initialize`, answered with the version it
 chose and waiting for `initialized`, or ready. -/
@@ -1112,24 +1624,53 @@ inductive Effect where
   client writes its keys and its terminal's size. -/
   | relay (id : Id) (messages : List Session.Wire.Msg)
 
-/-- The result of `initialize`: the protocol version chosen, the server, `linger` at its version,
-and its capabilities, the methods it answers and the notifications it may send. -/
+/-- What `serve` can do, as `initialize`'s result says: the methods it answers and the
+notifications it may send. -/
+structure Abilities where
+  /-- The methods it answers. -/
+  methods : List String
+  /-- The notifications it may send. -/
+  notifications : List String
+  deriving DecidableEq, Repr
+
+/-- What `serve` can do as JSON. -/
 @[expose]
-def welcome (version linger : String) : Json :=
-  .obj
-    [("protocolVersion", .str version),
-      ("serverInfo", .obj [("name", .str "linger"), ("version", .str linger)]),
-      ("capabilities",
-        .obj
-          [("methods",
-              .arr
-                (("initialize" :: methods.map (·.1) ++
-                      ["sessions/unsubscribe", "session/input"]).map
-                  .str)),
-            ("notifications",
-              .arr
-                [.str "sessions/changed", .str "session/screen/changed",
-                  .str "session/history/changed", .str "session/output"])])]
+def Abilities.json (a : Abilities) : Value :=
+  .table #[("methods", strings a.methods), ("notifications", strings a.notifications)]
+
+/-- `initialize`'s result: what `serve` can do, the protocol version chosen, and who the server is.
+-/
+structure Welcome where
+  /-- What `serve` can do. -/
+  capabilities : Abilities
+  /-- The protocol version chosen. -/
+  protocolVersion : String
+  /-- Who the server is. -/
+  serverInfo : Info
+  deriving DecidableEq, Repr
+
+/-- `initialize`'s result as JSON. -/
+@[expose]
+def Welcome.json (w : Welcome) : Value :=
+  .table
+    #[("capabilities", w.capabilities.json), ("protocolVersion", .string w.protocolVersion),
+      ("serverInfo", w.serverInfo.json)]
+
+/-- What `initialize`'s result says: the protocol version chosen, the server, `linger` at its
+version, and its capabilities, the methods it answers and the notifications it may send. -/
+@[expose]
+def Welcome.of (version linger : String) : Welcome :=
+  { capabilities :=
+      { methods := "initialize" :: methods.map (·.1) ++ ["sessions/unsubscribe", "session/input"]
+        notifications :=
+          ["sessions/changed", "session/screen/changed", "session/history/changed",
+            "session/output"] }
+    protocolVersion := version, serverInfo := { name := "linger", version? := some linger } }
+
+/-- **The result of `initialize`**: the protocol version chosen, the server, `linger` at its
+version, and its capabilities, the methods it answers and the notifications it may send. -/
+@[expose]
+def welcome (version linger : String) : Value := (Welcome.of version linger).json
 
 /-- What a connection may write before it is ready: an error, or the result of `initialize`. -/
 @[expose]
@@ -1159,7 +1700,7 @@ def eager {σ : Type} (step : σ → Event → σ × List Effect) (s : σ) : Eve
 a subscription is open or anything changed, and otherwise steps as `step` does. -/
 @[expose]
 def chatty {σ : Type} (step : σ → Event → σ × List Effect) (s : σ) : Event → σ × List Effect
-  | .writable => ((step s .writable).1, [.send (.notify "sessions/changed" (.obj []))])
+  | .writable => ((step s .writable).1, [.send (.notify "sessions/changed" (.table #[]))])
   | ev => step s ev
 
 /-- A wrong part: a connection that queues each listing's records as an update when it comes,
@@ -1169,7 +1710,9 @@ def queued {σ : Type} (step : σ → Event → σ × List Effect) (s : σ) : Ev
   | .sampled records =>
     ((step s (.sampled records)).1,
       (step s (.sampled records)).2 ++
-        [.send (.notify "sessions/changed" (.obj [("records", .arr (records.map Record.json))]))])
+        [.send
+            (.notify "sessions/changed"
+              (.table #[("records", .array (records.map Record.json).toArray)]))])
   | ev => step s ev
 
 /-- **A connection negotiates before it acts, and notifies only subscriptions open**, of the
@@ -1196,16 +1739,16 @@ def Negotiated {σ : Type} (init : σ) (phase : σ → Phase) (subscription : σ
     (∀ id version linger,
       Effect.send (.result id (welcome version linger)) ∈ (step s ev).2 →
         version ∈ versions ∧
-          ∃ params,
-            ev = .received (.request id "initialize" params) ∧
-              params.member? "protocolVersion" = some (.str version)) ∧
+          ∃ params : Initialize,
+            ev = .received (.request id "initialize" params.json) ∧
+              params.protocolVersion = version) ∧
     (∀ id method params,
       ev = .received (.request id method params) → ∃ e ∈ (step s ev).2, e.Answers id) ∧
     (∀ e ∈ (step s ev).2,
       ∀ method params,
         e = .send (.notify method params) →
           ∃ id,
-            params.member? "subscription" = some id.json ∧
+            member? "subscription" params = some id.json ∧
               (method = "sessions/changed" ∧ subscription s = some id ∨
                 method = "session/screen/changed" ∧
                   (∃ told latest, watching s id = some (.screen told latest)) ∨
@@ -1223,15 +1766,15 @@ def Negotiated {σ : Type} (init : σ) (phase : σ → Phase) (subscription : σ
         subscription s = some id ∨
           ∃ params version,
             phase s = .ready version ∧ ev = .received (.request id "sessions/subscribe" params)) ∧
-    (∀ id params version,
+    (∀ id version,
       phase s = .ready version →
-        ev = .received (.request id "sessions/subscribe" params) →
+        ev = .received (.request id "sessions/subscribe" (NoParams.json {})) →
         subscription (step s ev).1 = some id) ∧
-    (∀ id request params version,
+    (∀ id request version,
       phase s = .ready version →
         subscription s = some id →
-        ev = .received (.request request "sessions/unsubscribe" params) →
-        params.member? "subscription" = some id.json → subscription (step s ev).1 = none) ∧
+        ev = .received (.request request "sessions/unsubscribe" (Subscription.json ⟨id⟩)) →
+        subscription (step s ev).1 = none) ∧
     (∀ id,
       (watching (step s ev).1 id).isSome →
         (watching s id).isSome ∨
@@ -1240,11 +1783,11 @@ def Negotiated {σ : Type} (init : σ) (phase : σ → Phase) (subscription : σ
               (ev = .received (.request id "session/screen" params) ∨
                 ev = .received (.request id "session/history" params) ∨
                 ev = .received (.request id "session/attach" params))) ∧
-    ∀ id request params version,
+    ∀ id request version,
       phase s = .ready version →
         (watching s id).isSome →
-        ev = .received (.request request "sessions/unsubscribe" params) →
-        params.member? "subscription" = some id.json → watching (step s ev).1 id = none
+        ev = .received (.request request "sessions/unsubscribe" (Subscription.json ⟨id⟩)) →
+        watching (step s ev).1 id = none
 
 /-- **A screen's table is exact**, of the connection whose states read as `watching`, whose
 transition is `step`, whose results are `result` and whose updates are `changes`, at `s` for the
@@ -1255,10 +1798,10 @@ subscriber was told, and has then told it; and the changes from `told` to `lates
 (`Screen.Exact`). -/
 @[expose]
 def ScreenTable {σ : Type} (watching : σ → Id → Option Watch) (step : σ → Event → σ × List Effect)
-    (result : Api.Found → List (String × Json) → Json) (changes : Screen → Screen → Screen.Update)
-    (s : σ) (id : Id) (told latest screen : Screen) (left : Log Line) : Prop :=
+    (result : Api.Found → Shows → Value) (changes : Screen → Screen → Screen.Update) (s : σ)
+    (id : Id) (told latest screen : Screen) (left : Log Line) : Prop :=
   (watching s id = some (.asked false) →
-      (step s (.watched id screen left)).2 = [.send (.result id (result .done screen.members))] ∧
+      (step s (.watched id screen left)).2 = [.send (.result id (result .done screen.shows))] ∧
         watching (step s (.watched id screen left)).1 id = some (.screen screen screen)) ∧
     (watching s id = some (.screen told latest) →
       (step s (.watched id screen left)).2 = [] ∧
@@ -1285,10 +1828,10 @@ reading masks what the log read before, then what the look's log of the lines th
 when it holds a line or a drop, and then holds none. -/
 @[expose]
 def HistoryLog {σ : Type} (watching : σ → Id → Option Watch) (step : σ → Event → σ × List Effect)
-    (result : Api.Found → List (String × Json) → Json) (s : σ) (id : Id) (pending : Log Line)
-    (screen : Screen) (left : Log Line) : Prop :=
+    (result : Api.Found → Shows → Value) (s : σ) (id : Id) (pending : Log Line) (screen : Screen)
+    (left : Log Line) : Prop :=
   (watching s id = some (.asked true) →
-      (step s (.watched id screen left)).2 = [.send (.result id (result .done []))] ∧
+      (step s (.watched id screen left)).2 = [.send (.result id (result .done {}))] ∧
         ∃ kept,
           watching (step s (.watched id screen left)).1 id = some (.history kept) ∧
             Log.Masks kept.reads left.reads) ∧
@@ -1317,9 +1860,9 @@ stream's last update says so. -/
 /-- **An update of an attach's stream carries `bytes`**: its params name the subscription `id`, and
 their `data` is text that decodes as base64 (`Base64.decode`) to exactly those bytes. -/
 @[expose]
-def Carries (id : Id) (bytes : List UInt8) (params : Json) : Prop :=
-  params.member? "subscription" = some id.json ∧
-    ∃ text, params.member? "data" = some (.str text) ∧ Base64.decode text.toList = some bytes
+def Carries (id : Id) (bytes : List UInt8) (params : Value) : Prop :=
+  member? "subscription" params = some id.json ∧
+    ∃ text, member? "data" params = some (.string text) ∧ Base64.decode text.toList = some bytes
 
 /-- **What one read of an attach's connection does**, for the attach `id`, whose connection's
 frames `dec` has read so far and whose subscriber `pending` waits for, when it took `bytes`, of
@@ -1339,14 +1882,14 @@ def Streamed
     after = none ∧
       ∃ params,
         sent = [.send (.notify "session/output" params)] ∧
-          Carries id pending params ∧ (params.member? "closed").isSome
+          Carries id pending params ∧ (member? "closed" params).isSome
   else
     if (feed dec bytes).2.any Session.Wire.Msg.ends then
       after = none ∧
         ∃ params,
           sent = [.send (.notify "session/output" params)] ∧
             Carries id (pending ++ Session.Wire.shown (feed dec bytes).2) params ∧
-            (params.member? "closed").isSome
+            (member? "closed" params).isSome
     else
       sent = [] ∧
         after = some (.stream (feed dec bytes).1 (pending ++ Session.Wire.shown (feed dec bytes).2))
@@ -1357,7 +1900,7 @@ the attach `id`, where `feed` decodes what a daemon sends as an attach client de
 frames a screen an attach shows, `answerOf` gives the answer of what an attach found and `code` an
 answer's code. A live session's reads are its daemon's, a saved one's those of the daemon that
 resumes it, as `attach` resumes it (`Recovery.visit`), and a remote one's the frames its host's
-stream is relayed as (`Remote.Shows`); an ended one shows its final screen as one read, and then
+stream is relayed as (`Remote.Relays`); an ended one shows its final screen as one read, and then
 ends, having found how its program ended. The first read of the attach's connection answers its
 request, and every read is `Streamed`, so its subscriber gets the bytes an attach client writes of
 what the daemon sent, the repaint and the output after it, in order, every one and nothing else; a
@@ -1368,19 +1911,19 @@ what it found, and an open one sends one last update, which carries what waits a
 answer and code are those of what it found, and the connection holds it no more. -/
 @[expose]
 def AttachStream {σ : Type} (watching : σ → Id → Option Watch) (step : σ → Event → σ × List Effect)
-    (result : Api.Found → List (String × Json) → Json) (answerOf : Api.Found → Os.Answer)
+    (result : Api.Found → Shows → Value) (answerOf : Api.Found → Os.Answer)
     (code : Os.Answer → UInt32) (paint : List UInt8 → List UInt8)
     (feed : Session.Wire.Decoder → List UInt8 → Session.Wire.Decoder × List Session.Wire.Msg)
     (s : σ) (id : Id) (dec : Session.Wire.Decoder) (pending bytes screen : List UInt8)
     (found : Api.Found) (said : Log String) : Prop :=
   (watching s id = some .attaching →
       (∃ rest,
-          (step s (.read id bytes)).2 = .send (.result id (result .done [])) :: rest ∧
+          (step s (.read id bytes)).2 = .send (.result id (result .done {})) :: rest ∧
             Streamed feed id {} [] bytes rest (watching (step s (.read id bytes)).1 id)) ∧
-        (step s (.read id (paint screen))).2 = [.send (.result id (result .done []))] ∧
+        (step s (.read id (paint screen))).2 = [.send (.result id (result .done {}))] ∧
         watching (step s (.read id (paint screen))).1 id = some (.stream {} screen) ∧
-        (∃ members,
-          (step s (.unwatched id found said)).2 = [.send (.result id (result found members))]) ∧
+        (∃ shows,
+          (step s (.unwatched id found said)).2 = [.send (.result id (result found shows))]) ∧
         watching (step s (.unwatched id found said)).1 id = none) ∧
     (watching s id = some (.stream dec pending) →
       Streamed feed id dec pending bytes (step s (.read id bytes)).2
@@ -1389,16 +1932,14 @@ def AttachStream {σ : Type} (watching : σ → Id → Option Watch) (step : σ 
         (pending ≠ [] →
           ∃ params,
             (step s (.flush id)).2 = [.send (.notify "session/output" params)] ∧
-              Carries id pending params ∧ params.member? "closed" = none) ∧
+              Carries id pending params ∧ member? "closed" params = none) ∧
         watching (step s (.flush id)).1 id = some (.stream dec []) ∧
-        (∃ params rest,
+        (∃ (params : Value) (closed : Result),
           (step s (.unwatched id found said)).2 = [.send (.notify "session/output" params)] ∧
             Carries id pending params ∧
-            params.member? "closed" =
-              some
-                (.obj
-                  (("answer", .str (answerName (answerOf found))) ::
-                    ("code", .int (code (answerOf found)).toNat) :: rest))) ∧
+            member? "closed" params = some closed.json ∧
+            closed.answer = answerName (answerOf found) ∧
+            closed.code = (code (answerOf found)).toNat) ∧
         watching (step s (.unwatched id found said)).1 id = none)
 
 /-- A wrong part: a shown screen read as its bytes, unframed, which an attach client's decoder
@@ -1432,7 +1973,7 @@ before `serve` answers a command line it does not take, with a usage answer (`Re
 refused, saying so, and `ls -r`, which calls `sessions/list` of each host, lists it as a host that
 does not answer, saying why. A remote attach is an attach client's conversation with the host's
 `session/attach`: linger relays each update of its stream to the client as the frames of the bytes
-it carries (`Remote.Shows`), and each key the client types as one `session/input`. -/
+it carries (`Remote.Relays`), and each key the client types as one `session/input`. -/
 
 /-- **The request a host performs for one of a request's targets**, the session `name` there, with
 the standard input the command line has, `input`: the same request, its target `name` alone, a
@@ -1467,65 +2008,53 @@ def Remote.asked (request : Api.Request) (name : String) (input : List UInt8) :
 /-- The member `key` of the first message among `messages` whose `id` is the integer `n`, and that
 has one. -/
 @[expose]
-def Remote.answerOf (messages : List Json) (n : Int) (key : String) : Option Json :=
+def Remote.answerOf (messages : List Value) (n : Int) (key : String) : Option Value :=
   (messages.find? fun message =>
-        (message.member? "id").bind Id.of == some (.number n) && (message.member? key).isSome).bind
-    (·.member? key)
+        (member? "id" message).bind Id.of == some (.number n) && (member? key message).isSome).bind
+    (member? key)
 
-/-- **A host's `serve` shook hands**: it answered `initialize`, request 1, with a version this
-linger speaks. -/
+/-- **A host's `serve` shook hands**: it answered `initialize`, request 1, with its result, exactly
+a `Welcome` of a version this linger speaks. -/
 @[expose]
-def Remote.Shook (messages : List Json) : Prop :=
-  ∃ result version,
-    Remote.answerOf messages 1 "result" = some result ∧
-      result.member? "protocolVersion" = some (.str version) ∧ version ∈ versions
+def Remote.Shook (messages : List Value) : Prop :=
+  ∃ welcome : Welcome,
+    Remote.answerOf messages 1 "result" = some welcome.json ∧ welcome.protocolVersion ∈ versions
 
 /-- **What a host answered the call**, request 2, of the answers whose codes `code` gives: its
-result, an object whose `answer` and `code` are the answer's name and code, and whose other members,
-in the order it holds them, are `members`; or, where no result answered it, the `data` of the error
-that did, in the same form, as a method a `serve` does not answer or params it does not take get. -/
+result, exactly a `Result` whose `answer` and `code` are the answer's name and code, and which shows
+`shows`; or, where no result answered it, the `data` of the error that did, in the same form, as a
+method a `serve` does not answer or params it does not take get. -/
 @[expose]
-def Remote.Answered (code : Os.Answer → UInt32) (messages : List Json) (answer : Os.Answer)
-    (members : List (String × Json)) : Prop :=
-  ∃ all,
+def Remote.Answered (code : Os.Answer → UInt32) (messages : List Value) (answer : Os.Answer)
+    (shows : Shows) : Prop :=
+  ∃ result : Result,
     (Remote.answerOf messages 2 "result").or
-          ((Remote.answerOf messages 2 "error").bind (·.member? "data")) =
-        some (.obj all) ∧
-      all.lookup "answer" = some (.str (answerName answer)) ∧
-      all.lookup "code" = some (.int (code answer).toNat) ∧
-      members = all.filter fun m => m.1 != "answer" && m.1 != "code"
+          ((Remote.answerOf messages 2 "error").bind (member? "data")) =
+        some result.json ∧
+      result.answer = answerName answer ∧ result.code = (code answer).toNat ∧ result.toShows = shows
 
-/-- A record as a host's `sessions/list` gives one: an object each of whose members is a string. -/
-@[expose]
-def Record.of : Json → Option Record
-  | .obj members => members.mapM fun (key, value) => value.text?.map ((key, ·))
-  | _ => none
-
-/-- **The records a host's `sessions/list` returned**: it answered the call `done`, with these
+/-- **The records a host's `sessions/list` returned**: it answered the call `done`, showing these
 records. -/
 @[expose]
-def Remote.Lists (code : Os.Answer → UInt32) (messages : List Json) (records : List Record) :
-    Prop :=
-  ∃ members items,
-    Remote.Answered code messages .done members ∧
-      members.lookup "records" = some (.arr items) ∧ items.mapM Record.of = some records
+def Remote.Lists (code : Os.Answer → UInt32) (messages : List Value) (records : List Record) :
+    Prop := ∃ shows, Remote.Answered code messages .done shows ∧ shows.records? = some records
 
 /-- **A host refused `serve` with a usage answer**: it did not shake hands, and its command exited
 with the usage answer's status, 2, as the command line of a linger from before `serve` answers a
 word it does not take, or its `serve` answered `initialize` with an error whose `data` is the usage
 answer, as one that speaks no version this linger does. -/
 @[expose]
-def Remote.Usage (messages : List Json) (status : UInt32) : Prop :=
+def Remote.Usage (messages : List Value) (status : UInt32) : Prop :=
   ¬Remote.Shook messages ∧
     (status = 2 ∨
       ∃ error data,
         Remote.answerOf messages 1 "error" = some error ∧
-          error.member? "data" = some data ∧ data.member? "answer" = some (.str "usage"))
+          member? "data" error = some data ∧ member? "answer" data = some (.string "usage"))
 
 /-- What a host's `serve` told linger of its call. -/
 inductive Remote.Heard where
-  /-- It shook hands, and answered the call with this answer and these members. -/
-  | answered (answer : Os.Answer) (members : List (String × Json))
+  /-- It shook hands, and answered the call with this answer, showing this. -/
+  | answered (answer : Os.Answer) (shows : Shows)
   /-- It refused `serve` with a usage answer: a linger without `serve`, which linger refuses. -/
   | refused
   /-- It answered nothing linger reads. -/
@@ -1535,7 +2064,7 @@ inductive Remote.Heard where
 makes for a request at the session `name` with the standard input `input`, `call`, how a host's
 `serve` reads a method and its params, `parse`, how linger reads what a host's `serve` wrote and its
 command's exit status, `heard`, the answers' codes, `code`, what a command finds of a host's answer
-and the members of its result, `found`, the answer of what a command finds, `answerOf`, the lines a
+and what its result shows, `found`, the answer of what a command finds, `answerOf`, the lines a
 command says of what the host `host` said, `said`, and how a name or a line is made clean text,
 `clean`: the host reads the call as exactly the request it performs for that session
 (`Remote.asked`), none when there is none; linger reads an answer exactly when the host shook hands
@@ -1543,23 +2072,20 @@ and answered the call with it, and a refusal exactly when the host refused `serv
 answer; what the command finds answers exactly as the host answered; and the command says each line
 the host said, in order, as the host's: its name, then the line. -/
 @[expose]
-def Remote.Exact (call : Api.Request → String → List UInt8 → Option (String × Json))
-    (parse : String → Json → Option (Api.Request × List UInt8))
-    (heard : List Json → UInt32 → Remote.Heard) (code : Os.Answer → UInt32)
-    (found : Os.Answer → List (String × Json) → Api.Found) (answerOf : Api.Found → Os.Answer)
-    (said : String → List (String × Json) → List String) (clean : String → String)
-    (request : Api.Request) (name : String) (input : List UInt8) (messages : List Json)
-    (status : UInt32) (answer : Os.Answer) (members : List (String × Json)) (host : String) :
-    Prop :=
+def Remote.Exact (call : Api.Request → String → List UInt8 → Option (String × Value))
+    (parse : String → Value → Option (Api.Request × List UInt8))
+    (heard : List Value → UInt32 → Remote.Heard) (code : Os.Answer → UInt32)
+    (found : Os.Answer → Shows → Api.Found) (answerOf : Api.Found → Os.Answer)
+    (said : String → Shows → List String) (clean : String → String) (request : Api.Request)
+    (name : String) (input : List UInt8) (messages : List Value) (status : UInt32)
+    (answer : Os.Answer) (shows : Shows) (host : String) : Prop :=
   (call request name input).bind (fun called => parse called.1 called.2) =
       Remote.asked request name input ∧
-    (heard messages status = .answered answer members ↔
-      Remote.Shook messages ∧ Remote.Answered code messages answer members) ∧
+    (heard messages status = .answered answer shows ↔
+      Remote.Shook messages ∧ Remote.Answered code messages answer shows) ∧
     (heard messages status = .refused ↔ Remote.Usage messages status) ∧
-    answerOf (found answer members) = answer ∧
-    said host members =
-      (((members.lookup "said").bind Json.texts?).getD []).map fun text =>
-        clean host ++ ": " ++ clean text
+    answerOf (found answer shows) = answer ∧
+    said host shows = (shows.said?.getD []).map fun text => clean host ++ ": " ++ clean text
 
 /-- **A remote host's rows are exactly what its `sessions/list` returns, named `name@host`**, of
 how `heard` reads what a host's `serve` wrote and its command's exit status, how `rows` makes a
@@ -1568,34 +2094,29 @@ linger reads records of a host's answer exactly when the host shook hands and it
 returned them (`Remote.Lists`), and the host's rows are its records whose names `accept` takes, in
 order, each named `name@host`. -/
 @[expose]
-def Remote.Rows (heard : List Json → UInt32 → Remote.Heard)
+def Remote.Rows (heard : List Value → UInt32 → Remote.Heard)
     (rows : String → List Record → List Record) (accept : String → Option String)
-    (code : Os.Answer → UInt32) (host : String) (messages : List Json) (status : UInt32)
+    (code : Os.Answer → UInt32) (host : String) (messages : List Value) (status : UInt32)
     (records : List Record) : Prop :=
-  ((∃ members items,
-        heard messages status = .answered .done members ∧
-          members.lookup "records" = some (.arr items) ∧ items.mapM Record.of = some records) ↔
+  ((∃ shows, heard messages status = .answered .done shows ∧ shows.records? = some records) ↔
       Remote.Shook messages ∧ Remote.Lists code messages records) ∧
     (rows host records).map Record.key =
       (records.filter fun record => accept record.key == some record.key).map fun record =>
         record.key ++ "@" ++ host
 
-/-- A wrong part: a reading that takes request 2's result as `done` when its `answer` says so,
-whatever request 1 got, with its other members, and reads any other answer as silent. -/
+/-- A wrong part: a reading that takes request 2's result as `done`, listing no records, when its
+`answer` says so, whatever request 1 got, and reads any other answer as silent. -/
 @[expose]
-def Remote.unshaken (messages : List Json) (_ : UInt32) : Remote.Heard :=
-  match Remote.answerOf messages 2 "result" with
-  | some (.obj all) =>
-    match all.lookup "answer" with
-    | some (.str "done") => .answered .done (all.filter fun m => m.1 != "answer" && m.1 != "code")
-    | _ => .silent
+def Remote.unshaken (messages : List Value) (_ : UInt32) : Remote.Heard :=
+  match (Remote.answerOf messages 2 "result").bind (member? "answer") with
+  | some (.string "done") => .answered .done { records? := some [] }
   | _ => .silent
 
 /-- The notification that carries an update of an attach's stream, `session/output`, with these
 params. -/
 @[expose]
-def Remote.output (params : Json) : Json :=
-  .obj [("jsonrpc", .str "2.0"), ("method", .str "session/output"), ("params", params)]
+def Remote.output (params : Value) : Value :=
+  .table #[("jsonrpc", .string "2.0"), ("method", .string "session/output"), ("params", params)]
 
 /-- **A remote attach shows exactly the bytes the host's `session/attach` sends, and sends it exactly
 the keys typed**, of what linger relays to its attach client of each line a host's `serve` writes
@@ -1606,26 +2127,26 @@ those bytes, in order (`Wire.shown`); an update that carries `closed` is relayed
 ends the attach (`Wire.Msg.ends`) when it names the attach; and the keys an attach client types
 reach the host as one `session/input` that carries exactly them. -/
 @[expose]
-def Remote.Shows (relay : Id → Json → List Session.Wire.Msg) (keys : Id → List UInt8 → Json)
-    (id : Id) (stream : List (Json × List UInt8)) (typed : List UInt8) : Prop :=
+def Remote.Relays (relay : Id → Value → List Session.Wire.Msg) (keys : Id → List UInt8 → Value)
+    (id : Id) (stream : List (Value × List UInt8)) (typed : List UInt8) : Prop :=
   ((∀ update ∈ stream, Carries id update.2 update.1) →
-      (∀ update ∈ stream.dropLast, update.1.member? "closed" = none) →
+      (∀ update ∈ stream.dropLast, member? "closed" update.1 = none) →
       (∀ m ∈ stream.flatMap (fun update => relay id (Remote.output update.1)), m.Fits) ∧
         Session.Wire.shown (stream.flatMap fun update => relay id (Remote.output update.1)) =
           (stream.map (·.2)).flatten) ∧
     (∀ params,
-      params.member? "subscription" = some id.json →
-        (params.member? "closed").isSome → ∃ m ∈ relay id (Remote.output params), m.ends = true) ∧
+      member? "subscription" params = some id.json →
+        (member? "closed" params).isSome → ∃ m ∈ relay id (Remote.output params), m.ends = true) ∧
     Carries id typed (keys id typed)
 
 /-- A wrong part: a relay that writes an update's `data` as the text it is, a byte a character,
 its base64 undecoded, and ends the attach on `closed`. -/
 @[expose]
-def Remote.undecoded (_ : Id) (message : Json) : List Session.Wire.Msg :=
-  match (message.member? "params").bind (·.member? "data") with
-  | some (.str text) =>
+def Remote.undecoded (_ : Id) (message : Value) : List Session.Wire.Msg :=
+  match (member? "params" message).bind (member? "data") with
+  | some (.string text) =>
     [.output (text.toList.map fun c => c.toNat.toUInt8)] ++
-      (if ((message.member? "params").bind (·.member? "closed")).isSome then [.err []] else [])
+      (if ((member? "params" message).bind (member? "closed")).isSome then [.err []] else [])
   | _ => []
 
 end Linger.App.Serve

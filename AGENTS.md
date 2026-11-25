@@ -59,13 +59,14 @@ or `WorldCode`, as `scripts/gates.sh` reads it, and any other module is tooling.
   `WorldCode.lean` and `WorldCode/` its IO, and `WorldCode/Checks.lean` the checks of its world
   claims; then `Proofs/`, `Tests/` (elaboration-time unit tests) and `Suites/` (executable
   suites).
-- `Linger/Os/`: the answers every command gives (`CoreSpec.lean`, `CoreCode/Answer.lean`), the
-  canonical JSON linger writes and reads, `serve`'s lines, a host's replies and `ls --porcelain`
-  (`CoreSpec.lean`, `CoreCode/Json.lean`), linger's environment policies (`CoreCode/Env.lean`)
-  and the shim's smoke tests (`Suites/Shim.lean`, `./lake exe lingertest`).
+- `Linger/Os/`: the answers every command gives (`CoreSpec.lean`, `CoreCode/Answer.lean`),
+  linger's environment policies (`CoreCode/Env.lean`) and the shim's smoke tests
+  (`Suites/Shim.lean`, `./lake exe lingertest`).
 - `Linger/Target/`: session names, remote targets and the transports that reach their hosts, and
   the world claim of transports.
-- `Linger/Display/`: session status, titles and listings.
+- `Linger/Display/`: session status, titles and listings, and a session's record, which
+  `ls --porcelain` prints and `sessions/list` returns: its fields by key, each a flag, a count or
+  text (`CoreSpec.lean`).
 - `Linger/Terminal/Suites/`: live suites of the VT toolkit as linger runs it.
 - `Linger/Session/`: the session machine (`CoreCode.lean`), its effect `Driver`, `Wire` format,
   `Buf` queues, `Checkpoint`s, the `Handoff` an upgrade carries to the daemon's new image and the
@@ -80,8 +81,9 @@ or `WorldCode`, as `scripts/gates.sh` reads it, and any other module is tooling.
   `CoreCode/Api.lean` parses and plans; `WorldCode/Api.lean`, the Lean API, performs them and
   writes to no standard stream, a remote session's through its host's `serve`
   (`WorldCode/Remote.lean`), and `WorldCode.lean`, the command line, renders their replies;
-  `WorldCode/Main.lean` holds `main`; `CoreCode/Serve.lean` and `CoreCode/Json.lean` hold
-  `linger serve`'s JSON-RPC connection and JSON text, and `WorldCode/Serve.lean` its executor.
+  `WorldCode/Main.lean` holds `main`; `CoreCode/Serve.lean` and `CoreCode/Codec.lean` hold
+  `linger serve`'s JSON-RPC connection and its messages' codecs, and `WorldCode/Serve.lean` its
+  executor.
 - `Challenge.lean`: the program parts headline theorems name, declared as holes, and the
   headline theorems and their kills, stated with `sorry`. It imports only `CoreSpec` and
   `WorldSpec` modules and the packages' modules, and the build writes `comparator.json` from it
@@ -107,6 +109,12 @@ or `WorldCode`, as `scripts/gates.sh` reads it, and any other module is tooling.
   library trusts every module outside linger's package, and linger's headlines may name a
   package's parts, which its own headlines claim. Build one alone with `../../lake build` in its
   directory; it shares linger's `.lake/packages`.
+- ExactJSON ([vincentqb/exact-json](https://github.com/vincentqb/exact-json)), which linger
+  requires from git: every JSON text linger writes or reads, `serve`'s lines, a host's replies
+  and `ls --porcelain`, is ExactJSON's canonical text (`Value.render`, `Value.parse`) of a typed
+  value, through its `ToValue` and `FromValue`: derived for each method's params and results
+  (`App/CoreCode/Codec.lean`), and written over `ExactJSON.Value` for a record's fields, a JSON-RPC
+  id and JSON-RPC's envelope.
 - `first/`: a package linger requires first, which declares nothing and whose build directory is
   linger's: a workspace looks for a module in its dependencies' builds, the first required last,
   before its own, and each package names its challenge `Challenge`, as linger does.
@@ -126,8 +134,9 @@ size: Lean erases proofs regardless of file placement.
 
 - `CoreSpec` and `CoreCode` modules are pure: `scripts/gates.sh` rejects IO, initializers and
   `dbg` there, `partial`, `unsafe` and `@[implemented_by]` everywhere and `@[extern]` outside
-  `packages/os/Os/WorldSpec.lean`, and lets `CoreSpec` import only `CoreSpec`, `WorldSpec` also
-  `WorldSpec` and `CoreCode` also `CoreCode`; the challenge library's lint refuses any of them in
+  `packages/os/Os/WorldSpec.lean`, and lets `CoreSpec` import only `CoreSpec` and
+  `ExactJSON.Value`, ExactJSON's values and classes, `WorldSpec` also `WorldSpec` and `CoreCode`
+  also `CoreCode` and the rest of ExactJSON; the challenge library's lint refuses any of them in
   what a hole computes through. A `WorldSpec` module holds `@[extern] opaque` declarations and
   world claims and is otherwise pure, and `WorldCode` does the IO. Model effects as data; execute
   them in `WorldCode`.

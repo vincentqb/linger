@@ -4,7 +4,7 @@ public import Linger.App.CoreSpec
 public import Linger.Target.CoreSpec
 import Linger.App.CoreCode.Serve
 import Linger.App.CoreCode.Base64
-import Linger.Os.CoreCode.Json
+import Linger.App.CoreCode.Codec
 import Linger.Target.CoreCode.Remote
 import Linger.Session.CoreCode.Wire
 import Os.WorldCode
@@ -58,10 +58,11 @@ private def start (transport : Linger.Target.Remote.Transport) (terminal : Bool)
   | [] =>
     return none
 
-/-- A line a host's `serve` wrote, read as canonical JSON (`Json.parse`); a line that is not is no
-message, and the first such line's reason is kept in `unread`. -/
-private def readLine (unread : IO.Ref (Option String)) (line : String) : IO (Option Json) := do
-  match Json.parse line with
+/-- A line a host's `serve` wrote, read as canonical JSON (`Value.parse`); a line that is not is no
+message, and the first such line's reason, ExactJSON's, is kept in `unread`. -/
+private def readLine (unread : IO.Ref (Option String)) (line : String) :
+    IO (Option ExactJSON.Value) := do
+  match ExactJSON.Value.parse line with
   | .ok message =>
     return some message
   | .error why =>
@@ -71,7 +72,8 @@ private def readLine (unread : IO.Ref (Option String)) (line : String) : IO (Opt
 
 /-- The messages a host's `serve` writes until its output ends, each line read as canonical JSON
 (`readLine`). -/
-private def readAll (talk : Command.Talk) (unread : IO.Ref (Option String)) : IO (List Json) := do
+private def readAll (talk : Command.Talk) (unread : IO.Ref (Option String)) :
+    IO (List ExactJSON.Value) := do
   let mut messages := #[]
   repeat
     match ← talk.line with
@@ -85,21 +87,21 @@ private def readAll (talk : Command.Talk) (unread : IO.Ref (Option String)) : IO
 /-- The message a host's `serve` writes next that answers the request with the number `n`, the
 messages before it skipped; none once its output ends first. -/
 private def answerTo (talk : Command.Talk) (unread : IO.Ref (Option String)) (n : Int) :
-    IO (Option Json) := do
+    IO (Option ExactJSON.Value) := do
   repeat
     match ← talk.line with
     | none =>
       return none
     | some line =>
       if let some message← readLine unread line then
-        if (message.member? "id").bind Id.of == some (.number n) then
+        if (member? "id" message).bind Id.of == some (.number n) then
           return some message
   return none
 
 /-- End the conversation: end the host's input, read what it still writes, wait for its transport
 to end, and read what it told linger, `before` the messages it wrote first. -/
-private def finish (talk : Command.Talk) (unread : IO.Ref (Option String)) (before : List Json) :
-    IO Asked := do
+private def finish (talk : Command.Talk) (unread : IO.Ref (Option String))
+    (before : List ExactJSON.Value) : IO Asked := do
   talk.hangUp
   let rest ← readAll talk unread
   let status ← talk.finish
@@ -110,7 +112,7 @@ private def finish (talk : Command.Talk) (unread : IO.Ref (Option String)) (befo
 end its input, read what it writes until it ends, and read what it told linger
 (`Serve.Remote.heard`). -/
 def ask (transport : Linger.Target.Remote.Transport) (terminal : Bool) (method : String)
-    (params : Json) : IO Asked := do
+    (params : ExactJSON.Value) : IO Asked := do
   let some talk ← start transport terminal | return { heard := .silent, errors := [] }
   let unread ← IO.mkRef none
   try
@@ -133,7 +135,7 @@ def stream (transport : Linger.Target.Remote.Transport) (terminal : Bool) (name 
     let some hello ← answerTo talk unread 1 | finish talk unread []
     unless Serve.Remote.shook [hello] do
       return ← finish talk unread [hello]
-    let mut last : List Json := [hello]
+    let mut last : List ExactJSON.Value := [hello]
     let mut sent := false
     repeat
       let chunk ← read
@@ -147,7 +149,7 @@ def stream (transport : Linger.Target.Remote.Transport) (terminal : Bool) (name 
       discard <|
           talk.say
             (Serve.Remote.request 2 "session/send"
-              (.obj [("name", .str name), ("data", .str (Base64.encode bytes.toList))]))
+              (ExactJSON.toValue ({ data := Base64.encode bytes.toList, name } : Sending)))
       let some answered ← answerTo talk unread 2 | return ← finish talk unread [hello]
       last := [hello, answered]
       unless Serve.Remote.heard last 0 matches .answered .done _ do
@@ -190,21 +192,22 @@ private def tell (lock : Std.Mutex Unit) (ours : UInt32) (messages : List Linger
 request's and then its stream's `closed`, until the host's output ends; a stream that ends without
 ending the attach tells the client its connection was lost. -/
 private def relayDown (talk : Command.Talk) (unread : IO.Ref (Option String))
-    (lock : Std.Mutex Unit) (ours : UInt32) (id : Id) (final : IO.Ref (Option Json)) : IO Unit := do
+    (lock : Std.Mutex Unit) (ours : UInt32) (id : Id) (final : IO.Ref (Option ExactJSON.Value)) :
+    IO Unit := do
   let mut ended := false
   repeat
     let some line ← talk.line | break
     let some message ← readLine unread line | continue
-    if (message.member? "id").bind Id.of == some id then
-      match message.member? "result", (message.member? "error").bind (·.member? "data") with
+    if (member? "id" message).bind Id.of == some id then
+      match member? "result" message, (member? "error" message).bind (member? "data") with
       | some result, _ =>
         final.set (some result)
       | none, some data =>
         final.set (some data)
       | none, none =>
         pure ()
-    if (message.member? "method").bind Json.text? == some "session/output" then
-      if let some closed := (message.member? "params").bind (·.member? "closed") then
+    if member? "method" message == some (.string "session/output") then
+      if let some closed := (member? "params" message).bind (member? "closed") then
         final.set (some closed)
     let frames := Serve.Remote.relay id message
     if !frames.isEmpty && !ended then
@@ -260,7 +263,7 @@ def bridge (transport : Linger.Target.Remote.Transport) (terminal : Bool) (name 
       return .error (← finish talk unread [hello])
     let (ours, theirs) ← socketPair
     let id : Id := .number 2
-    let final ← IO.mkRef (none : Option Json)
+    let final ← IO.mkRef (none : Option ExactJSON.Value)
     let lock ← Std.Mutex.new ()
     let down ← IO.asTask (relayDown talk unread lock ours id final) .dedicated
     let up ← IO.asTask (relayUp talk lock ours id name command) .dedicated
@@ -277,7 +280,7 @@ def bridge (transport : Linger.Target.Remote.Transport) (terminal : Bool) (name 
       let status ← talk.finish
       let answered :=
         match ← final.get with
-        | some value => [hello, .obj [("id", id.json), ("result", value)]]
+        | some value => [hello, .table #[("id", id.json), ("result", value)]]
         | none => [hello]
       return { heard := Serve.Remote.heard answered status, errors := errorLines (← talk.errors),
                unread := ← unread.get }

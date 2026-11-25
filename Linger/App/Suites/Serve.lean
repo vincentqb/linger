@@ -3,7 +3,7 @@ module
 public import Verify.Harness
 public import Linger.App.CoreSpec
 public import Linger.App.CoreCode.Base64
-public import Linger.Os.CoreCode.Json
+
 import Linger.Selector.CoreCode.Picker
 import Linger.Session.CoreCode.Checkpoint
 import Terminal.CoreCode.Vt
@@ -29,9 +29,11 @@ does: the stream's bytes, base64 in each update, open with the synchronized repa
 what the session prints; it types into the session, sizes it, detaches, and hears the session's
 end in the stream's last update. A method `serve` does not answer, params it does not take and a
 line that is no JSON get JSON-RPC's errors; every line the client writes is canonical JSON, and a
-request that is not, one with a space, keys out of order or `1.0` for an integer, gets -32700 with
-the reason and changes nothing; and `ls --porcelain` prints exactly the records `sessions/list`
-returns, one canonical JSON line each. Once its standard input ends, `serve` exits 0. -/
+request that is not, one with a space, keys out of order, a raw line separator or an escape in
+uppercase, gets -32700 with ExactJSON's reason and changes nothing, as do params with `1.0` for an
+integer or a member their method does not define, each -32602; and `ls --porcelain` prints exactly
+the records `sessions/list` returns, one canonical JSON line each, a flag a JSON boolean and a
+count a JSON integer. Once its standard input ends, `serve` exits 0. -/
 
 namespace Linger.App.Suites.Serve
 
@@ -92,12 +94,15 @@ def at? : Json → List String → Option Json
   | value, [] => some value
   | value, key :: rest => (value.member? key).bind (at? · rest)
 
-/-- The text of the integer or string at a path. -/
-def textAt? (value : Json) (path : List String) : Option String :=
-  match at? value path with
-  | some (.int n) => some (toString n)
-  | some (.str text) => some text
+/-- A field's text: a string's, an integer's digits, and a boolean's `true` or `false`. -/
+def fieldText : Json → Option String
+  | .int n => some (toString n)
+  | .str text => some text
+  | .bool b => some (if b then "true" else "false")
   | _ => none
+
+/-- The text of the integer, string or boolean at a path. -/
+def textAt? (value : Json) (path : List String) : Option String := (at? value path).bind fieldText
 
 /-- The message the peer wrote whose id is `id`, once it has written it, within `ms`. -/
 def Peer.answer (p : Peer) (id : Nat) (ms : Nat := patienceMs) : IO (Option Json) := do
@@ -342,7 +347,7 @@ private def sameList (e : Env) (p : Peer) : IO Unit := do
     | some (.arr records) =>
       records.filterMap fun record =>
         match record with
-        | .obj members => members.mapM fun (key, value) => value.text?.map ((key, ·))
+        | .obj members => members.mapM fun (key, value) => (fieldText value).map ((key, ·))
         | _ => none
     | _ => []
   let unticked (record : List (String × String)) :=
@@ -372,9 +377,12 @@ def Peer.unparsed (p : Peer) (before : Nat) (ms : Nat := patienceMs) : IO (Optio
   found.get
 
 /-- Lines that are not canonical JSON, each a request that would change a session: one with a
-space after a member's colon, one whose keys are out of order and one with `1.0` where an integer
-belongs, each answered -32700, with no id, its `data` linger's usage answer and the reader's reason,
-and each changing nothing: no session starts, and none is resized. -/
+space after a member's colon, one whose keys are out of order, one with a line separator as itself
+and one with an escape spelled in uppercase, each answered -32700, with no id, its `data` linger's
+usage answer and ExactJSON's reason, and each changing nothing: no session starts; and requests
+whose params a method does not take, one with `1.0` where an integer belongs and one with a member
+the method does not define, each answered -32602, with its id, changing nothing either: no session
+is resized, and none starts. -/
 private def refusals (e : Env) (p : Peer) : IO Unit := do
   p.say
       (request 35 "session/start"
@@ -396,7 +404,7 @@ private def refusals (e : Env) (p : Peer) : IO Unit := do
   let (rc, _, _) ← e.cli #["ls", "spaced", "--porcelain"]
   expect
       (answerOf started == some ("done", "0") && unchanged spaced &&
-        (spacedWhy.getD "").startsWith "at character 19: whitespace" &&
+        (spacedWhy.getD "").startsWith "at character 19: canonical text has no whitespace" &&
         rc == 127)
       s!"a request with a space outside its strings gets -32700, data naming the whitespace, and starts nothing ({spacedWhy}, ls exit {rc})"
   let (unsorted, unsortedWhy) ←
@@ -406,20 +414,47 @@ private def refusals (e : Env) (p : Peer) : IO Unit := do
   expect
       (unchanged unsorted &&
         (unsortedWhy.getD "").startsWith
-          "at character 20: the key \"id\" after \"jsonrpc\", where canonical JSON lists keys in increasing order" &&
+          "at character 17: keys must increase: \"id\" comes before \"jsonrpc\"" &&
         rc == 127)
       s!"a request whose keys are out of order gets -32700, data naming the key, and starts nothing ({unsortedWhy}, ls exit {rc})"
-  let (fractional, fractionalWhy) ←
+  let (separated, separatedWhy) ←
     refused
-        "{\"id\":38,\"jsonrpc\":\"2.0\",\"method\":\"session/resize\",\"params\":{\"cols\":1.0,\"name\":\"fixed\",\"rows\":1}}"
+        "{\"id\":40,\"jsonrpc\":\"2.0\",\"method\":\"session/start\",\"params\":{\"args\":[\"a\u2028b\"],\"name\":\"separated\",\"program\":\"/bin/echo\"}}"
+  let (rc, _, _) ← e.cli #["ls", "separated", "--porcelain"]
+  expect
+      (unchanged separated &&
+        (separatedWhy.getD "").startsWith
+          "at character 70: write \\u2028, not the character itself" &&
+        rc == 127)
+      s!"a request with a line separator as itself gets -32700, data naming its escape, and starts nothing ({separatedWhy}, ls exit {rc})"
+  let (uppercase, uppercaseWhy) ←
+    refused
+        "{\"id\":41,\"jsonrpc\":\"2.0\",\"method\":\"session/start\",\"params\":{\"args\":[\"\\u007F\"],\"name\":\"uppercase\",\"program\":\"/bin/echo\"}}"
+  let (rc, _, _) ← e.cli #["ls", "uppercase", "--porcelain"]
+  expect
+      (unchanged uppercase &&
+        (uppercaseWhy.getD "").startsWith "at character 69: write \\u007f, not \\u007F" &&
+        rc == 127)
+      s!"a request with an escape in uppercase gets -32700, data naming the lowercase escape, and starts nothing ({uppercaseWhy}, ls exit {rc})"
+  p.say
+      "{\"id\":38,\"jsonrpc\":\"2.0\",\"method\":\"session/resize\",\"params\":{\"cols\":1.0,\"name\":\"fixed\",\"rows\":1}}"
+  let fractional ← p.answer 38
   let after ← e.info "fixed" "cols"
   expect
-      (unchanged fractional &&
-        (fractionalWhy.getD "").startsWith
-          "at character 69: a fraction or an exponent: linger's JSON numbers are integers" &&
+      (errorOf fractional == some "-32602" &&
+        fractional.bind (textAt? · ["error", "data", "answer"]) == some "usage" &&
         cols.isSome &&
         after == cols)
-      s!"a request with 1.0 for an integer gets -32700, data naming the fraction, and resizes nothing ({fractionalWhy}, cols {cols} then {after})"
+      s!"a request with 1.0 for an integer gets -32602 and resizes nothing ({errorOf fractional}, cols {cols} then {after})"
+  p.say
+      "{\"id\":42,\"jsonrpc\":\"2.0\",\"method\":\"session/start\",\"params\":{\"args\":[\"300\"],\"name\":\"extra\",\"program\":\"/bin/sleep\",\"x\":1}}"
+  let extra ← p.answer 42
+  let (rc, _, _) ← e.cli #["ls", "extra", "--porcelain"]
+  expect
+      (errorOf extra == some "-32602" &&
+        extra.bind (textAt? · ["error", "data", "answer"]) == some "usage" &&
+        rc == 127)
+      s!"a request with a member its method does not define gets -32602 and starts nothing ({errorOf extra}, ls exit {rc})"
   let _ ← e.cli #["kill", "fixed"]
 
 /-- `ls --porcelain` prints exactly the records `sessions/list` returns: a line for each, in order,
@@ -446,6 +481,26 @@ private def porcelainLines (e : Env) (p : Peer) : IO Unit := do
         | .error _ => false
   expect exact
       s!"ls --porcelain prints a canonical JSON line for each record sessions/list returns, in order, the same object ({lines.length} lines, {served.length} records)"
+  -- a flag is a JSON boolean and a count a JSON integer, in every line, and a live session's record
+  -- holds both
+  let kinded (members : List (String × Json)) :=
+    members.all fun (key, value) =>
+      if Linger.Display.Listing.flagKeys.contains key then value matches .bool _
+      else
+        if Linger.Display.Listing.countKeys.contains key then value matches .int _
+        else value matches .str _
+  let records :=
+    lines.filterMap fun line =>
+      match Json.parse line with
+      | .ok (.obj members) => some members
+      | _ => none
+  let typed :=
+    records.length == lines.length && records.all kinded &&
+      records.any fun members =>
+        (members.lookup "pid" matches some (.int _)) &&
+          (members.lookup "running" matches some (.bool _))
+  expect typed
+      s!"ls --porcelain writes a flag as a JSON boolean and a count as a JSON integer ({lines.take 1})"
 
 /-- The notifications of `method` the peer wrote so far. -/
 def Peer.notes (p : Peer) (method : String) : IO (List Json) := do
@@ -793,7 +848,7 @@ private def everySession (e : Env) (p : Peer) : IO Unit := do
       (startRc == 0 && waitRc == 7 && kept && answerOf opened == some ("done", "0") && final &&
         closed &&
         discarded &&
-        has record "\"exit\":\"7\"")
+        has record "\"exit\":7")
       s!"session/attach of an ended session shows its final screen, closes with how it ended and discards it ({answerOf opened})"
   saved "glimpsed" "GLIMPSED-MARK"
   p.say (request 94 "session/attach" (named "glimpsed" [("readOnly", .bool true)]))

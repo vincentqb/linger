@@ -17,7 +17,7 @@ public import Linger.Session.CoreSpec
 public import Linger.App.CoreSpec
 import Linger.App.CoreCode.Api
 import Linger.App.CoreCode.Base64
-import Linger.Os.CoreCode.Json
+import Linger.App.CoreCode.Codec
 import Linger.App.CoreCode.Serve
 import Linger.App.CoreCode.Handover
 import Linger.App.CoreCode.Recovery
@@ -632,7 +632,7 @@ private def resolveRemotes (env : Env) (flag : Option (List String)) :
 refused `serve`, as a linger without it does. -/
 private inductive Listed where
   /-- The records the host's `sessions/list` returned. -/
-  | records (records : List (List (String × String)))
+  | records (records : List Serve.Record)
   /-- It refused `serve` with a usage answer. -/
   | refused
   /-- It wrote lines that are not canonical JSON, the first for this reason, and none linger reads. -/
@@ -681,18 +681,20 @@ private def listRemotes (hosts : Array (String × Linger.Target.Remote.Transport
                   (some
                     (←
                       Command.startFeeding cmd args.toArray
-                          (Serve.Remote.lines "sessions/list" (.obj [])).toUTF8))
+                          (Serve.Remote.lines "sessions/list"
+                              (ExactJSON.toValue ({ names? := none } : Serve.Listed))).toUTF8))
           catch _ =>
             pure ()
         let mut running := #[]
         for (index, pending) in ← jobs.get do
           try
             if let some output← Command.poll pending then
-              let read := ((output.stdout.splitOn "\n").filter (!·.isEmpty)).map Json.parse
+              let read :=
+                ((output.stdout.splitOn "\n").filter (!·.isEmpty)).map ExactJSON.Value.parse
               let messages := read.filterMap (·.toOption)
               match Serve.Remote.heard messages output.exitCode with
-              | .answered .done members =>
-                if let some records := Serve.Remote.records members then
+              | .answered .done shows =>
+                if let some records := shows.records? then
                   outputs := outputs.set! index (some (.records records))
               | .refused =>
                 outputs := outputs.set! index (some .refused)
@@ -1110,7 +1112,7 @@ private def cmdList (env : Env) (porcelain : Bool)
               Linger.Display.Listing.statusFields
                 (Linger.Display.Status.classify { known := false })]
     | some (.records records) =>
-      rows := rows ++ Serve.Remote.rows host records
+      rows := rows ++ (Serve.Remote.rows host records).map Linger.Display.Listing.Record.fields
     | some .refused =>
       say env (remoteRefusal host)
       rows :=
@@ -1134,21 +1136,22 @@ private def cmdList (env : Env) (porcelain : Bool)
       entries := (← Names.load).flatMap fun (name, id) => [name, id] }
   return { found := .done, shown := .rows porcelain (rows ++ (← env.source.rows records)) }
 
-/-- What a request shows of a host's answer, of the members of its result: a capture's bytes, a
+/-- What a request shows of a host's answer, of what its result shows: a capture's bytes, a
 listing's records, every field the host gave, each named `name@host` (`Serve.Remote.record`), and
 the sessions an upgrade carried over, named `name@host`. -/
-private def remoteShown (request : Request) (host : String) (members : List (String × Json)) :
-    Shown :=
+private def remoteShown (request : Request) (host : String) (shows : Serve.Shows) : Shown :=
   match request with
   | .capture .. =>
-    match ((members.lookup "data").bind Json.text?).bind (Serve.Base64.decode ·.toList) with
+    match shows.data?.bind (Serve.Base64.decode ·.toList) with
     | some bytes => .bytes (ByteArray.mk bytes.toArray)
     | none => .nothing
   | .list (.named porcelain _) =>
-    .rows porcelain (((Serve.Remote.records members).getD []).filterMap (Serve.Remote.record host))
+    .rows porcelain
+      (((shows.records?.getD []).filterMap (Serve.Remote.record host)).map
+        Linger.Display.Listing.Record.fields)
   | .upgrade _ =>
     .upgraded
-      ((((members.lookup "upgraded").bind Json.texts?).getD []).map fun name =>
+      ((shows.upgraded?.getD []).map fun name =>
         s!"{Linger.Target.Remote.scrub name}@{Linger.Target.Remote.scrub host}")
   | _ => .nothing
 
@@ -1160,10 +1163,10 @@ that answered nothing linger reads is refused, saying what its transport wrote. 
 private def remoteReply (env : Env) (request : Request) (host : String)
     (asked : Linger.App.Remote.Asked) : IO Reply := do
   match asked.heard with
-  | .answered answer members =>
-    for line in Serve.Remote.said host members do
+  | .answered answer shows =>
+    for line in Serve.Remote.said host shows do
       say env line
-    return { found := Serve.Remote.found answer members, shown := remoteShown request host members }
+    return { found := Serve.Remote.found answer shows, shown := remoteShown request host shows }
   | .refused =>
     say env (remoteRefusal host)
     return { found := .refused }
@@ -1206,8 +1209,8 @@ private def remoteAttach (env : Env) (remote : Remote) (transport : Linger.Targe
     match outcome, asked.heard with
     | .stopped signal, _ =>
       return .stopped signal
-    | _, .answered answer members =>
-      return Serve.Remote.found answer members
+    | _, .answered answer shows =>
+      return Serve.Remote.found answer shows
     | _, _ =>
       return found
 

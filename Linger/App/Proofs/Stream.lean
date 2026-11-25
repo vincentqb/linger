@@ -3,7 +3,8 @@ module
 public import Linger.App.CoreSpec
 import all Linger.App.CoreSpec
 import all Linger.App.CoreCode.Base64
-import all Linger.Os.CoreCode.Json
+import all Linger.App.CoreCode.Codec
+public import Linger.App.Proofs.Codec
 import all Linger.App.CoreCode.Serve
 import all Linger.App.Proofs.Serve
 import all Linger.Session.Proofs.Wire
@@ -117,27 +118,35 @@ theorem Base64.decode_encode (bytes : List UInt8) :
 
 /-! ## The stream -/
 
-/-- An update of an attach's stream carries its bytes, with members after them or none. -/
-theorem Output.update_carries (id : Id) (bytes : List UInt8) (more : List (String × Json)) :
-    Carries id bytes ((Output.update id bytes).withMembers more) := by
-  refine
-    ⟨(output_update_names id bytes more).1, Base64.encode bytes, ?_, Base64.decode_encode bytes⟩
-  simp [Output.update, Json.withMembers, Json.member?, List.lookup]
+/-- An update of an attach's stream is the spec's object of it. -/
+theorem Output.update_eq (id : Id) (bytes : List UInt8) (closed : Option Result) :
+    Output.update id bytes closed =
+      Output.json { closed? := closed, data := Base64.encode bytes, subscription := id } :=
+  toValue_output _
 
-/-- An update of an attach's stream with no member after its own is itself. -/
-theorem Output.update_withMembers_nil (id : Id) (bytes : List UInt8) :
-    (Output.update id bytes).withMembers [] = Output.update id bytes := by
-  simp [Output.update, Json.withMembers]
+/-- An update of an attach's stream carries its bytes, closed or not. -/
+theorem Output.update_carries (id : Id) (bytes : List UInt8) (closed : Option Result) :
+    Carries id bytes (Output.update id bytes closed) := by
+  refine ⟨output_update_names id bytes closed, Base64.encode bytes, ?_, Base64.decode_encode bytes⟩
+  rw [Output.update_eq]
+  cases closed <;> simp [Output.json, member?, optional, List.lookup]
 
-/-- An update of an attach's stream that the stream's end adds no member to carries no `closed`. -/
+/-- An update of an attach's stream that does not close it carries no `closed`. -/
 theorem Output.update_open (id : Id) (bytes : List UInt8) :
-    (Output.update id bytes).member? "closed" = none := by
-  simp [Output.update, Json.member?, List.lookup]
+    member? "closed" (Output.update id bytes) = none := by
+  rw [Output.update_eq]
+  simp [Output.json, member?, optional, List.lookup]
+
+/-- The stream's last update carries `closed`, with how the attach ended. -/
+theorem Output.update_closing (id : Id) (bytes : List UInt8) (closed : Result) :
+    member? "closed" (Output.update id bytes (some closed)) = some closed.json := by
+  rw [Output.update_eq]
+  simp [Output.json, member?, optional, List.lookup]
 
 /-- The stream's last update carries `closed`. -/
 theorem Output.update_closed (id : Id) (bytes : List UInt8) (found : Api.Found) :
-    (((Output.update id bytes).withMembers (closedMembers found)).member? "closed").isSome := by
-  simp [Output.update, Json.withMembers, Json.member?, List.lookup, closedMembers]
+    (member? "closed" (Output.update id bytes (some (closedResult found)))).isSome := by
+  simp [Output.update_closing]
 
 /-- **A read of an attach's connection is `Streamed`**, for an attach the connection holds. -/
 theorem streamed_spec (s : State) (id : Id) (dec : Session.Wire.Decoder)
@@ -176,7 +185,7 @@ theorem read_attaching (s : State) (version : String) (id : Id) (bytes : List UI
     (ready : s.phase = .ready version) (asked : s.watching id = some .attaching) :
     step s (.read id bytes) =
       ((streamed s id {} [] bytes).1,
-        .send (.result id (result .done [])) :: (streamed s id {} [] bytes).2) := by
+        .send (.result id (result .done {})) :: (streamed s id {} [] bytes).2) := by
   simp [step, readAttach, ready, asked]
 
 /-- A later read of an attach is streamed. -/
@@ -227,7 +236,7 @@ theorem feed_paint (screen : List UInt8) :
 screen's bytes waiting for its subscriber. -/
 theorem read_paint (s : State) (version : String) (id : Id) (screen : List UInt8)
     (ready : s.phase = .ready version) (asked : s.watching id = some .attaching) :
-    (step s (.read id (paint screen))).2 = [.send (.result id (result .done []))] ∧
+    (step s (.read id (paint screen))).2 = [.send (.result id (result .done {}))] ∧
       (step s (.read id (paint screen))).1.watching id = some (.stream {} screen) := by
   have shown := shown_outputFrames screen []
   simp only [Session.Wire.shown, List.append_nil] at shown
@@ -241,7 +250,7 @@ said, and is held no more. -/
 theorem unwatched_attaching (s : State) (version : String) (id : Id) (found : Api.Found)
     (said : Log String) (ready : s.phase = .ready version)
     (asked : s.watching id = some .attaching) :
-    (step s (.unwatched id found said)).2 = [.send (.result id (result found (saidMembers said)))] ∧
+    (step s (.unwatched id found said)).2 = [.send (.result id (result found (saidShows said)))] ∧
       (step s (.unwatched id found said)).1.watching id = none := by
   refine ⟨?_, ?_⟩ <;> simp [step, unwatched, ready, asked, dropWatch_watching]
 
@@ -251,29 +260,18 @@ theorem unwatched_stream (s : State) (version : String) (id : Id) (dec : Session
     (pending : List UInt8) (found : Api.Found) (said : Log String)
     (ready : s.phase = .ready version) (holds : s.watching id = some (.stream dec pending)) :
     (step s (.unwatched id found said)).2 =
-        [.send
-            (.notify "session/output"
-              ((Output.update id pending).withMembers (closedMembers found)))] ∧
+        [.send (.notify "session/output" (Output.update id pending (some (closedResult found))))] ∧
       (step s (.unwatched id found said)).1.watching id = none := by
   refine ⟨?_, ?_⟩ <;> simp [step, unwatched, ready, holds, dropWatch_watching]
 
-/-- The last update's `closed` opens with the answer of what the attach found, and its code. -/
+/-- The last update's `closed` is a result whose answer is that of what the attach found, and its
+code. -/
 theorem update_closed_members (id : Id) (bytes : List UInt8) (found : Api.Found) :
-    ∃ rest,
-      ((Output.update id bytes).withMembers (closedMembers found)).member? "closed" =
-        some
-          (.obj
-            (("answer", .str (answerName (Api.answer found))) ::
-              ("code", .int (Os.Answer.code (Api.answer found)).toNat) :: rest)) := by
-  obtain ⟨rest, members⟩ :
-    ∃ rest,
-      closedMembers found =
-        [("closed",
-            .obj
-              (("answer", .str (answerName (Api.answer found))) ::
-                ("code", .int (Os.Answer.code (Api.answer found)).toNat) :: rest))] :=
-    ⟨_, rfl⟩
-  exact ⟨rest, by simp [Output.update, Json.withMembers, Json.member?, List.lookup, members]⟩
+    ∃ closed : Result,
+      member? "closed" (Output.update id bytes (some (closedResult found))) = some closed.json ∧
+        closed.answer = answerName (Api.answer found) ∧
+        closed.code = (Os.Answer.code (Api.answer found)).toNat :=
+  ⟨closedResult found, Output.update_closing id bytes _, rfl, rfl⟩
 
 /-- **An attach's stream is exact, for every session an attach reaches**: every read is
 `Streamed`, the first answering the attach's request; a shown screen's read leaves exactly the
@@ -293,17 +291,17 @@ theorem attach_stream (s : State) (version : String) (id : Id) (dec : Session.Wi
       ⟨⟨_, rfl, streamed_spec s id {} [] bytes (by simp [asked])⟩, painted, shown, ⟨_, answered⟩,
         dropped⟩
   · obtain ⟨last, dropped⟩ := unwatched_stream s version id dec pending found said ready holds
-    obtain ⟨rest, closed⟩ := update_closed_members id pending found
+    obtain ⟨closed, closedIs, answerIs, codeIs⟩ := update_closed_members id pending found
     rw [read_stream s version id dec pending bytes ready holds]
     obtain ⟨sent, after⟩ := flush_stream s version id dec pending ready holds
     refine
       ⟨streamed_spec s id dec pending bytes (by simp [holds]), ?_, ?_, after,
-        ⟨_, rest, last, Output.update_carries id pending (closedMembers found), closed⟩, dropped⟩
+        ⟨_, closed, last, Output.update_carries id pending _, closedIs, answerIs, codeIs⟩, dropped⟩
     · intro empty
       simp [sent, empty]
     · intro waiting
-      have carries := Output.update_carries id pending []
-      rw [Output.update_withMembers_nil] at carries
-      exact ⟨_, by simp [sent, waiting], carries, Output.update_open id pending⟩
+      exact
+        ⟨_, by simp [sent, waiting], Output.update_carries id pending none,
+          Output.update_open id pending⟩
 
 end Linger.App.Serve

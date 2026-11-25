@@ -12,7 +12,6 @@ import Input.Proofs
 import all Linger.Display.Proofs.View
 import all Linger.Display.Proofs.Listing
 public import Linger.Selector.CoreSpec
-import Linger.Os.CoreCode.Json
 
 /-! Selection contracts within and between listing snapshots.
 
@@ -42,48 +41,13 @@ theorem matches_length_le (query target : String)
   simpa only [List.length_map, String.length_toList] using
     ((matches_iff_sublist query target).mp h).length_le
 
-/-- A listing field is read only as a string. -/
-theorem fieldText_error (member : String × Json) (error : String)
-    (h : fieldText member = .error error) : error = "a listing field that is not a string" := by
-  unfold fieldText at h
+/-- A listing's diagnostic is one fixed sentence, naming no text of the listing. -/
+theorem listingRows_error (text error : String) (h : listingRows text = .error error) :
+    error = "a listing that is not the JSON Lines of session records" := by
+  unfold listingRows at h
   split at h
   · cases h
   · cases h; rfl
-
-/-- A listing line's diagnostics use a fixed vocabulary, naming no text of the line. -/
-theorem lineRecord_error (line error : String) (h : lineRecord line = .error error) :
-    error = "a listing line that is not canonical JSON" ∨
-      error = "a listing field that is not a string" ∨
-      error = "a listing line that is not an object" := by
-  unfold lineRecord at h
-  split at h
-  · cases h; exact .inl rfl
-  · rename_i members _
-    suffices
-      ∀ (ms : List (String × Json)),
-        ms.mapM fieldText = .error error → error = "a listing field that is not a string"
-      from .inr (.inl (this members h))
-    intro ms
-    induction ms with
-    | nil =>
-      intro h; cases h
-    | cons m rest ih =>
-      intro h
-      simp only [List.mapM_cons] at h
-      cases hm : fieldText m with
-      | error e =>
-        simp only [hm, bind, Except.bind] at h
-        cases h
-        exact fieldText_error m _ hm
-      | ok field =>
-        simp only [hm, bind, Except.bind] at h
-        cases hr : rest.mapM fieldText with
-        | error e =>
-          simp only [hr] at h
-          cases h
-          exact ih hr
-        | ok more => simp [hr, pure, Except.pure] at h
-  · cases h; exact .inr (.inr rfl)
 
 /-- **The targets of records**: each record's name, in order, each a valid target that no record
 before it, nor any of `seen`, names. -/
@@ -157,10 +121,10 @@ theorem targets_error (seen : List String) (records : List (List (String × Stri
 every line's record, and its targets are their names. -/
 theorem parseSnapshot_complete (text : String) (snapshot : Snapshot)
     (h : Linger.Selector.Picker.parseSnapshot text = .ok snapshot) :
-    (listingLines text).mapM lineRecord = .ok snapshot.records ∧
+    listingRows text = .ok snapshot.records ∧
       targets [] snapshot.records = .ok snapshot.candidates := by
   unfold parseSnapshot at h
-  cases hr : (listingLines text).mapM lineRecord with
+  cases hr : listingRows text with
   | error e => simp [hr, bind, Except.bind] at h
   | ok records =>
     simp only [hr, bind, Except.bind] at h
@@ -199,40 +163,17 @@ theorem parseSnapshot_provenance (text : String) (snapshot : Snapshot)
   obtain ⟨record, member, named⟩ := List.mem_filterMap.mp ht
   exact ⟨record, member, named⟩
 
-/-- A line's records, all of whose diagnostics use the fixed vocabulary. -/
-theorem mapM_lineRecord_error (lines : List String) (error : String)
-    (h : lines.mapM lineRecord = .error error) :
-    error = "a listing line that is not canonical JSON" ∨
-      error = "a listing field that is not a string" ∨
-      error = "a listing line that is not an object" := by
-  induction lines with
-  | nil => cases h
-  | cons line rest ih =>
-    simp only [List.mapM_cons] at h
-    cases hl : lineRecord line with
-    | error e =>
-      simp only [hl, bind, Except.bind] at h
-      cases h
-      exact lineRecord_error line _ hl
-    | ok record =>
-      simp only [hl, bind, Except.bind] at h
-      cases hr : rest.mapM lineRecord with
-      | error e =>
-        simp only [hr] at h
-        cases h
-        exact ih hr
-      | ok more => simp [hr, pure, Except.pure] at h
-
 /-- Diagnostics use a fixed vocabulary; untrusted listing text is never echoed. -/
 theorem parseSnapshot_error_safe (text error : String)
     (h : Linger.Selector.Picker.parseSnapshot text = .error error) :
     ∀ char ∈ error.toList, 32 ≤ char.toNat ∧ char.toNat < 127 := by
   unfold parseSnapshot at h
-  cases hr : (listingLines text).mapM lineRecord with
+  cases hr : listingRows text with
   | error e =>
     simp only [hr, bind, Except.bind] at h
     cases h
-    rcases mapM_lineRecord_error _ _ hr with rfl | rfl | rfl <;> decide
+    rw [listingRows_error _ _ hr]
+    decide
   | ok records =>
     simp only [hr, bind, Except.bind] at h
     cases ht : targets [] records with

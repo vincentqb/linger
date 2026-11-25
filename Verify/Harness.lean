@@ -4,6 +4,7 @@ public import Os.WorldCode
 public import Linger.Display.CoreCode.Status
 public import Linger.Display.CoreCode.Listing
 import Linger.Selector.CoreCode.Picker
+public import ExactJSON.Codec
 public import Terminal.CoreCode.Render
 
 public section
@@ -582,11 +583,13 @@ def tabRecords (txt : String) : List (String × String) :=
     | [k, v] => some (k, v)
     | _ => none
 
-/-- The records of a listing `linger ls --porcelain` prints: one canonical JSON object of strings a
-line, read as the chooser reads one (`Picker.lineRecord`); a line that is no record is left out. -/
+/-- The records of a listing `linger ls --porcelain` prints: one session's record a line, its JSON
+read exactly (`ExactJSON.decode`), each record's fields as a row holds them (`Record.fields`); a line
+that is no record is left out. -/
 def listingRecords (txt : String) : List (List (String × String)) :=
   ((txt.splitOn "\n").filter (!·.isEmpty)).filterMap fun line =>
-    (Linger.Selector.Picker.lineRecord line).toOption
+    ((ExactJSON.decode line : Except String Linger.Display.Listing.Record).toOption).map
+      Linger.Display.Listing.Record.fields
 
 /-- The fields of a listing's records, in order, every record's: what a listing of one session
 holds, or each session's `name` in turn. -/
@@ -818,5 +821,85 @@ def Env.suite (slug : String) (body : Env → IO Unit) : IO UInt32 := do
     e.retire true
     throw err
   verdict e
+
+/-! ## JSON as the suites write and read it -/
+
+/-- JSON as a suite writes and reads it: an object's members in any order, which its text lists by
+increasing key, as ExactJSON's canonical text does (`Json.render`). -/
+inductive Json where
+  | null
+  | bool (value : Bool)
+  | int (value : Int)
+  | str (value : String)
+  | arr (items : List Json)
+  | obj (members : List (String × Json))
+  deriving Inhabited
+
+/-- Members by increasing key, each once, the first of each key. -/
+def sortKeys (members : List (String × ExactJSON.Value)) : List (String × ExactJSON.Value) :=
+  members.foldl
+    (fun sorted member =>
+      let rec insert : List (String × ExactJSON.Value) → List (String × ExactJSON.Value)
+        | [] => [member]
+        | first :: rest =>
+          if member.1 < first.1 then member :: first :: rest
+          else if member.1 = first.1 then first :: rest else first :: insert rest
+      insert sorted)
+    []
+
+mutual
+/-- A suite's JSON as ExactJSON's value, each object's members by increasing key. -/
+def Json.value : Json → ExactJSON.Value
+  | .null => .null
+  | .bool value => .boolean value
+  | .int value => .integer value
+  | .str value => .string value
+  | .arr items => .array (Json.values items).toArray
+  | .obj members => .table (sortKeys (Json.memberValues members)).toArray
+/-- Each item as ExactJSON's value. -/
+def Json.values : List Json → List ExactJSON.Value
+  | [] => []
+  | item :: rest => item.value :: Json.values rest
+/-- Each member as ExactJSON's value. -/
+def Json.memberValues : List (String × Json) → List (String × ExactJSON.Value)
+  | [] => []
+  | (key, item) :: rest => (key, item.value) :: Json.memberValues rest
+end
+
+mutual
+/-- ExactJSON's value as a suite reads it; a float reads as `null`, which no linger text holds. -/
+def Json.ofValue : ExactJSON.Value → Json
+  | .null => .null
+  | .boolean value => .bool value
+  | .integer value => .int value
+  | .float _ => .null
+  | .string value => .str value
+  | .array ⟨items⟩ => .arr (Json.ofValues items)
+  | .table ⟨members⟩ => .obj (Json.ofMembers members)
+/-- Each item as a suite reads it. -/
+def Json.ofValues : List ExactJSON.Value → List Json
+  | [] => []
+  | item :: rest => Json.ofValue item :: Json.ofValues rest
+/-- Each member as a suite reads it. -/
+def Json.ofMembers : List (String × ExactJSON.Value) → List (String × Json)
+  | [] => []
+  | (key, item) :: rest => (key, Json.ofValue item) :: Json.ofMembers rest
+end
+
+/-- A suite's JSON as canonical text, ExactJSON's (`Value.render`). -/
+def Json.render (value : Json) : String := ExactJSON.Value.render value.value
+
+/-- Canonical text as a suite's JSON, read as ExactJSON reads it (`Value.parse`), or its reason. -/
+def Json.parse (text : String) : Except String Json := (ExactJSON.Value.parse text).map Json.ofValue
+
+/-- The member `key` of an object, the first under it. -/
+def Json.member? (key : String) : Json → Option Json
+  | .obj members => members.lookup key
+  | _ => none
+
+/-- A string's text. -/
+def Json.text? : Json → Option String
+  | .str value => some value
+  | _ => none
 
 end Verify.Harness

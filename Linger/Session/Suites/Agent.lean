@@ -202,9 +202,10 @@ private def checkInfo (e : Env) (mode : String) (failed : Bool) : IO Unit := do
       expect
           (rc == 0 && err.isEmpty &&
             named ==
-              Linger.Json.sortMembers
-                ([("name", name), ("state", "live")] ++
-                  Linger.Display.Listing.statusFields default))
+              Linger.Display.Listing.Record.fields
+                (Linger.Display.Listing.Record.ofRow
+                  ([("name", name), ("state", "live")] ++
+                    Linger.Display.Listing.statusFields default)))
           s!"ls {name} lists a {mode} info peer as live/unknown without partial fields"
       expect
           (serverRc == some 0 && lrc == 0 && pathKept && recs.contains ("name", name) &&

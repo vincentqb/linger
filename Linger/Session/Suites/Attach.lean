@@ -668,7 +668,7 @@ private def waitChecks (e : Env) : IO Unit := do
         return (← e.state "w5") == .exitedBad && (← e.field "w5" "exit") == some "37"
   let (lateRc, _, _) ← e.cli #["wait", "w5"]
   let (infoRc, lateInfo, _) ← e.cli #["ls", "w5", "--porcelain"]
-  expect (ended && lateRc == 37 && infoRc == 0 && has lateInfo "\"exit\":\"37\"")
+  expect (ended && lateRc == 37 && infoRc == 0 && has lateInfo "\"exit\":37")
       s!"an ended session's record answers wait and info (rc={lateRc})"
   let (neverRc, _, neverErr) ← e.cli #["wait", "w-never"]
   expect (neverRc == 127 && has neverErr "no session") "wait on a name no session took exits 127"
@@ -699,14 +699,14 @@ private def waitChecks (e : Env) : IO Unit := do
   -- kill returns once the session has ended, and the record says how: by its hangup.
   let (killRc, _, _) ← e.cli #["kill", "w6"]
   let (_, killedInfo, _) ← e.cli #["ls", "w6", "--porcelain"]
-  expect (killRc == 0 && has killedInfo "\"signal\":\"1\"")
+  expect (killRc == 0 && has killedInfo "\"signal\":1")
       s!"kill returns once the session has ended (rc={killRc})"
   let trapFile := s!"{e.dir}/w7.trapped"
   let _ ← e.typeIn "w7" #[s!"exec sh -c \"trap '' HUP; : > {trapFile}; while :; do sleep 1; done\""]
   let trapped ← waitFor 3000 (System.FilePath.pathExists trapFile)
   let (stubbornRc, _, _) ← e.cli #["kill", "w7"]
   let (_, stubbornInfo, _) ← e.cli #["ls", "w7", "--porcelain"]
-  expect (trapped && stubbornRc == 0 && has stubbornInfo "\"signal\":\"9\"")
+  expect (trapped && stubbornRc == 0 && has stubbornInfo "\"signal\":9")
       "kill ends a program that ignores SIGHUP"
   -- Nothing of the session's terminal session outlives it: not a background job of a shell
   -- that kill ends, nor one that ignores SIGHUP after its program exits by itself.

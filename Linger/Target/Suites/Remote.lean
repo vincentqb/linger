@@ -9,7 +9,7 @@ import Linger.Session.WorldCode.Client
 import Linger.Session.CoreCode.Checkpoint
 import Linger.App.CoreCode.Api
 import Linger.App.CoreCode.Base64
-import Linger.Os.CoreCode.Json
+
 import Terminal.CoreCode.Render
 import Terminal.CoreCode.Vt
 
@@ -81,11 +81,16 @@ private def farLinger (bin far : String) : String :=
   s!"#!/bin/sh\nLINGER_DIR={shellQuote far} exec {shellQuote bin} \"$@\"\n"
 
 /-- A JSON-RPC result, with this id, as the line a host's `serve` writes: canonical JSON. -/
-private def resultLine (id : Int) (result : Linger.Json) : String :=
-  Linger.Json.render (.obj [("jsonrpc", .str "2.0"), ("id", .int id), ("result", result)]) ++ "\n"
+private def resultLine (id : Int) (result : Json) : String :=
+  Json.render (.obj [("jsonrpc", .str "2.0"), ("id", .int id), ("result", result)]) ++ "\n"
 
-/-- The `initialize` result a host's `serve` writes. -/
-private def welcomeLine : String := resultLine 1 (.obj [("protocolVersion", .str "1")])
+/-- The `initialize` result a host's `serve` writes: exactly `serve`'s welcome. -/
+private def welcomeLine : String :=
+  ExactJSON.Value.render
+      (.table
+        #[("id", .integer 1), ("jsonrpc", .string "2.0"),
+          ("result", Linger.App.Serve.welcome "1" "0.1.0")]) ++
+    "\n"
 
 /-- A `sessions/list` result of these records, as a host's `serve` writes it. -/
 private def listLine (records : List (List (String × String))) : String :=
@@ -110,7 +115,7 @@ private def staleLines : String :=
 
 /-- What a host whose linger writes other JSON than canonical is told, after its name. -/
 private def withoutCanonical : String :=
-  "runs a linger whose serve does not write canonical JSON (at character 20: the key \"id\" after \"jsonrpc\", where canonical JSON lists keys in increasing order); install a current linger there"
+  "runs a linger whose serve does not write canonical JSON (at character 17: keys must increase: \"id\" comes before \"jsonrpc\"); install a current linger there"
 
 /-- A transport for the checks: a script that writes the words it is given to `log`, then runs
 them, `linger` first, as this checkout's `linger` under `state`, the state directory of a far
@@ -652,11 +657,11 @@ private def attachChecks (e : Env) (h : Hosts) : IO Unit := do
 private def outputOf (lines : Array String) : ByteArray :=
   lines.foldl
     (fun acc line =>
-      match Linger.Json.parse line with
+      match Json.parse line with
       | .ok message =>
-        if (message.member? "method").bind Linger.Json.text? == some "session/output" then
+        if (message.member? "method").bind Json.text? == some "session/output" then
           match
-            (((message.member? "params").bind (·.member? "data")).bind Linger.Json.text?).bind
+            (((message.member? "params").bind (·.member? "data")).bind Json.text?).bind
               (Linger.App.Serve.Base64.decode ·.toList) with
           | some bytes => acc ++ ByteArray.mk bytes.toArray
           | none => acc

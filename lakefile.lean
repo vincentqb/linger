@@ -17,6 +17,11 @@ require first from "first"
 require software_challenge from git
   "https://github.com/vincentqb/lean-software-challenge"@"3d5035043af16034bac2a92a7ccbcb2cee68ffa9"
 
+/-- ExactJSON, canonical and strictly typed JSON with its own challenge: every JSON text linger
+writes or reads, `serve`'s lines, a host's replies and `ls --porcelain`, goes through its codecs. -/
+require exactjson from git
+  "https://github.com/vincentqb/exact-json"@"70347e78e1fd3beaf4fc40c67b3efea4fcc1b18d"
+
 /-- The fuzzy matcher, a package of its own with its own challenge. -/
 require fuzzy from "packages/fuzzy"
 

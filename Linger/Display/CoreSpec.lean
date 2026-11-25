@@ -1,6 +1,7 @@
 module
 
 public import Terminal.CoreSpec
+public import ExactJSON.Value
 
 public section
 
@@ -250,6 +251,110 @@ def cellSources : List (List String) :=
 /-- The name of the program a command line runs: its first word, after the word's last `/`. -/
 @[expose]
 def command (line : String) : String := (((line.splitOn " ").headD "").splitOn "/").getLast?.getD ""
+
+/-! ## A session's record as JSON
+
+A listing row holds each field a session reports as a key and its text. Its record, as
+`ls --porcelain` and `serve` give it, holds each field once, under its key, and as JSON of the
+field's kind: a flag as a JSON boolean, a count as a JSON integer, and every other field as a
+string. A key's kind is the same in every record, whatever its value, so a field never takes a
+second type. -/
+
+/-- A field of a session's record, as JSON holds it: a flag, a count or text. -/
+inductive Field where
+  /-- A flag, `true` or `false`. -/
+  | flag (value : Bool)
+  /-- A count, a natural number. -/
+  | count (value : Nat)
+  /-- Text. -/
+  | text (value : String)
+  deriving DecidableEq, Repr
+
+/-- The keys whose fields are flags: whether a full-screen application is live, the program asks
+for attention, its terminal echoes, the session's program is its login shell, the program said it
+is ready, the daemon renames sessions, a command runs and history lines are unread. -/
+@[expose]
+def flagKeys : List String :=
+  ["alt", "asks", "echo", "login", "ready", "renames", "running", "unseen"]
+
+/-- The keys whose fields are counts: how far a watcher is behind, the daemon's build, its
+watchers, the terminal's size and cursor, when the session started, the program's exit status,
+the foreground program's process, the handoff version, the seconds since the program last wrote,
+the last command's exit status, the real-time clock at its last output, the output counter, the
+program's process, the protocol level and the signals that ended or saved it. -/
+@[expose]
+def countKeys : List String :=
+  ["behind", "build", "clients", "cols", "created", "cursorx", "cursory", "exit", "fgpid",
+    "handoff", "idle", "lastexit", "lastout", "outseq", "pid", "protocol", "rows", "saved",
+    "signal"]
+
+/-- **A row's field as its record holds it**: under a flag key, `true` or `false` as a flag; under
+a count key, decimal digits as a count; under any other key, the text itself. None for a flag or a
+count whose text is neither, which the record leaves out. -/
+@[expose]
+def Field.of (key value : String) : Option Field :=
+  if key ∈ flagKeys then
+    if value = "true" then some (.flag true)
+    else if value = "false" then some (.flag false) else none
+  else if key ∈ countKeys then value.toNat?.map .count else some (.text value)
+
+/-- A field's text as a row holds it: a flag as `true` or `false`, a count in decimal, and text as
+itself. -/
+@[expose]
+def Field.render : Field → String
+  | .flag value => if value then "true" else "false"
+  | .count value => toString value
+  | .text value => value
+
+/-- **A field as JSON**: a flag a boolean, a count an integer and text a string. -/
+instance : ExactJSON.ToValue Field where
+  toValue
+    | .flag value => .boolean value
+    | .count value => .integer value
+    | .text value => .string value
+
+/-- **A field read from JSON**: a boolean a flag, a natural integer a count and a string text; any
+other value is no field. -/
+instance : ExactJSON.FromValue Field where
+  fromValue?
+    | .boolean value => .ok (.flag value)
+    | .integer value => if 0 ≤ value then .ok (.count value.toNat) else .error "a count below 0"
+    | .string value => .ok (.text value)
+    | _ => .error "a field that is not a flag, a count or text"
+
+/-- A session's record: its fields by key, in increasing order of key, as JSON lists an object's
+members. -/
+abbrev Record : Type := Std.ExtTreeMap String Field
+
+/-- A record with one more field of a row: the field under its key, as `Field.of` reads it, unless
+the record holds the key already or `Field.of` does not read it. -/
+@[expose]
+def Record.add (record : Record) (field : String × String) : Record :=
+  match Field.of field.1 field.2 with
+  | some read => record.insertIfNew field.1 read
+  | none => record
+
+/-- **A row's record**: each field of the row under its key, as `Field.of` reads it, the first of
+each key it reads. -/
+@[expose]
+def Record.ofRow (row : List (String × String)) : Record := row.foldl Record.add ∅
+
+/-- The fields of a record as a row holds them, by increasing key, each as its text
+(`Field.render`). -/
+@[expose]
+def Record.fields (record : Record) : List (String × String) :=
+  record.toList.map fun field => (field.1, field.2.render)
+
+/-- A record's text field under `key`, and none when it holds no text there. -/
+@[expose]
+def Record.text? (record : Record) (key : String) : Option String :=
+  match record[key]? with
+  | some (.text value) => some value
+  | _ => none
+
+/-- The key a record is kept under: its session's name, `""` for a record without one. -/
+@[expose]
+def Record.key (record : Record) : String := (record.text? "name").getD ""
 
 /-- A wrong part: the porcelain linger printed before canonical JSON, each row a line for each
 field, its key, a tab and its value, then a blank line. -/

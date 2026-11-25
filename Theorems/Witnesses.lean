@@ -7,7 +7,7 @@ public import Linger.Display.CoreCode.Listing
 public import Linger.Display.CoreCode.View
 public import Linger.Import.CoreCode.Resurrect
 public import Linger.Selector.CoreCode.Picker
-public import Linger.Os.CoreCode.Json
+public import ExactJSON.Solution
 public import Linger.Session.CoreCode
 public import Linger.Session.CoreCode.Buf
 public import Linger.Session.CoreCode.Checkpoint
@@ -29,7 +29,8 @@ import all Linger.App.Proofs.Serve
 import all Linger.Display.Proofs.Listing
 import all Linger.Display.Proofs.View
 import all Linger.Import.Proofs.Resurrect
-import all Linger.Os.Proofs.Json
+import all Linger.Display.CoreCode.Listing
+import all Terminal.CoreCode.Render
 import all Linger.Selector.Proofs.Picker
 import all Linger.Session.Proofs.Buf
 import all Linger.Session.Proofs.Checkpoint
@@ -226,20 +227,32 @@ theorem op_meaning_applies :
 
 theorem serve_refuses_uncanonical_applies :
     ∃ (_ : App.Serve.State) (line : String) (reason : String),
-      Json.parse line = Except.error reason := by
-  -- the empty line is no canonical text
-  obtain ⟨reason, refused⟩ : ∃ reason, Json.parse "" = .error reason := by
-    cases parsed : Json.parse "" with
-    | error e => exact ⟨e, rfl⟩
-    | ok v =>
-      have rendered := congrArg String.toList (Json.parse_sound parsed).2
-      simp only [Json.render, String.toList_ofList] at rendered
-      exact absurd rendered (by simpa using Json.chars_ne_nil v)
-  exact ⟨App.Serve.State.init, "", reason, refused⟩
+      ExactJSON.Value.parse line = Except.error reason := by
+  -- the text of an invalid value, a NaN, is no canonical text
+  have invalid : ¬(ExactJSON.Value.float Float.nan).Valid := by
+    show ¬(ExactJSON.finiteFloat Float.nan = true)
+    rw [show ExactJSON.finiteFloat Float.nan = false by decide +kernel]
+    decide
+  have unread := ExactJSON.parse_render_invalid _ invalid
+  cases parsed : ExactJSON.Value.parse (ExactJSON.Value.float Float.nan).render with
+  | error e => exact ⟨App.Serve.State.init, _, e, parsed⟩
+  | ok v =>
+    rw [parsed] at unread
+    cases unread
+
+theorem serve_refuses_params_applies :
+    ∃ (s : App.Serve.State) (version : String) (_ : App.Serve.Id) (_ : String) (_ :
+      ExactJSON.Value), s.phase = App.Serve.Phase.ready version :=
+  ⟨{ stage := .ready "1" }, "1", .number 1, "session/kill", .null, rfl⟩
+
+theorem records_clean_applies :
+    ∃ (rows : List (List (String × String))) (record : App.Serve.Record) (_ : String) (_ :
+      Display.Listing.Field), record ∈ App.Serve.records rows := by
+  exact ⟨[[("name", "a")]], _, "name", .text "a", List.mem_singleton_self _⟩
 
 theorem chooser_same_list_applies :
     ∃ (rows : List (List (String × String))) (_ :
-      ∀ (record : List (String × String)),
+      ∀ (record : App.Serve.Record),
         record ∈ App.Serve.records rows →
           Target.Remote.targetValid (App.Serve.Record.key record) = true),
       (List.map App.Serve.Record.key (App.Serve.records rows)).Nodup :=

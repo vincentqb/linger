@@ -2,8 +2,7 @@ module
 
 public import Linger.Display.CoreSpec
 import Linger.Display.CoreCode.Status
-public import Linger.Os.CoreSpec
-import Linger.Os.CoreCode.Json
+import ExactJSON.Codec
 import Terminal.CoreCode.Render
 import Terminal.CoreCode.Vt
 
@@ -380,21 +379,19 @@ def terminalListing (withColor : Bool) (width : Option Nat) (rows : List (List (
 /-! ## Records -/
 
 /-- Text as a listing record holds it: each control character, C0, DEL and C1, as U+FFFD
-(`Render.textChar`), so that no key or value holds the tab or the newline that frame records. -/
+(`Render.textChar`), so that no key or value holds a character a terminal acts on, and of the
+characters ExactJSON escapes (`ExactJSON.mustEscape`) it holds only U+2028 and U+2029
+(`records_clean`). -/
 def clean (text : String) : String := text.map Terminal.Render.textChar
 
-/-- **Listing rows as records**: each key and value clean text (`clean`), and the first field of each
-key by increasing key, as a canonical object lists its members (`Json.sortMembers`). -/
-def records (rows : List (List (String × String))) : List (List (String × String)) :=
-  rows.map fun row => Json.sortMembers (row.map fun (key, value) => (clean key, clean value))
+/-- **Listing rows as records**: each row's fields as its record holds them (`Record.ofRow`), every
+key and value clean text (`clean`). -/
+def records (rows : List (List (String × String))) : List Record :=
+  rows.map fun row => Record.ofRow (row.map fun (key, value) => (clean key, clean value))
 
-/-- A record as JSON: an object, a string member for each field. -/
-def recordJson (record : List (String × String)) : Json :=
-  .obj (record.map fun (key, value) => (key, .str value))
-
-/-- **What `ls --porcelain` prints for listing rows**: each of their records (`records`) as one line
-of canonical JSON (`Json.render`), an object of its fields' strings. -/
+/-- **What `ls --porcelain` prints for listing rows**: their records (`records`) as JSON Lines, one
+canonical JSON object a line (`ExactJSON.encodeLines`). -/
 def porcelain (rows : List (List (String × String))) : String :=
-  String.join ((records rows).map fun record => (Json.render (recordJson record)).push '\n')
+  ExactJSON.encodeLines (records rows).toArray
 
 end Linger.Display.Listing

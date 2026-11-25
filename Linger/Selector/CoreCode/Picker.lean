@@ -10,8 +10,7 @@ import Linger.Target.CoreCode.Remote
 import Terminal.CoreCode.Vt
 import Terminal.CoreCode.Render
 import Linger.Display.CoreCode.View
-public import Linger.Os.CoreSpec
-import Linger.Os.CoreCode.Json
+import ExactJSON.Codec
 
 public section
 
@@ -30,23 +29,13 @@ exactly the targets `Fuzzy.align` can align (`align_isSome_iff_matches`). -/
 private def «matches» (query target : String) : Bool :=
   (query.toList.map Char.toLower).isSublist (target.toList.map Char.toLower)
 
-/-- A listing's lines: its text between newlines, the empty end after the last left out. -/
-def listingLines (text : String) : List String :=
-  ((text.toList.splitOn '\n').map String.ofList).filter fun line => !line.isEmpty
-
-/-- A listing field's value: its string. -/
-def fieldText (member : String × Json) : Except String (String × String) :=
-  match member.2 with
-  | .str text => .ok (member.1, text)
-  | _ => .error "a listing field that is not a string"
-
-/-- **A listing line as a record**: a canonical JSON object (`Json.parse`) each of whose members is a
-string, its fields in the order the line lists them. A diagnostic names no text of the line. -/
-def lineRecord (line : String) : Except String (List (String × String)) :=
-  match Json.parse line with
-  | .error _ => .error "a listing line that is not canonical JSON"
-  | .ok (.obj members) => members.mapM fieldText
-  | .ok _ => .error "a listing line that is not an object"
+/-- **A listing as rows**: its JSON Lines read as records (`ExactJSON.decodeLines`), exactly the
+lines `ls --porcelain` writes, each record's fields as a row holds them (`Record.fields`). A
+diagnostic names no text of the listing. -/
+def listingRows (text : String) : Except String (List (List (String × String))) :=
+  match (ExactJSON.decodeLines text : Except String (Array Linger.Display.Listing.Record)) with
+  | .ok records => .ok (records.toList.map Linger.Display.Listing.Record.fields)
+  | .error _ => .error "a listing that is not the JSON Lines of session records"
 
 /-- The targets of records, in order: each record's name, which must be a valid target no record
 before it has; a record without a name is no target. -/
@@ -61,10 +50,10 @@ def targets (seen : List String) : List (List (String × String)) → Except Str
         if seen.contains target then .error "duplicate session target in listing"
         else (targets (target :: seen) rest).map (target :: ·)
 
-/-- **The chooser's reading of a listing**: every line a record (`lineRecord`), and the targets
+/-- **The chooser's reading of a listing**: its records as rows (`listingRows`), and the targets
 their names, validated before any is published. -/
 def parseSnapshot (text : String) : Except String Snapshot := do
-  let records ← (listingLines text).mapM lineRecord
+  let records ← listingRows text
   let candidates ← targets [] records
   pure { candidates, records }
 

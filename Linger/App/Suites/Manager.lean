@@ -6,7 +6,7 @@ import Linger.Selector.WorldCode
 import Linger.Selector.CoreCode.Picker
 import Linger.Import.WorldCode
 import Linger.Display.CoreCode.Listing
-import Linger.Os.CoreCode.Json
+import ExactJSON.Codec
 import Linger.Display.CoreCode.View
 import Linger.Target.CoreCode.Name
 import Linger.Target.CoreCode.Remote
@@ -66,11 +66,9 @@ private def rowText (vt : Vt) (row : Nat) : String :=
 private def call (args : List String) : String :=
   "CALL\x00linger\x00" ++ String.intercalate "\x00" args ++ "\x00\n"
 
-/-- A listing of these records, one canonical JSON line each, as `ls --porcelain` prints them. -/
+/-- A listing of these rows' records, their JSON Lines, as `ls --porcelain` prints them. -/
 private def jsonListing (records : List (List (String × String))) : String :=
-  String.join
-    (records.map fun record =>
-      (Linger.Json.render (.obj (record.map fun (key, value) => (key, .str value)))).push '\n')
+  ExactJSON.encodeLines (records.map Linger.Display.Listing.Record.ofRow).toArray
 
 /-- A listing of sessions with these names and no other field. -/
 private def namesListing (names : List String) : String :=
@@ -2054,7 +2052,7 @@ private def refreshChecks (e : Env) : IO Unit := do
     [("failure", (namesListing ["Partial"]), 9, "could not list sessions (exit 9)"),
       ("duplicate", (namesListing ["Fresh", "Fresh"]), 1, "duplicate session target"),
       ("malformed", namesListing ["Fresh"] ++ "{\"extra\":[],\"name\":\"bad\"}\n", 1,
-        "a listing field that is not a string")] do
+        "a listing that is not the JSON Lines of session records")] do
     check e s!"refresh-{slug}"
         s!"automatic refresh rejects the entire bad snapshot and prints an error after restoration ({slug})"
         fun f =>

@@ -2,7 +2,7 @@ module
 
 public import Linger.App.CoreSpec
 import Linger.App.CoreCode.Base64
-import Linger.Os.CoreCode.Json
+import Linger.App.CoreCode.Codec
 import Linger.App.CoreCode.Api
 import Linger.Os.CoreCode.Answer
 import Linger.Session.CoreCode
@@ -19,15 +19,16 @@ public section
 /-! # Linger.App.Serve — linger's operations as JSON-RPC 2.0, one message a line
 
 `linger serve` reads JSON-RPC 2.0 messages from standard input and writes its own to standard
-output, one canonical JSON value a line (`Lines`, `decode`, `line`): a line that is not canonical
-gets error -32700, with the reader's reason in its `data`, and changes nothing
+output, one canonical JSON value a line, ExactJSON's (`Lines`, `decode`, `line`): a line that is
+not canonical gets error -32700, with ExactJSON's reason in its `data`, and changes nothing
 (`serve_refuses_uncanonical`). A connection is a state machine
 (`step`): it answers `initialize` with the version it chooses of those it speaks, and with an
 error any other request until the client says `initialized`; then each request of a method
-`methods` lists is the request of its command line (`Serve.words`, `parse`), which the shell
-performs as the command line does and answers with its result (`result`): the answer the command
-line would exit with, its name and its code, then what the request shows. A method it does not
-answer, params it does not take and a line that is no request get JSON-RPC's errors, with
+`methods` lists is the request of its command line (`Call.words`, `parse`), its params read exactly
+as their type (`exactly`), which the shell performs as the command line does and answers with its
+result (`result`): the answer the command line would exit with, its name and its code, then what
+the request shows. A method it does not answer, params it does not take, among them params with a
+member the method does not define, and a line that is no request get JSON-RPC's errors, with
 linger's answer, `usage`, in their `data`. An attach's conversation, `session/input`,
 `session/resize` and `session/detach` naming it by its subscription, relays its keys and its size
 to its daemon and ends it (`converse`), and the reads of its connection are its stream
@@ -185,31 +186,60 @@ def State.due (s : State) : Bool :=
     !(changes told latest).isEmpty || !(removed told latest).isEmpty
   | _, _, _, _ => false
 
-/-- **A method's request is its command line's**: the request `Api.parse` reads from the words
-`Serve.words` gives the method and its params, with the standard input `Serve.input` gives them;
-none for a method `methods` does not list or params it does not take. -/
-def parse (method : String) (params : Json) : Option (Api.Request × List UInt8) :=
-  (words method params).bind fun argv =>
-    (Api.parse argv).bind fun request => (input method params).map ((request, ·))
+/-- **The call a method and its params are**: the call of the method whose params are exactly
+`params`, read as its type writes them (`exactly`); none for a method `methods` does not list, and
+for params no call of it has, among them params with a member it does not define. -/
+def Call.read (method : String) (params : ExactJSON.Value) : Option Call :=
+  if method = "sessions/list" then (exactly params).map Call.list
+  else
+    if method = "sessions/subscribe" then (exactly params).map Call.subscribe
+    else
+      if method = "session/screen" then (exactly params).map Call.screen
+      else
+        if method = "session/history" then (exactly params).map Call.history
+        else
+          if method = "session/attach" then (exactly params).map Call.attach
+          else
+            if method = "session/start" then (exactly params).map Call.start
+            else
+              if method = "session/resume" then (exactly params).map Call.resume
+              else
+                if method = "session/send" then (exactly params).map Call.send
+                else
+                  if method = "session/detach" then (exactly params).map Call.detach
+                  else
+                    if method = "session/kill" then (exactly params).map Call.kill
+                    else
+                      if method = "session/rename" then (exactly params).map Call.rename
+                      else
+                        if method = "session/capture" then (exactly params).map Call.capture
+                        else
+                          if method = "session/resize" then (exactly params).map Call.resize
+                          else
+                            if method = "session/wait" then (exactly params).map Call.wait
+                            else
+                              if method = "session/upgrade" then (exactly params).map Call.upgrade
+                              else none
 
-/-- An answer as JSON members: its name and its code. -/
-def answerMembers (answer : Os.Answer) : List (String × Json) :=
-  [("answer", .str (answerName answer)), ("code", .int answer.code.toNat)]
+/-- **A method's request is its command line's**: the request `Api.parse` reads from the words of
+the call the method and its params are (`Call.read`, `Call.words`), with the standard input it
+gives (`Call.input`); none for a method `methods` does not list or params it does not take. -/
+def parse (method : String) (params : ExactJSON.Value) : Option (Api.Request × List UInt8) :=
+  (Call.read method params).bind fun call =>
+    (Api.parse call.words).bind fun request => call.input.map ((request, ·))
+
+/-- An answer's result: its name and its code, and what `shows` shows. -/
+def answered (answer : Os.Answer) (shows : Shows) : Result :=
+  { toShows := shows, answer := answerName answer, code := answer.code.toNat }
 
 /-- **The result of a performed request**: the answer the command line exits with for what it
-found (`Api.answer`), its name and its code, then the members of what it shows. -/
-def result (found : Api.Found) (members : List (String × Json)) : Json :=
-  .obj (answerMembers (Api.answer found) ++ members)
+found (`Api.answer`), its name and its code, then what it shows. -/
+def result (found : Api.Found) (shows : Shows) : ExactJSON.Value :=
+  ExactJSON.toValue (answered (Api.answer found) shows)
 
 /-- The `data` of an error: linger's answer, `usage`, as a command line it does not take gets,
-and `extra`. -/
-def refusal (extra : List (String × Json) := []) : Json := .obj (answerMembers .usage ++ extra)
-
-/-- The version `initialize`'s params ask for, if `serve` speaks it. -/
-def chosen (params : Json) : Option String :=
-  match params.member? "protocolVersion" with
-  | some (.str version) => if version ∈ versions then some version else none
-  | _ => none
+and what `extra` shows. -/
+def refusal (extra : Shows := {}) : ExactJSON.Value := ExactJSON.toValue (answered .usage extra)
 
 /-- The error that answers a request a connection takes no request but `initialize` before. -/
 private def notInitialized (id : Id) : Outgoing :=
@@ -217,10 +247,10 @@ private def notInitialized (id : Id) : Outgoing :=
 
 /-- `sessions/unsubscribe` of the subscription its params name: the sessions table's, a watch's,
 or both when they share the id, each closed; a watch not answered yet is answered `done`, as a
-detach ends an attach. -/
-def unsubscribe (s : State) (id : Id) (params : Json) : State × List Effect :=
-  match (params.member? "subscription").bind Id.of with
-  | some key =>
+detach ends an attach. Params that are not exactly a subscription's are invalid. -/
+def unsubscribe (s : State) (id : Id) (params : ExactJSON.Value) : State × List Effect :=
+  match (exactly params : Option Subscription) with
+  | some ⟨key⟩ =>
     if s.subscription = some key ∨ (s.watching key).isSome then
       ((if s.subscription = some key then
               { s with
@@ -228,11 +258,11 @@ def unsubscribe (s : State) (id : Id) (params : Json) : State × List Effect :=
             else s).dropWatch
           key,
         (match s.watching key with
-          | some (.asked _) | some .attaching => [.send (.result key (result .done []))]
+          | some (.asked _) | some .attaching => [.send (.result key (result .done {}))]
           | _ => []) ++
-          [.send (.result id (result .done []))])
+          [.send (.result id (result .done {}))])
     else (s, [.send (.error (some id) (-32602) "no such subscription" (refusal))])
-  | none => (s, [.send (.error (some id) (-32602) "no such subscription" (refusal))])
+  | none => (s, [.send (.error (some id) (-32602) "invalid params" (refusal))])
 
 /-- What a watch's request asks for: an attach for `session/attach`, and otherwise a watch of a
 history, for `session/history`, or of a screen. -/
@@ -253,73 +283,81 @@ def performs (s : State) (id : Id) (method : String) (req : Api.Request) (bytes 
       if s.watches.length < maxWatches ∧ s.subscription ≠ some id ∧ (s.watching id).isNone then
         ({ s with watches := s.watches ++ [(id, Watch.asking method)] },
           [.perform id method req bytes])
-      else (s, [.send (.result id (result .refused []))])
+      else (s, [.send (.result id (result .refused {}))])
     else (s, [.perform id method req bytes])
 
 /-- Whether a request is part of an attach's conversation, which names the attach by its
 subscription: `session/input`, and `session/resize` or `session/detach` with a `subscription`,
 which without one are the command line's `resize` and `detach`. -/
-def converses (method : String) (params : Json) : Bool :=
+def converses (method : String) (params : ExactJSON.Value) : Bool :=
   method = "session/input" ||
     (method = "session/resize" || method = "session/detach") &&
-      (params.member? "subscription").isSome
+      (member? "subscription" params).isSome
 
-/-- The messages a request of an attach's conversation writes on its connection: the bytes
+/-- The attach a request of an attach's conversation names and the messages it writes on the
+attach's connection, its params read exactly as their type writes them (`exactly`): the keys
 `session/input`'s `data` encodes in base64, as the input frames `send` cuts (`Wire.inputFrames`),
-and `session/resize`'s size, one the emulator keeps as it is, as `resize` takes it; none for params
-it does not take. -/
-def relayed (method : String) (params : Json) : Option (List Session.Wire.Msg) :=
+`session/resize`'s size, one the emulator keeps as it is, as `resize` takes it, and nothing for
+`session/detach`; none for params it does not take. -/
+def conversed (method : String) (params : ExactJSON.Value) : Option (Id × List Session.Wire.Msg) :=
   if method = "session/input" then
-    ((params.need "data" Json.text?).bind fun data => Base64.decode data.toList).map
-      Session.Wire.inputFrames
-  else do
-    let cols ← params.need "cols" Json.nat?
-    let rows ← params.need "rows" Json.nat?
-    if Terminal.Vt.clampDim cols = cols ∧ Terminal.Vt.clampDim rows = rows then
-      pure [.resize cols.toUInt32 rows.toUInt32]
-    else
-      none
+    (exactly params : Option Keys).bind fun keys =>
+      (Base64.decode keys.data.toList).map fun bytes =>
+        (keys.subscription, Session.Wire.inputFrames bytes)
+  else
+    if method = "session/resize" then
+      (exactly params : Option Sized).bind fun sized =>
+        if
+            Terminal.Vt.clampDim sized.cols = sized.cols ∧
+              Terminal.Vt.clampDim sized.rows = sized.rows then
+          some (sized.subscription, [.resize sized.cols.toUInt32 sized.rows.toUInt32])
+        else none
+    else (exactly params : Option Subscription).map fun named => (named.subscription, [])
 
 /-- **A request of an attach's conversation**, of the attach its params name by its subscription:
 `session/input` writes its keys on the attach's connection and `session/resize` its terminal's size,
 as an attach client does, and `session/detach` ends the attach, as an attach client's leaving does,
-answering one not answered yet `done`; each is answered `done`, and one that names no attach open
-is refused, and params it does not take are invalid. -/
-def converse (s : State) (id : Id) (method : String) (params : Json) : State × List Effect :=
-  match (params.member? "subscription").bind Id.of with
+answering one not answered yet `done`; each is answered `done`, one that names no attach open is
+refused, and params it does not take are invalid. -/
+def converse (s : State) (id : Id) (method : String) (params : ExactJSON.Value) :
+    State × List Effect :=
+  match conversed method params with
   | none => (s, [.send (.error (some id) (-32602) "invalid params" (refusal))])
-  | some key =>
+  | some (key, messages) =>
     match s.watching key with
     | some .attaching =>
       if method = "session/detach" then
         (s.dropWatch key,
-          [.send (.result key (result .done [])), .send (.result id (result .done []))])
+          [.send (.result key (result .done {})), .send (.result id (result .done {}))])
       else (s, [.send (.error (some id) (-32602) "no such subscription" (refusal))])
     | some (.stream _ _) =>
-      if method = "session/detach" then (s.dropWatch key, [.send (.result id (result .done []))])
-      else
-        match relayed method params with
-        | some messages => (s, [.relay key messages, .send (.result id (result .done []))])
-        | none => (s, [.send (.error (some id) (-32602) "invalid params" (refusal))])
+      if method = "session/detach" then (s.dropWatch key, [.send (.result id (result .done {}))])
+      else (s, [.relay key messages, .send (.result id (result .done {}))])
     | _ => (s, [.send (.error (some id) (-32602) "no such subscription" (refusal))])
 
 /-- What a connection does with a request: `initialize` once, before anything else, then the
 methods `methods` lists, each performed as its command line's request (`parse`), a
 `sessions/subscribe` opening its subscription, a watch or an attach asked for, `sessions/unsubscribe`
 of an open one, and the requests of an attach's conversation (`converse`). -/
-private def request (s : State) (id : Id) (method : String) (params : Json) : State × List Effect :=
+private def request (s : State) (id : Id) (method : String) (params : ExactJSON.Value) :
+    State × List Effect :=
   if method = "initialize" then
     match s.phase with
     | .fresh =>
-      match chosen params with
-      | some version =>
-        ({ s with stage := .negotiated version },
-          [.send (.result id (welcome version Terminal.Mediation.versionNumber))])
-      | none =>
-        (s,
-          [.send
-              (.error (some id) (-32602) "unsupported protocol version"
-                (refusal [("supported", .arr (versions.map .str))]))])
+      match (exactly params : Option Initialize) with
+      | some asked =>
+        if asked.protocolVersion ∈ versions then
+          ({ s with stage := .negotiated asked.protocolVersion },
+            [.send
+                (.result id
+                  (ExactJSON.toValue
+                    (Welcome.of asked.protocolVersion Terminal.Mediation.versionNumber)))])
+        else
+          (s,
+            [.send
+                (.error (some id) (-32602) "unsupported protocol version"
+                  (refusal { supported? := some versions }))])
+      | none => (s, [.send (.error (some id) (-32602) "invalid params" (refusal))])
     | _ => (s, [.send (.error (some id) (-32600) "already initialized" (refusal))])
   else
     match s.phase with
@@ -335,29 +373,21 @@ private def request (s : State) (id : Id) (method : String) (params : Json) : St
           else (s, [.send (.error (some id) (-32601) "method not found" (refusal))])
     | _ => (s, [.send (notInitialized id)])
 
-/-- An answer as a member: `closed`, with the answer the command line exits with for what the watch
-found, its name and its code, and how a session it found ended. -/
-def closedMembers (found : Api.Found) : List (String × Json) :=
-  [("closed",
-      .obj
-        (answerMembers (Api.answer found) ++
-          match found with
-          | .ended ending =>
-            [("ending",
-                Record.json
-                  ((Linger.Display.Listing.records [Linger.Session.endingFields ending]).headD []))]
-          | _ => []))]
+/-- The record of how a session ended that a request found, when it found that it ended: the record
+`ls` gives of it (`Session.endingFields`). -/
+def endingRecord : Api.Found → Option Record
+  | .ended ending => (Linger.Display.Listing.records [Linger.Session.endingFields ending]).head?
+  | _ => none
 
-/-- An update's params with more members after its own. -/
-def _root_.Linger.Json.withMembers : Json → List (String × Json) → Json
-  | .obj members, more => .obj (members ++ more)
-  | value, _ => value
+/-- How a watch ended, its last update's `closed`: the answer the command line exits with for what
+the watch found, its name and its code, and how a session it found ended. -/
+def closedResult (found : Api.Found) : Result :=
+  answered (Api.answer found) { ending? := endingRecord found }
 
-/-- What `said` shows of a log of what a request said: its last lines, as clean text, and how many
-before them it dropped. -/
-def saidMembers (said : Log String) : List (String × Json) :=
-  [("said", .arr (said.tail.map fun text => .str (Linger.Display.Listing.clean text))),
-    ("saidDropped", .int said.dropped)]
+/-- What a result shows of a log of what a request said: its last lines, as clean text, and how
+many before them it dropped. -/
+def saidShows (said : Log String) : Shows :=
+  { said? := some (said.tail.map Linger.Display.Listing.clean), saidDropped? := some said.dropped }
 
 /-- What a connection does with a watch's look: the first one answers the watch's request, a
 screen's with the screen and a history's with nothing, and holds what it found, and a later one
@@ -366,19 +396,46 @@ nothing. -/
 def watched (s : State) (id : Id) (screen : Screen) (left : Log Line) : State × List Effect :=
   match s.phase, s.watching id with
   | .ready _, some (.asked false) =>
-    (s.setWatch id (.screen screen screen), [.send (.result id (result .done screen.members))])
+    (s.setWatch id (.screen screen screen), [.send (.result id (result .done screen.shows))])
   | .ready _, some (.asked true) =>
     (s.setWatch id (.history (Log.append historyCap {} left)),
-      [.send (.result id (result .done []))])
+      [.send (.result id (result .done {}))])
   | .ready _, some (.screen told _) => (s.setWatch id (.screen told screen), [])
   | .ready _, some (.history pending) =>
     (s.setWatch id (.history (Log.append historyCap pending left)), [])
   | _, _ => (s, [])
 
 /-- The params of `session/output`: the subscription it updates, the id of the request that opened
-the attach, and the bytes it carries, as base64 `data` (`Base64.encode`). -/
-def Output.update (id : Id) (bytes : List UInt8) : Json :=
-  .obj [("subscription", id.json), ("data", .str (Base64.encode bytes))]
+the attach, the bytes it carries, as base64 `data` (`Base64.encode`), and, on its last update,
+how the attach ended. -/
+def Output.update (id : Id) (bytes : List UInt8) (closed : Option Result := none) :
+    ExactJSON.Value :=
+  ExactJSON.toValue
+    ({ closed? := closed, data := Base64.encode bytes, subscription := id } : Output)
+
+/-- The params of `session/screen/changed` of an update: the subscription it updates, the lines
+that changed, each under its number, the numbers of the lines that went, the cursor and the title
+when they changed, and, on its last update, how the watch ended. -/
+def Screen.changed (id : Id) (u : Screen.Update) (closed : Option Result := none) :
+    ExactJSON.Value :=
+  ExactJSON.toValue
+    ({ closed? := closed, cursor? := u.cursor, removed := u.removed,
+       rows := u.lines.map fun (y, line) => line.row y, subscription := id, title? := u.title } :
+      ScreenChanged)
+
+/-- The params of `session/history/changed` of a log: the subscription it updates, the lines that
+left the screen, oldest first, how many before them it dropped, and, on its last update, how the
+watch ended. -/
+def Log.changed (id : Id) (log : Log Line) (closed : Option Result := none) : ExactJSON.Value :=
+  ExactJSON.toValue
+    ({ closed? := closed, dropped := log.dropped, lines := log.tail.map Line.scrolled,
+       subscription := id } :
+      HistoryChanged)
+
+/-- The params of `sessions/changed`: the records that replace those under their keys, the keys
+that go, and the subscription it updates. -/
+def changed (id : Id) (records : List Record) (gone : List String) : ExactJSON.Value :=
+  ExactJSON.toValue ({ records, removed := gone, subscription := id } : Changed)
 
 /-- What an attach found when the first of `messages` that ends it (`Wire.Msg.ends`) did, as an
 attach client reads it: how the program ended, the status of an older daemon's report, that a
@@ -401,16 +458,14 @@ def streamed (s : State) (id : Id) (dec : Session.Wire.Decoder) (pending bytes :
   let decoded := dec.feed bytes
   if decoded.1.errored then
     (s.dropWatch id,
-      [.send
-          (.notify "session/output"
-            ((Output.update id pending).withMembers (closedMembers .refused)))])
+      [.send (.notify "session/output" (Output.update id pending (some (closedResult .refused))))])
   else
     let waiting := pending ++ Session.Wire.shown decoded.2
     if decoded.2.any Session.Wire.Msg.ends then
       (s.dropWatch id,
         [.send
             (.notify "session/output"
-              ((Output.update id waiting).withMembers (closedMembers (stopFound decoded.2))))])
+              (Output.update id waiting (some (closedResult (stopFound decoded.2)))))])
     else (s.setWatch id (.stream decoded.1 waiting), [])
 
 /-- **The read a screen an attach shows is**, as a daemon sends an attach its repaint: the screen's
@@ -425,7 +480,7 @@ def readAttach (s : State) (id : Id) (bytes : List UInt8) : State × List Effect
   match s.phase, s.watching id with
   | .ready _, some .attaching =>
     ((streamed s id {} [] bytes).1,
-      .send (.result id (result .done [])) :: (streamed s id {} [] bytes).2)
+      .send (.result id (result .done {})) :: (streamed s id {} [] bytes).2)
   | .ready _, some (.stream dec pending) => streamed s id dec pending bytes
   | _, _ => (s, [])
 
@@ -438,11 +493,11 @@ def flushed (s : State) (id : Id) : State × List Effect :=
     (s.setWatch id (.screen latest latest),
       if told = latest then []
       else
-        [.send (.notify "session/screen/changed" (Screen.update id (Screen.changes told latest)))])
+        [.send (.notify "session/screen/changed" (Screen.changed id (Screen.changes told latest)))])
   | .ready _, some (.history pending) =>
     (s.setWatch id (.history {}),
       if pending.tail = [] ∧ pending.dropped = 0 then []
-      else [.send (.notify "session/history/changed" (Log.update id pending))])
+      else [.send (.notify "session/history/changed" (Log.changed id pending))])
   | .ready _, some (.stream dec pending) =>
     (s.setWatch id (.stream dec []),
       if pending = [] then [] else [.send (.notify "session/output" (Output.update id pending))])
@@ -454,22 +509,19 @@ watch no more. -/
 def unwatched (s : State) (id : Id) (found : Api.Found) (said : Log String) : State × List Effect :=
   match s.phase, s.watching id with
   | .ready _, some (.asked _) | .ready _, some .attaching =>
-    (s.dropWatch id, [.send (.result id (result found (saidMembers said)))])
+    (s.dropWatch id, [.send (.result id (result found (saidShows said)))])
   | .ready _, some (.stream _ pending) =>
     (s.dropWatch id,
-      [.send
-          (.notify "session/output"
-            ((Output.update id pending).withMembers (closedMembers found)))])
+      [.send (.notify "session/output" (Output.update id pending (some (closedResult found))))])
   | .ready _, some (.screen told latest) =>
     (s.dropWatch id,
       [.send
           (.notify "session/screen/changed"
-            ((Screen.update id (Screen.changes told latest)).withMembers (closedMembers found)))])
+            (Screen.changed id (Screen.changes told latest) (some (closedResult found))))])
   | .ready _, some (.history pending) =>
     (s.dropWatch id,
       [.send
-          (.notify "session/history/changed"
-            ((Log.update id pending).withMembers (closedMembers found)))])
+          (.notify "session/history/changed" (Log.changed id pending (some (closedResult found))))])
   | _, _ => (s, [])
 
 /-- **What a connection does with an event.** Before it is ready it writes nothing but errors and
@@ -484,7 +536,7 @@ def step (s : State) : Event → State × List Effect
     (s,
       [.send
           (match unparsed with
-          | some reason => .error none (-32700) "parse error" (refusal [("reason", .str reason)])
+          | some reason => .error none (-32700) "parse error" (refusal { reason? := some reason })
           | none => .error id (-32600) "invalid request" (refusal))])
   | .received (.notification method _) =>
     match s.phase with
@@ -514,7 +566,8 @@ def step (s : State) : Event → State × List Effect
         if changes told latest = [] ∧ removed told latest = [] then []
         else
           [.send
-              (.notify "sessions/changed" (update id (changes told latest) (removed told latest)))])
+              (.notify "sessions/changed"
+                (changed id (changes told latest) (removed told latest)))])
     | _, _, _, _ => (s, [])
   | .watched id screen left => watched s id screen left
   | .flush id => flushed s id
@@ -523,52 +576,56 @@ def step (s : State) : Event → State × List Effect
 
 /-! ## Messages as lines -/
 
+/-- The members a JSON-RPC 2.0 request or notification defines. -/
+def envelope : List String := ["id", "jsonrpc", "method", "params"]
+
 /-- **What a line from the client is**: a request, with an id, a notification, without one, or no
-message: a line that is not canonical JSON, with the reason the reader gives (`Json.parse`), or a
-canonical text that is no JSON-RPC 2.0 request object. -/
+message: a line that is not canonical JSON, with the reason ExactJSON gives (`Value.parse`), or a
+canonical text that is no JSON-RPC 2.0 request object, among them an object with a member JSON-RPC
+does not define. -/
 def decode (line : String) : Message :=
-  match Json.parse line with
+  match ExactJSON.Value.parse line with
   | .error reason => .invalid none (some reason)
-  | .ok (.obj members) =>
-    let id := (members.lookup "id").bind Id.of
-    if (members.lookup "jsonrpc").bind Json.text? ≠ some "2.0" then .invalid id none
+  | .ok (.table members) =>
+    let fields := members.toList
+    let id := (fields.lookup "id").bind Id.of
+    if !(fields.all fun field => envelope.contains field.1) then .invalid id none
     else
-      match (members.lookup "method").bind Json.text?, members.lookup "id" with
-      | none, _ => .invalid id none
-      | some method, none => .notification method ((members.lookup "params").getD (.obj []))
-      | some method, some _ =>
-        match id with
-        | some id => .request id method ((members.lookup "params").getD (.obj []))
-        | none => .invalid none none
+      if fields.lookup "jsonrpc" != some (.string "2.0") then .invalid id none
+      else
+        match fields.lookup "method", fields.lookup "id" with
+        | some (.string method), none =>
+          .notification method ((fields.lookup "params").getD (.table #[]))
+        | some (.string method), some _ =>
+          match id with
+          | some id => .request id method ((fields.lookup "params").getD (.table #[]))
+          | none => .invalid none none
+        | _, _ => .invalid id none
   | .ok _ => .invalid none none
 
-/-- A message as JSON-RPC 2.0's object. -/
-def Outgoing.json : Outgoing → Json
-  | .result id value => .obj [("jsonrpc", .str "2.0"), ("id", id.json), ("result", value)]
+/-- A message as JSON-RPC 2.0's object, its members by increasing key. -/
+def Outgoing.json : Outgoing → ExactJSON.Value
+  | .result id value => .table #[("id", id.json), ("jsonrpc", .string "2.0"), ("result", value)]
   | .error id code message data =>
-    .obj
-      [("jsonrpc", .str "2.0"), ("id", (id.map Id.json).getD .null),
-        ("error", .obj [("code", .int code), ("message", .str message), ("data", data)])]
+    .table
+      #[("error", .table #[("code", .integer code), ("data", data), ("message", .string message)]),
+        ("id", (id.map Id.json).getD .null), ("jsonrpc", .string "2.0")]
   | .notify method params =>
-    .obj [("jsonrpc", .str "2.0"), ("method", .str method), ("params", params)]
+    .table #[("jsonrpc", .string "2.0"), ("method", .string method), ("params", params)]
 
-/-- The line `serve` writes for a message: its JSON text, which holds no newline, then one. -/
-def line (out : Outgoing) : String := (Json.render out.json).push '\n'
+/-- The line `serve` writes for a message: its JSON text (`Value.render`), which holds no C0
+control, DEL, C1 control, U+2028 or U+2029 as itself (ExactJSON's `render_no_control`), so no
+newline, then one. -/
+def line (out : Outgoing) : String := (ExactJSON.Value.render out.json).push '\n'
 
 /-- Text as `serve` sends it: every control character, C0, DEL and C1, as U+FFFD, as listings and
 `info` records give it (`Render.textChar`). -/
 def clean (text : String) : String := Linger.Display.Listing.clean text
 
-/-- Listing records as `serve` sends them: each key and value clean text (`clean`). -/
-def records (rows : List (List (String × String))) : List (List (String × String)) :=
+/-- Listing rows as `serve` sends them: their records, each key and value clean text
+(`Listing.records`). -/
+def records (rows : List (List (String × String))) : List Record :=
   Linger.Display.Listing.records rows
-
-/-- The members a request's result shows of how a session ended, when it found that it ended:
-`ending`, the record of it `ls` gives (`Session.endingFields`). -/
-def endingMembers : Api.Found → List (String × Json)
-  | .ended ending =>
-    [("ending", Record.json ((records [Linger.Session.endingFields ending]).headD []))]
-  | _ => []
 
 /-! ## Lines -/
 
@@ -635,89 +692,98 @@ does, is refused. A remote attach relays the host's stream to an attach client a
 (`Remote.relay`) and the client's keys, size and leaving as the requests of the attach's
 conversation (`Remote.up`). -/
 
-/-- One JSON-RPC message as the line linger writes a host's `serve`. -/
-def Remote.message (members : List (String × Json)) : String :=
-  (Json.render (.obj (("jsonrpc", .str "2.0") :: members))).push '\n'
+/-- A request, with this id, as the line linger writes a host's `serve`, its members by increasing
+key. -/
+def Remote.request (id : Nat) (method : String) (params : ExactJSON.Value) : String :=
+  (ExactJSON.Value.render
+        (.table
+          #[("id", .integer id), ("jsonrpc", .string "2.0"), ("method", .string method),
+            ("params", params)])).push
+    '\n'
 
-/-- A request, with this id, as the line linger writes a host's `serve`. -/
-def Remote.request (id : Nat) (method : String) (params : Json) : String :=
-  Remote.message [("id", .int id), ("method", .str method), ("params", params)]
+/-- A notification as the line linger writes a host's `serve`. -/
+def Remote.notification (method : String) (params : ExactJSON.Value) : String :=
+  (ExactJSON.Value.render
+        (.table #[("jsonrpc", .string "2.0"), ("method", .string method), ("params", params)])).push
+    '\n'
 
 /-- The handshake linger writes a host's `serve`: `initialize`, request 1, asking for the version
 this linger speaks, and `initialized`. -/
 def Remote.handshake : String :=
   Remote.request 1 "initialize"
-      (.obj
-        [("protocolVersion", .str "1"), ("clientInfo", .obj [("name", .str "linger")]),
-          ("capabilities", .obj [])]) ++
-    Remote.message [("method", .str "initialized"), ("params", .obj [])]
+      (ExactJSON.toValue
+        ({ capabilities? := some {}, clientInfo? := some { name := "linger", version? := none },
+           protocolVersion := "1" } :
+          Initialize)) ++
+    Remote.notification "initialized" (ExactJSON.toValue ({} : NoParams))
 
 /-- **The lines linger writes a host's `serve` for a call**: the handshake, then the call, request
 2; then its standard input ends, and `serve` answers what it read and ends. -/
-def Remote.lines (method : String) (params : Json) : String :=
+def Remote.lines (method : String) (params : ExactJSON.Value) : String :=
   Remote.handshake ++ Remote.request 2 method params
 
 /-- A method's params that name only a session. -/
-def Remote.named (name : String) : Json := .obj [("name", .str name)]
+def Remote.named (name : String) : ExactJSON.Value := ExactJSON.toValue ({ name } : Named)
+
+/-- `session/attach`'s params: the session, read-only on request, and its command, when one is
+given. -/
+def Remote.attaching (name : String) (readOnly : Bool) (command : List String) : ExactJSON.Value :=
+  ExactJSON.toValue
+    ({ command? := if command.isEmpty then none else some command, name,
+       readOnly? := if readOnly then some true else none } :
+      Attaching)
 
 /-- **The call a request at a host's session makes**, the session `name` there, its standard
 input `input`: the method of the request's operation and the params that carry each of its
 arguments (`Remote.asked`), as JSON, so no word reaches a shell; none for a request no method
 performs on one session. -/
 def Remote.call (request : Api.Request) (name : String) (input : List UInt8) :
-    Option (String × Json) :=
+    Option (String × ExactJSON.Value) :=
   match request with
-  | .attach readOnly _ command =>
-    some
-      ("session/attach",
-        .obj
-          ([("name", .str name)] ++ (if readOnly then [("readOnly", .bool true)] else []) ++
-            if command.isEmpty then [] else [("command", .arr (command.map .str))]))
-  | .list (.named _ _) => some ("sessions/list", .obj [("names", .arr [.str name])])
+  | .attach readOnly _ command => some ("session/attach", Remote.attaching name readOnly command)
+  | .list (.named _ _) =>
+    some ("sessions/list", ExactJSON.toValue ({ names? := some [name] } : Listed))
   | .list _ => none
   | .start _ program args =>
-    some
-      ("session/start",
-        .obj [("name", .str name), ("program", .str program), ("args", .arr (args.map .str))])
+    some ("session/start", ExactJSON.toValue ({ args? := some args, name, program } : Starting))
   | .resume _ => some ("session/resume", Remote.named name)
   | .send _ (.text words) =>
     some
       ("session/send",
-        .obj
-          [("name", .str name),
-            ("data", .str (Base64.encode (String.intercalate " " words).toUTF8.toList))])
+        ExactJSON.toValue
+          ({ data := Base64.encode (String.intercalate " " words).toUTF8.toList, name } : Sending))
   | .send _ .stdin =>
-    some ("session/send", .obj [("name", .str name), ("data", .str (Base64.encode input))])
+    some ("session/send", ExactJSON.toValue ({ data := Base64.encode input, name } : Sending))
   | .detach _ => some ("session/detach", Remote.named name)
   | .kill _ => some ("session/kill", Remote.named name)
-  | .rename _ new => some ("session/rename", .obj [("name", .str name), ("new", .str new)])
+  | .rename _ new => some ("session/rename", ExactJSON.toValue ({ name, new } : Renaming))
   | .capture history _ =>
-    some ("session/capture", .obj [("name", .str name), ("history", .bool history)])
+    some ("session/capture", ExactJSON.toValue ({ history? := some history, name } : Capturing))
   | .resize _ cols rows =>
-    some ("session/resize", .obj [("name", .str name), ("cols", .int cols), ("rows", .int rows)])
+    some ("session/resize", ExactJSON.toValue ({ cols, name, rows } : Resizing))
   | .wait _ => some ("session/wait", Remote.named name)
   | .upgrade _ => some ("session/upgrade", Remote.named name)
   | .serve => none
 
-/-- Whether a host's `serve` shook hands (`Remote.Shook`). -/
-def Remote.shook (messages : List Json) : Bool :=
-  match
-    ((Remote.answerOf messages 1 "result").bind (·.member? "protocolVersion")).bind Json.text? with
-  | some version => versions.contains version
+/-- Whether a host's `serve` shook hands (`Remote.Shook`): its result of `initialize` is exactly a
+`Welcome` of a version this linger speaks. -/
+def Remote.shook (messages : List ExactJSON.Value) : Bool :=
+  match (Remote.answerOf messages 1 "result").bind (exactly (α := Welcome)) with
+  | some welcome => versions.contains welcome.protocolVersion
   | none => false
 
 /-- Whether `initialize`'s error, in a host's messages, is the usage answer. -/
-def Remote.refusedUsage (messages : List Json) : Bool :=
-  (((Remote.answerOf messages 1 "error").bind (·.member? "data")).bind (·.member? "answer")).bind
-      Json.text? ==
-    some "usage"
+def Remote.refusedUsage (messages : List ExactJSON.Value) : Bool :=
+  match ((Remote.answerOf messages 1 "error").bind (member? "data")).bind (member? "answer") with
+  | some (.string "usage") => true
+  | _ => false
 
 /-- Whether a host refused `serve` with a usage answer (`Remote.Usage`). -/
-def Remote.usage (messages : List Json) (status : UInt32) : Bool :=
+def Remote.usage (messages : List ExactJSON.Value) (status : UInt32) : Bool :=
   !Remote.shook messages && (status == 2 || Remote.refusedUsage messages)
 
-/-- The answer named `name` whose code is `code`, as a result gives an answer (`answerMembers`):
-none for a name no answer has, or a code that is not the named answer's. -/
+/-- The answer named `name` whose code is `code`, as a result gives an answer (`answered`): none
+for a name no answer has, or a code that is not the named answer's. -/
 def answerNamed (name : String) (code : Nat) : Option Os.Answer :=
   (([.done, .notDone, .usage, .timedOut, .failed, .cannotRun, .notFound, .cancelled] ++
           (if 128 ≤ code ∧ code < 384 then
@@ -727,50 +793,38 @@ def answerNamed (name : String) (code : Nat) : Option Os.Answer :=
         List Os.Answer)).find?
     fun answer => answerName answer == name && answer.code.toNat == code
 
-/-- The answer an object's members `answer` and `code` give, by name and code, and its other
-members, in the order it holds them. -/
-def Remote.answerIn : Json → Option (Os.Answer × List (String × Json))
-  | .obj all =>
-    match all.lookup "answer", all.lookup "code" with
-    | some (.str name), some (.int code) =>
-      if 0 ≤ code then
-        (answerNamed name code.toNat).map
-          ((·, all.filter fun m => m.1 != "answer" && m.1 != "code"))
-      else none
-    | _, _ => none
-  | _ => none
+/-- The answer a result's `answer` and `code` give, by name and code, and what it shows, of a value
+read exactly as a result (`exactly`). -/
+def Remote.answerIn (value : ExactJSON.Value) : Option (Os.Answer × Shows) :=
+  (exactly value : Option Result).bind fun result =>
+    (answerNamed result.answer result.code).map ((·, result.toShows))
 
 /-- What answered the call, request 2: its result, or, where no result did, its error's `data`. -/
-def Remote.callAnswer (messages : List Json) : Option Json :=
+def Remote.callAnswer (messages : List ExactJSON.Value) : Option ExactJSON.Value :=
   (Remote.answerOf messages 2 "result").or
-    ((Remote.answerOf messages 2 "error").bind (·.member? "data"))
+    ((Remote.answerOf messages 2 "error").bind (member? "data"))
 
 /-- **What a host's `serve` told linger of its call**, of the messages it wrote and its command's
-exit status: the answer of the call and the result's other members, once it shook hands; a refusal
-when it refused `serve` with a usage answer; and otherwise nothing linger reads. -/
-def Remote.heard (messages : List Json) (status : UInt32) : Remote.Heard :=
+exit status: the answer of the call and what its result shows, once it shook hands; a refusal when
+it refused `serve` with a usage answer; and otherwise nothing linger reads. -/
+def Remote.heard (messages : List ExactJSON.Value) (status : UInt32) : Remote.Heard :=
   if Remote.shook messages then
     match (Remote.callAnswer messages).bind Remote.answerIn with
-    | some (answer, members) => .answered answer members
+    | some (answer, shows) => .answered answer shows
     | none => .silent
   else if Remote.usage messages status then .refused else .silent
 
-/-- The records a `sessions/list` answer's members hold (`Remote.Lists`). -/
-def Remote.records (members : List (String × Json)) : Option (List Record) :=
-  match members.lookup "records" with
-  | some (.arr items) => items.mapM Record.of
-  | _ => none
-
 /-- A host's row of a record its `sessions/list` returned: `name@host`, its command as clean text,
 its state, and the status and attention its record gives (`Listing.rowStatus`). -/
-def Remote.row (host : String) (record : Record) : List (String × String) :=
-  let live := (record.lookup "state").getD "live" == "live"
-  [("name", record.key ++ "@" ++ host),
-      ("cmd", Linger.Target.Remote.scrub ((record.lookup "cmd").getD "")),
-      ("state", if live then "live" else "resumable")] ++
-    Linger.Display.Listing.statusFields
-      (Linger.Display.Listing.rowStatus
-        (.remote live ((record.lookup "attention").getD "") ((record.lookup "status").getD "")))
+def Remote.row (host : String) (record : Record) : Record :=
+  let live := (record.text? "state").getD "live" == "live"
+  Linger.Display.Listing.Record.ofRow
+    ([("name", record.key ++ "@" ++ host),
+        ("cmd", Linger.Target.Remote.scrub ((record.text? "cmd").getD "")),
+        ("state", if live then "live" else "resumable")] ++
+      Linger.Display.Listing.statusFields
+        (Linger.Display.Listing.rowStatus
+          (.remote live ((record.text? "attention").getD "") ((record.text? "status").getD ""))))
 
 /-- **A host's rows**: one for each record its `sessions/list` returned whose name a target takes
 (`Name.accept`), in order, named `name@host`. -/
@@ -782,39 +836,39 @@ def Remote.rows (host : String) (records : List Record) : List Record :=
 its name `name@host`; none for a record whose name a target does not take. -/
 def Remote.record (host : String) (record : Record) : Option Record :=
   if Linger.Target.Name.accept record.key == some record.key then
-    some
-      (record.map fun field =>
-        if field.1 == "name" then ("name", record.key ++ "@" ++ host) else field)
+    some (record.insert "name" (.text (record.key ++ "@" ++ host)))
   else none
 
 /-- What a host's answer says it said, each line as its host's: `host: ` and the line, the host as
 clean text. -/
-def Remote.said (host : String) (members : List (String × Json)) : List String :=
-  (((members.lookup "said").bind Json.texts?).getD []).map fun text =>
+def Remote.said (host : String) (shows : Shows) : List String :=
+  (shows.said?.getD []).map fun text =>
     Linger.Target.Remote.scrub host ++ ": " ++ Linger.Target.Remote.scrub text
 
 /-- How a session ended, of the record a host's answer gives of it (`Session.endingFields`): none
 for a record no ending gives. -/
 def Remote.endingOf (fields : Record) : Option Linger.Session.Ending :=
-  let small (text : String) : Option UInt8 :=
-    text.toNat?.bind fun n => if n < 256 then some n.toUInt8 else none
-  match fields.lookup "saved" with
-  | some n => (small n).map .saved
+  let small (field : Option Linger.Display.Listing.Field) : Option UInt8 :=
+    match field with
+    | some (.count n) => if n < 256 then some n.toUInt8 else none
+    | _ => none
+  match fields["saved"]? with
+  | some n => (small (some n)).map .saved
   | none =>
-    if fields.lookup "outcome" == some "unknown" then some (.program .unknown)
+    if fields.text? "outcome" == some "unknown" then some (.program .unknown)
     else
-      match fields.lookup "signal" with
-      | some n => (small n).map fun signal => .program (.signaled signal)
+      match fields["signal"]? with
+      | some n => (small (some n)).map fun signal => .program (.signaled signal)
       | none =>
-        match fields.lookup "exit" with
-        | some n => (small n).map fun code => .program (.exited code)
+        match fields["exit"]? with
+        | some n => (small (some n)).map fun code => .program (.exited code)
         | none => if fields.isEmpty then some .dismissed else none
 
-/-- **What a remote command found**, of the host's answer and the result's members: how the
-session ended, when the members say it and its answer is the host's, and otherwise the host's
+/-- **What a remote command found**, of the host's answer and what its result shows: how the
+session ended, when the result says it and its answer is the host's, and otherwise the host's
 answer as it gave it. Either way, its answer is the host's. -/
-def Remote.found (answer : Os.Answer) (members : List (String × Json)) : Api.Found :=
-  match ((members.lookup "ending").bind Record.of).bind Remote.endingOf with
+def Remote.found (answer : Os.Answer) (shows : Shows) : Api.Found :=
+  match shows.ending?.bind Remote.endingOf with
   | some ending => if ending.answer = answer then .ended ending else .heard answer
   | none => .heard answer
 
@@ -828,65 +882,76 @@ def Remote.outputFrames (bytes : List UInt8) : List Linger.Session.Wire.Msg :=
 def Remote.endedText : List UInt8 :=
   [116, 104, 101, 32, 102, 97, 114, 32, 97, 116, 116, 97, 99, 104, 32, 101, 110, 100, 101, 100]
 
-/-- The message that ends an attach as the host's stream's `closed` says it ended: how its
-program ended, or that a signal saved it, as its daemon would say, and otherwise a refusal, whose
-answer the bridge keeps. -/
-def Remote.ending (closed : Json) : Linger.Session.Wire.Msg :=
-  match ((closed.member? "ending").bind Record.of).bind Remote.endingOf with
+/-- The message that ends an attach as the host's stream's `closed` says it ended, read exactly as a
+result (`exactly`): how its program ended, or that a signal saved it, as its daemon would say, and
+otherwise a refusal, whose answer the bridge keeps. -/
+def Remote.ending (closed : ExactJSON.Value) : Linger.Session.Wire.Msg :=
+  match ((exactly closed : Option Result).bind (·.ending?)).bind Remote.endingOf with
   | some (.program outcome) => .ended outcome
   | some (.saved signal) => .saved signal
   | _ => .err Remote.endedText
+
+/-- A string value's text. -/
+def Remote.text? : ExactJSON.Value → Option String
+  | .string text => some text
+  | _ => none
+
+/-- An array of strings, their texts. -/
+def Remote.texts? : ExactJSON.Value → Option (List String)
+  | .array items => items.toList.mapM Remote.text?
+  | _ => none
 
 /-- **What linger relays to its attach client of a line the host's `serve` wrote** for the attach
 `id`: an update of the attach's stream, `session/output` naming it, as the frames of the bytes it
 carries, then, when it carries `closed`, the message that ends the attach (`Remote.ending`); the
 answer of the attach's request, when it is no `done`, as a refusal that says what the host said;
 and nothing of any other line. -/
-def Remote.relay (id : Id) (message : Json) : List Linger.Session.Wire.Msg :=
-  match message.member? "method", message.member? "params" with
-  | some (.str "session/output"), some params =>
-    if (params.member? "subscription").bind Id.of = some id then
+def Remote.relay (id : Id) (message : ExactJSON.Value) : List Linger.Session.Wire.Msg :=
+  match member? "method" message, member? "params" message with
+  | some (.string "session/output"), some params =>
+    if (member? "subscription" params).bind Id.of = some id then
       let bytes :=
-        match params.member? "data" with
-        | some (.str text) => (Base64.decode text.toList).getD []
+        match member? "data" params with
+        | some (.string text) => (Base64.decode text.toList).getD []
         | _ => []
       Remote.outputFrames bytes ++
-        match params.member? "closed" with
+        match member? "closed" params with
         | some closed => [Remote.ending closed]
         | none => []
     else []
   | _, _ =>
-    if (message.member? "id").bind Id.of = some id then
-      match message.member? "result" with
+    if (member? "id" message).bind Id.of = some id then
+      match member? "result" message with
       | some result =>
-        if (result.member? "answer").bind Json.text? = some "done" then []
+        if (member? "answer" result).bind Remote.text? = some "done" then []
         else
-          let said := ((result.member? "said").bind Json.texts?).getD []
-          let answer := ((result.member? "answer").bind Json.text?).getD "unknown"
+          let said := ((member? "said" result).bind Remote.texts?).getD []
+          let answer := ((member? "answer" result).bind Remote.text?).getD "unknown"
           [.err
               ((Linger.Target.Remote.scrub
                       (if said.isEmpty then s!"the attach was refused: {answer}"
                       else String.intercalate "; " said)).take
                   1024).copy.toUTF8.toList]
       | none =>
-        let error := ((message.member? "error").bind (·.member? "message")).bind Json.text?
+        let error := ((member? "error" message).bind (member? "message")).bind Remote.text?
         [.err
             ((Linger.Target.Remote.scrub (error.getD "the attach was refused")).take
                 1024).copy.toUTF8.toList]
     else []
 
-/-- **The params of the `session/input` that carries keys** to the attach `id`: its subscription,
-and the keys in base64. -/
-def Remote.keys (id : Id) (bytes : List UInt8) : Json :=
-  .obj [("subscription", id.json), ("data", .str (Base64.encode bytes))]
+/-- **The params of the `session/input` that carries keys** to the attach `id`: the keys in
+base64, and its subscription. -/
+def Remote.keys (id : Id) (bytes : List UInt8) : ExactJSON.Value :=
+  ExactJSON.toValue ({ data := Base64.encode bytes, subscription := id } : Keys)
 
 /-- `session/resize` of the attach `id`, request `next`, to a terminal's size, the emulator's, at
 most 1000 either way (`Vt.clampDim`). -/
 def Remote.sized (id : Id) (next : Nat) (cols rows : UInt32) : String :=
   Remote.request next "session/resize"
-    (.obj
-      [("subscription", id.json), ("cols", .int (Terminal.Vt.clampDim cols.toNat)),
-        ("rows", .int (Terminal.Vt.clampDim rows.toNat))])
+    (ExactJSON.toValue
+      ({ cols := Terminal.Vt.clampDim cols.toNat, rows := Terminal.Vt.clampDim rows.toNat,
+         subscription := id } :
+        Sized))
 
 /-- What linger writes the host's `serve` of a message an attach client sends the attach `id`,
 `next` the id of the next request: `session/attach` of the session `name`, with its mode and its
@@ -897,11 +962,7 @@ def Remote.up (id : Id) (name : String) (command : List String) (next : Nat) :
     Linger.Session.Wire.Msg → List String
   | .attach mode cols rows =>
     let readOnly := mode == .readOnly
-    let attached :=
-      Remote.request 2 "session/attach"
-        (.obj
-          ([("name", .str name)] ++ (if readOnly then [("readOnly", .bool true)] else []) ++
-            if command.isEmpty then [] else [("command", .arr (command.map .str))]))
+    let attached := Remote.request 2 "session/attach" (Remote.attaching name readOnly command)
     if readOnly || cols == 0 || rows == 0 then [attached]
     else [attached, Remote.sized id next cols rows]
   | .input bytes => [Remote.request next "session/input" (Remote.keys id bytes)]
@@ -911,6 +972,6 @@ def Remote.up (id : Id) (name : String) (command : List String) (next : Nat) :
 /-- What linger writes the host's `serve` when the attach `id`'s client leaves: `session/detach`
 of it, the session running on. -/
 def Remote.leave (id : Id) (next : Nat) : String :=
-  Remote.request next "session/detach" (.obj [("subscription", id.json)])
+  Remote.request next "session/detach" (ExactJSON.toValue ({ subscription := id } : Subscription))
 
 end Linger.App.Serve

@@ -3,8 +3,8 @@ module
 import all Linger.Selector.CoreCode.Picker
 meta import Linger.Selector.CoreCode.Picker
 import Linger.Display.CoreCode.Status
-import Linger.Os.CoreCode.Json
-meta import Linger.Os.CoreCode.Json
+import ExactJSON.Codec
+meta import ExactJSON.Codec
 
 /-! Concrete selector fixtures. General contracts live in `Linger.Selector.Proofs.Picker`. -/
 
@@ -31,11 +31,13 @@ namespace Linger.Selector.Picker.Tests
   visible ["work", "wk", "a-w-k", "Work", "other", "work"] "WK" ==
     ["work", "wk", "a-w-k", "Work", "work"]
 
-/-- A listing of these records, one canonical JSON line each, as `ls --porcelain` prints them. -/
+/-- A listing of records whose fields are these rows' text, their JSON Lines, as `ls --porcelain`
+prints records, without cleaning their text. -/
 def listing (records : List (List (String × String))) : String :=
-  String.join
+  ExactJSON.encodeLines
     (records.map fun record =>
-      (Json.render (.obj (record.map fun (key, value) => (key, .str value)))).push '\n')
+        (record.foldl (fun held field => held.insertIfNew field.1 (.text field.2)) ∅ :
+          Linger.Display.Listing.Record)).toArray
 
 /-- The targets a listing's text gives, or none when the chooser refuses it. -/
 def listed (text : String) : Option (List String) :=
@@ -53,15 +55,21 @@ def listed (text : String) : Option (List String) :=
   listed (listing [[("unknown", "metadata")], [("names", "not-a-name")], [("name", "work@世界")]]) ==
     some ["work@世界"]
 
-#guard
-  ["", "\n", listing [[("pid", "123"), ("state", "running")]]].all fun text =>
-    listed text == some []
+#guard ["", listing [[("pid", "123"), ("state", "running")]]].all fun text => listed text == some []
 
--- a line that is not a canonical object of strings refuses the whole listing
+-- a line that is not a record's JSON refuses the whole listing: a blank line, text that is not
+-- canonical, a field that is no flag, count or text, and a last line without its line feed
 #guard
-  ["name\twork\n", "{\"name\": \"work\"}\n", "{\"name\":\"work\",\"pid\":5}\n", "[\"work\"]\n",
-        "{\"pid\":\"1\",\"name\":\"work\"}\n", "{\"name\":\"work\"}\n{\"name\":\"other\"\n"].all
+  ["\n", "name\twork\n", "{\"name\": \"work\"}\n", "{\"name\":\"work\",\"pid\":-5}\n",
+        "{\"name\":\"work\",\"pid\":null}\n", "[\"work\"]\n", "{\"pid\":\"1\",\"name\":\"work\"}\n",
+        "{\"name\":\"work\"}\n{\"name\":\"other\"\n", "{\"name\":\"work\"}"].all
     fun text => listed text == none
+
+-- a record's flags and counts are JSON booleans and integers, which the chooser reads as text
+#guard
+  match parseSnapshot "{\"name\":\"work\",\"pid\":42,\"running\":true}\n" with
+  | .ok snapshot => snapshot.row "work" == [("name", "work"), ("pid", "42"), ("running", "true")]
+  | .error _ => false
 
 #guard
   ["\x00", "\x01", "\r", "\x1b", "\x7f", "\u0085", "\u009b"].all fun control =>

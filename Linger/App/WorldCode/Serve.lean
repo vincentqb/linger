@@ -3,7 +3,7 @@ module
 public import Linger.App.WorldCode.Api
 import Linger.App.CoreCode.Serve
 import Linger.App.CoreCode.Base64
-import Linger.Os.CoreCode.Json
+import Linger.App.CoreCode.Codec
 import Linger.Session.CoreCode
 import Linger.Session.CoreCode.Wire
 import Linger.Session.WorldCode.Client
@@ -98,7 +98,8 @@ private structure Shared where
   written. -/
   relaying : List UInt32 := []
 
-/-- Write one message, a line of clean text (`Serve.line`). -/
+/-- Write one message, its line (`Serve.line`): JSON text, which holds no C0 control, DEL, C1
+control, U+2028 or U+2029 as itself (`render_no_control`), then a newline. -/
 private def emit (out : Outgoing) : IO Unit := writeAll stdoutFd (Serve.line out).toUTF8
 
 /-- Ask the daemon of the watch under `key` for its `info`, on the watch's connection, unless a
@@ -152,15 +153,19 @@ private def stepShared (ev : Event) :
       | .perform id method request bytes => some (id, method, request, bytes)
       | .send _ | .relay .. => none
 
-/-- The members of a result that show what a request shows: a capture's bytes in base64,
-`data`; a listing's records, `records`, each a session's fields as clean text; any other text, and
-the sessions an upgrade carried over. -/
-private def shownMembers : Api.Shown → List (String × Json)
-  | .nothing => []
-  | .bytes bytes => [("data", .str (Base64.encode bytes.toList))]
-  | .rows _ rows => [("records", .arr ((Serve.records rows).map Record.json))]
-  | .text text => [("text", .str (Serve.clean text))]
-  | .upgraded names => [("upgraded", .arr (names.map fun name => .str (Serve.clean name)))]
+/-- What a result shows of what a request shows, of how a session it found ended (`endingRecord`)
+and of what it said (`said`): a capture's bytes in base64, `data`; a listing's records, `records`,
+each a session's record, its keys and text clean text; any other text, and the sessions an upgrade
+carried over; how the session ended, `ending`; and the last lines it said, `said`, and how many
+before them it dropped. -/
+private def shows (shown : Api.Shown) (found : Api.Found) (said : Log String) : Shows :=
+  let base : Shows := { saidShows said with ending? := endingRecord found }
+  match shown with
+  | .nothing => base
+  | .bytes bytes => { base with data? := some (Base64.encode bytes.toList) }
+  | .rows _ rows => { base with records? := some (Serve.records rows) }
+  | .text text => { base with text? := some (Serve.clean text) }
+  | .upgraded names => { base with upgraded? := some (names.map Serve.clean) }
 
 /-- The writer: write what waits, in order, and, when nothing else waits, the subscriber's update
 when it has one due, else a watch's, until input has ended and nothing waits, or writing fails. -/
@@ -578,7 +583,7 @@ private def answer (env : Api.Env) (conn : Std.Mutex Shared) (wake : Std.Condvar
       say := fun s => said.modify (Log.push saidCap · s.text)
       input := some (ByteArray.mk bytes.toArray) }
   let reply ← Api.perform env request
-  let members := shownMembers reply.shown ++ endingMembers reply.found ++ saidMembers (← said.get)
+  let members := shows reply.shown reply.found (← said.get)
   let start ←
     conn.atomically do
         modify fun s =>
