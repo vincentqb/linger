@@ -6,16 +6,15 @@ import Linger.Session.WorldCode.Daemon
 import Os.WorldCode
 import Os.WorldSpec
 import Terminal.CoreCode.Replay
-import SoftwareChallenge.Commands
+meta import SoftwareChallenge.Attributes -- shake: keep
 
 /-! # The checks of the session's world claims
 
-Each world claim the session headlines rest on has a check here, which tests the foreign
-behaviour the claim constrains on the host it runs on, with its own programs, terminals, files and
-sockets. A claim takes that behaviour as a parameter, which no Lean term computes: each check
-names it with a constant of this module, which has no body, and observes it by running the real
-thing. Each says what it covers; the claims are of every input. No program module imports this
-one. -/
+Each world claim the session headlines rest on has a check here, a test marked `@[tests claim]`,
+which tests the foreign behaviour the claim constrains on the host it runs on, with its own
+programs, terminals, files and sockets. A claim takes that behaviour as a parameter, which no Lean
+term computes, so each check observes it by running the real thing. Each says what it covers; the
+claims are of every input. No program module imports this one; `Verify.Checks` runs its tests. -/
 
 namespace Linger.Session.Checks
 
@@ -66,14 +65,11 @@ def stop (pid master : UInt32) (reaped : Bool := false) : IO Unit := do
 /-- Fail the check, saying why. -/
 def refute {α : Type} (why : String) : IO α := throw (IO.userError why)
 
-/-- What a reader reads of a name's end record once linger saved `bytes` there: the observation
-`Record.Kept` constrains. -/
-opaque readsBack : List UInt8 → Option (List UInt8)
-
--- A record saved as linger saves one, through `Os.Shell.replaceFile`, reads back whole at every
--- size, from none to a mebibyte; and a reader that reads while it is saved over and over reads
--- one saved record whole each time, never part of one or a mix of two.
-Check Record.Kept readsBack := do
+/-- A record saved as linger saves one, through `Os.Shell.replaceFile`, reads back whole at every
+size, from none to a mebibyte; and a reader that reads while it is saved over and over reads one
+saved record whole each time, never part of one or a mix of two. -/
+@[tests Record.Kept]
+public def checkRecordKept : IO Unit := do
   IO.FS.withTempDir fun dir => do
       let path := (dir / "name.record").toString
       for size in [0, 1, 4095, 4096, 65537, 1048576] do
@@ -112,14 +108,11 @@ Check Record.Kept readsBack := do
       | .error err =>
         refute s!"a reader could not read a record being saved: {err}"
 
-/-- What a reader finds at a path once the machine crashed while linger replaced the file there:
-the observation `Disk.Durable` constrains. -/
-opaque afterCrash : Option ByteArray → ByteArray → Bool → Option ByteArray
-
--- No check cuts the power. This one checks what a reader finds once both of `replaceFile`'s
--- flushes have returned and no crash came: over an old file and over none, a fresh descriptor
--- reads the new file whole, the temporary sibling is gone, and the file flushes again.
-Check Disk.Durable afterCrash := do
+/-- No check cuts the power. This one checks what a reader finds once both of `replaceFile`'s
+flushes have returned and no crash came: over an old file and over none, a fresh descriptor reads
+the new file whole, the temporary sibling is gone, and the file flushes again. -/
+@[tests Disk.Durable]
+public def checkDiskDurable : IO Unit := do
   IO.FS.withTempDir fun dir => do
       let path := (dir / "name.ckpt").toString
       for (old, new) in [(none, 0), (some 1, 70000), (some 70000, 3)] do
@@ -135,15 +128,12 @@ Check Disk.Durable afterCrash := do
         unless ← fsyncPath path do
           refute "a replaced file did not flush"
 
-/-- What a program whose terminal is in a mode reads once its pty was written: the observation
-`Pty.Delivers` constrains. -/
-opaque rawReads : Pty.Mode → ByteArray → ByteArray
-
--- A program whose terminal is in raw mode reads every byte written to its pty, one for one and
--- in order: the program sets raw mode with `stty raw -echo`, says so, and copies what it reads to
--- a file, and the check writes every byte value, the control bytes, DEL and bytes that are no
--- UTF-8 among them, then the same in reverse order.
-Check Pty.Delivers rawReads := do
+/-- A program whose terminal is in raw mode reads every byte written to its pty, one for one and in
+order: the program sets raw mode with `stty raw -echo`, says so, and copies what it reads to a file,
+and the check writes every byte value, the control bytes, DEL and bytes that are no UTF-8 among
+them, then the same in reverse order. -/
+@[tests Pty.Delivers]
+public def checkPtyDelivers : IO Unit := do
   IO.FS.withTempDir fun dir => do
       let file := (dir / "raw.input").toString
       let (pid, master) ←
@@ -170,16 +160,6 @@ Check Pty.Delivers rawReads := do
       finally
         stop pid master
 
-/-- The environment of the process that starts a program: an observation `Spawn.Runs`
-constrains, which the started program inherits. -/
-opaque inherited : String → Option String
-
-/-- What a program a start asks for sees of its start, `none` when it cannot start: the
-observation `Spawn.Runs` and `Spawn.Clean` constrain. -/
-opaque started :
-    String →
-      String → Array String → List (String × Option String) → Spawn.Reset → Option Spawn.Started
-
 /-- Start `/bin/sh` in a new terminal, in `dir`, running `script` with `words` and the extra
 environment `extra`, as a session's program starts, and give the lines it leaves in `out` once
 it writes them there, or `none` if it does not within 10 s. -/
@@ -193,12 +173,12 @@ def startedSees (dir out script : String) (words extra : Array String) (reset : 
   finally
     stop pid master
 
--- A started program sees the words, the directory and the environment its start asked for: a
--- shell started in a new terminal, in a directory of its own, with words a shell would expand,
--- split or quote, with variables that override what it inherits, the last setting of one
--- winning, and one it inherits unset, writes what it sees to a file: its directory, its words and
--- each variable.
-Check Spawn.Runs inherited started := do
+/-- A started program sees the words, the directory and the environment its start asked for: a shell
+started in a new terminal, in a directory of its own, with words a shell would expand, split or
+quote, with variables that override what it inherits, the last setting of one winning, and one it
+inherits unset, writes what it sees to a file: its directory, its words and each variable. -/
+@[tests Spawn.Runs]
+public def checkSpawnRuns : IO Unit := do
   IO.FS.withTempDir fun dir => do
       let out := (dir / "started").toString
       let words := #["w0", "two words", "$HOME `id` * ;", "ü ✓", ""]
@@ -221,14 +201,6 @@ Check Spawn.Runs inherited started := do
 def textOf (path : String) : IO String := do
   return ((← (IO.FS.readFile path).toBaseIO).toOption).getD ""
 
-/-- What linger reads of the foreground of the terminal whose master is the argument: the
-observation `Pty.Foreground` constrains. -/
-opaque reportedForeground : UInt32 → Option Foreground
-
-/-- The foreground's leader of the terminal whose master is the argument, as it sees itself: the
-observation `Pty.Foreground` compares the report with. -/
-opaque seenForeground : UInt32 → Option Foreground
-
 /-- What `Os.Shell.foreground` reports of the terminal `master`, once it reports `words` or the
 clock reaches `deadline`. -/
 def reportsWithin (master : UInt32) (words : List String) (deadline : Nat) :
@@ -239,14 +211,15 @@ def reportsWithin (master : UInt32) (words : List String) (deadline : Nat) :
     report ← foreground master
   return report
 
--- The operating system reports a pty's foreground as its leader sees itself: a shell started in a
--- new terminal, with words a shell would split or quote, moves to a directory of its own and
--- writes the directory it sees there, while it is its terminal's foreground, and is reported with
--- its pid, its words and that directory; then an interactive shell in a new terminal runs a
--- `sleep`, a job of its own, in another directory it moves to, and the foreground reported is
--- that `sleep`, with its words and that directory. It runs on macOS too, where `sysctl` and
--- `libproc` answer, but no macOS host has run it yet.
-Check Pty.Foreground reportedForeground seenForeground := do
+/-- The operating system reports a pty's foreground as its leader sees itself: a shell started in a
+new terminal, with words a shell would split or quote, moves to a directory of its own and writes
+the directory it sees there, while it is its terminal's foreground, and is reported with its pid,
+its words and that directory; then an interactive shell in a new terminal runs a `sleep`, a job of
+its own, in another directory it moves to, and the foreground reported is that `sleep`, with its
+words and that directory. It runs on macOS too, where `sysctl` and `libproc` answer, but no macOS
+host has run it yet. -/
+@[tests Pty.Foreground]
+public def checkPtyForeground : IO Unit := do
   IO.FS.withTempDir fun dir => do
       let out := (dir / "seen").toString
       IO.FS.createDir (dir / "moved")
@@ -286,14 +259,6 @@ Check Pty.Foreground reportedForeground seenForeground := do
       finally
         stop shell master
 
-/-- What linger reads of whether the terminal whose master is the argument echoes: the observation
-`Pty.Echo` constrains. -/
-opaque reportedEcho : UInt32 → Option Bool
-
-/-- Whether the terminal whose master is the argument echoes, as its program last set it on its
-own end: the observation `Pty.Echo` compares the report with. -/
-opaque setEcho : UInt32 → Option Bool
-
 /-- What `Os.Shell.echoOf` reports of the terminal `master`, once it reports `wanted` or the clock
 reaches `deadline`. -/
 def echoWithin (master : UInt32) (wanted : Bool) (deadline : Nat) : IO (Option Bool) := do
@@ -303,11 +268,12 @@ def echoWithin (master : UInt32) (wanted : Bool) (deadline : Nat) : IO (Option B
     report ← echoOf master
   return report
 
--- A pty reports its echo as its program last set it: a shell in a new terminal turns echo off on
--- its own end, says so in a file, and waits for a line, then turns echo on again and says so;
--- after each, linger reads the flag through the master, and it is what the shell set. The shell
--- reads its line with echo off, and the master reads no echo of it.
-Check Pty.Echo reportedEcho setEcho := do
+/-- A pty reports its echo as its program last set it: a shell in a new terminal turns echo off on
+its own end, says so in a file, and waits for a line, then turns echo on again and says so; after
+each, linger reads the flag through the master, and it is what the shell set. The shell reads its
+line with echo off, and the master reads no echo of it. -/
+@[tests Pty.Echo]
+public def checkPtyEcho : IO Unit := do
   IO.FS.withTempDir fun dir => do
       let off := (dir / "off").toString
       let on := (dir / "on").toString
@@ -329,14 +295,15 @@ Check Pty.Echo reportedEcho setEcho := do
       finally
         stop pid master
 
--- A started program holds no more than its start asks for, whatever the process that starts it
--- holds: that process ignores SIGHUP, as a daemon does, and the program, a shell, finds its
--- terminal on descriptors 0, 1 and 2, no other descriptor from 3 to 64 open, and SIGHUP and
--- SIGINT able to reach it; on Linux, once it is `sleep`, which changes none of it, its `/proc`
--- entry shows no signal ignored or blocked and, once `sleep` has closed what it opens as it
--- starts, only descriptors 0, 1 and 2, all its terminal.
--- The runner holds no descriptor a start could pass on, so the descriptors' reset goes untested.
-Check Spawn.Clean started := do
+/-- A started program holds no more than its start asks for, whatever the process that starts it
+holds: that process ignores SIGHUP, as a daemon does, and the program, a shell, finds its terminal
+on descriptors 0, 1 and 2, no other descriptor from 3 to 64 open, and SIGHUP and SIGINT able to
+reach it; on Linux, once it is `sleep`, which changes none of it, its `/proc` entry shows no signal
+ignored or blocked and, once `sleep` has closed what it opens as it starts, only descriptors 0, 1
+and 2, all its terminal. The runner holds no descriptor a start could pass on, so the descriptors'
+reset goes untested. -/
+@[tests Spawn.Clean]
+public def checkSpawnClean : IO Unit := do
   IO.FS.withTempDir fun dir => do
       let out := (dir / "clean").toString
       ignoreSighup
@@ -395,13 +362,10 @@ Check Spawn.Clean started := do
       finally
         stop pid master
 
-/-- Whether a process has ended a number of milliseconds after a signal reached it: the
-observation `Signal.Ends` constrains. -/
-opaque ended : UInt32 → Nat → Nat → Bool
-
--- SIGKILL ends a process within a second: a program in a terminal session of its own, which
--- ignores SIGTERM, SIGINT and SIGHUP and sleeps, has ended a second after SIGKILL reached it.
-Check Signal.Ends ended := do
+/-- SIGKILL ends a process within a second: a program in a terminal session of its own, which
+ignores SIGTERM, SIGINT and SIGHUP and sleeps, has ended a second after SIGKILL reached it. -/
+@[tests Signal.Ends]
+public def checkSignalEnds : IO Unit := do
   let (pid, master) ←
     spawnPty 80 24 "" "/bin/sh" #["-c", "trap '' TERM INT HUP; printf ready; exec sleep 60"] #[]
   let reaped ← IO.mkRef false
@@ -423,14 +387,11 @@ Check Signal.Ends ended := do
   finally
     stop pid master (← reaped.get)
 
-/-- Whether a poll with a timeout returned after a number of milliseconds with nothing ready and
-no signal caught: the observation `Poll.Sleeps` constrains. -/
-opaque quiet : Int32 → Nat → Prop
-
--- poll(2) waits out its timeout: a poll of a listening socket nobody connects to, with timeouts
--- from 0 to 50 ms, returns with nothing ready no sooner than its timeout; and one with a negative
--- timeout waits for its event, returning only once a connection arrives 100 ms later.
-Check Poll.Sleeps quiet := do
+/-- poll(2) waits out its timeout: a poll of a listening socket nobody connects to, with timeouts
+from 0 to 50 ms, returns with nothing ready no sooner than its timeout; and one with a negative
+timeout waits for its event, returning only once a connection arrives 100 ms later. -/
+@[tests Poll.Sleeps]
+public def checkPollSleeps : IO Unit := do
   IO.FS.withTempDir fun dir => do
       let path := (dir / "p.sock").toString
       let listen ← unixListen path
@@ -458,13 +419,6 @@ Check Poll.Sleeps quiet := do
       finally
         close listen
 
-/-- What linger's effect executor answers for an effect in a world, as `Driver.Responds` reads
-an executor: the world it leaves and the effect's reply, or what it raises. -/
-opaque answers :
-    State →
-      Shell.Daemon.Rt →
-      (eff : Effect Terminal.Replay.Plan) → Except IO.Error (Shell.Daemon.Rt × Driver.Reply eff)
-
 /-- A daemon's transport to a client that connected to `listen` at `path` and hung up. -/
 def hungUp (listen : UInt32) (path : String) : IO Shell.Daemon.Conn := do
   let client ← unixConnect path
@@ -476,13 +430,14 @@ def hungUp (listen : UInt32) (path : String) : IO Shell.Daemon.Conn := do
   close client.toUInt64.toUInt32
   return { fd := served.toUInt64.toUInt32 }
 
--- The daemon's effect executor answers every effect, the world it acts on failing: each kind of
--- effect, run through `Daemon.runEffect` against clients that hung up, a terminal descriptor
--- that is no terminal, checkpoint hooks that raise and a program in a terminal session of its
--- own, returns its reply and the events the driver feeds back for it: a client gone, nothing,
--- or how the stopped program ended. It covers each kind of effect once, in one failing world;
--- the claim is of every state, world and effect.
-Check Driver.Responds answers := do
+/-- The daemon's effect executor answers every effect, the world it acts on failing: each kind of
+effect, run through `Daemon.runEffect` against clients that hung up, a terminal descriptor that is
+no terminal, checkpoint hooks that raise and a program in a terminal session of its own, returns its
+reply and the events the driver feeds back for it: a client gone, nothing, or how the stopped
+program ended. It covers each kind of effect once, in one failing world; the claim is of every
+state, world and effect. -/
+@[tests Driver.Responds]
+public def checkDriverResponds : IO Unit := do
   IO.FS.withTempDir fun dir => do
       let path := (dir / "d.sock").toString
       let listen ← unixListen path
@@ -533,14 +488,11 @@ Check Driver.Responds answers := do
         stop pid master (← reaped.get)
         close listen
 
-/-- Which lock attempts the operating system grants, in a state of the locks: the observation
-`Claim.Exclusive` constrains. -/
-opaque grants : Claim.State → Nat → Nat → Bool
-
--- The operating system grants a lock only when no one holds it: while one open of a lock file
--- holds its `flock`, as a daemon's does, another open of it does not get it, and once the holder
--- lets it go, the next does.
-Check Claim.Exclusive grants := do
+/-- The operating system grants a lock only when no one holds it: while one open of a lock file
+holds its `flock`, as a daemon's does, another open of it does not get it, and once the holder lets
+it go, the next does. -/
+@[tests Claim.Exclusive]
+public def checkClaimExclusive : IO Unit := do
   IO.FS.withTempDir fun dir => do
       let path := (dir / "name.lock").toString
       let first ← flock path
@@ -557,17 +509,12 @@ Check Claim.Exclusive grants := do
         refute s!"a lock file's lock was refused once its holder let it go ({third})"
       close third.toUInt64.toUInt32
 
-/-- What the names of a directory name once a session's name is placed, as a start places an
-entry, with a link, or as a rename moves one, with a rename that may not replace: the observation
-`Os.Place.NoReplace` constrains, which `one_name` rests on. It has no body; the check below
-observes it. -/
-opaque placedNames : Bool → (String → Option Nat) → String → String → Option (String → Option Nat)
-
--- A start and a rename onto one name leave it naming one entry: in a directory of its own, four
--- links and four renames that may not replace, at once, from eight files that each hold their
--- own ID, onto one free name; exactly one succeeds, the name holds that one's ID, every linked
--- source stays and every renamed source that lost stays too.
-Check Os.Place.NoReplace placedNames := do
+/-- A start and a rename onto one name leave it naming one entry: in a directory of its own, four
+links and four renames that may not replace, at once, from eight files that each hold their own ID,
+onto one free name; exactly one succeeds, the name holds that one's ID, every linked source stays
+and every renamed source that lost stays too. -/
+@[tests Os.Place.NoReplace]
+public def checkPlaceNoReplace : IO Unit := do
   IO.FS.withTempDir fun dir => do
       let sources := (List.range 8).map fun i => (decide (i < 4), s!"src{i}")
       for (_, source) in sources do
@@ -592,16 +539,12 @@ Check Os.Place.NoReplace placedNames := do
         unless kept == (links || source != winner) do
           throw (IO.userError s!"placing a name moved or kept {source} wrongly")
 
-/-- What a daemon is once the exec of an upgrade succeeded, its id, its children and its kept
-descriptors, from what they were before: the observation `Os.Exec.Keeps` constrains, which
-`upgrade_keeps` rests on. It has no body; the check below observes it. -/
-opaque upgraded : Nat → List Nat → List Nat → Nat × List Nat × List Nat
-
--- An exec keeps the process, its child and a kept descriptor: a shell that started a child and
--- holds the check's pipe at descriptor 3 alone execs a second shell, which reads the same process
--- id, finds the child's parent is still that process, and writes through descriptor 3 to the
--- pipe the check reads. The upgrade suite upgrades live sessions the same way.
-Check Os.Exec.Keeps upgraded := do
+/-- An exec keeps the process, its child and a kept descriptor: a shell that started a child and
+holds the check's pipe at descriptor 3 alone execs a second shell, which reads the same process id,
+finds the child's parent is still that process, and writes through descriptor 3 to the pipe the
+check reads. The upgrade suite upgrades live sessions the same way. -/
+@[tests Os.Exec.Keeps]
+public def checkExecKeeps : IO Unit := do
   let script :=
     "sleep 30 >/dev/null 2>&1 & child=$!\n" ++ "exec 3>&1 1>/dev/null\n" ++
       "echo \"before $$ $child\" >&3\n" ++
@@ -619,17 +562,12 @@ Check Os.Exec.Keeps upgraded := do
         (IO.userError
           s!"the exec'd shell wrote nothing through the descriptor it kept: {out.stdout} {out.stderr}")
 
-/-- What a session's notification socket reads, one read of at most the first argument's bytes for
-each, of the notifications its program sent to it one after another: the observation
-`Os.Dgram.Whole` constrains, which `notify_exact` rests on. It has no body; the check below
-observes it. -/
-opaque notifications : Nat → List (List UInt8) → List (List UInt8)
-
--- A session's notifications arrive whole and in order: at a socket bound as a daemon binds its
--- own (`Os.Shell.dgramBind`), the notifications a program sends, `READY=1` and its status, a
--- status `systemd-notify` would join to it, one of exactly `Notify.cap` bytes and a last one, read
--- as the daemon reads them, one read of at most `Notify.cap` bytes each, are those, in order.
-Check Os.Dgram.Whole notifications := do
+/-- A session's notifications arrive whole and in order: at a socket bound as a daemon binds its own
+(`Os.Shell.dgramBind`), the notifications a program sends, `READY=1` and its status, a status
+`systemd-notify` would join to it, one of exactly `Notify.cap` bytes and a last one, read as the
+daemon reads them, one read of at most `Notify.cap` bytes each, are those, in order. -/
+@[tests Os.Dgram.Whole]
+public def checkDgramWhole : IO Unit := do
   IO.FS.withTempDir fun dir => do
       let path := (dir / "s.notify").toString
       let fd ← dgramBind path
@@ -652,21 +590,12 @@ Check Os.Dgram.Whole notifications := do
       finally
         close fd
 
-/-- Whether a process is in the process group of a session's program when its ending signals
-the group: the membership `Os.Signal.Group` speaks of, which `ending_clean` rests on. It has no
-body; the check below observes it. -/
-opaque inProgramGroup : Nat → Nat → Bool
-
-/-- Whether the signal a session's ending sends to its program's process group
-(`Os.Shell.signalGroup`) reaches a process: the observation `Os.Signal.Group` constrains. It has no
-body; the check below observes it. -/
-opaque endingReaches : Nat → Nat → Bool
-
--- A session's ending reaches every process of its program's group: a program in a terminal session
--- and a process group of its own starts two jobs in its group, each of which, like the program,
--- notes the SIGHUP an ending sends first in a file of its own and keeps running; one signal to the
--- group, and each of the three notes it.
-Check Os.Signal.Group inProgramGroup endingReaches := do
+/-- A session's ending reaches every process of its program's group: a program in a terminal session
+and a process group of its own starts two jobs in its group, each of which, like the program, notes
+the SIGHUP an ending sends first in a file of its own and keeps running; one signal to the group,
+and each of the three notes it. -/
+@[tests Os.Signal.Group]
+public def checkSignalGroup : IO Unit := do
   IO.FS.withTempDir fun dir => do
       let first := Linger.Session.ending.head?.map (·.signal) |>.getD 1
       let note (who : String) := s!"trap ': > {dir}/{who}' HUP"

@@ -2,7 +2,7 @@ module
 
 public import Os.WorldSpec
 import Os.WorldCode
-import SoftwareChallenge.Commands
+meta import SoftwareChallenge.Attributes -- shake: keep
 
 /-! # The checks of the OS boundary's world claims
 
@@ -11,23 +11,20 @@ that an exec keeps the process, its children and the descriptors it does not clo
 `Os.Place.NoReplace` that a link or a rename that may not replace never replaces a name, and
 `Os.Lock.Tells` that `fstat` and `stat` tell the file a descriptor holds from the one a path
 names, `Os.Signal.Group` that a signal to a process group reaches every member, and `Os.Dgram.Whole`
-that datagrams sent to a Unix socket's path arrive whole and in order. Each claim
-takes the behaviour it constrains as a parameter, which no Lean term computes: `slept`, `execd`,
-`placedBy`, `told`, `grouped` and `groupReached` name them, and the checks observe them, by
-sleeping and reading the monotonic clock around each sleep, by running a process that execs, by
-placing names in a directory of their own, eight at once onto one, by locking, deleting and
-creating lock files, and by signalling a process group whose members note the signal. No program module imports this one. -/
+that datagrams sent to a Unix socket's path arrive whole and in order. Each claim takes the
+behaviour it constrains as a parameter, which no Lean term computes, so its check, a test marked
+`@[tests claim]`, observes it: by sleeping and reading the monotonic clock around each sleep, by
+running a process that execs, by placing names in a directory of their own, eight at once onto
+one, by locking, deleting and creating lock files, by signalling a process group whose members note
+the signal, and by sending datagrams to a socket of its own. No program module imports this one;
+`Os.Checks.Main` runs its tests. -/
 
 namespace Os.Checks
 
-/-- What the monotonic clock reads once a sleep of `ms` milliseconds, asked for when it read
-`now`, returns: the observation `Os.Wait.Lasts` constrains. It has no body; the check below
-observes it. -/
-opaque slept : Nat → Nat → Nat
-
--- A sleep lasts at least as long as asked: around sleeps of 0, 1, 7 and 20 milliseconds, the
--- monotonic clock advances by at least as much.
-Check Os.Wait.Lasts slept := do
+/-- A sleep lasts at least as long as asked: around sleeps of 0, 1, 7 and 20 milliseconds, the
+monotonic clock advances by at least as much. -/
+@[tests Os.Wait.Lasts]
+public def checkWaitLasts : IO Unit := do
   for ms in [0, 1, 7, 20] do
     let before ← IO.monoMsNow
     IO.sleep ms.toUInt32
@@ -35,15 +32,11 @@ Check Os.Wait.Lasts slept := do
     unless before + ms ≤ after do
       throw (IO.userError s!"a sleep of {ms} ms returned {after - before} ms after it began")
 
-/-- What a process is once an `execve` it made succeeded, its id, its children and its kept
-descriptors, from what they were before: the observation `Os.Exec.Keeps` constrains. It has no
-body; the check below observes it. -/
-opaque execd : Nat → List Nat → List Nat → Nat × List Nat × List Nat
-
--- An exec keeps the process: a shell that started a child and holds the check's pipe at
--- descriptor 3 alone execs a second shell, which reads the same process id, finds the child's
--- parent is still that process, and writes through descriptor 3 to the pipe the check reads.
-Check Os.Exec.Keeps execd := do
+/-- An exec keeps the process: a shell that started a child and holds the check's pipe at descriptor
+3 alone execs a second shell, which reads the same process id, finds the child's parent is still
+that process, and writes through descriptor 3 to the pipe the check reads. -/
+@[tests Os.Exec.Keeps]
+public def checkExecKeeps : IO Unit := do
   let script :=
     "sleep 30 >/dev/null 2>&1 & child=$!\n" ++ "exec 3>&1 1>/dev/null\n" ++
       "echo \"before $$ $child\" >&3\n" ++
@@ -61,16 +54,12 @@ Check Os.Exec.Keeps execd := do
         (IO.userError
           s!"the exec'd shell wrote nothing through the descriptor it kept: {out.stdout} {out.stderr}")
 
-/-- What the names of a directory name once a link or a rename that may not replace placed one
-name at another: the observation `Os.Place.NoReplace` constrains. It has no body; the check below
-observes it. -/
-opaque placedBy : Bool → (String → Option Nat) → String → String → Option (String → Option Nat)
-
--- A name is never replaced: in a directory of its own, a link and a rename onto a name that names
--- a file both fail and leave both names as they were; onto a free name, a link leaves both names
--- naming the file and a rename only the new one; and of eight renames at once onto one free
--- name, from eight files, exactly one succeeds, and the name names that one's file.
-Check Os.Place.NoReplace placedBy := do
+/-- A name is never replaced: in a directory of its own, a link and a rename onto a name that names
+a file both fail and leave both names as they were; onto a free name, a link leaves both names
+naming the file and a rename only the new one; and of eight renames at once onto one free name, from
+eight files, exactly one succeeds, and the name names that one's file. -/
+@[tests Os.Place.NoReplace]
+public def checkPlaceNoReplace : IO Unit := do
   IO.FS.withTempDir fun dir => do
       let at_ (name : String) := (dir / name).toString
       let read (name : String) : IO (Option String) := do
@@ -118,16 +107,12 @@ Check Os.Place.NoReplace placedBy := do
       | _ =>
         throw (IO.userError s!"of eight renames at once onto one free name, {winners} succeeded")
 
-/-- What `Os.Shell.namesHeld` answers of a descriptor that holds a file open and a path, when the
-path names that file and when it names another or none: the observation `Os.Lock.Tells`
-constrains. It has no body; the check below observes it. -/
-opaque told : Bool → Bool
-
--- `fstat` and `stat` tell a held file from the one a path names, round after round: a locked file
--- the path names reads true; once its holder deleted it the path names none, and once another
--- file is created there, another, and both read false while the descriptor holds the first; the
--- path's new file, locked, reads true, and while it is held no second lock of the path is granted.
-Check Os.Lock.Tells told := do
+/-- `fstat` and `stat` tell a held file from the one a path names, round after round: a locked file
+the path names reads true; once its holder deleted it the path names none, and once another file is
+created there, another, and both read false while the descriptor holds the first; the path's new
+file, locked, reads true, and while it is held no second lock of the path is granted. -/
+@[tests Os.Lock.Tells]
+public def checkLockTells : IO Unit := do
   let dir ← IO.FS.createTempDir
   try
     let path := (dir / "check.lock").toString
@@ -165,18 +150,11 @@ Check Os.Lock.Tells told := do
   finally
     IO.FS.removeDirAll dir
 
-/-- Whether a process is in a process group when `Os.Shell.signalGroup` signals the group: the
-membership `Os.Signal.Group` speaks of. It has no body; the check below observes it. -/
-opaque grouped : Nat → Nat → Bool
-
-/-- Whether `Os.Shell.signalGroup` of a group reaches a process: the observation `Os.Signal.Group`
-constrains. It has no body; the check below observes it. -/
-opaque groupReached : Nat → Nat → Bool
-
--- A signal to a process group reaches every member: a shell that leads a terminal session and a
--- process group of its own starts two jobs in its group, each of which, like the shell, notes
--- SIGTERM in a file of its own; one SIGTERM to the group, and each of the three notes it.
-Check Os.Signal.Group grouped groupReached := do
+/-- A signal to a process group reaches every member: a shell that leads a terminal session and a
+process group of its own starts two jobs in its group, each of which, like the shell, notes SIGTERM
+in a file of its own; one SIGTERM to the group, and each of the three notes it. -/
+@[tests Os.Signal.Group]
+public def checkSignalGroup : IO Unit := do
   IO.FS.withTempDir fun dir => do
       let note (who : String) := s!"trap ': > {dir}/{who}; exit 0' TERM"
       let member (who : String) :=
@@ -229,15 +207,11 @@ Check Os.Signal.Group grouped groupReached := do
             break
         Os.Shell.close master
 
-/-- What a datagram socket reads, one read of at most the first argument's bytes for each, of the
-datagrams sent to it one after another: the observation `Os.Dgram.Whole` constrains. It has no
-body; the check below observes it. -/
-opaque datagrams : Nat → List (List UInt8) → List (List UInt8)
-
--- Datagrams sent to a Unix socket's path arrive whole and in order: four of different sizes, one
--- of them 4000 bytes long, sent one after another to a socket bound in a directory of its own,
--- read back one read each of at most 4096 bytes, are those four, in order, and then none waits.
-Check Os.Dgram.Whole datagrams := do
+/-- Datagrams sent to a Unix socket's path arrive whole and in order: four of different sizes, one
+of them 4000 bytes long, sent one after another to a socket bound in a directory of its own, read
+back one read each of at most 4096 bytes, are those four, in order, and then none waits. -/
+@[tests Os.Dgram.Whole]
+public def checkDgramWhole : IO Unit := do
   IO.FS.withTempDir fun dir => do
       let path := (dir / "notify").toString
       let fd ← Os.Shell.dgramBind path

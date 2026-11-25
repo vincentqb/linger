@@ -742,11 +742,10 @@ theorem tick_facts (s : State) (now : Nat) :
 /-- **After the last event, a daemon wakes at most twice on its own.** Ticking at the deadline
 its session sets for its save, the session then needs no tick until the next event: a tick at
 the deadline saves, and a tick before it leaves the deadline where it was. -/
-theorem ticks_settle (s : State) (now t₁ t₂ : Nat)
-    (h₁ : (trace step s [.tick now]).1.nextTick = some t₁)
-    (h₂ : (trace step s [.tick now, .tick t₁]).1.nextTick = some t₂) :
-    (trace step s [.tick now, .tick t₁, .tick t₂]).1.nextTick = none := by
-  simp only [trace] at h₁ h₂ ⊢
+theorem ticks_settle (s : State) (now t₁ : Nat)
+    (h₁ : (trace step s [.tick now]).1.nextTick = some t₁) :
+    (trace step s [.tick now, .tick t₁]).1.nextTick = none := by
+  simp only [trace] at h₁ ⊢
   generalize hs0 : (step s (.tick now)).1 = s0 at *
   have hd0 : s0.dirty = true := by
     cases hd : s0.dirty
@@ -758,8 +757,7 @@ theorem ticks_settle (s : State) (now t₁ t₂ : Nat)
     cases hd : (step s0 (.tick t₁)).1.dirty
     · rfl
     · have := (tick_facts s0 t₁ hd).2.1; omega
-  rw [(nextTick_eq_none _).mpr hd1] at h₂
-  cases h₂
+  exact (nextTick_eq_none _).mpr hd1
 
 theorem setClient_length (s : State) (c : Client) :
     (s.setClient c).clients.length = s.clients.length := by simp [State.setClient]

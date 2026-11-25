@@ -41,9 +41,6 @@ import all Os.Proofs.Wait
 import all Theorems.Solution
 public meta import Lean.Elab.Command
 import Lean.Parser.Command
-meta import SoftwareChallenge.Commands -- shake: keep
-public meta import SoftwareChallenge.Policy
-import SoftwareChallenge.Policy
 public meta import Lean.Compiler.CSimpAttr
 import Lean.Compiler.CSimpAttr
 
@@ -64,12 +61,16 @@ namespace Theorems.Coverage
 
 open Lean Elab Command
 
-/-- A module of pure code: one whose role, as the challenge library reads it from the module's
-name (`SoftwareChallenge.Role.ofName`), is `CoreSpec` or `CoreCode`, linger's or a package's. -/
+/-- The roles a module's name gives it, as linger lays its modules out: the first component of
+its name that is one of these is its role. -/
+public meta def roles : List Lean.Name := [`CoreSpec, `CoreCode, `WorldSpec, `WorldCode]
+
+/-- A module of pure code: one whose role, the first component of its name in `roles`, is
+`CoreSpec` or `CoreCode`, linger's or a package's. -/
 public meta def pureModule (mod : Lean.Name) : Bool :=
-  match SoftwareChallenge.Role.ofName mod with
-  | .coreSpec | .coreCode => true
-  | _ => false
+  match mod.components.find? roles.contains with
+  | some role => role == `CoreSpec || role == `CoreCode
+  | none => false
 
 /-- The source files under `Linger/`, `Theorems/` and each package's directory whose module
 `keep` selects, read from the tree so that a module nothing imports still counts. A package's

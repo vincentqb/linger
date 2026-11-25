@@ -15,20 +15,20 @@ package declares nothing, and its build directory is linger's. -/
 require first from "first"
 
 require software_challenge from git
-  "https://github.com/vincentqb/lean-software-challenge"@"57aae4dfe83ef6f28f313cdec1007fc3554b474c"
+  "https://github.com/vincentqb/lean-software-challenge"@"3d5035043af16034bac2a92a7ccbcb2cee68ffa9"
 
-/-- The fuzzy matcher, a package of its own with its own challenge and audit. -/
+/-- The fuzzy matcher, a package of its own with its own challenge. -/
 require fuzzy from "packages/fuzzy"
 
-/-- The terminal key decoder, a package of its own with its own challenge and audit. -/
+/-- The terminal key decoder, a package of its own with its own challenge. -/
 require input from "packages/input"
 
 /-- The VT toolkit: the emulator, renderer, streaming replay, child-facing mediation and safe
-title emission, a package of its own with its own challenge and audit. -/
+title emission, a package of its own with its own challenge. -/
 require terminal from "packages/terminal"
 
 /-- The OS boundary: the foreign declarations, the C shim they bind, the checked wrappers
-callers use and the bounded wait, a package of its own with its own challenge and audit. -/
+callers use and the bounded wait, a package of its own with its own challenge. -/
 require os from "packages/os"
 
 /-- Options for every library but `Verify`: Lake builds a module with the options of one library
@@ -48,7 +48,8 @@ under a component's `Proofs/` is built. Lean erases proofs regardless of file pl
   roots :=
   #[`Theorems.Accountability, `Theorems.Authority, `Theorems.Bounded, `Theorems.CleanTerminal,
     `Theorems.Coverage, `Theorems.Events, `Theorems.Exactness, `Theorems.Faults, `Theorems.Identity,
-    `Theorems.Recovery, `Theorems.Solution, `Theorems.Status, `Theorems.Transparency]
+    `Theorems.Recovery, `Theorems.Solution, `Theorems.Status, `Theorems.Transparency,
+    `Theorems.Witnesses]
   globs :=
   #[.submodules `Theorems, .submodules `Linger.App.Proofs, .submodules `Linger.Display.Proofs,
     .submodules `Linger.Import.Proofs, .submodules `Linger.Os.Proofs,
@@ -65,8 +66,8 @@ lean_lib Tests where
     .submodules `Linger.Session.Tests, .submodules `Linger.Target.Tests]
   leanOptions := implementationOptions
 
-/-- The checks of linger's world claims, which no program module imports: built by default, so
-the audit counts them, and run by the challenge library's checks runner. -/
+/-- The checks of linger's world claims, which no program module imports: built by default, and
+run by `checks`, whose `main` is the challenge library's `SoftwareChallenge.testsMain`. -/
 @[default_target] lean_lib Checks where
   roots := #[`Linger.Session.WorldCode.Checks, `Linger.Target.WorldCode.Checks]
   leanOptions := implementationOptions
@@ -76,6 +77,9 @@ lean_lib Verify where
 
 lean_exe suites where root := `Verify.Main
 
+/-- The checks of linger's world claims, run against this host: `./lake exe checks`. -/
+lean_exe checks where root := `Verify.Checks
+
 /-- The headline theorems and their kills, stated with `sorry`. The build writes
 `comparator.json` from them, and `./lake comparator` builds this library and checks that
 `Theorems.Solution` proves the same statements. -/
@@ -83,9 +87,10 @@ lean_lib Challenge where leanOptions := #[⟨`warn.sorry, false⟩]
 
 @[default_target] lean_exe linger where root := `Linger.App.WorldCode.Main
 
-/-- The Lean Software Challenge audit of every module the default targets build. -/
-@[default_target] target audit pkg : Unit := do
-  return (← pkg.fetchFacetJob `softwareChallenge).map (fun _ => ())
+/-- The Lean Software Challenge's statement step: it checks that every headline of `Challenge.lean`
+has its kill, and its witness where a hypothesis is about a hole, and writes `comparator.json`. -/
+@[default_target] target statement pkg : Unit := do
+  return (← pkg.fetchFacetJob `softwareChallengeStatement).map (fun _ => ())
 
 /-- Build and run the complete verifier, including live pty suites. -/
 @[test_driver] script test do

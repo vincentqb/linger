@@ -107,7 +107,6 @@ theorem title_feed {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) (both 
   rw [ite_eq_right (by simp), ite_eq_left (by decide)]
   have hd : String.fromUTF8? ⟨text.toByteArray.data⟩ = some text := by
     simp [String.fromUTF8?, text.isValidUTF8]
-    rfl
   cases both
   · simp only [Bool.false_eq_true, ↓reduceIte]
     simp

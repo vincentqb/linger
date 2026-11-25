@@ -19,7 +19,7 @@ namespace Linger.Json
 
 /-- A key not less than another and not equal to it is greater. -/
 theorem key_gt {a b : String} (notLt : ¬a < b) (ne : a ≠ b) : b < a :=
-  Std.lt_of_le_of_ne (String.not_lt.mp notLt) (Ne.symm ne)
+  Std.lt_of_le_of_ne (Std.not_lt.mp notLt) (Ne.symm ne)
 
 /-- A member `insertMember` gives is the one it inserts or one it was given. -/
 theorem mem_insertMember {α : Type} (member : String × α) :
@@ -57,7 +57,7 @@ theorem insertMember_pairwise {α : Type} (member : String × α) :
       refine ⟨?_, ?_, sortedRest⟩
       · rintro k (rfl | ⟨m, inRest, rfl⟩)
         · exact lt
-        · exact String.lt_trans lt (below m.1 ⟨m, inRest, rfl⟩)
+        · exact Std.lt_trans lt (below m.1 ⟨m, inRest, rfl⟩)
       · rintro k ⟨m, inRest, rfl⟩
         exact below m.1 ⟨m, inRest, rfl⟩
     · split
@@ -78,8 +78,8 @@ theorem insertMember_last {α : Type} (member : String × α) :
   | [], _ => rfl
   | first :: rest, below => by
     have firstBelow := below first (by simp)
-    simp only [insertMember, String.lt_asymm firstBelow, ↓reduceIte,
-      (String.ne_of_lt firstBelow).symm, List.cons_append]
+    simp only [insertMember, Std.Asymm.asymm _ _ firstBelow, ↓reduceIte,
+      (Std.ne_of_lt firstBelow).symm, List.cons_append]
     rw [insertMember_last member rest fun m inRest => below m (by simp [inRest])]
 
 /-- `sortMembers`'s fold, from members already sorted. -/
@@ -969,7 +969,7 @@ theorem keyAfter_below {members : List (String × Json)} {key : String}
       · simp only [List.reverse_cons, List.map_append, List.map_singleton] at sorted
         rw [List.pairwise_append] at sorted
         exact
-          String.lt_trans
+          Std.lt_trans
             (sorted.2.2 m.1
               (by
                 simp; exact ⟨m.2, member⟩)

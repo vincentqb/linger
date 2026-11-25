@@ -412,6 +412,14 @@ theorem step_attach_repaint_rejects_blank :
                 (∃ bytes, eff = .writePty bytes) ∨ ∃ cols rows, eff = .resizePty cols rows := by
   sorry
 
+@[witness step_attach_repaint]
+theorem step_attach_repaint_applies :
+    ∃ (s : Session.State) (id : Nat) (chunk : List UInt8) (c : Session.Client) (dec :
+      Session.Wire.Decoder) (mode : Session.Mode) (cols : UInt32) (rows : UInt32) (_ :
+      s.client? id = some c) (_ : c.attached = false),
+      c.decoder.feed chunk = (dec, [Session.Wire.Msg.attach mode cols rows]) := by
+  sorry
+
 theorem step_output_delivered (s : State) (chunk : List UInt8) :
     (Session.step s (.ptyOut chunk)).1.terminal = s.terminal.feed chunk ∧
       ∃ answers frames : List (List UInt8),
@@ -458,6 +466,14 @@ theorem step_input_exact_rejects_drop :
             inputs.map Effect.writePty := by
   sorry
 
+@[witness step_input_exact]
+theorem step_input_exact_applies :
+    ∃ (s : Session.State) (id : Nat) (chunk : List UInt8) (c : Session.Client) (dec :
+      Session.Wire.Decoder) (inputs : List (List UInt8)) (_ : s.client? id = some c) (_ :
+      c.mode = Session.Mode.writable),
+      c.decoder.feed chunk = (dec, List.map Session.Wire.Msg.input inputs) := by
+  sorry
+
 theorem input_exact (reads : Pty.Mode → ByteArray → ByteArray) (delivers : Pty.Delivers reads)
     {cap : Nat} {accepted written : ByteArray} {b : Buf.Buf}
     (life :
@@ -483,6 +499,14 @@ theorem input_exact_rejects_lost :
                     cap < Buf.owedLen b + more.size := by
   sorry
 
+@[witness input_exact]
+theorem input_exact_applies :
+    ∃ (reads : Session.Pty.Mode → ByteArray → ByteArray) (_ : Session.Pty.Delivers reads) (cap :
+      Nat) (accepted : ByteArray) (written : ByteArray) (b : Session.Buf.Buf),
+      Session.Buf.InputLife Session.Buf.Buf.empty Session.Buf.bufOffer Session.Buf.bufAdvance
+        Session.Buf.writeFrom cap accepted written b := by
+  sorry
+
 theorem decode_encode_chunked (ms : List Wire.Msg) (fits : ∀ m ∈ ms, m.Fits)
     (chunks : List (List UInt8)) (cut : chunks.flatten = ms.flatMap Wire.encode) :
     Wire.feedAll Wire.Decoder.feed {} chunks = ({ buf := [], errored := false }, ms) := by sorry
@@ -494,6 +518,12 @@ theorem decode_encode_chunked_rejects_silence :
           ∀ (chunks : List (List UInt8)),
             chunks.flatten = ms.flatMap (fun (_ : Wire.Msg) => ([] : List UInt8)) →
               Wire.feedAll Wire.Decoder.feed {} chunks = ({ buf := [], errored := false }, ms) := by
+  sorry
+
+@[witness decode_encode_chunked]
+theorem decode_encode_chunked_applies :
+    ∃ (ms : List Session.Wire.Msg) (_ : ∀ (m : Session.Wire.Msg), m ∈ ms → m.Fits) (chunks :
+      List (List UInt8)), chunks.flatten = List.flatMap Session.Wire.encode ms := by
   sorry
 
 theorem inputFrames_exact (bytes : List UInt8) :
@@ -544,6 +574,14 @@ theorem step_attach_focus_rejects_eager :
                   other.id ≠ id → (other.attached && other.mode == .writable) = false := by
   sorry
 
+@[witness step_attach_focus]
+theorem step_attach_focus_applies :
+    ∃ (s : Session.State) (id : Nat) (chunk : List UInt8) (c : Session.Client) (dec :
+      Session.Wire.Decoder) (mode : Session.Mode) (cols : UInt32) (rows : UInt32) (_ :
+      s.client? id = some c),
+      c.decoder.feed chunk = (dec, [Session.Wire.Msg.attach mode cols rows]) := by
+  sorry
+
 theorem step_closed_focus (s : State) (id : Nat) (bytes : List UInt8) :
     Effect.writePty bytes ∈ (Session.step s (.closed id)).2 ↔
       bytes = [0x1B, 0x5B, 0x4F] ∧
@@ -588,6 +626,12 @@ theorem one_owner_rejects_socket :
                   s.active b = some right → left.Uses resource → right.Uses resource → a = b := by
   sorry
 
+@[witness one_owner]
+theorem one_owner_applies :
+    ∃ (grant : Session.Claim.State → Nat → Nat → Bool) (_ : Session.Claim.Exclusive grant) (s :
+      Session.Claim.State), Session.Claim.Reachable grant Session.Claim.enters s := by
+  sorry
+
 theorem names_one_to_one (t : Names.Table) (wf : Names.Wf t) (a b id : String) :
     (Names.resolve t a = some id → Names.resolve t b = some id → a = b) ∧
       (Names.resolve t a = some id ↔ Names.nameOf t id = some a) ∧
@@ -629,6 +673,12 @@ theorem rename_moves_rejects_reid :
                     Names.resolve (Names.renameReid t old new id) n = Names.resolve t n := by
   sorry
 
+@[witness rename_moves]
+theorem rename_moves_applies :
+    ∃ (t : Session.Names.Table) (_ : Session.Names.Wf t) (old : String) (_ : String) (id : String),
+      Session.Names.resolve t old = some id := by
+  sorry
+
 theorem claim_fresh (t : Names.Table) (wf : Names.Wf t) (name id : String)
     (unnamed : Names.resolve t name = none) (fresh : Names.Fresh id) (unused : id ∉ t.map (·.2)) :
     Names.Wf (Names.claim t name id) ∧
@@ -650,6 +700,12 @@ theorem claim_fresh_rejects_self :
                   n ≠ name → Names.resolve (Names.claimSelf t name id) n = Names.resolve t n := by
   sorry
 
+@[witness claim_fresh]
+theorem claim_fresh_applies :
+    ∃ (t : Session.Names.Table) (_ : Session.Names.Wf t) (name : String) (_ : String),
+      Session.Names.resolve t name = none := by
+  sorry
+
 theorem nameOf_shown (t : Names.Table) (id name : String) (shown : Names.nameOf t id = some name) :
     (name, id) ∈ t ∨ Name.check id = some name := by sorry
 
@@ -657,6 +713,12 @@ theorem nameOf_shown (t : Names.Table) (id name : String) (shown : Names.nameOf 
 theorem nameOf_shown_rejects_bare :
     ¬∀ (t : Names.Table) (id name : String),
         Names.nameOfBare t id = some name → (name, id) ∈ t ∨ Name.check id = some name := by
+  sorry
+
+@[witness nameOf_shown]
+theorem nameOf_shown_applies :
+    ∃ (t : Session.Names.Table) (id : String) (name : String),
+      Session.Names.nameOf t id = some name := by
   sorry
 
 theorem rename_plan (valid oldHeld older newHeld : Bool) :
@@ -711,6 +773,15 @@ theorem one_name_rejects_replace :
                   after dst = some file ∧
                     ((fun (_ : Names.Op) => Names.Call.replace) second).run placed after src' dst =
                       none := by
+  sorry
+
+@[witness one_name]
+theorem one_name_applies :
+    ∃ (placed : Bool → (String → Option Nat) → String → String → Option (String → Option Nat)) (_ :
+      Os.Place.NoReplace placed) (first : Session.Names.Op) (_ : Session.Names.Op) (names :
+      String → Option Nat) (src : String) (_ : String) (dst : String) (file : Nat) (_ :
+      names src = some file) (after : String → Option Nat),
+      Session.Names.Call.run placed (Session.Names.call first) names src dst = some after := by
   sorry
 
 theorem step_fields_kept (s : State) (ev : Event) :
@@ -970,6 +1041,12 @@ theorem run_readonly_rejects_kill :
               (∃ m, eff = .send id m) ∨ eff = .close id ∨ eff = .checkpoint := by
   sorry
 
+@[witness run_readonly]
+theorem run_readonly_applies :
+    ∃ (s : Session.State) (id : Nat) (_ : List (List UInt8)) (c : Session.Client),
+      s.client? id = some c := by
+  sorry
+
 theorem step_attach_mode (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {mode : Mode} {cols rows : UInt32} (hc : s.client? id = some c)
     (fresh : c.attached = false) (read : c.decoder.feed chunk = (dec, [.attach mode cols rows]))
@@ -1000,6 +1077,14 @@ theorem step_attach_mode_rejects_unsized :
               c'.attached = true ∧ c'.mode = mode := by
   sorry
 
+@[witness step_attach_mode]
+theorem step_attach_mode_applies :
+    ∃ (s : Session.State) (id : Nat) (chunk : List UInt8) (c : Session.Client) (dec :
+      Session.Wire.Decoder) (mode : Session.Mode) (cols : UInt32) (rows : UInt32) (_ :
+      s.client? id = some c) (_ : c.attached = false),
+      c.decoder.feed chunk = (dec, [Session.Wire.Msg.attach mode cols rows]) := by
+  sorry
+
 theorem step_resize_mode (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {sizes : List (UInt32 × UInt32)} (hc : s.client? id = some c)
     (read : c.decoder.feed chunk = (dec, sizes.map fun size => .resize size.1 size.2))
@@ -1023,6 +1108,16 @@ theorem step_resize_mode_rejects_unsized :
                   (Session.step s (.bytes id chunk)).1 id).map
               (·.mode) =
             some c.mode := by
+  sorry
+
+@[witness step_resize_mode]
+theorem step_resize_mode_applies :
+    ∃ (s : Session.State) (id : Nat) (chunk : List UInt8) (c : Session.Client) (dec :
+      Session.Wire.Decoder) (sizes : List (UInt32 × UInt32)) (_ : s.client? id = some c),
+      c.decoder.feed chunk =
+        (dec,
+          List.map (fun (size : UInt32 × UInt32) => Session.Wire.Msg.resize size.fst size.snd)
+            sizes) := by
   sorry
 
 theorem step_resizes_sized (s : State) (ev : Event) (cols rows : UInt32)
@@ -1058,6 +1153,12 @@ theorem step_resizes_sized_rejects_zero :
                       height ≠ 0 ∧
                       cols.toNat = Vt.clampDim width.toNat ∧
                       rows.toNat = Vt.clampDim height.toNat := by
+  sorry
+
+@[witness step_resizes_sized]
+theorem step_resizes_sized_applies :
+    ∃ (s : Session.State) (ev : Session.Event) (cols : UInt32) (rows : UInt32),
+      Session.Effect.resizePty cols rows ∈ (Session.step s ev).snd := by
   sorry
 
 theorem rowFields_name (socketName : String) (info : List (String × String)) :
@@ -1230,6 +1331,12 @@ theorem rowText_clean_rejects_escape :
           Display.Printable c := by
   sorry
 
+@[witness rowText_clean]
+theorem rowText_clean_applies :
+    ∃ (width : Option Nat) (layout : Display.Listing.Layout) (info : List (String × String)) (c :
+      Char), c ∈ Display.Listing.rowText width layout info := by
+  sorry
+
 theorem columns_aligned (layout : Listing.Layout) (info : List (String × String)) :
     (∃ blanks : List Char,
         (∀ c ∈ blanks, c = ' ') ∧
@@ -1281,6 +1388,12 @@ theorem picker_attach_listed_rejects_fixed :
           target ∈ s.candidates := by
   sorry
 
+@[witness picker_attach_listed]
+theorem picker_attach_listed_applies :
+    ∃ (s : Selector.Picker.State) (key : Selector.Key) (target : String),
+      Selector.Picker.step s key = Selector.Picker.Outcome.attach target := by
+  sorry
+
 theorem picker_create_new (s : Selector.Picker.State) (key : Selector.Key) (target : String)
     (h : Selector.Picker.step s key = .create target) :
     target ∉ s.candidates ∧ target ≠ "" ∧ Name.Accepted ((target.splitOn "@").headD "") := by sorry
@@ -1292,6 +1405,12 @@ theorem picker_create_new_rejects_empty :
               key =
             .create target →
           target ∉ s.candidates ∧ target ≠ "" ∧ Name.Accepted ((target.splitOn "@").headD "") := by
+  sorry
+
+@[witness picker_create_new]
+theorem picker_create_new_applies :
+    ∃ (s : Selector.Picker.State) (key : Selector.Key) (target : String),
+      Selector.Picker.step s key = Selector.Picker.Outcome.create target := by
   sorry
 
 theorem relist_keeps_rows (s : Selector.Picker.State) (resort : Bool) (ordered : List String)
@@ -1429,6 +1548,19 @@ theorem picker_moves_cycle_rejects_clamped :
                 (if n = 0 then s else { s with cursor := ((s.cursor - k : Int) % n).toNat }) := by
   sorry
 
+@[witness picker_moves_cycle]
+theorem picker_moves_cycle_applies :
+    ∃ (s : Selector.Picker.State) (n : Nat) (_ : Nat),
+      ∀ (i : Nat),
+        (∃ (next : Selector.Picker.State),
+            Selector.Picker.step
+                { candidates := s.candidates, query := s.query, cursor := i,
+                  allowCreate := s.allowCreate, descriptions := s.descriptions }
+                Selector.Key.accept =
+              Selector.Picker.Outcome.stay next) ↔
+          n ≤ i := by
+  sorry
+
 theorem route_exact (args : List String) : App.Entry.route args = App.Entry.Route.of args := by
   sorry
 
@@ -1466,6 +1598,12 @@ theorem op_meaning_rejects_outside :
             App.Api.plan request = request.act ∧
             (request.op.finds found = true →
               (fun (_ : Api.Found) => Os.Answer.timedOut) found = found.answer) := by
+  sorry
+
+@[witness op_meaning]
+theorem op_meaning_applies :
+    ∃ (args : List String) (argv : List String) (request : App.Api.Request) (_ : App.Api.Found) (_ :
+      App.Entry.route args = App.Entry.Route.session argv), App.Api.parse argv = some request := by
   sorry
 
 theorem said_rendered (said : Api.Said) :
@@ -1638,6 +1776,12 @@ theorem serve_refuses_uncanonical_rejects_unreasoned :
                           ("reason", .str reason)]))]) := by
   sorry
 
+@[witness serve_refuses_uncanonical]
+theorem serve_refuses_uncanonical_applies :
+    ∃ (_ : App.Serve.State) (line : String) (reason : String),
+      Json.parse line = Except.error reason := by
+  sorry
+
 theorem porcelain_records (rows : List (List (String × String))) :
     Listing.porcelain rows =
       String.join
@@ -1674,6 +1818,15 @@ theorem chooser_same_list_rejects_own :
               snapshot.candidates = (App.Serve.records rows).map Serve.Record.key ∧
               ∀ record ∈ App.Serve.records rows,
                 Selector.Picker.Snapshot.row snapshot (Serve.Record.key record) = record := by
+  sorry
+
+@[witness chooser_same_list]
+theorem chooser_same_list_applies :
+    ∃ (rows : List (List (String × String))) (_ :
+      ∀ (record : List (String × String)),
+        record ∈ App.Serve.records rows →
+          Target.Remote.targetValid (App.Serve.Record.key record) = true),
+      (List.map App.Serve.Record.key (App.Serve.records rows)).Nodup := by
   sorry
 
 theorem serve_negotiated (s : App.Serve.State) (ev : Serve.Event) :
@@ -1747,6 +1900,13 @@ theorem history_log_exact_rejects_uncounted :
             App.Serve.result s id pending screen left := by
   sorry
 
+@[witness history_log_exact]
+theorem history_log_exact_applies :
+    ∃ (s : App.Serve.State) (version : String) (_ : App.Serve.Id) (_ : App.Serve.Log App.Serve.Line)
+      (_ : App.Serve.Log App.Serve.Line) (_ : App.Serve.Screen),
+      s.phase = App.Serve.Phase.ready version := by
+  sorry
+
 theorem serve_attach_exact (s : App.Serve.State) (version : String) (id : Serve.Id)
     (dec : Wire.Decoder) (pending bytes screen : List UInt8) (found : App.Api.Found)
     (said : Serve.Log String) (ready : s.phase = .ready version) :
@@ -1784,6 +1944,13 @@ theorem serve_attach_exact_rejects_done_anyway :
           Serve.AttachStream App.Serve.State.watching App.Serve.step App.Serve.result
             Serve.doneAnyway Os.Answer.code App.Serve.paint Wire.Decoder.feed s id dec pending bytes
             screen found said := by
+  sorry
+
+@[witness serve_attach_exact]
+theorem serve_attach_exact_applies :
+    ∃ (s : App.Serve.State) (version : String) (_ : App.Serve.Id) (_ : Session.Wire.Decoder) (_ :
+      List UInt8) (_ : List UInt8) (_ : List UInt8) (_ : App.Api.Found) (_ : App.Serve.Log String),
+      s.phase = App.Serve.Phase.ready version := by
   sorry
 
 theorem remote_rows_exact (host : String) (messages : List Json) (status : UInt32)
@@ -1966,6 +2133,14 @@ theorem dismiss_hides_rejects_memory :
                       pane.name).endings ↔
                 name = pane.name ∨ name ∈ records.endings) ∧
             pane ∉ Import.Resurrect.listed later panes := by
+  sorry
+
+@[witness dismiss_hides]
+theorem dismiss_hides_applies :
+    ∃ (records : Session.Records) (later : Session.Records) (pane : Import.Resurrect.Pane) (_ :
+      List Import.Resurrect.Pane),
+      ∀ (name : String),
+        name ∈ (Import.Resurrect.dismiss records pane.name).endings → name ∈ later.endings := by
   sorry
 
 theorem dismissal_happened (afterSave : List UInt8 → Option (List UInt8))
@@ -2180,6 +2355,14 @@ theorem input_unrecorded_rejects_kept :
                 Effect.blind := by
   sorry
 
+@[witness input_unrecorded]
+theorem input_unrecorded_applies :
+    ∃ (_ : Vt.Vt) (_ : List (String × String)) (_ : List (String × String)) (evs :
+      List Session.Event) (evs' : List Session.Event) (_ :
+      ∀ (ev : Session.Event), ev ∈ evs → Session.Framed Session.Wire.encode ev),
+      Session.Typed Session.Wire.encode evs evs' := by
+  sorry
+
 theorem start_runs (inherited : String → Option String)
     (start :
       String →
@@ -2238,6 +2421,21 @@ theorem start_runs_rejects_passing :
                         started.env key = if Start.lingers key then none else inherited key := by
   sorry
 
+@[witness start_runs]
+theorem start_runs_applies :
+    ∃ (inherited : String → Option String) (start :
+      String →
+        String →
+        Array String →
+        List (String × Option String) → Session.Spawn.Reset → Option Session.Spawn.Started)
+      (_ : Session.Spawn.Runs inherited start) (names : List String) (_ :
+      ∀ (key : String), (inherited key).isSome = true → key ∈ names) (id : String) (notify : String)
+      (dir : String) (shell : String) (argv : List String) (started : Session.Spawn.Started),
+      start dir (Session.Start.programOf shell argv).fst (Session.Start.programOf shell argv).snd
+          (Session.Start.environment id notify names) Session.Start.reset =
+        some started := by
+  sorry
+
 theorem start_clean
     (start :
       String →
@@ -2271,6 +2469,20 @@ theorem start_clean_rejects_inherited :
                 ∀ fd, started.descriptor fd = if fd < 3 then some .terminal else none := by
   sorry
 
+@[witness start_clean]
+theorem start_clean_applies :
+    ∃ (start :
+      String →
+        String →
+        Array String →
+        List (String × Option String) → Session.Spawn.Reset → Option Session.Spawn.Started)
+      (_ : Session.Spawn.Clean start) (name : String) (notify : String) (dir : String) (shell :
+      String) (names : List String) (argv : List String) (started : Session.Spawn.Started),
+      start dir (Session.Start.programOf shell argv).fst (Session.Start.programOf shell argv).snd
+          (Session.Start.environment name notify names) Session.Start.reset =
+        some started := by
+  sorry
+
 theorem step_kill_stops (s : State) (id : Nat) (chunk : List UInt8) {c : Client}
     {dec : Wire.Decoder} {rest : List Wire.Msg} (hc : s.client? id = some c)
     (writable : c.mode = .writable) (read : c.decoder.feed chunk = (dec, .kill :: rest))
@@ -2297,6 +2509,14 @@ theorem step_kill_stops_rejects_exit :
             ((fun (s : State) (_ : Event) => (s, ([.exit] : List (Effect Replay.Plan)))) s
                   (.bytes id chunk)).1.fieldList =
               s.fieldList := by
+  sorry
+
+@[witness step_kill_stops]
+theorem step_kill_stops_applies :
+    ∃ (s : Session.State) (id : Nat) (chunk : List UInt8) (c : Session.Client) (dec :
+      Session.Wire.Decoder) (rest : List Session.Wire.Msg) (_ : s.client? id = some c) (_ :
+      c.mode = Session.Mode.writable),
+      c.decoder.feed chunk = (dec, Session.Wire.Msg.kill :: rest) := by
   sorry
 
 theorem step_ended_reports (s : State) (ev : Event) :
@@ -2712,6 +2932,13 @@ theorem step_unknown_refused_rejects_silence :
               s.fieldList := by
   sorry
 
+@[witness step_unknown_refused]
+theorem step_unknown_refused_applies :
+    ∃ (s : Session.State) (id : Nat) (chunk : List UInt8) (c : Session.Client) (dec :
+      Session.Wire.Decoder) (tag : UInt8) (payload : List UInt8) (_ : s.client? id = some c),
+      c.decoder.feed chunk = (dec, [Session.Wire.Msg.unknown tag payload]) := by
+  sorry
+
 theorem run_refines {World : Type}
     (execute : State → World → (eff : Effect Replay.Plan) → Id (World × Driver.Reply eff))
     (ending : Outcome)
@@ -2744,6 +2971,18 @@ theorem run_refines_rejects_inert :
                         (execute asked.1 world asked.2).1)
                       r.world ∧
                   (Driver.inert execute r events).exiting = exits := by
+  sorry
+
+@[witness run_refines]
+theorem run_refines_applies :
+    ∃ (World : Type) (execute :
+      Session.State →
+        World → (eff : Session.Effect Replay.Plan) → Id (World × Session.Driver.Reply eff))
+      (ending : Session.Outcome) (_ :
+      ∀ (st : Session.State) (world : World) (eff : Session.Effect Replay.Plan),
+        (execute st world eff).snd = Session.Driver.success ending eff)
+      (r : Session.Driver.Result Session.State World) (_ : List Session.Event),
+      r.exiting = false := by
   sorry
 
 theorem run_total_safe {World ε : Type}
@@ -2784,6 +3023,18 @@ theorem run_total_safe_rejects_jump :
                     (Checkpoint.Decoded Checkpoint.loadBytes) out.st.terminal := by
   sorry
 
+@[witness run_total_safe]
+theorem run_total_safe_applies :
+    ∃ (World : Type) (ε : Type) (execute :
+      Session.State →
+        World → (eff : Session.Effect Replay.Plan) → Except ε (World × Session.Driver.Reply eff))
+      (_ : Session.Driver.Responds execute) (r : Session.Driver.Result Session.State World) (_ :
+      List Session.Event) (_ :
+      Session.Bounds Session.State.roster Session.State.fieldList Session.State.scanner r.st),
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Session.Checkpoint.Decoded Session.Checkpoint.loadBytes) r.st.terminal := by
+  sorry
+
 theorem run_feedback_alive {World : Type}
     (execute : State → World → (eff : Effect Replay.Plan) → Id (World × Driver.Reply eff))
     (r : Driver.Result State World) (events : List Event) (running : r.exiting = false)
@@ -2800,6 +3051,15 @@ theorem run_feedback_alive_rejects_halt :
           (Driver.halt execute r events).exiting = false := by
   sorry
 
+@[witness run_feedback_alive]
+theorem run_feedback_alive_applies :
+    ∃ (World : Type) (_ :
+      Session.State →
+        World → (eff : Session.Effect Replay.Plan) → Id (World × Session.Driver.Reply eff))
+      (r : Session.Driver.Result Session.State World) (_ : List Session.Event),
+      r.exiting = false := by
+  sorry
+
 theorem run_stop_exits {World : Type}
     (execute : State → World → (eff : Effect Replay.Plan) → Id (World × Driver.Reply eff))
     (r : Driver.Result State World) (ev : Event) (running : r.exiting = false)
@@ -2814,6 +3074,15 @@ theorem run_stop_exits_rejects_jump :
         r.exiting = false →
           Effect.stopProgram ∈ (Session.step r.st ev).2 →
           (Driver.jump (State.boot (Vt.Vt.init 1 1) [] []) execute r [ev]).exiting = true := by
+  sorry
+
+@[witness run_stop_exits]
+theorem run_stop_exits_applies :
+    ∃ (World : Type) (_ :
+      Session.State →
+        World → (eff : Session.Effect Replay.Plan) → Id (World × Session.Driver.Reply eff))
+      (r : Session.Driver.Result Session.State World) (ev : Session.Event) (_ : r.exiting = false),
+      Session.Effect.stopProgram ∈ (Session.step r.st ev).snd := by
   sorry
 
 theorem locks_named (records : Session.Records) (name : String)
@@ -2857,6 +3126,13 @@ theorem reachableIn_bound {cap : Nat} {b : Buf.Buf}
 theorem reachableIn_bound_rejects_append :
     ¬∀ {cap : Nat} {b : Buf.Buf},
         Buf.InputReach Buf.Buf.empty Buf.bufEnqueue Buf.bufAdvance cap b → Buf.owedLen b ≤ cap := by
+  sorry
+
+@[witness reachableIn_bound]
+theorem reachableIn_bound_applies :
+    ∃ (cap : Nat) (b : Session.Buf.Buf),
+      Session.Buf.InputReach Session.Buf.Buf.empty Session.Buf.bufOffer Session.Buf.bufAdvance cap
+        b := by
   sorry
 
 theorem step_bytes_one_reply (s : State) (id : Nat) (chunk : List UInt8) :
@@ -2942,6 +3218,14 @@ theorem handoff_carries_rejects_rebuilt :
                   Handoff.encode (State.boot s.terminal s.fieldList []) w)
                 s w) =
             some (s, w) := by
+  sorry
+
+@[witness handoff_carries]
+theorem handoff_carries_applies :
+    ∃ (s : Session.State) (_ : Session.Handoff.World) (_ :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Session.Checkpoint.Decoded Session.Checkpoint.loadBytes) s.terminal),
+      s.terminal.quiesce = s.terminal := by
   sorry
 
 theorem upgrade_keeps (exec : Nat → List Nat → List Nat → Nat × List Nat × List Nat)
@@ -3100,6 +3384,13 @@ theorem loadBytes_saveBytes_live_rejects_refusal :
             some { c with vt := c.vt.quiesce } := by
   sorry
 
+@[witness loadBytes_saveBytes_live]
+theorem loadBytes_saveBytes_live_applies :
+    ∃ (c : Session.Checkpoint.Ckpt Vt.Vt),
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Session.Checkpoint.Decoded Session.Checkpoint.loadBytes) c.vt := by
+  sorry
+
 theorem resume_restores (c : Checkpoint.Ckpt Vt.Vt)
     (h :
       Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
@@ -3135,6 +3426,13 @@ theorem resume_restores_rejects_fresh :
                 (c.fields.filter (recordField ·.1)).take maxFields := by
   sorry
 
+@[witness resume_restores]
+theorem resume_restores_applies :
+    ∃ (c : Session.Checkpoint.Ckpt Vt.Vt),
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Session.Checkpoint.Decoded Session.Checkpoint.loadBytes) c.vt := by
+  sorry
+
 theorem loadBytes_resave {b : ByteArray} {c : Checkpoint.Ckpt Vt.Vt}
     (h : Checkpoint.loadBytes b = some c) :
     Checkpoint.loadBytes (Checkpoint.saveBytes c) = some c := by sorry
@@ -3147,6 +3445,12 @@ theorem loadBytes_resave_rejects_fixed :
               ((fun (_ : Checkpoint.Ckpt Vt.Vt) => Checkpoint.saveBytes ⟨Vt.Vt.init 1 1, "x", []⟩)
                 c) =
             some c := by
+  sorry
+
+@[witness loadBytes_resave]
+theorem loadBytes_resave_applies :
+    ∃ (b : ByteArray) (c : Session.Checkpoint.Ckpt Vt.Vt),
+      Session.Checkpoint.loadBytes b = some c := by
   sorry
 
 theorem recovery_exact (create : Bool) (file : Option ByteArray) :
@@ -3238,6 +3542,16 @@ theorem older_record_described_rejects_stored :
                   { c with
                     vt := c.vt.quiesce,
                     fields := c.fields ++ Checkpoint.importDescription c.fields } := by
+  sorry
+
+@[witness older_record_described]
+theorem older_record_described_applies :
+    ∃ (c : Session.Checkpoint.Ckpt Vt.Vt) (_ :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+        (Session.Checkpoint.Decoded Session.Checkpoint.loadBytes) c.vt)
+      (_ : List.lookup "description" c.fields = none) (old : ByteArray),
+      old.data.toList =
+        [76, 78, 71, 82, 3] ++ List.drop 5 (Session.Checkpoint.saveBytes c).data.toList := by
   sorry
 
 theorem infoText_text (s : State) :
@@ -3367,6 +3681,13 @@ theorem changed_exactly_rejects_chatty :
             (Serve.chatty App.Serve.step s .writable).1.latest = some latest := by
   sorry
 
+@[witness changed_exactly]
+theorem changed_exactly_applies :
+    ∃ (s : App.Serve.State) (version : String) (id : App.Serve.Id) (told : List App.Serve.Record)
+      (latest : List App.Serve.Record) (_ : s.phase = App.Serve.Phase.ready version) (_ :
+      s.subscription = some id) (_ : s.told = some told), s.latest = some latest := by
+  sorry
+
 theorem screen_table_exact (s : App.Serve.State) (version : String) (id : Serve.Id)
     (told latest screen : Serve.Screen) (left : Serve.Log Serve.Line)
     (ready : s.phase = .ready version) :
@@ -3392,22 +3713,31 @@ theorem screen_table_exact_rejects_first_change :
             Serve.Screen.firstChange s id told latest screen left := by
   sorry
 
-theorem ticks_settle (s : State) (now t₁ t₂ : Nat)
-    (h₁ : (Session.trace Session.step s [.tick now]).1.nextTick = some t₁)
-    (h₂ : (Session.trace Session.step s [.tick now, .tick t₁]).1.nextTick = some t₂) :
-    (Session.trace Session.step s [.tick now, .tick t₁, .tick t₂]).1.nextTick = none := by sorry
+@[witness screen_table_exact]
+theorem screen_table_exact_applies :
+    ∃ (s : App.Serve.State) (version : String) (_ : App.Serve.Id) (_ : App.Serve.Screen) (_ :
+      App.Serve.Screen) (_ : App.Serve.Screen) (_ : App.Serve.Log App.Serve.Line),
+      s.phase = App.Serve.Phase.ready version := by
+  sorry
+
+theorem ticks_settle (s : State) (now t₁ : Nat)
+    (h₁ : (Session.trace Session.step s [.tick now]).1.nextTick = some t₁) :
+    (Session.trace Session.step s [.tick now, .tick t₁]).1.nextTick = none := by sorry
 
 @[kills ticks_settle]
 theorem ticks_settle_rejects_poll :
-    ¬∀ (s : State) (now t₁ t₂ : Nat),
+    ¬∀ (s : State) (now t₁ : Nat),
         (fun (_ : State) => (some 0 : Option Nat)) (Session.trace Session.step s [.tick now]).1 =
             some t₁ →
           (fun (_ : State) => (some 0 : Option Nat))
               (Session.trace Session.step s [.tick now, .tick t₁]).1 =
-            some t₂ →
-          (fun (_ : State) => (some 0 : Option Nat))
-              (Session.trace Session.step s [.tick now, .tick t₁, .tick t₂]).1 =
             none := by
+  sorry
+
+@[witness ticks_settle]
+theorem ticks_settle_applies :
+    ∃ (s : Session.State) (now : Nat) (t₁ : Nat),
+      (Session.trace Session.step s [Session.Event.tick now]).fst.nextTick = some t₁ := by
   sorry
 
 theorem poll_wakes (quiet : Int32 → Nat → Prop) (sleeps : Poll.Sleeps quiet) (now : Nat)
@@ -3424,6 +3754,13 @@ theorem poll_wakes_rejects_polling :
               ∀ (ms : Nat),
                 quiet ((fun (_ : Nat) (_ : List Nat) => (100 : Int32)) now deadlines) ms →
                   ∃ due, deadlines.min? = some due ∧ due - now ≤ ms := by
+  sorry
+
+@[witness poll_wakes]
+theorem poll_wakes_applies :
+    ∃ (quiet : Int32 → Nat → Prop) (_ : Session.Poll.Sleeps quiet) (now : Nat) (deadlines :
+      List Nat) (_ : ∀ (d : Nat), d ∈ deadlines → d - now ≤ 2147483647) (ms : Nat),
+      quiet (Session.pollTimeout now deadlines) ms := by
   sorry
 
 theorem picker_repaints_changes (sa sb : Selector.Picker.State) (na nb : Selector.Picker.Snapshot)
@@ -3557,6 +3894,12 @@ theorem start_answer_true_rejects_proceed :
         Start.Reachable (fun _ => true) Start.answer r →
           (r.answer = some .started → r.runs = true) ∧
             (r.answer = some .notStarted → r.runs = false) := by
+  sorry
+
+@[witness start_answer_true]
+theorem start_answer_true_applies :
+    ∃ (r : Session.Start.Request),
+      Session.Start.Reachable Session.Start.proceeds Session.Start.answer r := by
   sorry
 
 theorem fault_contained (f : Fault)
@@ -4157,6 +4500,12 @@ theorem sort_live_above_done_rejects_done_above :
                   ¬((status y).state = .errored ∨
                       (status y).state = .working ∨
                       (status y).state = .paused ∨ (status y).state = .idle) := by
+  sorry
+
+@[witness sort_live_above_done]
+theorem sort_live_above_done_applies :
+    ∃ (α : Type) (status : α → Display.Status.Status) (rows : List α) (first : List α) (rest :
+      List α), Display.View.sort status rows = first ++ rest := by
   sorry
 
 theorem sort_two_keys {α : Type} (status : α → Status.Status) (earlier : α → α → Prop)

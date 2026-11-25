@@ -159,24 +159,20 @@ theorem screen_table_exact_rejects_first_change :
   simp [App.Serve.Screen.View.line, App.Serve.Screen.firstChange, told, latest, before, after,
     List.lookup] at this
 
-theorem ticks_settle (s : State) (now t₁ t₂ : Nat)
-    (h₁ : (Session.trace Session.step s [.tick now]).1.nextTick = some t₁)
-    (h₂ : (Session.trace Session.step s [.tick now, .tick t₁]).1.nextTick = some t₂) :
-    (Session.trace Session.step s [.tick now, .tick t₁, .tick t₂]).1.nextTick = none :=
-  Session.ticks_settle s now t₁ t₂ h₁ h₂
+theorem ticks_settle (s : State) (now t₁ : Nat)
+    (h₁ : (Session.trace Session.step s [.tick now]).1.nextTick = some t₁) :
+    (Session.trace Session.step s [.tick now, .tick t₁]).1.nextTick = none :=
+  Session.ticks_settle s now t₁ h₁
 
 theorem ticks_settle_rejects_poll :
-    ¬∀ (s : State) (now t₁ t₂ : Nat),
+    ¬∀ (s : State) (now t₁ : Nat),
         (fun (_ : State) => (some 0 : Option Nat)) (Session.trace Session.step s [.tick now]).1 =
             some t₁ →
           (fun (_ : State) => (some 0 : Option Nat))
               (Session.trace Session.step s [.tick now, .tick t₁]).1 =
-            some t₂ →
-          (fun (_ : State) => (some 0 : Option Nat))
-              (Session.trace Session.step s [.tick now, .tick t₁, .tick t₂]).1 =
             none := by
   intro h
-  exact absurd (h (State.boot (Vt.Vt.init 1 1) [] []) 0 0 0 rfl rfl) (by simp)
+  exact absurd (h (State.boot (Vt.Vt.init 1 1) [] []) 0 0 rfl) (by simp)
 
 theorem poll_wakes (quiet : Int32 → Nat → Prop) (sleeps : Poll.Sleeps quiet) (now : Nat)
     (deadlines : List Nat) (fit : ∀ d ∈ deadlines, d - now ≤ 2147483647) (ms : Nat)

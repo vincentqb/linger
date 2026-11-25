@@ -674,7 +674,10 @@ theorem before_number_rejects_lexicographic :
             true := by
   intro h
   have wrong := h "p" "" 2 10 (by decide) (by decide) (by decide)
-  exact absurd wrong (by decide)
+  exact
+    absurd wrong
+      (by
+        simp only [decide_eq_true_eq, ← String.toList_lt_toList_iff]; decide)
 
 theorem hidden_adds_up (targets : List String) :
     (View.hidden targets).2 = [] ∨

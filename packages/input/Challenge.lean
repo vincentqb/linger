@@ -24,6 +24,12 @@ theorem paste_only_text_rejects_enter :
             ∃ c, key = .text c := by
   sorry
 
+@[witness paste_only_text]
+theorem paste_only_text_applies :
+    ∃ (state : Input.State) (byte : UInt8) (_ : state.paste = true) (key : Input.Key),
+      key ∈ (Input.feed state byte).2 := by
+  sorry
+
 theorem decode_conforms (s : Input.Seq) :
     Input.reads Input.feed Input.flush s = ({ paste := s.pastes }, s.keys) := by sorry
 

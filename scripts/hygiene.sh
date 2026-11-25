@@ -108,9 +108,7 @@ while IFS= read -r -d '' entry; do
   elif [[ "$mode" == 100644 && "$content" == '#!'* ]]; then
     fail "shebang without executable mode"
   fi
-  # The challenge library writes and rereads each owned.lock itself, without a final newline:
-  # its layout is the library's, not this repository's to correct.
-  if [[ -n "$content" && "$content" != *$'\n' && "${file##*/}" != owned.lock ]]; then
+  if [[ -n "$content" && "$content" != *$'\n' ]]; then
     fail "missing final newline"
   fi
   if [[ "$content" == *$'\n\n' ]]; then

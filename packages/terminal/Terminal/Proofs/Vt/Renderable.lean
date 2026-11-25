@@ -340,8 +340,8 @@ which proves the definition is load-bearing but not that *this* lemma is.
 The check itself lives in `packages/terminal/Terminal/Tests/Vt.lean`: it is an evaluation, and a kernel
 `decide` in a module file cannot reduce through a derived `DecidableEq` instance
 whose body is not exposed — in `Tests/`, under the compiled-evaluation tactic whose
-whole point is evaluating, it keeps its full force. In a proof module, the audit rejects the
-axiom that tactic adds. -/
+whole point is evaluating, it keeps its full force. In a proof module, `scripts/gates.sh`
+rejects the axiom that tactic adds. -/
 
 /-! ### What the sweep leaves alone
 
@@ -1051,7 +1051,7 @@ which grids are well-formed.
 
 Both take `Nat`, not `Char`, so the pins are **closed propositions** decided by
 the kernel — no `Char` literal (Lean's `\uXXXX` cannot reach plane 2), and no
-compiled evaluation, whose axiom the audit rejects. Each edge is
+compiled evaluation, whose axiom `scripts/gates.sh` rejects. Each edge is
 pinned on **both sides** (`lo-1 = false, lo = true`), so shifting a bound either
 way falsifies a conjunct. Deliberately *not* stated as
 `∀ c, isWide c = true ↔ <the disjunction>`: that is a verbatim second copy of the

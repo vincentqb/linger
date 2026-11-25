@@ -3,22 +3,19 @@ module
 public import Linger.Target.WorldSpec
 import Linger.Target.CoreCode.Remote
 import Os.WorldCode
-import SoftwareChallenge.Commands
+meta import SoftwareChallenge.Attributes -- shake: keep
 
 /-! # The checks of the remote commands' world claims
 
 `Transport.Delivers` says that a transport runs `linger serve` there and carries every byte
 either way exactly, or runs nothing. The claim takes the world's reading as a parameter, which no
-Lean term computes: `carry` names it, and the checks observe it through the transports that run
-linger here, with no host to reach, with a `linger` of the check's own first on `PATH` that, given
-`serve` and nothing else, writes back every byte it reads, so that the bytes come back exactly when
-the transport ran `linger serve` and carried them both ways. No program module imports this one. -/
+Lean term computes, so its checks, tests marked `@[tests Remote.Transport.Delivers]`, observe it
+through the transports that run linger here, with no host to reach, with a `linger` of the check's
+own first on `PATH` that, given `serve` and nothing else, writes back every byte it reads, so that
+the bytes come back exactly when the transport ran `linger serve` and carried them both ways. No
+program module imports this one; `Verify.Checks` runs its tests. -/
 
 namespace Linger.Target.Checks
-
-/-- What arrives at one end of a transport's command, linger run as it, when the other end writes
-the given bytes: the observation `Transport.Delivers` constrains. -/
-opaque carry : List String → List UInt8 → Option (List UInt8)
 
 /-- The shells an account may log in with. Each one this host has is tried, here and by the
 shells suite. -/
@@ -98,14 +95,16 @@ def carries (transport : Linger.Target.Remote.Transport) : IO Unit := do
               (IO.userError
                 s!"{transport.command} carried {bytes.length} bytes as {wrote.size} other bytes")
 
--- `env`, a command that runs its words here, runs `linger serve` and carries every byte either way,
--- as `docker exec -i` and `kubectl exec -i` do.
-Check Remote.Transport.Delivers carry { command := ["env"] } := carries { command := ["env"] }
+/-- `env`, a command that runs its words here, runs `linger serve` and carries every byte either
+way, as `docker exec -i` and `kubectl exec -i` do. -/
+@[tests Remote.Transport.Delivers]
+public def checkEnvDelivers : IO Unit := carries { command := ["env"] }
 
--- A command shaped as ssh's is, which joins the words after it with spaces and hands the line to a
--- login shell, as sshd hands it to the remote account's: `sh -c 'exec sh -c "$*"'` runs
--- `linger serve` and carries every byte either way, as `ssh -T` does.
-Check Remote.Transport.Delivers carry { command := ["sh", "-c", "exec sh -c \"$*\"", "ssh"] } :=
+/-- A command shaped as ssh's is, which joins the words after it with spaces and hands the line to a
+login shell, as sshd hands it to the remote account's: `sh -c 'exec sh -c "$*"'` runs `linger serve`
+and carries every byte either way, as `ssh -T` does. -/
+@[tests Remote.Transport.Delivers]
+public def checkSshDelivers : IO Unit :=
   carries { command := ["sh", "-c", "exec sh -c \"$*\"", "ssh"] }
 
 end Linger.Target.Checks

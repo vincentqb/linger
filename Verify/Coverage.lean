@@ -1,7 +1,6 @@
 module
 
 meta import Theorems.Coverage
-meta import SoftwareChallenge.Commands
 
 meta section
 

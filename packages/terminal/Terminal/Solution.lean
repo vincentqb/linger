@@ -1,6 +1,5 @@
 module
 
-meta import SoftwareChallenge
 public import Terminal.CoreCode.Render
 public import Terminal.CoreCode.Replay
 public import Terminal.CoreCode.Mediation
@@ -648,5 +647,51 @@ theorem progress_source_rejects_title :
         intro t ht; simp at ht; subst ht; unfold Stream.Token.Ok; decide)
       none
   exact absurd this (by decide +kernel)
+
+theorem replay_history_applies :
+    ∃ (budget : Nat) (_ : 0 < budget) (v : Vt.Vt) (w : Vt.Vt) (_ :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v) (_ :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable w) (_ :
+      w.colCount = v.colCount) (_ : w.rowCount = v.rowCount), (Render.sbRows v).isEmpty = false :=
+  ⟨1, Nat.one_pos, (Vt.Vt.init 2 1).feed [0x41, 0x0A], (Vt.Vt.init 2 1).feed [0x41, 0x0A],
+    .feed (.init 2 1) [0x41, 0x0A], .feed (.init 2 1) [0x41, 0x0A], rfl, rfl, by
+    rw [Render.sbRows_observed]; rfl⟩
+
+theorem replay_synchronized_applies :
+    ∃ (budget : Nat) (_ : 0 < budget) (v : Vt.Vt) (bytes : Render.Bytes),
+      Replay.Emits Replay.next budget (Replay.start v) bytes :=
+  ⟨1, Nat.one_pos, Vt.Vt.init 1 1, Render.synced (Vt.Vt.init 1 1), by
+    rw [← Replay.start_faithful (Vt.Vt.init 1 1)]
+    exact Replay.emits_remaining 1 Nat.one_pos (Replay.start (Vt.Vt.init 1 1))⟩
+
+theorem history_grows_applies :
+    ∃ (v : Vt.Vt), Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v :=
+  ⟨Vt.Vt.init 1 1, .init 1 1⟩
+
+theorem live_shape_applies :
+    ∃ (v : Vt.Vt), Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v :=
+  ⟨Vt.Vt.init 1 1, .init 1 1⟩
+
+theorem feed_inert_applies :
+    ∃ (v : Vt.Vt) (_ : List UInt8), v.atBoundary = true := ⟨Vt.Vt.init 1 1, [], by decide +kernel⟩
+
+theorem next_bounded_applies :
+    ∃ (budget : Nat) (p : Replay.Plan) (q : Replay.Plan) (bytes : Render.Bytes),
+      Replay.next budget p = some (bytes, q) := by
+  have emits := Replay.emits_remaining 1 Nat.one_pos (Replay.start (Vt.Vt.init 1 1))
+  rw [Replay.start_faithful (Vt.Vt.init 1 1)] at emits
+  generalize synced : Render.synced (Vt.Vt.init 1 1) = bytes at emits
+  cases emits with
+  | done _ => exact absurd (congrArg List.length synced) (by decide +kernel)
+  | step next _ _ => exact ⟨1, _, _, _, next⟩
+
+theorem leave_canonical_all_applies :
+    ∃ (w : Vt.Vt), 2 ≤ w.rowCount := ⟨Vt.Vt.init 1 2, by decide +kernel⟩
+
+theorem vt_keeps_applies : ∃ (v : Vt.Vt) (_ : Vt.Ref.Kept), v.atBoundary = true :=
+  ⟨Vt.Vt.init 1 1, .shape 0, by decide +kernel⟩
+
+theorem title_source_applies : ∃ (v : Vt.Vt) (_ : List Stream.Token), v.atBoundary = true :=
+  ⟨Vt.Vt.init 1 1, [], by decide +kernel⟩
 
 end Terminal

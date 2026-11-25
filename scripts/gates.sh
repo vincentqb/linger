@@ -68,8 +68,9 @@ code_count() { code_grep "$@" | awk 'END { print NR + 0 }'; }   # -> a number
 
 # The proofs, read from the tree: linger's `Theorems/` and each component's `Proofs/`, and each
 # package's `Proofs` and `Solution`. Deliberate word splitting below: no tracked path in this tree
-# has a space. Pure code's own rules, no IO, no `partial`, no `sorry` and only the standard axioms,
-# are the challenge library's, which each build's audit applies by role.
+# has a space. Pure code's own rules, no IO, initializer or tracing, and its imports, are the
+# roles' gates below; that what a hole computes through is pure and that every target is proved
+# with only the standard axioms are the challenge library's lint and comparator.
 proof_paths="$(git ls-files -- 'Theorems/*.lean' 'Linger/*/Proofs/*.lean' \
   'packages/*/*/Proofs.lean' 'packages/*/*/Proofs/*.lean' 'packages/*/*/Solution.lean')"
 [ -n "$proof_paths" ] || fail "no proof modules found"
@@ -84,6 +85,13 @@ proof_paths="$(git ls-files -- 'Theorems/*.lean' 'Linger/*/Proofs/*.lean' \
 # `synthInstance.maxHeartbeats` weaken a check instead of meeting it.
 ! code_grep '(^|[^[:alnum:]_])set_option([^[:alnum:]_]|$)' '*.lean' \
   || fail "set_option in a Lean file: options belong in lakefile.lean, and a raised limit means restructuring"
+# Proofs add no axioms and run no native code: outside the elaboration-time unit tests, whose
+# examples declare nothing, no module declares an axiom or decides by native evaluation, so every
+# lemma, whether or not a headline's proof reaches it and the comparator replays it, uses only the
+# standard axioms. A world claim is a hypothesis the headlines that rest on it take, never an axiom.
+! code_grep '^[[:space:]]*((private|public)[[:space:]]+)?axiom[[:space:]]+[^[:space:]]+[[:space:]]*:|(^|[^[:alnum:]_])(native_decide|bv_decide)([^[:alnum:]_]|$)|decide[[:space:]]+[+]native' \
+    '*.lean' ':!*/Tests/*' ':!*/Tests.lean' \
+  || fail "an axiom or native evaluation outside the unit tests: prove it with the standard axioms"
 # Fuel makes a recursion total by cutting it off, so the claims hold of a truncation.
 ! code_grep '[(]fuel[[:space:]]*:' '*.lean' \
   || fail "a fuel parameter: recurse on the data or a decreasing measure"
@@ -112,11 +120,17 @@ code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(
 # `@[never_extract, extern "f"]` and `attribute [extern "f"] g`
 [ "$(code_grep '(^|[^[:alnum:]_])extern([^[:alnum:]_]|$)' '*.lean' | awk -F: '!seen[$1]++ { print $1 }' | tr -d ' ')" = "packages/os/Os/WorldSpec.lean" ] \
   || fail "extern declarations outside packages/os/Os/WorldSpec.lean"
-# The os WorldSpec declares foreign functions and the world claim of the waits, and nothing else:
-# no Lean body, no wrapper.
-! code_grep '^[[:space:]]*(private[[:space:]]+)?(def|abbrev|theorem|instance|structure|inductive)[[:space:]]' \
+# The os WorldSpec declares foreign functions and the world claims the boundary rests on, and
+# nothing else: no Lean body, no wrapper. A world claim is a `Prop` definition, exposed and
+# reducible, each one's `def` right after its `@[expose, reducible]`.
+! code_grep '^[[:space:]]*(private[[:space:]]+)?(abbrev|theorem|instance|structure|inductive)[[:space:]]' \
     packages/os/Os/WorldSpec.lean \
   || fail "packages/os/Os/WorldSpec.lean holds a Lean definition: wrappers and checks belong in packages/os/Os/WorldCode.lean"
+awk '/^[[:space:]]*(private[[:space:]]+)?def[[:space:]]/ && prev != "@[expose, reducible]" { bad = 1 }
+  /^[[:space:]]*(private[[:space:]]+)?def[[:space:]]/ { claim = 1 }
+  claim && / := / { if ($0 !~ /Prop :=/) bad = 1; claim = 0 }
+  { prev = $0 } END { exit bad }' packages/os/Os/WorldSpec.lean \
+  || fail "packages/os/Os/WorldSpec.lean defines something other than a world claim, an exposed and reducible Prop"
 # Each binding is private, and packages/os/Os/WorldCode.lean wraps it (its one importer is pinned
 # with the import closures below), so a caller reaches the shim only through a wrapper.
 ! code_grep '^[[:space:]]*(public[[:space:]]+)?opaque[[:space:]]' packages/os/Os/WorldSpec.lean \
@@ -231,12 +245,13 @@ for manifest in packages/*/lake-manifest.json; do
     && tr -d ' \n' < "$manifest" | grep -q '"packagesDir":"../../.lake/packages"' \
     || fail "$manifest must pin software_challenge to linger's commit, in linger's packages"
 done
-# The audit stays a default target, and the verifier builds every default target: CI starts
-# from a fresh checkout, so a default target missing from that list is never built there.
+# The challenge library's statement step stays a default target, and the verifier builds every
+# default target: CI starts from a fresh checkout, so a default target missing from that list is
+# never built there.
 default_targets="$(code_grep '^@[[]default_target[]]' lakefile.lean \
   | sed 's/^[^:]*:[0-9]*:@[[]default_target[]][[:space:]]*//' | awk '{ print $2 }')"
-printf '%s\n' "$default_targets" | grep -qx audit \
-  || fail "the Lean Software Challenge audit is no longer a default target"
+printf '%s\n' "$default_targets" | grep -qx statement \
+  || fail "the Lean Software Challenge statement step is no longer a default target"
 verify_build="$(awk '
   /^[.][/]lake --rehash --wfail build / { on = 1 }
   on { words = words " " $0; if ($0 !~ /[\\]$/) { print words; exit } }' scripts/verify.sh \
@@ -311,8 +326,9 @@ library_roots() {
 # globs below build those two with these options.
 [ "$(library_decl Linger)" = "lean_lib Linger where leanOptions := implementationOptions " ] \
   || fail "the Linger library lost implementationOptions: $(library_decl Linger)"
-# The checks of linger's world claims are a default target, so the audit counts them: the Checks
-# library builds exactly each component's `WorldCode/Checks.lean`, which no program module imports.
+# The checks of linger's world claims are a default target, so every build compiles them: the
+# Checks library builds exactly each component's `WorldCode/Checks.lean`, which no program module
+# imports, and `Verify.Checks`, the root of the checks executable, runs them.
 checks_want="$(git ls-files -- 'Linger/*/WorldCode/Checks.lean' | sed 's/[.]lean$//; s#/#.#g' \
   | awk '{ printf "%s`%s", (NR > 1 ? ", " : ""), $0 }')"
 [ -n "$checks_want" ] || fail "no module holds linger's checks"
@@ -326,8 +342,9 @@ checks_imported="$(module_imports '*/CoreSpec*.lean' '*/CoreCode*.lean' '*/World
   fail "a module of the program imports a module of checks, whose code would then ship in linger"; }
 [ "$(git grep -c 'def implementationOptions : Array LeanOption := #\[⟨`linter.missingDocs, true⟩\]$' -- lakefile.lean)" = lakefile.lean:1 ] \
   || fail "implementationOptions no longer enables linter.missingDocs"
-# Each package under packages/ builds with linger's options and its own audit, and shares the
-# checkout's packages, so its code meets the same bar and building it alone fetches nothing.
+# Each package under packages/ builds with linger's options and its own statement step, and
+# shares the checkout's packages, so its code meets the same bar and building it alone fetches
+# nothing.
 for p in $checkout_packages; do
   pkg="packages/$p"
   grep -qx "package $p where" "$pkg/lakefile.lean" || fail "$pkg/lakefile.lean does not declare package $p"
@@ -335,10 +352,10 @@ for p in $checkout_packages; do
       '⟨`linter.extra.unreachableTactic, true⟩' '⟨`linter.redundantVisibility, true⟩' \
       '⟨`linter.extra.unnecessarySeqFocus, true⟩' 'packagesDir := "../../.lake/packages"' \
       'def implementationOptions : Array LeanOption := #[⟨`linter.missingDocs, true⟩]' \
-      '@[default_target] target audit pkg : Unit := do'; do
+      '@[default_target] target statement pkg : Unit := do'; do
     grep -qF "$opt" "$pkg/lakefile.lean" || fail "$pkg/lakefile.lean lost $opt"
   done
-  for file in Challenge.lean owned.lock lake-manifest.json lean-toolchain .lean-fmt.toml; do
+  for file in Challenge.lean lake-manifest.json lean-toolchain .lean-fmt.toml; do
     [ -n "$(git ls-files -- "$pkg/$file")" ] || fail "$pkg has no tracked $file"
   done
   cmp -s lean-toolchain "$pkg/lean-toolchain" || fail "$pkg/lean-toolchain differs from linger's"
@@ -350,7 +367,7 @@ done
   || fail "the package options changed: $(lake_decl package linger)"
 [ "$(library_decl Verify)" = "lean_lib Verify where " ] \
   || fail "the Verify library gained fields: $(library_decl Verify)"
-for exe in "linger \`Linger.App.WorldCode.Main" "lingertest \`Linger.Os.Suites.Shim" "suites \`Verify.Main"; do
+for exe in "linger \`Linger.App.WorldCode.Main" "lingertest \`Linger.Os.Suites.Shim" "suites \`Verify.Main" "checks \`Verify.Checks"; do
   [ "$(lake_decl lean_exe "${exe% *}")" = "lean_exe ${exe% *} where root := ${exe#* } " ] \
     || fail "the ${exe% *} executable must declare only its root: $(lake_decl lean_exe "${exe% *}")"
 done
@@ -421,7 +438,7 @@ import_closure Linger/Os/CoreCode/Env.lean ''
 # The answers every command gives sit in the bottom layer and depend on nothing above it.
 import_closure Linger/Os/CoreSpec.lean ''
 import_closure Linger/Os/CoreCode/Answer.lean 'public import Linger.Os.CoreSpec;'
-import_closure packages/os/Os/WorldSpec.lean 'import SoftwareChallenge.Commands;'
+import_closure packages/os/Os/WorldSpec.lean ''
 # packages/os/Os/WorldCode.lean is the one module that sees the private bindings: the one module
 # that imports all of Os.WorldSpec. Others import it plainly, for the world claim it states.
 [ "$(module_imports '*.lean' | awk -F: "$IMPORT_AWK"'
@@ -460,7 +477,7 @@ module_imports ':(glob)Linger/Session/*.lean' 'Linger/Session/CoreCode/*' 'Linge
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
     if (mod !~ /^(Linger[.](Session|Os|Target|Display)[.][[:alnum:]_.]+|Terminal[.][[:alnum:]_.]+|Os[.][[:alnum:]_.]+|Linger[.]App[.](WorldCode([.](Api|Remote))?|CoreSpec|CoreCode[.](Commands|Fields|Wait|Kill|Recovery|Capture|Api|Handover|Serve|Base64))|Std[.](Async[.](System|Signal)|Sync[.]Mutex))$/ \
-        && mod != "SoftwareChallenge.Commands") {
+        && mod != "SoftwareChallenge.Attributes") {
       print "  " $0; bad = 1
     }
   }
@@ -485,12 +502,13 @@ layer_bad="$(module_imports 'Linger/*' ':!Linger/*/Suites/*' \
   printf '%s\n' "$layer_bad" >&2
   fail "a component imports a peer or a higher layer (layers: $component_layers)"; }
 
-# Headline theorems. The challenge library reads Challenge.lean: the build writes comparator.json
-# from it, the audit holds it to holes and theorems and each headline to a kill marked
-# `@[kills headline]`, and `./lake comparator` checks that Theorems.Solution proves the same
-# statements. What the audit does not see is outside linger, which it trusts: so a statement's
-# meaning rests on no package's code either, as a spec module imports, from anywhere, only spec
-# modules, a CoreSpec or WorldSpec one, and the library's syntax, and none of them all of one.
+# Headline theorems. The challenge library reads Challenge.lean: its statement step holds each
+# headline to a kill marked `@[kills headline]`, and to a witness marked `@[witness headline]` when
+# a hypothesis is about a hole, and writes comparator.json, and `./lake comparator` checks that
+# Theorems.Solution proves the same statements. What the library does not see is outside linger,
+# which it trusts: so a statement's meaning rests on no package's code either, as a spec module
+# imports, from anywhere, only spec modules, a CoreSpec or WorldSpec one, and none of them all of
+# one.
 spec_imports_bad="$(module_imports 'Linger/*/CoreSpec*.lean' 'Linger/*/WorldSpec*.lean' \
 | awk -F: "$IMPORT_AWK"'
   function role(mod,    n, i, part) {
@@ -499,11 +517,34 @@ spec_imports_bad="$(module_imports 'Linger/*/CoreSpec*.lean' 'Linger/*/WorldSpec
     return "" }
   { mod = import_mod($3); r = role(mod)
     if ($3 ~ /import[[:space:]]+all[[:space:]]/ \
-        || (r != "CoreSpec" && r != "WorldSpec" && mod != "SoftwareChallenge.Commands"))
+        || (r != "CoreSpec" && r != "WorldSpec"))
       print "  " $0 }')"
 [ -z "$spec_imports_bad" ] || {
   printf '%s\n' "$spec_imports_bad" >&2
-  fail "a spec module imports code: it may import only CoreSpec and WorldSpec modules, and SoftwareChallenge.Commands"; }
+  fail "a spec module imports code: it may import only CoreSpec and WorldSpec modules"; }
+# The roles' rules, which the challenge library no longer reads from a module's name: a CoreSpec
+# module imports only CoreSpec modules, a WorldSpec module only CoreSpec and WorldSpec ones and a
+# CoreCode module only CoreSpec and CoreCode ones, linger's or a package's, and pure code, CoreSpec
+# and CoreCode, names no IO, initializer or `dbg` tracing.
+role_imports_bad="$(module_imports '*/CoreSpec*.lean' '*/CoreCode*.lean' '*/WorldSpec*.lean' \
+| awk -F: "$IMPORT_AWK"'
+  function role(name, sep,    n, i, part) {
+    n = split(name, part, sep)
+    for (i = 1; i <= n; i++) {
+      p = part[i]; sub(/[.]lean$/, "", p)
+      if (p ~ /^(CoreSpec|CoreCode|WorldSpec|WorldCode)$/) return p }
+    return "" }
+  { own = role($1, "/"); r = role(import_mod($3), ".")
+    if (own == "CoreSpec" && r != "CoreSpec" \
+        || own == "WorldSpec" && r != "CoreSpec" && r != "WorldSpec" \
+        || own == "CoreCode" && r != "CoreSpec" && r != "CoreCode")
+      print "  " $1 ": " $3 }')"
+[ -z "$role_imports_bad" ] || {
+  printf '%s\n' "$role_imports_bad" >&2
+  fail "a module imports outside its role: CoreSpec imports CoreSpec, WorldSpec also WorldSpec, CoreCode also CoreCode"; }
+! code_grep '(^|[^[:alnum:]_."])(IO|BaseIO|EIO|initialize|builtin_initialize|dbg_trace|dbgTrace|dbgTraceIfShared)([^[:alnum:]_"]|$)' \
+    '*/CoreSpec*.lean' '*/CoreCode*.lean' \
+  || fail "pure code names IO, an initializer or dbg tracing: effects are data there, executed in WorldCode"
 [ "$(library_decl Challenge)" = "lean_lib Challenge where leanOptions := #[⟨\`warn.sorry, false⟩] " ] \
   || fail "the Challenge library may silence only its sorry warnings: $(library_decl Challenge)"
 ! grep -qE '^@[[]default_target[]][[:space:]]+lean_lib Challenge' lakefile.lean \
@@ -1760,8 +1801,8 @@ code_grep '^sentinel_dir="[$]socket_root/linger-verify-sentinel-[$][$]"$' script
 # `./lake build suites` is the only build of the suites suites, under Verify/ and each component's
 # Suites/, and it builds only the import closure of Verify/Main.lean, the suites root: a module
 # outside it is never built, and none of its suites can run. Walk that closure forwards
-# over the import lines; each suite module but Coverage and lingertest's root, the shim smoke
-# test, must be in it.
+# over the import lines; each suite module but Coverage, lingertest's root, the shim smoke
+# test, and the checks' runner, the root of `./lake build checks`, must be in it.
 suite_unreached="$(module_imports Verify/Main.lean 'Verify/*' 'Linger/*/Suites/*' \
 | awk -F: -v files="$(git ls-files 'Verify/*.lean' 'Linger/*/Suites/*.lean' | tr '\n' ' ')" "$IMPORT_AWK"'
   { mod = import_mod($3); gsub(/[.]/, "/", mod)
@@ -1775,7 +1816,7 @@ suite_unreached="$(module_imports Verify/Main.lean 'Verify/*' 'Linger/*/Suites/*
     k = split(files, F, " ")
     for (j = 1; j <= k; j++)
       if (F[j] != "Verify/Coverage.lean" && F[j] != "Linger/Os/Suites/Shim.lean" &&
-          !(F[j] in reached)) printf "%s ", F[j] }')"
+          F[j] != "Verify/Checks.lean" && !(F[j] in reached)) printf "%s ", F[j] }')"
 [ -z "$suite_unreached" ] \
   || fail "outside the import closure of Verify/Main.lean, so './lake build suites' never elaborates them: ${suite_unreached% }"
 # Every registered suite but the opt-in remote-live and perf runs in the verifier: Verify.Main.suites
@@ -1814,8 +1855,8 @@ git ls-files 'tests/*' 'Tools/*' 'Manager/*' 'Tests/*' 'Linger/Core/*' 'Linger/R
   && fail "legacy directory: use scripts/, or a component under Linger/" || true
 
 # A module's role is the first component of its name that is `CoreSpec`, `CoreCode`,
-# `WorldSpec` or `WorldCode`, and the audit holds each role to its rules; any other module is
-# tooling, held to none of them, which no program module can import. So each module of a
+# `WorldSpec` or `WorldCode`, and the roles' gates above hold each role to its rules; any other
+# module is tooling, held to none of them, which no program module can import. So each module of a
 # component or a package has its role right below the component or the package's root, or is a
 # proof, a test, a suite or a package's solution, and no module of the program is tooling by a
 # misplaced name.

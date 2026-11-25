@@ -1,7 +1,6 @@
 module
 
 public import Linger.Session.CoreSpec
-import SoftwareChallenge.Commands
 
 public section
 
@@ -19,7 +18,8 @@ namespace Linger.Session
 `bytes`, writing them to a temporary file and renaming that over the record, a reader reads
 exactly `bytes` until linger saves or removes the record again. A reader that sees part of a
 record, an older one, or a mix of two falsifies it. -/
-WorldClaim Record.Kept (afterSave : List UInt8 → Option (List UInt8)) :=
+@[expose, reducible]
+def Record.Kept (afterSave : List UInt8 → Option (List UInt8)) : Prop :=
   ∀ bytes, afterSave bytes = some bytes
 
 /-- The file system keeps what linger replaces whole and durably through a crash, power loss
@@ -32,7 +32,8 @@ either. A reader that finds anything else there after a crash, such as an empty 
 short, a mix of two, or the old file once both flushes returned, falsifies it. No suite cuts the
 power: the resume suite kills a daemon with SIGKILL while it saves, which tests the tear and not
 the flush. -/
-WorldClaim Disk.Durable (afterCrash : Option ByteArray → ByteArray → Bool → Option ByteArray) :=
+@[expose, reducible]
+def Disk.Durable (afterCrash : Option ByteArray → ByteArray → Bool → Option ByteArray) : Prop :=
   ∀ old new,
     afterCrash old new true = some new ∧
       (afterCrash old new false = old ∨ afterCrash old new false = some new)
@@ -43,7 +44,8 @@ reads once linger wrote `written`. A program in raw mode that reads a byte linge
 misses one it wrote or reads two in another order falsifies it, a control byte as much as any
 other. Of any other mode it says nothing: in the cooked mode a terminal starts in, the line
 discipline edits lines and turns ^C into SIGINT instead of a byte to read. -/
-WorldClaim Pty.Delivers (reads : Pty.Mode → ByteArray → ByteArray) :=
+@[expose, reducible]
+def Pty.Delivers (reads : Pty.Mode → ByteArray → ByteArray) : Prop :=
   ∀ written, reads .raw written = written
 
 /-- The operating system reports a pty's foreground process, its words and its directory, as the
@@ -55,7 +57,8 @@ leader, or other words or another directory than that process sees, falsifies it
 with no foreground group, or whose group's leader has ended, the report is `none`, and the claim
 says nothing. On Linux `/proc` answers; on macOS `sysctl` and `libproc` do, which no macOS host
 has checked yet. -/
-WorldClaim Pty.Foreground (reported seen : UInt32 → Option Foreground) :=
+@[expose, reducible]
+def Pty.Foreground (reported seen : UInt32 → Option Foreground) : Prop :=
   ∀ master fg, reported master = some fg → seen master = some fg
 
 /-- A pty reports whether it echoes what is typed as its program last set it. `reported master` is
@@ -65,7 +68,8 @@ flag, and `set master` is that flag as the program last set it on its own end of
 terminal whose program last turned it on, or of echo on from one whose program turned it off,
 falsifies it. Of a descriptor that is no terminal the report is `none`, and the claim says
 nothing. -/
-WorldClaim Pty.Echo (reported set : UInt32 → Option Bool) :=
+@[expose, reducible]
+def Pty.Echo (reported set : UInt32 → Option Bool) : Prop :=
   ∀ master echo, reported master = some echo → set master = some echo
 
 /-- The operating system runs what linger asks, and nothing else. A program that `start dir prog
@@ -75,10 +79,13 @@ variable, or else as `inherited` has it: the environment of the command that ask
 session, which its daemon runs with. A program that cannot start is `none`. A started program
 that sees other words, another directory, another value or a variable `extra` unsets falsifies
 it. -/
-WorldClaim Spawn.Runs (inherited : String → Option String)
-  (start :
-    String →
-      String → Array String → List (String × Option String) → Spawn.Reset → Option Spawn.Started) :=
+@[expose, reducible]
+def Spawn.Runs (inherited : String → Option String)
+    (start :
+      String →
+        String →
+        Array String → List (String × Option String) → Spawn.Reset → Option Spawn.Started) :
+    Prop :=
   ∀ dir prog args extra reset started,
     start dir prog args extra reset = some started →
       started.argv = prog :: args.toList ∧
@@ -91,10 +98,13 @@ prog args extra reset` starts has its session's terminal on descriptors 0, 1 and
 ignored, blocked or left open. A program so started that finds a signal ignored or blocked, a
 descriptor from 3 up open, or another file than its terminal on 0, 1 or 2 falsifies it, as its
 `SigIgn`, `SigBlk` and `fd` entries under `/proc` show on Linux. -/
-WorldClaim Spawn.Clean
-  (start :
-    String →
-      String → Array String → List (String × Option String) → Spawn.Reset → Option Spawn.Started) :=
+@[expose, reducible]
+def Spawn.Clean
+    (start :
+      String →
+        String →
+        Array String → List (String × Option String) → Spawn.Reset → Option Spawn.Started) :
+    Prop :=
   ∀ dir prog args extra reset started,
     start dir prog args extra reset = some started →
       (∀ fd, fd < 3 → started.descriptor fd = some .terminal) ∧
@@ -111,7 +121,8 @@ terminal session linger's signals miss a process that left it with `setsid`, one
 another user and one forked after linger looked for the session's processes; on macOS, and on
 Linux before 5.3, a pid freed and reused between reading its session and signalling it could
 receive them instead. -/
-WorldClaim Signal.Ends (gone : UInt32 → Nat → Nat → Bool) := ∀ pid ms, 1000 ≤ ms → gone 9 ms pid
+@[expose, reducible]
+def Signal.Ends (gone : UInt32 → Nat → Nat → Bool) : Prop := ∀ pid ms, 1000 ≤ ms → gone 9 ms pid
 
 /-- poll(2) waits out its timeout. `quiet timeout ms` says that a poll with that timeout returned
 after `ms` milliseconds with none of its descriptors ready and no signal caught. Such a poll
@@ -120,7 +131,8 @@ never. A ready descriptor or a signal may end a poll sooner, as the SIGCHLD a da
 program end by does, and a loaded host may end it later. A poll that returns before its timeout
 with nothing ready and no signal caught falsifies it, as does one with a negative timeout that
 returns so at all. -/
-WorldClaim Poll.Sleeps (quiet : Int32 → Nat → Prop) :=
+@[expose, reducible]
+def Poll.Sleeps (quiet : Int32 → Nat → Prop) : Prop :=
   ∀ timeout ms, quiet timeout ms → 0 ≤ timeout.toInt ∧ timeout.toInt ≤ ms
 
 end Linger.Session
@@ -132,8 +144,9 @@ the effect's reply, which may say that the effect failed, its client gone, its c
 or its stopped program's ending unknown. This is a premise about executing effects, not an
 assumption that the event driver succeeds. An effect that raises instead of answering, as a
 write a client's transport refuses could, falsifies it. -/
-WorldClaim Responds {S World Plan ε : Type}
-  (execute : S → World → (eff : Effect Plan) → Except ε (World × Reply eff)) :=
+@[expose, reducible]
+def Responds {S World Plan ε : Type}
+    (execute : S → World → (eff : Effect Plan) → Except ε (World × Reply eff)) : Prop :=
   ∀ st world eff, ∃ answer, execute st world eff = .ok answer
 
 end Linger.Session.Driver
@@ -145,7 +158,8 @@ a lock file's path names, when only a holder deletes that file and a process tha
 then checks that the path still names it, and locks the path's file again when not
 (`Os.Shell.flock`, which `Os.Lock.Tells` lets tell them apart). Two processes holding the lock
 of the file one path names at once falsify it. -/
-WorldClaim Exclusive (grant : State → Nat → Nat → Bool) :=
+@[expose, reducible]
+def Exclusive (grant : State → Nat → Nat → Bool) : Prop :=
   ∀ s actor resource, grant s actor resource = true → s.locks resource = none
 
 end Linger.Session.Claim

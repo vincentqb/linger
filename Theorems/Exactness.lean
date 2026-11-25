@@ -287,8 +287,13 @@ theorem json_written_rejects_unsorted :
   intro h
   -- `{"b":null,"a":null}` is not the text of the object it spells, `{"a":null,"b":null}`
   have same := congrArg String.toList (h (.obj [("b", .null), ("a", .null)])).2
+  have ab : "a" < "b" := by
+    rw [← String.toList_lt_toList_iff]; decide
+  have ba : ¬"b" < "a" := by
+    rw [← String.toList_lt_toList_iff]; decide
   have sorted :
-    (Json.obj [("b", .null), ("a", .null)]).sorted = .obj [("a", .null), ("b", .null)] := rfl
+    (Json.obj [("b", .null), ("a", .null)]).sorted = .obj [("a", .null), ("b", .null)] := by
+    simp [Json.sorted, Json.sortMembers, Json.sortedMembers, Json.insertMember, ab]
   rw [sorted] at same
   simp [Json.unsorted, String.intercalate_cons_cons, String.intercalate_singleton, Json.render,
     Json.chars, Json.quote, Json.escape] at same
@@ -324,7 +329,9 @@ theorem json_read_rejects_unordered :
       .ok (.obj [("b", .null), ("a", .null)]) := by
     simp [Json.unordered]
   have valid := ((h "{\"b\":null,\"a\":null}" (.obj [("b", .null), ("a", .null)])).1.mp read).1
-  simp [Json.Valid] at valid
+  have ba : ¬"b" < "a" := by
+    rw [← String.toList_lt_toList_iff]; decide
+  simp [Json.Valid, ba] at valid
 
 theorem serve_refuses_uncanonical (s : App.Serve.State) (line reason : String)
     (refused : Json.parse line = .error reason) :

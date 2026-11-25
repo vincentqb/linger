@@ -80,14 +80,14 @@ fi
 logs="$(mktemp -d "${TMPDIR:-/tmp}/linger-verify.XXXXXX")"
 export LINGER_LOG_DIR="$logs"
 
-say "1. build (program + theorems + tests + checks + audit)"
+say "1. build (program + theorems + tests + checks + statement)"
 # Lake checks source/dependency content and replays cached diagnostics. Rehash
 # artifacts too, and fail on warnings even after a local warningAsError override.
 # Run `./lake clean` first for clean release/compiler validation. The list holds every
-# default target (scripts/gates.sh checks), so a fresh checkout runs the Lean Software Challenge audit
-# here, as a local `./lake build` does.
+# default target (scripts/gates.sh checks), so a fresh checkout runs the Lean Software Challenge
+# statement step here, as a local `./lake build` does, and the checks executable of stage 2f.
 ./lake --rehash --wfail build Linger \
-    Theorems Tests Checks linger lingertest suites audit > "$logs/build.log" 2>&1 \
+    Theorems Tests Checks linger lingertest suites checks statement > "$logs/build.log" 2>&1 \
   || { tail -30 "$logs/build.log"; fail "build (see $logs/build.log)"; }
 # --wfail ignores warnings from elaborating lakefile.lean; this grep sees them.
 if grep -qE '^(warning|error)' "$logs/build.log"; then
@@ -97,8 +97,8 @@ fi
 # Shake reads the oleans just built. The proof library has no root module, so the proof
 # modules are named one by one. Tests stay out: shake cannot see `example` or
 # `#guard` uses. Linger.Os.Suites.Shim and Verify.Main stay out to bound the cost.
-# Shake writes its suggestions to standard output; the build log it replays first, the
-# challenge audit's report among it, goes to standard error.
+# Shake writes its suggestions to standard output; the build log it replays first goes to
+# standard error.
 shake_modules="$(git ls-files 'Theorems/*.lean' 'Linger/*/Proofs/*.lean' | sed 's/[.]lean$//; s#/#.#g')"
 # shellcheck disable=SC2086  # one module name per word
 ./lake shake --keep-implied Linger Linger.App.WorldCode.Main $shake_modules \
@@ -205,6 +205,12 @@ say "2c. verifier regression tests (CI policy, caches and suite isolation)"
   || fail "verifier regression checks (see $logs/linger-ci.out and linger-hygiene.out)"
 
 say "2d. headline theorems (Challenge.lean against Theorems/Solution.lean)"
+# The challenge library's lint judges the solution as `lake comparator` will: every headline,
+# kill and witness proved with only the standard axioms, every hole defined in plain Lean, without
+# `@[extern]`, `@[implemented_by]`, `unsafe` or `partial` on anything it computes through, and
+# `main` computing through every hole. It exits 0 only with nothing pending and no error.
+./lake script run software_challenge/lint > "$logs/challenge-lint.log" 2>&1 \
+  || { grep -v '^[✔⣿]' "$logs/challenge-lint.log" | tail -20; fail "the challenge library's lint refused linger (see $logs/challenge-lint.log)"; }
 # `lake comparator` builds both modules, exports them and replays the claims' proofs through
 # the kernel in a separate process; it accepts only when every statement matches and no axiom
 # outside comparator.json's list is used. Its bwrap sandbox protects a judge from code the
@@ -220,10 +226,11 @@ if grep '^warning' "$logs/comparator.log"; then
   fail "Challenge.lean has warnings (see $logs/comparator.log)"
 fi
 
-say "2e. packages (each package's build, audit and headline theorems, on its own)"
-# Each package under packages/ is a Lake package with its own challenge and audit, which linger
-# trusts: build it alone, with its unit tests and audit, and check that its solution proves its
-# challenge. It shares this checkout's packages (`packagesDir`), so this fetches nothing.
+say "2e. packages (each package's build, statement, lint and headline theorems, on its own)"
+# Each package under packages/ is a Lake package with its own challenge, which linger trusts: build
+# it alone, with its unit tests and statement step, lint it as linger is linted, and check that its
+# solution proves its challenge. It shares this checkout's packages (`packagesDir`), so this
+# fetches nothing.
 for pkg in packages/*/; do
   pkg="${pkg%/}"
   name="$(basename "$pkg")"
@@ -233,43 +240,34 @@ for pkg in packages/*/; do
     grep -E '^(warning|error)' "$logs/$name-build.log"
     fail "$pkg is not warning-clean"
   fi
+  (cd "$pkg" && ../../lake script run software_challenge/lint) > "$logs/$name-lint.log" 2>&1 \
+    || { grep -v '^[✔⣿]' "$logs/$name-lint.log" | tail -20; fail "the challenge library's lint refused $pkg (see $logs/$name-lint.log)"; }
   (cd "$pkg" && ../../lake comparator --inadvisably-no-sandbox) > "$logs/$name-comparator.log" 2>&1 \
     || { grep -v '^Exporting' "$logs/$name-comparator.log" | tail -20; fail "lake comparator rejected $pkg's headline theorems"; }
   [ "$(tail -1 "$logs/$name-comparator.log")" = 'Your solution is okay!' ] \
     || fail "lake comparator did not accept $pkg's headline theorems (see $logs/$name-comparator.log)"
-  printf '  %s: build, audit and headline theorems OK\n' "$pkg"
+  printf '  %s: build, statement, lint and headline theorems OK\n' "$pkg"
 done
 
-say "2f. world claims (every Check, linger's and each package's)"
-# The challenge library's `test_challenge` runs every Check of the package it tests between its
-# lint and a sandboxed comparator, which 2d and 2e run without the sandbox. This runs its checks
-# runner alone, as it writes it: a module that imports every module the package's audit read, the
-# files its report lists, and runs their checks against this host's operating system.
-repo="$PWD"
-for dir in . packages/*/; do
+say "2f. world claims (every check, linger's and each package's)"
+# Each check of a world claim is a test marked `@[tests claim]`, and an executable whose `main` is
+# the challenge library's `SoftwareChallenge.testsMain` runs every one it imports against this
+# host's operating system: linger's `checks`, built in stage 1, and each package's test driver.
+# Each runs exactly as many tests as its modules mark.
+run_checks() {                               # run_checks NAME DIR EXPECTED CMD...
+  rc_name="$1"; rc_dir="$2"; rc_want="$3"; shift 3
+  (cd "$rc_dir" && "$@") > "$logs/checks-$rc_name.log" 2>&1 \
+    || { tail -20 "$logs/checks-$rc_name.log"; fail "a check of $rc_name failed (see $logs/checks-$rc_name.log)"; }
+  [ "$(tail -1 "$logs/checks-$rc_name.log")" = "Tests: $rc_want of $rc_want passed" ] \
+    || fail "$rc_name ran other checks than the $rc_want its modules mark (see $logs/checks-$rc_name.log)"
+  printf '  %s: %s checks OK\n' "$rc_name" "$rc_want"
+}
+marked() { cat "$@" | grep -c '^@[[]tests '; }
+run_checks linger . "$(marked Linger/*/WorldCode/Checks.lean)" ./.lake/build/bin/checks
+for dir in packages/*/; do
   dir="${dir%/}"
-  name="$(basename "$dir")"
-  [ "$dir" != . ] || name=linger
-  report="$dir/.lake/build/softwareChallenge.txt"
-  [ -f "$report" ] || fail "$dir has no audit report, which its build writes"
-  modules="$(grep -E '^(Edit|Owned): ' "$report" | sed 's/^[A-Za-z]*: //' | tr ' ' '\n' \
-    | grep '[.]lean$' | grep -vx -e lakefile.lean -e Challenge.lean | sed 's/[.]lean$//; s#/#.#g')"
-  [ -n "$modules" ] || fail "$dir's audit report lists no module"
-  checks=0
-  for module in $modules; do
-    n="$(grep -c '^Check ' "$dir/$(printf '%s' "$module" | tr . /).lean")" || true
-    checks=$((checks + n))
-  done
-  runner="$logs/checks-$name.lean"
-  # shellcheck disable=SC2086  # one module name per word
-  {
-    printf 'import SoftwareChallenge\n'
-    printf 'import %s\n' $modules
-    printf 'run_cmd SoftwareChallenge.runChecks #[%s]\n' "$(printf '`%s, ' $modules | sed 's/, $//')"
-  } > "$runner"
-  (cd "$dir" && "$repo/lake" lean "$runner") > "$logs/checks-$name.log" 2>&1 \
-    || { tail -20 "$logs/checks-$name.log"; fail "a Check of $name failed (see $logs/checks-$name.log)"; }
-  printf '  %s: %s checks OK\n' "$name" "$checks"
+  [ -n "$(git ls-files -- "$dir/*/WorldCode/Checks.lean")" ] || continue
+  run_checks "$(basename "$dir")" "$dir" "$(marked "$dir"/*/WorldCode/Checks.lean)" ../../lake test
 done
 
 say "3. posix shim smoke tests"

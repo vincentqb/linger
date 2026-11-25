@@ -4,7 +4,7 @@ open Lake DSL
 
 /-- The VT toolkit: the emulator, renderer, streaming replay, child-facing mediation and safe
 title emission, with their proofs. It imports no other linger package and has its own challenge
-(`Challenge.lean`) and audit. It shares the packages of the checkout that requires it,
+(`Challenge.lean`). It shares the packages of the checkout that requires it,
 so building it alone fetches nothing. -/
 package terminal where
   leanOptions :=
@@ -14,7 +14,7 @@ package terminal where
   packagesDir := "../../.lake/packages"
 
 require software_challenge from git
-  "https://github.com/vincentqb/lean-software-challenge"@"57aae4dfe83ef6f28f313cdec1007fc3554b474c"
+  "https://github.com/vincentqb/lean-software-challenge"@"3d5035043af16034bac2a92a7ccbcb2cee68ffa9"
 
 /-- Options for every library but the challenge: with the package's `warningAsError`, a public
 declaration without a docstring fails the build. -/
@@ -35,6 +35,7 @@ which checks that `Terminal.Solution` proves the same statements. The build writ
 `comparator.json` from them. -/
 lean_lib Challenge where leanOptions := #[⟨`warn.sorry, false⟩]
 
-/-- The Lean Software Challenge audit of every module the default targets build. -/
-@[default_target] target audit pkg : Unit := do
-  return (← pkg.fetchFacetJob `softwareChallenge).map (fun _ => ())
+/-- The Lean Software Challenge's statement step: it checks that every headline of `Challenge.lean`
+has its kill, and its witness where a hypothesis is about a hole, and writes `comparator.json`. -/
+@[default_target] target statement pkg : Unit := do
+  return (← pkg.fetchFacetJob `softwareChallengeStatement).map (fun _ => ())

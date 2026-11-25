@@ -1,7 +1,5 @@
 module
 
-import SoftwareChallenge.Commands
-
 public section
 
 /-! # The foreign declarations, and the world claims the waits, the exec and the names rest on
@@ -147,7 +145,8 @@ namespace Os.Wait
 clock then reads `after now ms`, at least `ms` later. A clock reading, after `IO.sleep ms`
 returns, less than `ms` above the one before it falsifies it, as would a sleep that never
 returns. -/
-WorldClaim Lasts (after : Nat → Nat → Nat) := ∀ now ms, now + ms ≤ after now ms
+@[expose, reducible]
+def Lasts (after : Nat → Nat → Nat) : Prop := ∀ now ms, now + ms ≤ after now ms
 
 end Os.Wait
 
@@ -159,7 +158,8 @@ close-on-exec, by number, is, after the exec, `exec pid children kept`, with the
 same children and the same descriptors open at the same numbers. A new image that reads another
 id, misses a child of the old one, or finds a kept descriptor closed or holding something else
 falsifies it. -/
-WorldClaim Keeps (exec : Nat → List Nat → List Nat → Nat × List Nat × List Nat) :=
+@[expose, reducible]
+def Keeps (exec : Nat → List Nat → List Nat → Nat × List Nat × List Nat) : Prop :=
   ∀ pid children kept, exec pid children kept = (pid, children, kept)
 
 end Os.Exec
@@ -176,8 +176,10 @@ processes that place onto one name at once therefore leave it naming the first o
 the second fails. A call that succeeds while `dst` names a file, or that leaves `dst` naming
 another file, falsifies it. A file system that cannot rename without replacing fails every
 rename, which the claim allows. -/
-WorldClaim NoReplace
-  (placed : Bool → (String → Option Nat) → String → String → Option (String → Option Nat)) :=
+@[expose, reducible]
+def NoReplace
+    (placed : Bool → (String → Option Nat) → String → String → Option (String → Option Nat)) :
+    Prop :=
   ∀ rename names src dst,
     ((names dst).isSome → placed rename names src dst = none) ∧
       ∀ after,
@@ -198,7 +200,8 @@ unlinked and another created there. A file a descriptor holds open keeps its dev
 numbers, which no other file has while it is open, so the answer is true exactly when the path
 names the held file. A path that names the held file and reads false, or names another or none
 and reads true, falsifies it. -/
-WorldClaim Tells (reads : Bool → Bool) := ∀ named, reads named = named
+@[expose, reducible]
+def Tells (reads : Bool → Bool) : Prop := ∀ named, reads named = named
 
 end Os.Lock
 
@@ -209,7 +212,8 @@ whether the process `pid` is in the process group `pgid` when `Os.Shell.signalGr
 and `reaches pgid pid` whether that signal reaches `pid`: kill(2) of `-pgid` delivers to every
 member at once, one forked since included. A member the signal misses falsifies it. A process
 that left the group, with `setsid` or `setpgid`, is no member. -/
-WorldClaim Group (member reaches : Nat → Nat → Bool) :=
+@[expose, reducible]
+def Group (member reaches : Nat → Nat → Bool) : Prop :=
   ∀ pgid pid, member pgid pid = true → reaches pgid pid = true
 
 end Os.Signal
@@ -223,7 +227,8 @@ that it sent all of it) and each of at most `cap` bytes: exactly those datagrams
 they were sent, none cut short, merged, split, repeated or reordered. A read that returns part of
 one of them, two at once or one out of its order falsifies it. Of a datagram the socket's queue
 had no room for, which the send refuses, it says nothing. -/
-WorldClaim Whole (received : Nat → List (List UInt8) → List (List UInt8)) :=
+@[expose, reducible]
+def Whole (received : Nat → List (List UInt8) → List (List UInt8)) : Prop :=
   ∀ cap sent, (∀ d ∈ sent, d.length ≤ cap) → received cap sent = sent
 
 end Os.Dgram

@@ -110,6 +110,15 @@ theorem replay_history_rejects_silence :
                   (w.feed bytes).scrollback = (Render.sbRows v).toList := by
   sorry
 
+@[witness replay_history]
+theorem replay_history_applies :
+    ∃ (budget : Nat) (_ : 0 < budget) (v : Vt.Vt) (w : Vt.Vt) (_ :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v) (_ :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable w) (_ :
+      w.colCount = v.colCount) (_ : w.rowCount = v.rowCount),
+      (Render.sbRows v).isEmpty = false := by
+  sorry
+
 theorem replay_synchronized (budget : Nat) (positive : 0 < budget) (v : Vt.Vt)
     (bytes : Render.Bytes) (emits : Replay.Emits Replay.next budget (Replay.start v) bytes) :
     ∃ body,
@@ -128,6 +137,12 @@ theorem replay_synchronized_rejects_bare :
                 ∃ body,
                   bytes = Render.syncBegin ++ body ++ Render.syncEnd ∧
                     ¬Render.syncBegin <:+: body ∧ ¬Render.syncEnd <:+: body := by
+  sorry
+
+@[witness replay_synchronized]
+theorem replay_synchronized_applies :
+    ∃ (budget : Nat) (_ : 0 < budget) (v : Vt.Vt) (bytes : Render.Bytes),
+      Replay.Emits Replay.next budget (Replay.start v) bytes := by
   sorry
 
 theorem history_grows (v : Vt.Vt)
@@ -162,6 +177,11 @@ theorem history_grows_rejects_lost :
                       (List.range (v.rowCount - (v.resize cols rows).rowCount)).map v.getRow) := by
   sorry
 
+@[witness history_grows]
+theorem history_grows_applies :
+    ∃ (v : Vt.Vt), Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v := by
+  sorry
+
 theorem live_shape (v : Vt.Vt)
     (hv : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v) :
     1 ≤ v.colCount ∧
@@ -186,6 +206,11 @@ theorem live_shape_rejects_empty :
             v.cursorPos.2 < v.rowCount ∧ v.scrollback.length ≤ Vt.sbCap := by
   sorry
 
+@[witness live_shape]
+theorem live_shape_applies :
+    ∃ (v : Vt.Vt), Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v := by
+  sorry
+
 theorem feed_inert (v : Vt.Vt) (bytes : List UInt8) (between : v.atBoundary = true)
     (inert : ∀ b ∈ bytes, b = 0x7F ∨ b < 0x07 ∨ 0x0F < b ∧ b < 0x20 ∧ b ≠ 0x1B) :
     v.feed bytes = v := by sorry
@@ -200,6 +225,9 @@ theorem feed_inert_rejects_print :
               v bytes =
             v := by
   sorry
+
+@[witness feed_inert]
+theorem feed_inert_applies : ∃ (v : Vt.Vt) (_ : List UInt8), v.atBoundary = true := by sorry
 
 theorem repeatAtMost_eq_repeat (v : Vt.Vt) (cap count : Nat) (f : Vt.Vt → Vt.Vt) :
     v.repeatAtMost cap count f = Nat.repeat f (min count cap) v := by sorry
@@ -219,6 +247,12 @@ theorem next_bounded {budget : Nat} {p q : Replay.Plan} {bytes : Render.Bytes}
 theorem next_bounded_rejects_overrun :
     ¬∀ {budget : Nat} {p q : Replay.Plan} {bytes : Render.Bytes},
         Replay.overrun budget p = some (bytes, q) → bytes.length ≤ budget := by
+  sorry
+
+@[witness next_bounded]
+theorem next_bounded_applies :
+    ∃ (budget : Nat) (p : Replay.Plan) (q : Replay.Plan) (bytes : Render.Bytes),
+      Replay.next budget p = some (bytes, q) := by
   sorry
 
 theorem screenText_text (v : Vt.Vt) :
@@ -277,6 +311,9 @@ theorem leave_canonical_all_rejects_escape :
             (w.feed ([0x1B] : Render.Bytes)).getPen = ({} : Vt.Pen) ∧
             (w.feed ([0x1B] : Render.Bytes)).windowTitle = "" := by
   sorry
+
+@[witness leave_canonical_all]
+theorem leave_canonical_all_applies : ∃ (w : Vt.Vt), 2 ≤ w.rowCount := by sorry
 
 theorem vt_conforms :
     ∃ screen : Vt.Vt → Vt.Ref.Screen,
@@ -394,6 +431,9 @@ theorem vt_keeps_rejects_unescaped :
             ((Vt.Ref.unescaped Vt.Vt.feed) v k.bytes).atBoundary = true := by
   sorry
 
+@[witness vt_keeps]
+theorem vt_keeps_applies : ∃ (v : Vt.Vt) (_ : Vt.Ref.Kept), v.atBoundary = true := by sorry
+
 theorem title_source (v : Vt.Vt) (ts : List Stream.Token) (between : v.atBoundary = true)
     (ok : ∀ t ∈ ts, t.Ok) :
     (v.feed (ts.flatMap Stream.Token.bytes)).windowTitle =
@@ -410,6 +450,10 @@ theorem title_source_rejects_icon :
               ts.foldl Stream.Token.retitle v.windowTitle ∧
             ((Stream.iconAsTitle Vt.Vt.feed) v (ts.flatMap Stream.Token.bytes)).atBoundary =
               true := by
+  sorry
+
+@[witness title_source]
+theorem title_source_applies : ∃ (v : Vt.Vt) (_ : List Stream.Token), v.atBoundary = true := by
   sorry
 
 theorem asks_exact (v : Vt.Vt) (ts : List Stream.Token) (ok : ∀ t ∈ ts, t.Ok) :
